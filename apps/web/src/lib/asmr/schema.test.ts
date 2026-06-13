@@ -121,6 +121,21 @@ describe("AsmrProjectSchema", () => {
     expect(() => AsmrProjectSchema.parse(project)).toThrow();
   });
 
+  it("rejects clips that end after project duration", () => {
+    const project = structuredClone(validProject);
+    project.timeline.tracks[0].clips[0].start = 298;
+    project.timeline.tracks[0].clips[0].duration = 6;
+
+    expect(() => AsmrProjectSchema.parse(project)).toThrow();
+  });
+
+  it("rejects emotion curve points that end after project duration", () => {
+    const project = structuredClone(validProject);
+    project.emotion_curve[1].end = 360;
+
+    expect(() => AsmrProjectSchema.parse(project)).toThrow();
+  });
+
   it("rejects voice clips without text", () => {
     const project = asRecord(structuredClone(validProject));
     const timeline = asRecord(project.timeline);

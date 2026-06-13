@@ -202,6 +202,51 @@ export const AsmrProjectSchema = z.object({
       uri: z.string().nullable(),
     }),
   ),
+}).superRefine((project, context) => {
+  for (const [pointIndex, point] of project.emotion_curve.entries()) {
+    if (point.start > project.duration) {
+      context.addIssue({
+        code: "custom",
+        message: "emotion_curve point start must be within project duration",
+        path: ["emotion_curve", pointIndex, "start"],
+      });
+    }
+
+    if (point.end > project.duration) {
+      context.addIssue({
+        code: "custom",
+        message: "emotion_curve point end must be within project duration",
+        path: ["emotion_curve", pointIndex, "end"],
+      });
+    }
+  }
+
+  for (const [trackIndex, track] of project.timeline.tracks.entries()) {
+    for (const [clipIndex, clip] of track.clips.entries()) {
+      if (clip.start > project.duration) {
+        context.addIssue({
+          code: "custom",
+          message: "clip start must be within project duration",
+          path: ["timeline", "tracks", trackIndex, "clips", clipIndex, "start"],
+        });
+      }
+
+      if (clip.start + clip.duration > project.duration) {
+        context.addIssue({
+          code: "custom",
+          message: "clip end must be within project duration",
+          path: [
+            "timeline",
+            "tracks",
+            trackIndex,
+            "clips",
+            clipIndex,
+            "duration",
+          ],
+        });
+      }
+    }
+  }
 });
 
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
