@@ -76,8 +76,8 @@ export function TimelinePanel({
         </div>
       </div>
 
-      <div className="p-3">
-        <div className="overflow-hidden rounded-lg border border-white/[0.06] bg-black/16">
+      <div className="overflow-x-auto p-3">
+        <div className="min-w-[720px] overflow-hidden rounded-lg border border-white/[0.06] bg-black/16 lg:min-w-0">
           {fixedTracks.map(({ type, label }) => {
             const clips =
               type === "post_processing"
@@ -114,7 +114,7 @@ export function TimelinePanel({
                         aria-pressed={isSelected}
                         title={`${getClipLabel(clip)} · ${timeRange}`}
                         className={clsx(
-                          "absolute top-3 flex h-10 min-w-12 items-center overflow-hidden rounded-md border px-2 text-left text-[11px] font-semibold leading-none shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45",
+                          "absolute top-3 flex h-10 min-w-24 items-center overflow-hidden rounded-md border px-2 text-left text-[11px] font-semibold leading-none shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45",
                           clipTones[clip.track],
                           isSelected && "ring-2 ring-sky-200/70",
                         )}

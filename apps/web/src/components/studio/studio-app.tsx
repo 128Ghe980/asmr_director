@@ -41,8 +41,8 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
         </div>
       </div>
 
-      <div className="p-4">
-        <div className="flex h-20 overflow-hidden rounded-lg border border-white/[0.06] bg-black/16">
+      <div className="overflow-x-auto p-4">
+        <div className="flex h-20 min-w-[680px] overflow-hidden rounded-lg border border-white/[0.06] bg-black/16 lg:min-w-0">
           {project.emotion_curve.map((point) => {
             const duration = point.end - point.start;
             const width = `${Math.max(6, (duration / project.duration) * 100)}%`;

@@ -32,6 +32,8 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: rgba(143, 161, 183, 0.42) rgba(16, 22, 32, 0.52);
+  scrollbar-width: thin;
 }
 
 html {
@@ -66,4 +68,23 @@ button {
 
 ::selection {
   background: rgba(56, 189, 248, 0.28);
+}
+
+::-webkit-scrollbar {
+  height: 0.625rem;
+  width: 0.625rem;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(16, 22, 32, 0.52);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(143, 161, 183, 0.38);
+  border: 2px solid rgba(16, 22, 32, 0.52);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(143, 161, 183, 0.58);
 }
