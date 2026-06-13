@@ -173,6 +173,32 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 这一步会把当前“漂亮的 DSL 预览台”推进成真正可用的“ASMR 时间线编辑台”。
 
+## V0.2 编辑闭环进展
+
+已启动 V0.2 的前半步：可编辑 Inspector + 本地项目状态同步 + 实时 schema 校验。
+
+本轮新增设计与计划：
+
+- `docs/superpowers/specs/2026-06-14-v0-2-editing-loop-design.md`
+- `docs/superpowers/plans/2026-06-14-v0-2-editing-loop.md`
+
+已实现内容：
+
+- `StudioApp` 维护可编辑的本地 project state。
+- `ClipInspector` 支持编辑当前 clip 的文本、时间、时长、音量、pan、距离和移动方式。
+- voice / breath / sfx / ambience clip 都有对应的类型字段编辑入口。
+- Storyboard、Timeline、Inspector、Validation Panel 和 Export JSON 都从同一份可编辑 project 渲染。
+- `ValidationPanel` 实时显示项目是否通过 schema 校验；非法时间范围会显示具体路径和错误信息。
+- `Export JSON` 会导出编辑后的 project，而不是初始 demo project。
+
+浏览器交互验收覆盖：
+
+- 选择 voice clip 后修改台词，Storyboard 和 Inspector 同步显示新台词。
+- 输入非法 duration 后显示 `timeline.tracks.0.clips.0.duration` 校验错误。
+- 恢复合法 duration 后重新显示 `Project valid`。
+- 导出的 `asmr_demo_001.json` 包含编辑后的台词。
+- 桌面和 390px 移动视口没有文档级横向溢出。
+
 ## 后续版本衔接
 
 - V0.2：可编辑时间线、clip 修改、局部重生成入口、音效替换、左右耳位置修改。

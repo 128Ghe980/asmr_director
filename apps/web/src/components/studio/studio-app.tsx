@@ -2,6 +2,11 @@
 
 import { useMemo, useState } from "react";
 
+import {
+  getProjectValidationIssues,
+  updateClipInProject,
+  type ClipPatch,
+} from "@/lib/asmr/edit-project";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 
@@ -9,6 +14,7 @@ import { ClipInspector } from "./clip-inspector";
 import { ProjectHeader } from "./project-header";
 import { StoryboardPanel } from "./storyboard-panel";
 import { TimelinePanel } from "./timeline-panel";
+import { ValidationPanel } from "./validation-panel";
 
 type StudioAppProps = {
   project: AsmrProject;
@@ -69,25 +75,36 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
 }
 
 export function StudioApp({ project }: StudioAppProps) {
-  const clips = useMemo(() => flattenClips(project), [project]);
+  const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
+  const clips = useMemo(() => flattenClips(editableProject), [editableProject]);
   const [selectedClipId, setSelectedClipId] = useState<string | undefined>(
     () => clips[0]?.id,
   );
   const selectedClip =
     clips.find((clip) => clip.id === selectedClipId) ?? clips[0];
   const activeClipId = selectedClip?.id;
+  const validationIssues = useMemo(
+    () => getProjectValidationIssues(editableProject),
+    [editableProject],
+  );
+
+  function handleUpdateClip(clipId: string, patch: ClipPatch) {
+    setEditableProject((currentProject) =>
+      updateClipInProject(currentProject, clipId, patch),
+    );
+  }
 
   return (
     <div className="min-h-screen bg-studio-bg text-studio-text">
       <ProjectHeader
-        project={project}
-        onExportJson={() => exportProjectJson(project)}
+        project={editableProject}
+        onExportJson={() => exportProjectJson(editableProject)}
       />
 
       <main className="grid gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)_minmax(280px,340px)]">
         <div className="min-h-[520px] lg:h-[calc(100vh-112px)]">
           <StoryboardPanel
-            project={project}
+            project={editableProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
           />
@@ -95,15 +112,19 @@ export function StudioApp({ project }: StudioAppProps) {
 
         <div className="flex min-w-0 flex-col gap-4">
           <TimelinePanel
-            project={project}
+            project={editableProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
           />
-          <EmotionCurve project={project} />
+          <EmotionCurve project={editableProject} />
+          <ValidationPanel issues={validationIssues} />
         </div>
 
         <div>
-          <ClipInspector selectedClip={selectedClip} />
+          <ClipInspector
+            selectedClip={selectedClip}
+            onUpdateClip={handleUpdateClip}
+          />
         </div>
       </main>
     </div>
