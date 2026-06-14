@@ -199,6 +199,34 @@ npm.cmd run build --prefix apps/web -- --webpack
 - 导出的 `asmr_demo_001.json` 包含编辑后的台词。
 - 桌面和 390px 移动视口没有文档级横向溢出。
 
+## V0.2 项目持久化进展
+
+已补齐本地项目闭环：自动保存/恢复、粘贴 JSON 导入、Reset Demo、dirty/restored 状态。
+
+本轮新增设计与计划：
+
+- `docs/superpowers/specs/2026-06-14-v0-2-project-persistence-design.md`
+- `docs/superpowers/plans/2026-06-14-v0-2-project-persistence.md`
+
+已实现内容：
+
+- `project-persistence.ts` 提供 project 序列化、导入解析、localStorage 读取/保存/清空 helper。
+- `StudioApp` 页面加载后从 `localStorage` 恢复最近项目。
+- 编辑 project 后自动保存到 `ai-asmr-studio:v0:project`。
+- `ProjectControls` 支持粘贴 JSON、Load JSON、Reset Demo。
+- 导入非法 JSON 时显示错误，并保留当前 project。
+- Reset Demo 会恢复内置 demo，并清除本地保存影响。
+- Project Controls 显示 `Demo`、`Edited` 或 `Restored from browser` 状态。
+
+浏览器交互验收覆盖：
+
+- 编辑台词后刷新页面，编辑内容仍保留。
+- Reset Demo 后恢复原始台词，刷新后仍保持原始 demo。
+- 导入合法 JSON 后标题和台词更新。
+- 导入非法 JSON 后显示 `Import JSON could not be parsed.`，当前 project 不被覆盖。
+- 导出 JSON 包含当前导入后的 project 内容。
+- 桌面和 390px 移动视口没有文档级横向溢出。
+
 ## 后续版本衔接
 
 - V0.2：可编辑时间线、clip 修改、局部重生成入口、音效替换、左右耳位置修改。

@@ -1,16 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getProjectValidationIssues,
   updateClipInProject,
   type ClipPatch,
 } from "@/lib/asmr/edit-project";
+import {
+  clearSavedProject,
+  loadSavedProject,
+  parseImportedProject,
+  saveProject,
+  serializeProject,
+} from "@/lib/asmr/project-persistence";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 
 import { ClipInspector } from "./clip-inspector";
+import { ProjectControls } from "./project-controls";
 import { ProjectHeader } from "./project-header";
 import { StoryboardPanel } from "./storyboard-panel";
 import { TimelinePanel } from "./timeline-panel";
@@ -76,6 +84,10 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
 
 export function StudioApp({ project }: StudioAppProps) {
   const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
+  const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
+  const [importError, setImportError] = useState<string>();
+  const [restoreState, setRestoreState] = useState<"demo" | "restored">("demo");
+  const skipNextSaveRef = useRef(false);
   const clips = useMemo(() => flattenClips(editableProject), [editableProject]);
   const [selectedClipId, setSelectedClipId] = useState<string | undefined>(
     () => clips[0]?.id,
@@ -87,11 +99,95 @@ export function StudioApp({ project }: StudioAppProps) {
     () => getProjectValidationIssues(editableProject),
     [editableProject],
   );
+  const isDirty = useMemo(
+    () => serializeProject(editableProject) !== serializeProject(project),
+    [editableProject, project],
+  );
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    queueMicrotask(() => {
+      if (isCancelled) {
+        return;
+      }
+
+      try {
+        const loadedProject = loadSavedProject(window.localStorage, {
+          fallbackProject: project,
+        });
+
+        setEditableProject(loadedProject.project);
+        setRestoreState(loadedProject.restored ? "restored" : "demo");
+        setSelectedClipId(flattenClips(loadedProject.project)[0]?.id);
+      } catch {
+        setEditableProject(project);
+        setRestoreState("demo");
+        setSelectedClipId(flattenClips(project)[0]?.id);
+      } finally {
+        setHasLoadedStorage(true);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [project]);
+
+  useEffect(() => {
+    if (!hasLoadedStorage) {
+      return;
+    }
+
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+
+    try {
+      saveProject(window.localStorage, editableProject);
+    } catch {
+      // Browser storage can be unavailable in restrictive contexts.
+    }
+  }, [editableProject, hasLoadedStorage]);
 
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
     setEditableProject((currentProject) =>
       updateClipInProject(currentProject, clipId, patch),
     );
+    setImportError(undefined);
+  }
+
+  function handleImportJson(text: string) {
+    const importedProject = parseImportedProject(text);
+
+    if (!importedProject.success) {
+      setImportError(importedProject.error);
+      return;
+    }
+
+    setEditableProject(importedProject.project);
+    setSelectedClipId(flattenClips(importedProject.project)[0]?.id);
+    setRestoreState("restored");
+    setImportError(undefined);
+  }
+
+  function handleResetDemo() {
+    try {
+      clearSavedProject(window.localStorage);
+    } catch {
+      // Reset should still restore the in-memory demo when storage is blocked.
+    }
+
+    setEditableProject((currentProject) => {
+      skipNextSaveRef.current =
+        serializeProject(currentProject) !== serializeProject(project);
+
+      return project;
+    });
+    setSelectedClipId(flattenClips(project)[0]?.id);
+    setRestoreState("demo");
+    setImportError(undefined);
   }
 
   return (
@@ -118,6 +214,13 @@ export function StudioApp({ project }: StudioAppProps) {
           />
           <EmotionCurve project={editableProject} />
           <ValidationPanel issues={validationIssues} />
+          <ProjectControls
+            importError={importError}
+            isDirty={isDirty}
+            onImportJson={handleImportJson}
+            onResetDemo={handleResetDemo}
+            restoreState={restoreState}
+          />
         </div>
 
         <div>
