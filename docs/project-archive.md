@@ -4,6 +4,8 @@
 
 AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
+当前本地工作区路径（Codex desktop）：`D:\CodexWorkplace\asmr_director`。这是本机恢复线索，不是跨环境要求；换机器或换环境时以 repo 根目录为准。
+
 这份文档是当前项目的历史档案，用来保存我们已经聊好的产品判断、设计方向、实现进度和决策过程。
 
 如果是新的 AI agent 接手，或者当前会话发生上下文压缩，应先读 `docs/AI_HANDOFF.md`。那份文件更短、更稳定，专门服务“快速恢复当前状态和下一步”。
@@ -240,12 +242,34 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 这避免把所有信息都堆进一个越来越长的 archive。`AI_HANDOFF.md` 只保留当前状态、关键文件地图、验证命令、最近提交和下一步推荐；`project-archive.md` 继续保留上下文和演进历史。
 
-## 后续版本衔接
+## V0.3 Director Actions 进展
 
-- V0.2：可编辑时间线、clip 修改、局部重生成入口、音效替换、左右耳位置修改。
-- V0.3：真实分段 TTS、ASR 回听、响度统一、音色一致性检查、自动重试。
-- V0.4：角色声音卡、参考音频上传、授权确认、角色偏好。
-- V0.5：分轨 WAV、SRT、封面 prompt、标题简介、创作者发布包。
+已完成一轮“导演意图按钮”能力，把 raw field editing 往更像导演台的交互推进了一步。
+
+本轮新增设计与计划：
+
+- `docs/superpowers/specs/2026-06-16-v0-3-director-action-presets-design.md`
+- `docs/superpowers/plans/2026-06-16-v0-3-director-action-presets.md`
+
+已实现内容：
+
+- voice clip 的 Inspector 中显示 Director Actions：`Softer`、`Closer`、`Left`、`Right`、`Pause`、`Quiet`。
+- `director-presets.ts` 用纯函数把按钮意图转成确定性的 Timeline DSL 修改。
+- `Pause` 对已经以 ` ...` 结尾的文本保持幂等，避免重复点击导致不可见的 duration 漂移。
+- 非 voice clip 不显示 Director Actions，避免把人声导演意图误套到 SFX / ambience / breath。
+- 相关行为已补测试；当前 handoff 记录的最新验证为 5 个 test files / 34 个 tests。
+
+## 当前初步路径（2026-06-16）
+
+这条路线是当前共识；`docs/AI_HANDOFF.md` 保留更短、更适合上下文恢复的高信号版本。
+
+1. 字段级校验高亮：把 schema 问题精确连回 Inspector 输入框，同时保留全局 Validation Panel。
+2. 轻量时间线编辑：支持 start/duration 微调、插入 pause 等小动作，但暂时不做完整 DAW 拖拽系统。
+3. 项目结构升级：补更清楚的 project shell、元数据和未来项目列表空间，继续保持本地优先。
+4. 真实音频前的预览层：先做占位播放状态、波形/状态位和生成槽位，让流程像音频产品，但不假装已经有真实音频。
+5. 真实生成链路：等导演工作流和 Timeline DSL 稳定后，再接 TTS/SFX、回听、局部重生成和导出。
+
+核心排序原则：先把“可编辑的 ASMR 工程”和“导演层”做扎实，再接昂贵且容易牵动架构的真实音频生成。
 
 ## 恢复工作指引
 

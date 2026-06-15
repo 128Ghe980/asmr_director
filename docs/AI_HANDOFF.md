@@ -4,6 +4,14 @@ Last updated: 2026-06-16
 
 Read this first when resuming the project after context compaction or as a new AI agent. This file is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
+## Workspace Location
+
+Current Codex desktop workspace path for this repo:
+
+- `D:\CodexWorkplace\asmr_director`
+
+This is a local recovery hint, not a portable project requirement. In other environments, treat the repository root as the source of truth.
+
 ## Product North Star
 
 This project is an **AI ASMR director console**, not a generic AI ASMR generator.
@@ -171,6 +179,18 @@ Suggested scope:
 
 Alternative later step: lightweight timeline interactions such as nudging start/duration or inserting pauses visually. Do not jump to real TTS/audio generation yet.
 
+## Initial Product Path
+
+This is the current early roadmap. Treat it as directional, not a rigid release contract.
+
+1. Field-level validation highlighting: connect schema issues to exact Inspector fields while keeping the global Validation Panel.
+2. Light timeline editing: support small timing operations such as nudging starts/durations and inserting pauses without building a full DAW.
+3. Project structure upgrade: add a clearer project shell, metadata, and room for a future project list while keeping local-first state.
+4. Preview layer before real audio: add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.
+5. Real generation chain: only after the director workflow feels stable, introduce real TTS/SFX generation, listening, regeneration, and export.
+
+The key sequencing rule: keep strengthening the editable Timeline DSL and director workflow before connecting expensive or brittle audio generation.
+
 ## Do Not Do Yet
 
 Do not jump straight into:
@@ -183,7 +203,7 @@ Do not jump straight into:
 - User accounts or cloud sync.
 - Payment or publishing flows.
 
-Those are later versions. V0.3 should keep proving the editable Timeline DSL and director workflow.
+Those are later versions. The near-term path should keep proving the editable Timeline DSL and director workflow.
 
 ## Working Rules For Future Agents
 
