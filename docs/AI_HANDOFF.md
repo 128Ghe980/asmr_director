@@ -145,7 +145,11 @@ Earlier V0.1 foundation:
 
 ## Recommended Next Work
 
-Recommended next step: **V0.2 director action presets**.
+Active approved design: **V0.3 director action presets**.
+
+Read the spec before implementing:
+
+- `docs/superpowers/specs/2026-06-16-v0-3-director-action-presets-design.md`
 
 Build small action buttons for selected voice clips:
 
@@ -156,16 +160,16 @@ Build small action buttons for selected voice clips:
 - "加停顿"
 - "更小声"
 
-For now these should be deterministic local edits, not real AI regeneration. They should update DSL fields through existing edit helpers, remain schema-validated, autosave, and export correctly.
+These should be deterministic local edits, not real AI regeneration. They should update DSL fields through a tested pure helper, remain schema-validated, autosave, and export correctly.
 
 Why this next: the app already edits raw fields and persists projects. Preset actions will make it feel like an ASMR director tool rather than a form editor.
 
-Suggested implementation shape:
+Implementation shape:
 
 - Add a pure helper in `apps/web/src/lib/asmr/` for applying director presets to a clip.
 - Write tests first.
 - Add a compact action strip inside or near `ClipInspector`.
-- Keep actions disabled or hidden for non-voice clips unless there is a clear deterministic behavior.
+- Hide voice-specific actions for non-voice clips.
 
 ## Do Not Do Yet
 
@@ -179,7 +183,7 @@ Do not jump straight into:
 - User accounts or cloud sync.
 - Payment or publishing flows.
 
-Those are later versions. V0.2 should keep proving the editable Timeline DSL and director workflow.
+Those are later versions. V0.3 should keep proving the editable Timeline DSL and director workflow.
 
 ## Working Rules For Future Agents
 
