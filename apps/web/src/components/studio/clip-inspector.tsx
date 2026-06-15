@@ -145,7 +145,7 @@ function DirectorActionStrip({
               type="button"
               onClick={() => onApplyPreset(action.preset)}
               title={action.title}
-              aria-label={action.title}
+              aria-label={`${action.label}: ${action.title}`}
               className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 text-xs font-semibold text-studio-text transition-colors hover:border-sky-300/30 hover:bg-sky-300/12 focus:outline-none focus:ring-2 focus:ring-sky-300/35"
             >
               <Icon
