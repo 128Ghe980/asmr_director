@@ -38,6 +38,8 @@ Current user-facing capabilities:
 - Resets to the built-in demo project.
 - Shows voice-only Director Actions in Clip Inspector: Softer, Closer, Left, Right, Pause, Quiet.
 - Applies Director Actions as deterministic local Timeline DSL edits through a tested pure helper.
+- Highlights selected Clip Inspector fields when their schema validation issues map to editable inputs.
+- Shows compact inline field messages while keeping the global Validation Panel as the full issue list.
 
 Current status is frontend-only. There is no backend, real audio generation, audio playback, waveform rendering, TTS, SFX generation, cloud persistence, auth, billing, or collaboration.
 
@@ -50,7 +52,7 @@ Core app:
 - `apps/web/src/components/studio/project-header.tsx` shows project context and Export JSON.
 - `apps/web/src/components/studio/storyboard-panel.tsx` renders chronological clip cards.
 - `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks.
-- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields.
+- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields and displays field-level validation state.
 - `apps/web/src/components/studio/validation-panel.tsx` shows live schema issues.
 - `apps/web/src/components/studio/project-controls.tsx` handles paste-import, reset, and Demo/Edited/Restored state.
 
@@ -60,7 +62,7 @@ Domain/data:
 - `apps/web/src/lib/asmr/mock-project.ts` is the canonical "雨夜睡前陪伴" demo project.
 - `apps/web/src/lib/asmr/validate.ts` wraps schema parsing and clip flattening.
 - `apps/web/src/lib/asmr/view-model.ts` contains display helpers.
-- `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers and validation issue formatting.
+- `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers, validation issue formatting, and selected-clip field issue mapping.
 - `apps/web/src/lib/asmr/project-persistence.ts` contains import parsing, JSON serialization, and localStorage helpers.
 - `apps/web/src/lib/asmr/director-presets.ts` contains deterministic Director Action preset behavior for voice clips.
 
@@ -115,11 +117,11 @@ npm.cmd run build --prefix apps/web -- --webpack
 Latest verified state before this handoff:
 
 - 5 test files passed.
-- 34 tests passed.
+- 38 tests passed.
 - lint passed.
 - build passed.
 - Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
-- Browser verification passed with headless Chrome DevTools Protocol fallback: voice actions update fields, non-voice clips hide actions, localStorage restore persists preset edits, and desktop/mobile viewports have no document-level horizontal overflow.
+- Browser verification passed in the in-app browser: invalid selected voice `duration` and `position.pan` highlight the matching Inspector fields with inline messages, restoring valid values clears field errors, the global Validation Panel still lists project issues, and desktop/mobile viewports have no document-level horizontal overflow.
 
 Run locally:
 
@@ -137,6 +139,11 @@ http://localhost:3000/
 
 Most recent feature commits:
 
+- `a8cfacc fix: stabilize inspector field error ids`
+- `cbfee19 feat: highlight invalid inspector fields`
+- `c85d2fd feat: map validation issues to clip fields`
+- `5d2d845 docs: plan field validation highlighting`
+- `381cbcb docs: design field validation highlighting`
 - `e67f0cb fix: make pause preset idempotent`
 - `8026b27 docs: record director presets implementation`
 - `766c637 fix: include visible director action labels`
@@ -165,25 +172,25 @@ Earlier V0.1 foundation:
 
 ## Recommended Next Work
 
-Recommended next step: **field-level validation highlighting**.
+Recommended next step: **light timeline editing**.
 
-Why this next: the app can now edit raw fields and apply director intent presets, but validation feedback still appears mainly in the global Validation Panel. The next polish layer should connect schema issues back to the exact Inspector fields that caused them.
+Why this next: the app can now edit raw fields, apply director intent presets, persist/import projects, and show field-level validation feedback. The next polish layer should make common timing edits feel like timeline operations instead of only raw number entry.
 
 Suggested scope:
 
-- Map validation issue paths to selected clip fields when possible.
-- Highlight invalid Inspector inputs with clear error styling.
-- Show compact field-level messages without adding explanatory page copy.
-- Keep the global Validation Panel as the full project issue list.
-- Reuse existing `getProjectValidationIssues` output where possible.
+- Add small start/duration nudge controls for the selected clip.
+- Add a simple "insert pause" timeline action if it can reuse current clip update helpers.
+- Keep edits deterministic local Timeline DSL changes.
+- Keep the global Validation Panel and field-level validation behavior intact.
+- Avoid full drag/drop DAW behavior for now.
 
-Alternative later step: lightweight timeline interactions such as nudging start/duration or inserting pauses visually. Do not jump to real TTS/audio generation yet.
+Do not jump to real TTS/audio generation yet.
 
 ## Initial Product Path
 
 This is the current early roadmap. Treat it as directional, not a rigid release contract.
 
-1. Field-level validation highlighting: connect schema issues to exact Inspector fields while keeping the global Validation Panel.
+1. Field-level validation highlighting: completed for selected Clip Inspector fields while keeping the global Validation Panel.
 2. Light timeline editing: support small timing operations such as nudging starts/durations and inserting pauses without building a full DAW.
 3. Project structure upgrade: add a clearer project shell, metadata, and room for a future project list while keeping local-first state.
 4. Preview layer before real audio: add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.

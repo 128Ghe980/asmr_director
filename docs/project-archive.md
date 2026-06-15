@@ -259,12 +259,38 @@ npm.cmd run build --prefix apps/web -- --webpack
 - 非 voice clip 不显示 Director Actions，避免把人声导演意图误套到 SFX / ambience / breath。
 - 相关行为已补测试；当前 handoff 记录的最新验证为 5 个 test files / 34 个 tests。
 
+## 字段级校验高亮进展
+
+已完成当前路线中的第一项：把 schema validation issue 精确连回当前选中 clip 的 Inspector 字段。
+
+本轮新增设计与计划：
+
+- `docs/superpowers/specs/2026-06-16-field-level-validation-highlighting-design.md`
+- `docs/superpowers/plans/2026-06-16-field-level-validation-highlighting.md`
+
+已实现内容：
+
+- `edit-project.ts` 新增 `getClipFieldValidationIssues`，把 `timeline.tracks.N.clips.M.duration` 这类路径映射为 Inspector field key。
+- 支持映射当前可编辑字段，包括 `start`、`duration`、`volume_db`、`position.pan`、`position.distance`、`position.movement` 和各 clip 类型字段。
+- `StudioApp` 从现有 `validationIssues` 派生当前选中 clip 的 field issue map。
+- `ClipInspector` 对有问题的字段显示 amber 错误态、`aria-invalid`、`aria-describedby` 和紧凑 inline message。
+- 全局 `ValidationPanel` 保留完整项目 issue 列表，字段级提示只负责就地定位。
+
+实现中修正了一个 TypeScript build 问题：嵌套函数中直接读取 `selectedClip.id` 时，TypeScript 不接受 early return 后的闭包收窄；改为提前捕获 `selectedClipId` 后 build 恢复通过。
+
+验证覆盖：
+
+- `npm.cmd run test --prefix apps/web`：5 个 test files / 38 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过；本地 SWC warning 仍可能出现，但 webpack/WASM 构建完成。
+- 浏览器验收：非法 duration 高亮 Duration 字段并显示 inline error；非法 pan 高亮 Pan 字段；恢复合法值后字段错误清空；Validation Panel 仍显示全局 issue；桌面和 390px 移动视口无文档级横向溢出。
+
 ## 当前初步路径（2026-06-16）
 
 这条路线是当前共识；`docs/AI_HANDOFF.md` 保留更短、更适合上下文恢复的高信号版本。
 
-1. 字段级校验高亮：把 schema 问题精确连回 Inspector 输入框，同时保留全局 Validation Panel。
-2. 轻量时间线编辑：支持 start/duration 微调、插入 pause 等小动作，但暂时不做完整 DAW 拖拽系统。
+1. 字段级校验高亮：已完成，当前选中 clip 的 Inspector 字段会显示对应错误态，同时保留全局 Validation Panel。
+2. 轻量时间线编辑：下一步，支持 start/duration 微调、插入 pause 等小动作，但暂时不做完整 DAW 拖拽系统。
 3. 项目结构升级：补更清楚的 project shell、元数据和未来项目列表空间，继续保持本地优先。
 4. 真实音频前的预览层：先做占位播放状态、波形/状态位和生成槽位，让流程像音频产品，但不假装已经有真实音频。
 5. 真实生成链路：等导演工作流和 Timeline DSL 稳定后，再接 TTS/SFX、回听、局部重生成和导出。
