@@ -216,6 +216,8 @@ export function ClipInspector({
     );
   }
 
+  const selectedClipId = selectedClip.id;
+
   function updateClip(patch: ClipPatch) {
     if (!selectedClip) {
       return;
@@ -243,7 +245,7 @@ export function ClipInspector({
   }
 
   function getFieldErrorId(field: ClipFieldValidationKey): string {
-    return `clip-${selectedClip.id}-${field.replaceAll(".", "-")}-error`;
+    return `clip-${selectedClipId}-${field.replaceAll(".", "-")}-error`;
   }
 
   function getFieldControlProps(field: ClipFieldValidationKey) {
