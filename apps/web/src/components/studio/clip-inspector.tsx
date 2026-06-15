@@ -11,13 +11,19 @@ import {
 } from "lucide-react";
 
 import type { DirectorPreset } from "@/lib/asmr/director-presets";
-import type { ClipPatch } from "@/lib/asmr/edit-project";
+import type {
+  ClipFieldValidationIssues,
+  ClipFieldValidationKey,
+  ClipPatch,
+  ProjectValidationIssue,
+} from "@/lib/asmr/edit-project";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import { formatTimeRange, getPositionLabel } from "@/lib/asmr/view-model";
 
 import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
+  fieldValidationIssues: ClipFieldValidationIssues;
   selectedClip: TimelineClip | undefined;
   onApplyDirectorPreset: (clipId: string, preset: DirectorPreset) => void;
   onUpdateClip: (clipId: string, patch: ClipPatch) => void;
@@ -161,10 +167,30 @@ function DirectorActionStrip({
   );
 }
 
-function controlClassName(extra = "") {
+function FieldError({
+  id,
+  issues,
+}: {
+  id: string;
+  issues: ProjectValidationIssue[];
+}) {
+  if (issues.length === 0) {
+    return null;
+  }
+
+  return (
+    <span id={id} className="mt-2 block text-xs leading-5 text-amber-100">
+      {issues.map((issue) => issue.message).join(" ")}
+    </span>
+  );
+}
+
+function controlClassName(extra = "", hasError = false) {
   return [
-    "w-full rounded-md border border-white/[0.08] bg-black/20 px-3 py-2 text-sm text-studio-text outline-none transition",
-    "focus:border-sky-300/45 focus:ring-2 focus:ring-sky-300/20",
+    "w-full rounded-md border px-3 py-2 text-sm text-studio-text outline-none transition",
+    hasError
+      ? "border-amber-300/55 bg-amber-300/[0.075] focus:border-amber-200/80 focus:ring-2 focus:ring-amber-300/20"
+      : "border-white/[0.08] bg-black/20 focus:border-sky-300/45 focus:ring-2 focus:ring-sky-300/20",
     extra,
   ].join(" ");
 }
@@ -176,6 +202,7 @@ function parseNumericInput(value: string): number {
 }
 
 export function ClipInspector({
+  fieldValidationIssues,
   selectedClip,
   onApplyDirectorPreset,
   onUpdateClip,
@@ -205,6 +232,29 @@ export function ClipInspector({
     onApplyDirectorPreset(selectedClip.id, preset);
   }
 
+  function getFieldIssues(
+    field: ClipFieldValidationKey,
+  ): ProjectValidationIssue[] {
+    return fieldValidationIssues[field] ?? [];
+  }
+
+  function hasFieldIssues(field: ClipFieldValidationKey): boolean {
+    return getFieldIssues(field).length > 0;
+  }
+
+  function getFieldErrorId(field: ClipFieldValidationKey): string {
+    return `clip-${selectedClip.id}-${field.replaceAll(".", "-")}-error`;
+  }
+
+  function getFieldControlProps(field: ClipFieldValidationKey) {
+    return hasFieldIssues(field)
+      ? {
+          "aria-describedby": getFieldErrorId(field),
+          "aria-invalid": true as const,
+        }
+      : {};
+  }
+
   return (
     <section className="rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
@@ -226,28 +276,51 @@ export function ClipInspector({
               <textarea
                 value={selectedClip.text}
                 onChange={(event) => updateClip({ text: event.target.value })}
-                className={controlClassName("min-h-24 resize-y leading-6")}
+                className={controlClassName(
+                  "min-h-24 resize-y leading-6",
+                  hasFieldIssues("text"),
+                )}
+                {...getFieldControlProps("text")}
+              />
+              <FieldError
+                id={getFieldErrorId("text")}
+                issues={getFieldIssues("text")}
               />
             </InspectorField>
             <InspectorField label="Emotion">
               <input
                 value={selectedClip.emotion}
                 onChange={(event) => updateClip({ emotion: event.target.value })}
-                className={controlClassName()}
+                className={controlClassName("", hasFieldIssues("emotion"))}
+                {...getFieldControlProps("emotion")}
+              />
+              <FieldError
+                id={getFieldErrorId("emotion")}
+                issues={getFieldIssues("emotion")}
               />
             </InspectorField>
             <InspectorField label="Style">
               <input
                 value={selectedClip.style}
                 onChange={(event) => updateClip({ style: event.target.value })}
-                className={controlClassName()}
+                className={controlClassName("", hasFieldIssues("style"))}
+                {...getFieldControlProps("style")}
+              />
+              <FieldError
+                id={getFieldErrorId("style")}
+                issues={getFieldIssues("style")}
               />
             </InspectorField>
             <InspectorField label="Pace">
               <input
                 value={selectedClip.pace}
                 onChange={(event) => updateClip({ pace: event.target.value })}
-                className={controlClassName()}
+                className={controlClassName("", hasFieldIssues("pace"))}
+                {...getFieldControlProps("pace")}
+              />
+              <FieldError
+                id={getFieldErrorId("pace")}
+                issues={getFieldIssues("pace")}
               />
             </InspectorField>
           </>
@@ -258,7 +331,12 @@ export function ClipInspector({
             <input
               value={selectedClip.breath}
               onChange={(event) => updateClip({ breath: event.target.value })}
-              className={controlClassName()}
+              className={controlClassName("", hasFieldIssues("breath"))}
+              {...getFieldControlProps("breath")}
+            />
+            <FieldError
+              id={getFieldErrorId("breath")}
+              issues={getFieldIssues("breath")}
             />
           </InspectorField>
         ) : null}
@@ -268,7 +346,12 @@ export function ClipInspector({
             <input
               value={selectedClip.sfx}
               onChange={(event) => updateClip({ sfx: event.target.value })}
-              className={controlClassName()}
+              className={controlClassName("", hasFieldIssues("sfx"))}
+              {...getFieldControlProps("sfx")}
+            />
+            <FieldError
+              id={getFieldErrorId("sfx")}
+              issues={getFieldIssues("sfx")}
             />
           </InspectorField>
         ) : null}
@@ -279,7 +362,12 @@ export function ClipInspector({
               <input
                 value={selectedClip.ambience}
                 onChange={(event) => updateClip({ ambience: event.target.value })}
-                className={controlClassName()}
+                className={controlClassName("", hasFieldIssues("ambience"))}
+                {...getFieldControlProps("ambience")}
+              />
+              <FieldError
+                id={getFieldErrorId("ambience")}
+                issues={getFieldIssues("ambience")}
               />
             </InspectorField>
             <label className="grid grid-cols-[82px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-3">
@@ -292,6 +380,11 @@ export function ClipInspector({
                   checked={selectedClip.loop}
                   onChange={(event) => updateClip({ loop: event.target.checked })}
                   className="h-4 w-4 accent-sky-300"
+                  {...getFieldControlProps("loop")}
+                />
+                <FieldError
+                  id={getFieldErrorId("loop")}
+                  issues={getFieldIssues("loop")}
                 />
               </span>
             </label>
@@ -311,7 +404,12 @@ export function ClipInspector({
               onChange={(event) =>
                 updateClip({ start: parseNumericInput(event.target.value) })
               }
-              className={controlClassName("mt-2")}
+              className={controlClassName("mt-2", hasFieldIssues("start"))}
+              {...getFieldControlProps("start")}
+            />
+            <FieldError
+              id={getFieldErrorId("start")}
+              issues={getFieldIssues("start")}
             />
           </label>
           <label>
@@ -326,7 +424,12 @@ export function ClipInspector({
               onChange={(event) =>
                 updateClip({ duration: parseNumericInput(event.target.value) })
               }
-              className={controlClassName("mt-2")}
+              className={controlClassName("mt-2", hasFieldIssues("duration"))}
+              {...getFieldControlProps("duration")}
+            />
+            <FieldError
+              id={getFieldErrorId("duration")}
+              issues={getFieldIssues("duration")}
             />
           </label>
         </div>
@@ -343,7 +446,12 @@ export function ClipInspector({
               onChange={(event) =>
                 updateClip({ volume_db: parseNumericInput(event.target.value) })
               }
-              className={controlClassName("mt-2")}
+              className={controlClassName("mt-2", hasFieldIssues("volume_db"))}
+              {...getFieldControlProps("volume_db")}
+            />
+            <FieldError
+              id={getFieldErrorId("volume_db")}
+              issues={getFieldIssues("volume_db")}
             />
           </label>
           <label>
@@ -361,7 +469,12 @@ export function ClipInspector({
                   position: { pan: parseNumericInput(event.target.value) },
                 })
               }
-              className={controlClassName("mt-2")}
+              className={controlClassName("mt-2", hasFieldIssues("position.pan"))}
+              {...getFieldControlProps("position.pan")}
+            />
+            <FieldError
+              id={getFieldErrorId("position.pan")}
+              issues={getFieldIssues("position.pan")}
             />
           </label>
         </div>
@@ -377,7 +490,11 @@ export function ClipInspector({
                 },
               })
             }
-            className={controlClassName()}
+            className={controlClassName(
+              "",
+              hasFieldIssues("position.distance"),
+            )}
+            {...getFieldControlProps("position.distance")}
           >
             {distanceOptions.map((distance) => (
               <option key={distance} value={distance}>
@@ -385,6 +502,10 @@ export function ClipInspector({
               </option>
             ))}
           </select>
+          <FieldError
+            id={getFieldErrorId("position.distance")}
+            issues={getFieldIssues("position.distance")}
+          />
         </InspectorField>
 
         <InspectorField label="Move">
@@ -398,7 +519,11 @@ export function ClipInspector({
                 },
               })
             }
-            className={controlClassName()}
+            className={controlClassName(
+              "",
+              hasFieldIssues("position.movement"),
+            )}
+            {...getFieldControlProps("position.movement")}
           >
             {movementOptions.map((movement) => (
               <option key={movement} value={movement}>
@@ -406,6 +531,10 @@ export function ClipInspector({
               </option>
             ))}
           </select>
+          <FieldError
+            id={getFieldErrorId("position.movement")}
+            issues={getFieldIssues("position.movement")}
+          />
         </InspectorField>
 
         <ReadOnlyRow

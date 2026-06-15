@@ -7,6 +7,7 @@ import {
   type DirectorPreset,
 } from "@/lib/asmr/director-presets";
 import {
+  getClipFieldValidationIssues,
   getProjectValidationIssues,
   updateClipInProject,
   type ClipPatch,
@@ -102,6 +103,17 @@ export function StudioApp({ project }: StudioAppProps) {
   const validationIssues = useMemo(
     () => getProjectValidationIssues(editableProject),
     [editableProject],
+  );
+  const selectedClipValidationIssues = useMemo(
+    () =>
+      activeClipId
+        ? getClipFieldValidationIssues(
+            editableProject,
+            activeClipId,
+            validationIssues,
+          )
+        : {},
+    [activeClipId, editableProject, validationIssues],
   );
   const isDirty = useMemo(
     () => serializeProject(editableProject) !== serializeProject(project),
@@ -236,6 +248,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
         <div>
           <ClipInspector
+            fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={selectedClip}
             onApplyDirectorPreset={handleApplyDirectorPreset}
             onUpdateClip={handleUpdateClip}
