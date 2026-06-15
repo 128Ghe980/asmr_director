@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { demoProject } from "./mock-project";
 import {
+  getClipFieldValidationIssues,
   getProjectValidationIssues,
   updateClipInProject,
 } from "./edit-project";
@@ -70,5 +71,77 @@ describe("edit project helpers", () => {
       path: "timeline.tracks.0.clips.3.duration",
       message: "clip end must be within project duration",
     });
+  });
+
+  it("maps validation issues to fields on the selected clip", () => {
+    const updated = updateClipInProject(demoProject, "voice_004", {
+      start: 208,
+      duration: 12,
+    });
+
+    const issues = getProjectValidationIssues(updated);
+    const fieldIssues = getClipFieldValidationIssues(
+      updated,
+      "voice_004",
+      issues,
+    );
+
+    expect(fieldIssues.duration).toEqual([
+      {
+        path: "timeline.tracks.0.clips.3.duration",
+        message: "clip end must be within project duration",
+      },
+    ]);
+  });
+
+  it("ignores validation issues for other clips", () => {
+    const updated = updateClipInProject(demoProject, "voice_004", {
+      start: 208,
+      duration: 12,
+    });
+
+    const issues = getProjectValidationIssues(updated);
+    const fieldIssues = getClipFieldValidationIssues(
+      updated,
+      "voice_001",
+      issues,
+    );
+
+    expect(fieldIssues).toEqual({});
+  });
+
+  it("maps nested position issues to nested field keys", () => {
+    const updated = updateClipInProject(demoProject, "voice_001", {
+      position: { pan: 1.4 },
+    });
+
+    const issues = getProjectValidationIssues(updated);
+    const fieldIssues = getClipFieldValidationIssues(
+      updated,
+      "voice_001",
+      issues,
+    );
+
+    expect(fieldIssues["position.pan"]).toEqual([
+      {
+        path: "timeline.tracks.0.clips.0.position.pan",
+        message: "Too big: expected number to be <=1",
+      },
+    ]);
+  });
+
+  it("ignores unsupported paths for the selected clip", () => {
+    const fieldIssues = getClipFieldValidationIssues(demoProject, "voice_001", [
+      {
+        path: "timeline.tracks.0.clips.0.generation.status",
+        message: "unsupported status",
+      },
+      {
+        path: "project",
+        message: "project issue",
+      },
+    ]);
+
+    expect(fieldIssues).toEqual({});
   });
 });

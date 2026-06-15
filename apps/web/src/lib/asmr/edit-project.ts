@@ -26,6 +26,43 @@ export type ProjectValidationIssue = {
   message: string;
 };
 
+export type ClipFieldValidationKey =
+  | "text"
+  | "emotion"
+  | "style"
+  | "pace"
+  | "breath"
+  | "sfx"
+  | "ambience"
+  | "loop"
+  | "start"
+  | "duration"
+  | "volume_db"
+  | "position.pan"
+  | "position.distance"
+  | "position.movement";
+
+export type ClipFieldValidationIssues = Partial<
+  Record<ClipFieldValidationKey, ProjectValidationIssue[]>
+>;
+
+const clipFieldValidationKeys = new Set<ClipFieldValidationKey>([
+  "text",
+  "emotion",
+  "style",
+  "pace",
+  "breath",
+  "sfx",
+  "ambience",
+  "loop",
+  "start",
+  "duration",
+  "volume_db",
+  "position.pan",
+  "position.distance",
+  "position.movement",
+]);
+
 function applyClipPatch<TClip extends TimelineClip>(
   clip: TClip,
   patch: ClipPatch,
@@ -97,4 +134,57 @@ export function getProjectValidationIssues(
     path: issue.path.join("."),
     message: issue.message,
   }));
+}
+
+function getClipPathPrefix(
+  project: AsmrProject,
+  clipId: string,
+): string | undefined {
+  for (const [trackIndex, track] of project.timeline.tracks.entries()) {
+    const clipIndex = track.clips.findIndex((clip) => clip.id === clipId);
+
+    if (clipIndex >= 0) {
+      return `timeline.tracks.${trackIndex}.clips.${clipIndex}`;
+    }
+  }
+
+  return undefined;
+}
+
+function getClipFieldValidationKey(
+  relativePath: string,
+): ClipFieldValidationKey | undefined {
+  return clipFieldValidationKeys.has(relativePath as ClipFieldValidationKey)
+    ? (relativePath as ClipFieldValidationKey)
+    : undefined;
+}
+
+export function getClipFieldValidationIssues(
+  project: AsmrProject,
+  clipId: string,
+  issues: ProjectValidationIssue[],
+): ClipFieldValidationIssues {
+  const clipPathPrefix = getClipPathPrefix(project, clipId);
+
+  if (!clipPathPrefix) {
+    return {};
+  }
+
+  return issues.reduce<ClipFieldValidationIssues>((fieldIssues, issue) => {
+    const clipPath = `${clipPathPrefix}.`;
+
+    if (!issue.path.startsWith(clipPath)) {
+      return fieldIssues;
+    }
+
+    const relativePath = issue.path.slice(clipPath.length);
+    const fieldKey = getClipFieldValidationKey(relativePath);
+
+    if (!fieldKey) {
+      return fieldIssues;
+    }
+
+    fieldIssues[fieldKey] = [...(fieldIssues[fieldKey] ?? []), issue];
+    return fieldIssues;
+  }, {});
 }
