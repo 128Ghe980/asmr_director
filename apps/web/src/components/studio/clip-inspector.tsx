@@ -1,5 +1,16 @@
 "use client";
 
+import {
+  Ear,
+  Heart,
+  MoveLeft,
+  MoveRight,
+  Pause,
+  Volume1,
+  type LucideIcon,
+} from "lucide-react";
+
+import type { DirectorPreset } from "@/lib/asmr/director-presets";
 import type { ClipPatch } from "@/lib/asmr/edit-project";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import { formatTimeRange, getPositionLabel } from "@/lib/asmr/view-model";
@@ -8,6 +19,7 @@ import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
   selectedClip: TimelineClip | undefined;
+  onApplyDirectorPreset: (clipId: string, preset: DirectorPreset) => void;
   onUpdateClip: (clipId: string, patch: ClipPatch) => void;
 };
 
@@ -29,6 +41,52 @@ const movementOptions: Array<TimelineClip["position"]["movement"]> = [
   "recede",
   "left_to_right",
   "right_to_left",
+];
+
+type DirectorAction = {
+  icon: LucideIcon;
+  label: string;
+  preset: DirectorPreset;
+  title: string;
+};
+
+const directorActions: DirectorAction[] = [
+  {
+    icon: Heart,
+    label: "Softer",
+    preset: "softer",
+    title: "Make this voice delivery softer",
+  },
+  {
+    icon: Ear,
+    label: "Closer",
+    preset: "closer",
+    title: "Move this voice closer to the listener",
+  },
+  {
+    icon: MoveLeft,
+    label: "Left",
+    preset: "left-ear",
+    title: "Place this voice in the left ear",
+  },
+  {
+    icon: MoveRight,
+    label: "Right",
+    preset: "right-ear",
+    title: "Place this voice in the right ear",
+  },
+  {
+    icon: Pause,
+    label: "Pause",
+    preset: "add-pause",
+    title: "Add a readable performance pause",
+  },
+  {
+    icon: Volume1,
+    label: "Quiet",
+    preset: "quieter",
+    title: "Lower this voice volume",
+  },
 ];
 
 function InspectorField({
@@ -65,6 +123,44 @@ function ReadOnlyRow({
   );
 }
 
+function DirectorActionStrip({
+  onApplyPreset,
+}: {
+  onApplyPreset: (preset: DirectorPreset) => void;
+}) {
+  return (
+    <div className="border-b border-white/[0.06] py-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
+          Director Actions
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {directorActions.map((action) => {
+          const Icon = action.icon;
+
+          return (
+            <button
+              key={action.preset}
+              type="button"
+              onClick={() => onApplyPreset(action.preset)}
+              title={action.title}
+              aria-label={action.title}
+              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 text-xs font-semibold text-studio-text transition-colors hover:border-sky-300/30 hover:bg-sky-300/12 focus:outline-none focus:ring-2 focus:ring-sky-300/35"
+            >
+              <Icon
+                className="h-3.5 w-3.5 shrink-0 text-studio-gold"
+                aria-hidden="true"
+              />
+              <span className="truncate">{action.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function controlClassName(extra = "") {
   return [
     "w-full rounded-md border border-white/[0.08] bg-black/20 px-3 py-2 text-sm text-studio-text outline-none transition",
@@ -81,6 +177,7 @@ function parseNumericInput(value: string): number {
 
 export function ClipInspector({
   selectedClip,
+  onApplyDirectorPreset,
   onUpdateClip,
 }: ClipInspectorProps) {
   if (!selectedClip) {
@@ -100,6 +197,14 @@ export function ClipInspector({
     onUpdateClip(selectedClip.id, patch);
   }
 
+  function applyPreset(preset: DirectorPreset) {
+    if (!selectedClip) {
+      return;
+    }
+
+    onApplyDirectorPreset(selectedClip.id, preset);
+  }
+
   return (
     <section className="rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
@@ -111,6 +216,10 @@ export function ClipInspector({
       </div>
 
       <div className="px-4">
+        {selectedClip.type === "voice" ? (
+          <DirectorActionStrip onApplyPreset={applyPreset} />
+        ) : null}
+
         {selectedClip.type === "voice" ? (
           <>
             <InspectorField label="Text">

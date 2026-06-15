@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  applyDirectorPreset,
+  type DirectorPreset,
+} from "@/lib/asmr/director-presets";
+import {
   getProjectValidationIssues,
   updateClipInProject,
   type ClipPatch,
@@ -158,6 +162,13 @@ export function StudioApp({ project }: StudioAppProps) {
     setImportError(undefined);
   }
 
+  function handleApplyDirectorPreset(clipId: string, preset: DirectorPreset) {
+    setEditableProject((currentProject) =>
+      applyDirectorPreset(currentProject, clipId, preset),
+    );
+    setImportError(undefined);
+  }
+
   function handleImportJson(text: string) {
     const importedProject = parseImportedProject(text);
 
@@ -226,6 +237,7 @@ export function StudioApp({ project }: StudioAppProps) {
         <div>
           <ClipInspector
             selectedClip={selectedClip}
+            onApplyDirectorPreset={handleApplyDirectorPreset}
             onUpdateClip={handleUpdateClip}
           />
         </div>
