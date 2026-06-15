@@ -92,13 +92,16 @@ function buildPresetPatch(
           movement: "static",
         },
       };
-    case "add-pause":
+    case "add-pause": {
+      const hasPauseMarker = clip.text.endsWith(PAUSE_MARKER);
+
       return {
-        text: clip.text.endsWith(PAUSE_MARKER)
-          ? clip.text
-          : `${clip.text}${PAUSE_MARKER}`,
-        duration: getAddPauseDuration(project, clip),
+        text: hasPauseMarker ? clip.text : `${clip.text}${PAUSE_MARKER}`,
+        duration: hasPauseMarker
+          ? clip.duration
+          : getAddPauseDuration(project, clip),
       };
+    }
     case "quieter":
       return {
         volume_db: clampVolume(clip.volume_db - 3),

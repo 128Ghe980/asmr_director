@@ -83,6 +83,25 @@ describe("director presets", () => {
     expect(updatedTarget.duration).toBe(6);
   });
 
+  it("adds a pause marker and extends duration when there is room", () => {
+    const updated = applyDirectorPreset(demoProject, "voice_002", "add-pause");
+    const updatedTarget = getClip(updated, "voice_002");
+
+    expect(updatedTarget.text.endsWith(" ...")).toBe(true);
+    expect(updatedTarget.duration).toBe(8.7);
+    expect(updatedTarget.start).toBe(58);
+  });
+
+  it("does not invisibly extend duration when pause marker already exists", () => {
+    const paused = applyDirectorPreset(demoProject, "voice_002", "add-pause");
+    const repeated = applyDirectorPreset(paused, "voice_002", "add-pause");
+    const pausedTarget = getClip(paused, "voice_002");
+    const repeatedTarget = getClip(repeated, "voice_002");
+
+    expect(repeatedTarget.text).toBe(pausedTarget.text);
+    expect(repeatedTarget.duration).toBe(pausedTarget.duration);
+  });
+
   it("returns the same project when the target clip is missing", () => {
     const updated = applyDirectorPreset(demoProject, "missing_clip", "closer");
 
