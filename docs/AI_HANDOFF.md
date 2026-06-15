@@ -107,7 +107,7 @@ npm.cmd run build --prefix apps/web -- --webpack
 Latest verified state before this handoff:
 
 - 5 test files passed.
-- 32 tests passed.
+- 34 tests passed.
 - lint passed.
 - build passed.
 - Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
@@ -129,6 +129,8 @@ http://localhost:3000/
 
 Most recent feature commits:
 
+- `e67f0cb fix: make pause preset idempotent`
+- `8026b27 docs: record director presets implementation`
 - `766c637 fix: include visible director action labels`
 - `aaca380 feat: add director action buttons`
 - `a1cdbf0 feat: add director preset helper`
