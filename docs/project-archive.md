@@ -2,7 +2,11 @@
 
 记录日期：2026-06-14
 
-这份文档是当前项目的入口档案，用来保存我们已经聊好的产品判断、设计方向和 V0.1 已完成内容。新的开发会话可以先读这里，再按需阅读详细 spec 和 plan。
+AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
+
+这份文档是当前项目的历史档案，用来保存我们已经聊好的产品判断、设计方向、实现进度和决策过程。
+
+如果是新的 AI agent 接手，或者当前会话发生上下文压缩，应先读 `docs/AI_HANDOFF.md`。那份文件更短、更稳定，专门服务“快速恢复当前状态和下一步”。
 
 ## 当前一句话定位
 
@@ -227,6 +231,15 @@ npm.cmd run build --prefix apps/web -- --webpack
 - 导出 JSON 包含当前导入后的 project 内容。
 - 桌面和 390px 移动视口没有文档级横向溢出。
 
+## AI 交接文档结构
+
+为了方便未来其他 AI 续写项目，也方便上下文压缩后快速恢复状态，项目新增双层记忆结构：
+
+- `docs/AI_HANDOFF.md`：高信号接手入口。新的 AI agent 或压缩后的会话应先读它。
+- `docs/project-archive.md`：历史档案。记录更完整的产品判断、阶段进展和决策过程。
+
+这避免把所有信息都堆进一个越来越长的 archive。`AI_HANDOFF.md` 只保留当前状态、关键文件地图、验证命令、最近提交和下一步推荐；`project-archive.md` 继续保留上下文和演进历史。
+
 ## 后续版本衔接
 
 - V0.2：可编辑时间线、clip 修改、局部重生成入口、音效替换、左右耳位置修改。
@@ -238,11 +251,12 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 继续开发时建议先读：
 
-1. `docs/project-archive.md`
-2. `docs/superpowers/specs/2026-06-13-v0-1-dsl-first-design.md`
-3. `apps/web/src/lib/asmr/schema.ts`
-4. `apps/web/src/lib/asmr/mock-project.ts`
-5. `apps/web/src/components/studio/studio-app.tsx`
+1. `docs/AI_HANDOFF.md`
+2. `docs/project-archive.md`
+3. `docs/superpowers/specs/2026-06-13-v0-1-dsl-first-design.md`
+4. `apps/web/src/lib/asmr/schema.ts`
+5. `apps/web/src/lib/asmr/mock-project.ts`
+6. `apps/web/src/components/studio/studio-app.tsx`
 
 本地运行：
 
