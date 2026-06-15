@@ -191,6 +191,22 @@ This is the current early roadmap. Treat it as directional, not a rigid release 
 
 The key sequencing rule: keep strengthening the editable Timeline DSL and director workflow before connecting expensive or brittle audio generation.
 
+## Next Work Protocol
+
+When the user asks "what next?", "what should we do now?", "理论上下一步是什么？", or any equivalent roadmap question, do not answer from fresh intuition alone.
+
+First read this file, then answer from `Recommended Next Work` and `Initial Product Path` using this shape:
+
+```text
+Documented path points to:
+Already done:
+Recommended next step:
+Why not the other options yet:
+Needed doc/plan/implementation step:
+```
+
+If the documented path feels stale, say that explicitly and propose a documentation update before changing direction. Do not silently replace the roadmap with a newly invented one.
+
 ## Do Not Do Yet
 
 Do not jump straight into:
@@ -213,3 +229,4 @@ Those are later versions. The near-term path should keep proving the editable Ti
 - After meaningful UI changes, run browser verification at desktop and mobile widths.
 - Preserve the Studio Console visual direction: professional tool first, restrained ASMR atmosphere second.
 - Keep docs updated when changing product direction, data contracts, or next-step recommendations.
+- Treat roadmap questions as document-synchronized work: check `Recommended Next Work`, `Initial Product Path`, and `Next Work Protocol` before recommending the next task.
