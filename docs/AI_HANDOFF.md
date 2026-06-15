@@ -28,6 +28,8 @@ Current user-facing capabilities:
 - Imports pasted JSON if schema-valid.
 - Rejects invalid import JSON without replacing current project.
 - Resets to the built-in demo project.
+- Shows voice-only Director Actions in Clip Inspector: Softer, Closer, Left, Right, Pause, Quiet.
+- Applies Director Actions as deterministic local Timeline DSL edits through a tested pure helper.
 
 Current status is frontend-only. There is no backend, real audio generation, audio playback, waveform rendering, TTS, SFX generation, cloud persistence, auth, billing, or collaboration.
 
@@ -36,7 +38,7 @@ Current status is frontend-only. There is no backend, real audio generation, aud
 Core app:
 
 - `apps/web/src/app/page.tsx` renders the studio with `demoProject`.
-- `apps/web/src/components/studio/studio-app.tsx` owns local editable project state and wires export, import, autosave, reset, validation, and selected clip state.
+- `apps/web/src/components/studio/studio-app.tsx` owns local editable project state and wires export, import, autosave, reset, validation, selected clip state, and director preset application.
 - `apps/web/src/components/studio/project-header.tsx` shows project context and Export JSON.
 - `apps/web/src/components/studio/storyboard-panel.tsx` renders chronological clip cards.
 - `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks.
@@ -52,6 +54,7 @@ Domain/data:
 - `apps/web/src/lib/asmr/view-model.ts` contains display helpers.
 - `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers and validation issue formatting.
 - `apps/web/src/lib/asmr/project-persistence.ts` contains import parsing, JSON serialization, and localStorage helpers.
+- `apps/web/src/lib/asmr/director-presets.ts` contains deterministic Director Action preset behavior for voice clips.
 
 Tests:
 
@@ -59,6 +62,7 @@ Tests:
 - `apps/web/src/lib/asmr/view-model.test.ts`
 - `apps/web/src/lib/asmr/edit-project.test.ts`
 - `apps/web/src/lib/asmr/project-persistence.test.ts`
+- `apps/web/src/lib/asmr/director-presets.test.ts`
 
 Docs:
 
@@ -102,16 +106,17 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 Latest verified state before this handoff:
 
-- 4 test files passed.
-- 24 tests passed.
+- 5 test files passed.
+- 32 tests passed.
 - lint passed.
 - build passed.
 - Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
+- Browser verification passed with headless Chrome DevTools Protocol fallback: voice actions update fields, non-voice clips hide actions, localStorage restore persists preset edits, and desktop/mobile viewports have no document-level horizontal overflow.
 
 Run locally:
 
 ```powershell
-npm.cmd run dev --prefix apps/web -- --port 3000
+npm.cmd run dev --prefix apps/web -- --port 3000 --webpack
 ```
 
 Open:
@@ -124,6 +129,11 @@ http://localhost:3000/
 
 Most recent feature commits:
 
+- `766c637 fix: include visible director action labels`
+- `aaca380 feat: add director action buttons`
+- `a1cdbf0 feat: add director preset helper`
+- `bee8085 docs: plan director action presets`
+- `e8f585e docs: design director action presets`
 - `b207728 feat: persist studio projects locally`
 - `fc3644e feat: add project persistence helpers`
 - `303a8f8 docs: plan v0 project persistence`
@@ -145,31 +155,19 @@ Earlier V0.1 foundation:
 
 ## Recommended Next Work
 
-Active approved design: **V0.3 director action presets**.
+Recommended next step: **field-level validation highlighting**.
 
-Read the spec before implementing:
+Why this next: the app can now edit raw fields and apply director intent presets, but validation feedback still appears mainly in the global Validation Panel. The next polish layer should connect schema issues back to the exact Inspector fields that caused them.
 
-- `docs/superpowers/specs/2026-06-16-v0-3-director-action-presets-design.md`
+Suggested scope:
 
-Build small action buttons for selected voice clips:
+- Map validation issue paths to selected clip fields when possible.
+- Highlight invalid Inspector inputs with clear error styling.
+- Show compact field-level messages without adding explanatory page copy.
+- Keep the global Validation Panel as the full project issue list.
+- Reuse existing `getProjectValidationIssues` output where possible.
 
-- "更温柔"
-- "更贴耳"
-- "换左耳"
-- "换右耳"
-- "加停顿"
-- "更小声"
-
-These should be deterministic local edits, not real AI regeneration. They should update DSL fields through a tested pure helper, remain schema-validated, autosave, and export correctly.
-
-Why this next: the app already edits raw fields and persists projects. Preset actions will make it feel like an ASMR director tool rather than a form editor.
-
-Implementation shape:
-
-- Add a pure helper in `apps/web/src/lib/asmr/` for applying director presets to a clip.
-- Write tests first.
-- Add a compact action strip inside or near `ClipInspector`.
-- Hide voice-specific actions for non-voice clips.
+Alternative later step: lightweight timeline interactions such as nudging start/duration or inserting pauses visually. Do not jump to real TTS/audio generation yet.
 
 ## Do Not Do Yet
 
