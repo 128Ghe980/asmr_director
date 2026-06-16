@@ -321,3 +321,34 @@ npm.cmd run test --prefix apps/web
 npm.cmd run lint --prefix apps/web
 npm.cmd run build --prefix apps/web -- --webpack
 ```
+## Light Timeline Editing 进展（2026-06-16）
+
+这一轮完成了当前初步路径里的第 2 项：轻量时间线编辑。我们没有进入完整 DAW 拖拽/resize 体系，而是先把最常用的小时间修改做成确定性的 Timeline DSL 操作。
+
+新增设计与计划：
+
+- `docs/superpowers/specs/2026-06-16-light-timeline-editing-design.md`
+- `docs/superpowers/plans/2026-06-16-light-timeline-editing.md`
+
+已实现内容：
+
+- `edit-project.ts` 新增 `ClipTimingNudge` 与 `nudgeClipTiming`，支持对选中 clip 的 `start` / `duration` 做 delta 微调。
+- timing helper 保持纯函数、不可变更新；找不到 clip 时返回原 project。
+- `start` 最小值 clamp 到 `0`，`duration` 最小值 clamp 到 `0.1`，并按 0.1 秒步长取整。
+- helper 不强行把 clip end clamp 回 project duration，越界继续交给现有 schema validation 与字段级校验高亮处理。
+- `ClipInspector` 新增 Timing Actions：`Start -0.5s`、`Start +0.5s`、`Duration -0.5s`、`Duration +0.5s`。
+- `StudioApp` 通过 `nudgeClipTiming` 更新当前 `AsmrProject`，因此 Storyboard、Timeline、Inspector、Validation Panel、Export JSON 与 localStorage 仍然共享同一份状态。
+
+验证覆盖：
+
+- `npm.cmd run test --prefix apps/web`：5 个 test files / 44 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过；本地 SWC Win32 warning 仍可能出现，但 webpack/WASM 构建成功。
+- 浏览器验证因 in-app Browser 的 Node runtime 返回 `failed to write kernel assets`，本轮改用本机 Chrome CDP fallback 验证。
+- 验证结果：`Duration +0.5s` 会更新 voice duration、Time row、Timeline label/width；`Start +0.5s` 会更新 voice start 与 Timeline left；ambience duration 越界后 Duration 字段显示 inline issue，global Validation Panel 同步显示，`Duration -0.5s` 恢复后错误清除；桌面 1440px 与移动 390px 均无文档级横向溢出。
+
+路线状态更新：
+
+1. 字段级校验高亮：已完成。
+2. 轻量时间线编辑：已完成 start/duration nudge。
+3. 项目结构升级：下一步，目标是让产品从“单个 demo 编辑页”更像一个本地优先的项目工作区，为后续项目列表、元数据、预览层留出结构。

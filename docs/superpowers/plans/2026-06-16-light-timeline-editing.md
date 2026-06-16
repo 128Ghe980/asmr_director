@@ -392,7 +392,7 @@ git commit -m "feat: add inspector timing actions"
 - Modify: `docs/AI_HANDOFF.md`
 - Modify: `docs/project-archive.md`
 
-- [ ] **Step 1: Run full verification**
+- [x] **Step 1: Run full verification**
 
 Run:
 
@@ -404,7 +404,7 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 Expected: all commands exit 0. The build may emit the known local SWC warning while webpack/WASM still succeeds.
 
-- [ ] **Step 2: Browser verification**
+- [x] **Step 2: Browser verification**
 
 Run or reuse the dev server:
 
@@ -416,11 +416,11 @@ Verify:
 
 - Selecting a voice clip and pressing `Start +0.5s` updates the Time row and Timeline block label.
 - Pressing `Duration +0.5s` updates the Time row and Timeline block width/label.
-- Pressing `Duration +0.5s` on the final voice clip until it exceeds project duration shows a Duration field-level issue.
+- Pressing `Duration +0.5s` on a clip that reaches beyond project duration shows a Duration field-level issue.
 - Pressing `Duration -0.5s` until timing is valid clears the field-level issue.
 - Desktop and 390px mobile viewports have no document-level horizontal overflow.
 
-- [ ] **Step 3: Update docs**
+- [x] **Step 3: Update docs**
 
 Update `docs/AI_HANDOFF.md`:
 
@@ -434,7 +434,7 @@ Update `docs/project-archive.md`:
 - Add a light timeline editing progress section with design/plan links, implemented behavior, and verification.
 - Mark route step 2 as completed and step 3 as next.
 
-- [ ] **Step 4: Commit docs**
+- [x] **Step 4: Commit docs**
 
 Run:
 

@@ -40,6 +40,8 @@ Current user-facing capabilities:
 - Applies Director Actions as deterministic local Timeline DSL edits through a tested pure helper.
 - Highlights selected Clip Inspector fields when their schema validation issues map to editable inputs.
 - Shows compact inline field messages while keeping the global Validation Panel as the full issue list.
+- Shows compact Timing Actions for the selected clip: Start -0.5s, Start +0.5s, Duration -0.5s, Duration +0.5s.
+- Applies Timing Actions as deterministic local Timeline DSL edits through a tested pure helper.
 
 Current status is frontend-only. There is no backend, real audio generation, audio playback, waveform rendering, TTS, SFX generation, cloud persistence, auth, billing, or collaboration.
 
@@ -52,7 +54,7 @@ Core app:
 - `apps/web/src/components/studio/project-header.tsx` shows project context and Export JSON.
 - `apps/web/src/components/studio/storyboard-panel.tsx` renders chronological clip cards.
 - `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks.
-- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields and displays field-level validation state.
+- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields, displays field-level validation state, and exposes compact timing actions.
 - `apps/web/src/components/studio/validation-panel.tsx` shows live schema issues.
 - `apps/web/src/components/studio/project-controls.tsx` handles paste-import, reset, and Demo/Edited/Restored state.
 
@@ -62,7 +64,7 @@ Domain/data:
 - `apps/web/src/lib/asmr/mock-project.ts` is the canonical "雨夜睡前陪伴" demo project.
 - `apps/web/src/lib/asmr/validate.ts` wraps schema parsing and clip flattening.
 - `apps/web/src/lib/asmr/view-model.ts` contains display helpers.
-- `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers, validation issue formatting, and selected-clip field issue mapping.
+- `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers, selected-clip timing nudges, validation issue formatting, and selected-clip field issue mapping.
 - `apps/web/src/lib/asmr/project-persistence.ts` contains import parsing, JSON serialization, and localStorage helpers.
 - `apps/web/src/lib/asmr/director-presets.ts` contains deterministic Director Action preset behavior for voice clips.
 
@@ -117,11 +119,11 @@ npm.cmd run build --prefix apps/web -- --webpack
 Latest verified state before this handoff:
 
 - 5 test files passed.
-- 38 tests passed.
+- 44 tests passed.
 - lint passed.
 - build passed.
 - Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
-- Browser verification passed in the in-app browser: invalid selected voice `duration` and `position.pan` highlight the matching Inspector fields with inline messages, restoring valid values clears field errors, the global Validation Panel still lists project issues, and desktop/mobile viewports have no document-level horizontal overflow.
+- Browser verification passed via local Chrome CDP fallback because the in-app Browser Node runtime returned `failed to write kernel assets`. Verified: `Duration +0.5s` updates selected voice duration, Time row, and Timeline block label/width; `Start +0.5s` updates selected voice start and Timeline block position; nudging ambience duration beyond project duration shows the selected Duration field-level issue and global validation; nudging back clears both; desktop 1440px and mobile 390px viewports have no document-level horizontal overflow.
 
 Run locally:
 
@@ -139,6 +141,10 @@ http://localhost:3000/
 
 Most recent feature commits:
 
+- `6dbee1a feat: add inspector timing actions`
+- `26ec01d feat: add clip timing nudges`
+- `f716786 docs: plan light timeline editing`
+- `f9f0384 docs: design light timeline editing`
 - `a8cfacc fix: stabilize inspector field error ids`
 - `cbfee19 feat: highlight invalid inspector fields`
 - `c85d2fd feat: map validation issues to clip fields`
@@ -172,17 +178,16 @@ Earlier V0.1 foundation:
 
 ## Recommended Next Work
 
-Recommended next step: **light timeline editing**.
+Recommended next step: **project structure upgrade**.
 
-Why this next: the app can now edit raw fields, apply director intent presets, persist/import projects, and show field-level validation feedback. The next polish layer should make common timing edits feel like timeline operations instead of only raw number entry.
+Why this next: the app can now edit raw fields, apply director intent presets, persist/import projects, show field-level validation feedback, and perform small timing operations without raw number entry. The next layer should make the app feel like a durable project workspace rather than a single embedded demo.
 
 Suggested scope:
 
-- Add small start/duration nudge controls for the selected clip.
-- Add a simple "insert pause" timeline action if it can reuse current clip update helpers.
-- Keep edits deterministic local Timeline DSL changes.
-- Keep the global Validation Panel and field-level validation behavior intact.
-- Avoid full drag/drop DAW behavior for now.
+- Add a clearer project shell for current project metadata, status, and future project-list affordances.
+- Keep state local-first and continue using the single `AsmrProject` source of truth.
+- Preserve the current Studio Console layout while making room for future project list/import/export workflows.
+- Avoid adding backend persistence, auth, collaboration, or real generation yet.
 
 Do not jump to real TTS/audio generation yet.
 
@@ -191,8 +196,8 @@ Do not jump to real TTS/audio generation yet.
 This is the current early roadmap. Treat it as directional, not a rigid release contract.
 
 1. Field-level validation highlighting: completed for selected Clip Inspector fields while keeping the global Validation Panel.
-2. Light timeline editing: support small timing operations such as nudging starts/durations and inserting pauses without building a full DAW.
-3. Project structure upgrade: add a clearer project shell, metadata, and room for a future project list while keeping local-first state.
+2. Light timeline editing: completed for selected clip start/duration nudges without building a full DAW.
+3. Project structure upgrade: next; add a clearer project shell, metadata, and room for a future project list while keeping local-first state.
 4. Preview layer before real audio: add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.
 5. Real generation chain: only after the director workflow feels stable, introduce real TTS/SFX generation, listening, regeneration, and export.
 
