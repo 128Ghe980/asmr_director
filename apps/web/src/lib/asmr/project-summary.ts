@@ -79,10 +79,14 @@ function getLocalStateBadge({
   };
 }
 
-function getSaveStateBadge(
-  restoreState: ProjectWorkspaceSummaryInput["restoreState"],
-): ProjectWorkspaceBadge {
-  if (restoreState === "restored") {
+function getSaveStateBadge({
+  isDirty,
+  restoreState,
+}: Pick<
+  ProjectWorkspaceSummaryInput,
+  "isDirty" | "restoreState"
+>): ProjectWorkspaceBadge {
+  if (isDirty || restoreState === "restored") {
     return {
       label: "本地已保存",
       tone: "ok",
@@ -141,7 +145,7 @@ export function getProjectWorkspaceSummary({
       status,
     },
     localState: getLocalStateBadge({ isDirty, restoreState }),
-    saveState: getSaveStateBadge(restoreState),
+    saveState: getSaveStateBadge({ isDirty, restoreState }),
     validation: getValidationBadge(validationIssueCount),
     preview: {
       label: "预览未生成",

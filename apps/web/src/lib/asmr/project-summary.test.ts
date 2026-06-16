@@ -65,7 +65,7 @@ describe("project workspace summary", () => {
     ]);
   });
 
-  it("marks edited projects with an accent local state", () => {
+  it("marks edited projects with an accent local state and locally saved save state", () => {
     const updated = updateClipInProject(demoProject, "voice_001", {
       volume_db: -10,
     });
@@ -82,8 +82,8 @@ describe("project workspace summary", () => {
       tone: "accent",
     });
     expect(summary.saveState).toEqual({
-      label: "示例项目",
-      tone: "neutral",
+      label: "本地已保存",
+      tone: "ok",
     });
   });
 
