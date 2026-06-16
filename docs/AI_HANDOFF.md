@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-06-16
+Last updated: 2026-06-17
 
 Read this first when resuming the project after context compaction or as a new AI agent. This file is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -84,6 +84,7 @@ Docs:
 - `docs/project-archive.md` is the running project archive.
 - `docs/asmr导演早期设计.md` is the original product/technical vision.
 - `docs/superpowers/specs/` contains approved specs.
+- Starting 2026-06-17, approved specs should include a Chinese companion file named `*.zh.md` for user review and context recovery.
 - `docs/superpowers/plans/` contains implementation plans.
 
 ## Data Model Facts
@@ -182,16 +183,20 @@ Earlier V0.1 foundation:
 
 ## Recommended Next Work
 
-Recommended next step: **project structure upgrade**.
+Recommended next step: **implement the C+ project structure upgrade**.
 
-Why this next: the app can now edit raw fields, apply director intent presets, persist/import projects, show field-level validation feedback, and perform small timing operations without raw number entry. The next layer should make the app feel like a durable project workspace rather than a single embedded demo.
+Why this next: the app can now edit raw fields, apply director intent presets, persist/import projects, show field-level validation feedback, and perform small timing operations without raw number entry. The project structure upgrade has an approved C+ design and archived mockups, so the next layer should implement the durable project workspace shell rather than keep iterating on ad hoc header/control placement.
 
-Suggested scope:
+Approved scope:
 
-- Add a clearer project shell for current project metadata, status, and future project-list affordances.
+- Implement the C+ collapsible workspace from `docs/superpowers/specs/2026-06-17-project-structure-upgrade-design.md` and `docs/superpowers/specs/2026-06-17-project-structure-upgrade-design.zh.md`.
+- Use `docs/mockups/2026-06-17-project-structure-upgrade-collapsible-c.html` as the visual reference.
+- Add a left project rail, top workspace header, center editor, and right project details dock.
+- Let the left project rail and right project details dock collapse independently.
+- Add a focused editing action that collapses both side regions.
 - Keep state local-first and continue using the single `AsmrProject` source of truth.
-- Preserve the current Studio Console layout while making room for future project list/import/export workflows.
-- Avoid adding backend persistence, auth, collaboration, or real generation yet.
+- Preserve editing, validation, persistence, import, export, reset, and concise Chinese UI copy.
+- Avoid adding backend persistence, auth, collaboration, real generation, or full multi-project management yet.
 
 Do not jump to real TTS/audio generation yet.
 
@@ -201,7 +206,7 @@ This is the current early roadmap. Treat it as directional, not a rigid release 
 
 1. Field-level validation highlighting: completed for selected Clip Inspector fields while keeping the global Validation Panel.
 2. Light timeline editing: completed for selected clip start/duration nudges without building a full DAW.
-3. Project structure upgrade: next; add a clearer project shell, metadata, and room for a future project list while keeping local-first state.
+3. Project structure upgrade: design approved; implement the C+ collapsible project workspace with left project rail, top status header, center editor, and right project details dock.
 4. Preview layer before real audio: add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.
 5. Real generation chain: only after the director workflow feels stable, introduce real TTS/SFX generation, listening, regeneration, and export.
 
@@ -249,4 +254,5 @@ Those are later versions. The near-term path should keep proving the editable Ti
 - After meaningful UI changes, run browser verification at desktop and mobile widths.
 - Preserve the Studio Console visual direction: professional tool first, restrained ASMR atmosphere second.
 - Keep docs updated when changing product direction, data contracts, or next-step recommendations.
+- For new approved specs, keep the English spec and add a Chinese companion `*.zh.md` version.
 - Treat roadmap questions as document-synchronized and project-synchronized work: check `Recommended Next Work`, `Initial Product Path`, `Next Work Protocol`, and current repo/app reality before recommending the next task.
