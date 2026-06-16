@@ -36,11 +36,12 @@ Current user-facing capabilities:
 - Imports pasted JSON if schema-valid.
 - Rejects invalid import JSON without replacing current project.
 - Resets to the built-in demo project.
-- Shows voice-only Director Actions in Clip Inspector: Softer, Closer, Left, Right, Pause, Quiet.
+- Uses Chinese-first interface copy with short, clear button names while keeping technical abbreviations such as `ASMR`, `JSON`, `dB`, `LUFS`, and `seed`.
+- Shows voice-only Director Actions in Clip Inspector: 更柔, 更近, 左耳, 右耳, 停顿, 降低.
 - Applies Director Actions as deterministic local Timeline DSL edits through a tested pure helper.
 - Highlights selected Clip Inspector fields when their schema validation issues map to editable inputs.
 - Shows compact inline field messages while keeping the global Validation Panel as the full issue list.
-- Shows compact Timing Actions for the selected clip: Start -0.5s, Start +0.5s, Duration -0.5s, Duration +0.5s.
+- Shows compact Timing Actions for the selected clip: 开始 -0.5秒, 开始 +0.5秒, 时长 -0.5秒, 时长 +0.5秒.
 - Applies Timing Actions as deterministic local Timeline DSL edits through a tested pure helper.
 
 Current status is frontend-only. There is no backend, real audio generation, audio playback, waveform rendering, TTS, SFX generation, cloud persistence, auth, billing, or collaboration.
@@ -64,6 +65,7 @@ Domain/data:
 - `apps/web/src/lib/asmr/mock-project.ts` is the canonical "雨夜睡前陪伴" demo project.
 - `apps/web/src/lib/asmr/validate.ts` wraps schema parsing and clip flattening.
 - `apps/web/src/lib/asmr/view-model.ts` contains display helpers.
+- `apps/web/src/lib/asmr/ui-copy.ts` contains shared Chinese UI labels and validation-message translations.
 - `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers, selected-clip timing nudges, validation issue formatting, and selected-clip field issue mapping.
 - `apps/web/src/lib/asmr/project-persistence.ts` contains import parsing, JSON serialization, and localStorage helpers.
 - `apps/web/src/lib/asmr/director-presets.ts` contains deterministic Director Action preset behavior for voice clips.
@@ -75,6 +77,7 @@ Tests:
 - `apps/web/src/lib/asmr/edit-project.test.ts`
 - `apps/web/src/lib/asmr/project-persistence.test.ts`
 - `apps/web/src/lib/asmr/director-presets.test.ts`
+- `apps/web/src/lib/asmr/ui-copy.test.ts`
 
 Docs:
 
@@ -118,12 +121,12 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 Latest verified state before this handoff:
 
-- 5 test files passed.
-- 44 tests passed.
+- 6 test files passed.
+- 51 tests passed.
 - lint passed.
 - build passed.
 - Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
-- Browser verification passed via local Chrome CDP fallback because the in-app Browser Node runtime returned `failed to write kernel assets`. Verified: `Duration +0.5s` updates selected voice duration, Time row, and Timeline block label/width; `Start +0.5s` updates selected voice start and Timeline block position; nudging ambience duration beyond project duration shows the selected Duration field-level issue and global validation; nudging back clears both; desktop 1440px and mobile 390px viewports have no document-level horizontal overflow.
+- Browser verification passed via local Chrome CDP fallback. Verified: core visible UI copy and button labels are Chinese, old English control labels are absent, schema errors render in Chinese, and desktop 1440px plus mobile 390px viewports have no document-level horizontal overflow.
 
 Run locally:
 
@@ -141,6 +144,7 @@ http://localhost:3000/
 
 Most recent feature commits:
 
+- `154f973 feat: localize studio ui copy`
 - `6dbee1a feat: add inspector timing actions`
 - `26ec01d feat: add clip timing nudges`
 - `f716786 docs: plan light timeline editing`

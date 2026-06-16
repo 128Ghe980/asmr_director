@@ -352,3 +352,31 @@ npm.cmd run build --prefix apps/web -- --webpack
 1. 字段级校验高亮：已完成。
 2. 轻量时间线编辑：已完成 start/duration nudge。
 3. 项目结构升级：下一步，目标是让产品从“单个 demo 编辑页”更像一个本地优先的项目工作区，为后续项目列表、元数据、预览层留出结构。
+## 中文界面文案进展（2026-06-16）
+
+这一轮是路线外插队的小修正：用户发现页面整体仍偏英文，希望先把界面改成中文，并要求按钮名字简洁清晰。我们采用的口径是“中文为主，保留必要技术缩写”，也就是保留 `ASMR`、`JSON`、`dB`、`LUFS`、`seed`，其余可见操作文案尽量中文化。
+
+新增设计：
+
+- `docs/superpowers/specs/2026-06-16-chinese-ui-copy-design.md`
+
+已实现内容：
+
+- 新增 `apps/web/src/lib/asmr/ui-copy.ts`，集中管理中文状态、轨道、片段类型、空间位置、移动方式、常见 timeline 值和校验信息。
+- 主要页面文案改为中文：`分镜`、`时间线`、`情绪曲线`、`项目校验`、`项目操作`、`片段检查`。
+- 按钮名改为短中文：`导出 JSON`、`载入`、`重置`、`更柔`、`更近`、`左耳`、`右耳`、`停顿`、`降低`、`开始 -0.5秒`、`开始 +0.5秒`、`时长 -0.5秒`、`时长 +0.5秒`。
+- 状态徽章从 raw enum 改成中文，例如 `可预览`、`待生成`、`生成中`、`已生成`。
+- 常见 demo 值从英文枚举展示改为中文，例如 `comforting` -> `安抚`，`rain_room_tone` -> `雨夜房间`。
+- 校验错误与导入错误展示为中文，例如 `片段结束不能超过项目总时长`、`JSON 解析失败。`
+
+验证覆盖：
+
+- `npm.cmd run test --prefix apps/web`：6 个 test files / 51 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过；本地 SWC Win32 warning 仍可能出现，但 webpack/WASM 构建成功。
+- 浏览器验证：核心可见 UI 和按钮均为中文，旧英文按钮/面板词未出现在页面文本中；越界校验错误为中文；桌面 1440px 与移动 390px 均无文档级横向溢出。
+
+路线状态：
+
+- 这不是替换“项目结构升级”的路线项，只是进入下一步前的体验修正。
+- 下一步仍然回到 `docs/AI_HANDOFF.md` 记录的 `project structure upgrade`。
