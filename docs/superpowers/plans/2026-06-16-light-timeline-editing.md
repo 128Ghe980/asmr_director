@@ -443,7 +443,7 @@ git add docs/AI_HANDOFF.md docs/project-archive.md
 git commit -m "docs: record light timeline editing"
 ```
 
-- [ ] **Step 5: Push branch**
+- [x] **Step 5: Push branch**
 
 Run:
 
