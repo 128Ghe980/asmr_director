@@ -21,13 +21,13 @@ import {
   saveProject,
   serializeProject,
 } from "@/lib/asmr/project-persistence";
+import { getProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 
 import { ClipInspector } from "./clip-inspector";
-import { ProjectControls } from "./project-controls";
-import { ProjectHeader } from "./project-header";
+import { ProjectWorkspace } from "./project-workspace";
 import { StoryboardPanel } from "./storyboard-panel";
 import { TimelinePanel } from "./timeline-panel";
 import { ValidationPanel } from "./validation-panel";
@@ -121,6 +121,16 @@ export function StudioApp({ project }: StudioAppProps) {
   const isDirty = useMemo(
     () => serializeProject(editableProject) !== serializeProject(project),
     [editableProject, project],
+  );
+  const workspaceSummary = useMemo(
+    () =>
+      getProjectWorkspaceSummary({
+        project: editableProject,
+        isDirty,
+        restoreState,
+        validationIssueCount: validationIssues.length,
+      }),
+    [editableProject, isDirty, restoreState, validationIssues.length],
   );
 
   useEffect(() => {
@@ -224,13 +234,14 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   return (
-    <div className="min-h-screen bg-studio-bg text-studio-text">
-      <ProjectHeader
-        project={editableProject}
-        onExportJson={() => exportProjectJson(editableProject)}
-      />
-
-      <main className="grid gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)_minmax(280px,340px)]">
+    <ProjectWorkspace
+      importError={importError}
+      summary={workspaceSummary}
+      onExportJson={() => exportProjectJson(editableProject)}
+      onImportJson={handleImportJson}
+      onResetDemo={handleResetDemo}
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)_minmax(280px,340px)]">
         <div className="min-h-[520px] lg:h-[calc(100vh-112px)]">
           <StoryboardPanel
             project={editableProject}
@@ -247,13 +258,6 @@ export function StudioApp({ project }: StudioAppProps) {
           />
           <EmotionCurve project={editableProject} />
           <ValidationPanel issues={validationIssues} />
-          <ProjectControls
-            importError={importError}
-            isDirty={isDirty}
-            onImportJson={handleImportJson}
-            onResetDemo={handleResetDemo}
-            restoreState={restoreState}
-          />
         </div>
 
         <div>
@@ -265,7 +269,7 @@ export function StudioApp({ project }: StudioAppProps) {
             onUpdateClip={handleUpdateClip}
           />
         </div>
-      </main>
-    </div>
+      </div>
+    </ProjectWorkspace>
   );
 }
