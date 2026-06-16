@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>项目结构升级 Mock - C 折叠版 - 2026-06-17</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0c1118;
+        --panel: #121a25;
+        --panel-2: #172231;
+        --panel-3: #1d2a3a;
+        --line: #2b3a4d;
+        --text: #edf3f8;
+        --muted: #96a6b8;
+        --soft: #cad6e3;
+        --accent: #66aaa5;
+        --gold: #f0c96b;
+        --red: #dd7a7a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 12% 0%, rgba(102, 170, 165, 0.16), transparent 30rem),
+          linear-gradient(180deg, #0c1118 0%, #090d13 100%);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Microsoft YaHei", sans-serif;
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .page {
+        width: min(1500px, calc(100vw - 36px));
+        margin: 0 auto;
+        padding: 34px 0 54px;
+      }
+
+      .intro {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 22px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 28px;
+        letter-spacing: 0;
+      }
+
+      .intro p {
+        max-width: 930px;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .rule-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 4px;
+      }
+
+      .tag {
+        border: 1px solid var(--line);
+        background: rgba(23, 34, 49, 0.84);
+        border-radius: 999px;
+        color: var(--soft);
+        font-size: 12px;
+        padding: 5px 10px;
+      }
+
+      .toolbar-demo {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }
+
+      .control {
+        border: 1px solid #3f566d;
+        background: #1e2b3a;
+        color: var(--text);
+        border-radius: 9px;
+        cursor: pointer;
+        padding: 8px 12px;
+      }
+
+      .control:hover {
+        border-color: rgba(102, 170, 165, 0.86);
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 210px minmax(0, 1fr) 260px;
+        min-height: 660px;
+        border: 1px solid #304156;
+        background: #101720;
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 22px 80px rgba(0, 0, 0, 0.32);
+        transition: grid-template-columns 180ms ease;
+      }
+
+      .shell.left-collapsed {
+        grid-template-columns: 54px minmax(0, 1fr) 260px;
+      }
+
+      .shell.right-collapsed {
+        grid-template-columns: 210px minmax(0, 1fr) 58px;
+      }
+
+      .shell.left-collapsed.right-collapsed {
+        grid-template-columns: 54px minmax(0, 1fr) 58px;
+      }
+
+      .project-rail,
+      .right-dock {
+        background: #0d141d;
+        padding: 14px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .project-rail {
+        border-right: 1px solid #223145;
+      }
+
+      .right-dock {
+        border-left: 1px solid #223145;
+      }
+
+      .rail-top,
+      .dock-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .side-title {
+        color: var(--soft);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .icon-btn {
+        width: 28px;
+        height: 28px;
+        display: inline-grid;
+        place-items: center;
+        border: 1px solid #354a60;
+        background: #172331;
+        color: var(--soft);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      .icon-btn:hover {
+        border-color: rgba(102, 170, 165, 0.82);
+      }
+
+      .current-project {
+        border: 1px solid #385066;
+        background: #172432;
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .project-name {
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .project-meta-line {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 5px;
+      }
+
+      .rail-item {
+        border: 1px solid #223244;
+        background: #121c28;
+        border-radius: 9px;
+        color: #adbdce;
+        font-size: 12px;
+        padding: 9px;
+      }
+
+      .rail-item.future {
+        border-style: dashed;
+        color: #728397;
+      }
+
+      .collapsed-label {
+        display: none;
+        writing-mode: vertical-rl;
+        justify-self: center;
+        color: #8fa2b7;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        margin-top: 10px;
+      }
+
+      .shell.left-collapsed .project-rail,
+      .shell.right-collapsed .right-dock {
+        padding: 12px;
+      }
+
+      .shell.left-collapsed .rail-content,
+      .shell.left-collapsed .side-title,
+      .shell.right-collapsed .dock-content,
+      .shell.right-collapsed .side-title {
+        display: none;
+      }
+
+      .shell.left-collapsed .project-rail,
+      .shell.right-collapsed .right-dock {
+        justify-items: center;
+      }
+
+      .shell.left-collapsed .collapsed-label,
+      .shell.right-collapsed .collapsed-label {
+        display: block;
+      }
+
+      .workspace {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        background: #101721;
+      }
+
+      .workspace-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: center;
+        padding: 15px 16px;
+        border-bottom: 1px solid #223145;
+        background: #121b27;
+      }
+
+      .workspace-title {
+        display: grid;
+        gap: 5px;
+      }
+
+      .workspace-title strong {
+        font-size: 17px;
+      }
+
+      .workspace-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status-row,
+      .action-row {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+      }
+
+      .action-row {
+        justify-content: flex-end;
+      }
+
+      .badge {
+        border: 1px solid #365067;
+        background: #182636;
+        color: var(--soft);
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .badge.ok {
+        border-color: rgba(102, 170, 165, 0.7);
+        color: #9ed6d2;
+      }
+
+      .badge.warn {
+        border-color: rgba(240, 201, 107, 0.64);
+        color: #f0d38a;
+      }
+
+      .action {
+        border: 1px solid #40556c;
+        background: #223144;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .workspace-grid {
+        display: grid;
+        grid-template-columns: minmax(270px, 0.9fr) minmax(360px, 1.35fr) minmax(260px, 0.9fr);
+        gap: 12px;
+        padding: 12px;
+        min-width: 0;
+      }
+
+      .panel {
+        border: 1px solid #27384b;
+        background: #151f2c;
+        border-radius: 10px;
+        padding: 12px;
+        display: grid;
+        align-content: start;
+        gap: 10px;
+        min-height: 255px;
+        min-width: 0;
+      }
+
+      .panel h4 {
+        color: var(--soft);
+        font-size: 12px;
+      }
+
+      .bar {
+        height: 10px;
+        border-radius: 999px;
+        background: #2b3b4f;
+      }
+
+      .bar.short {
+        width: 58%;
+      }
+
+      .bar.mid {
+        width: 76%;
+      }
+
+      .bar.accent {
+        background: #5c9f9b;
+      }
+
+      .timeline {
+        min-height: 420px;
+      }
+
+      .track {
+        display: grid;
+        gap: 7px;
+        border: 1px solid #223145;
+        background: #121b27;
+        border-radius: 10px;
+        padding: 9px;
+      }
+
+      .track-name {
+        color: #8fa2b7;
+        font-size: 11px;
+      }
+
+      .clip {
+        height: 18px;
+        border-radius: 6px;
+        background: #426f72;
+      }
+
+      .clip.alt {
+        width: 68%;
+        background: #6a5f8f;
+      }
+
+      .clip.short {
+        width: 48%;
+      }
+
+      .dock-card {
+        border: 1px solid #2b3a4e;
+        background: #151f2c;
+        border-radius: 10px;
+        padding: 10px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .dock-card h4 {
+        color: var(--soft);
+        font-size: 12px;
+      }
+
+      .preview-window {
+        height: 94px;
+        border: 1px solid #455a70;
+        border-radius: 9px;
+        background:
+          linear-gradient(135deg, rgba(240, 201, 107, 0.14), transparent 44%),
+          linear-gradient(145deg, #26394c, #182333);
+      }
+
+      .meta-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid #223145;
+        padding-bottom: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .meta-row strong {
+        color: var(--soft);
+        font-weight: 700;
+      }
+
+      .notes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .note {
+        border: 1px solid var(--line);
+        background: rgba(18, 26, 37, 0.82);
+        border-radius: 12px;
+        padding: 13px;
+      }
+
+      .note b {
+        display: block;
+        color: var(--soft);
+        font-size: 13px;
+        margin-bottom: 6px;
+      }
+
+      .note span {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .archive {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 1180px) {
+        .shell,
+        .shell.left-collapsed,
+        .shell.right-collapsed,
+        .shell.left-collapsed.right-collapsed {
+          grid-template-columns: 1fr;
+        }
+
+        .project-rail,
+        .right-dock {
+          border-right: 0;
+          border-left: 0;
+          border-bottom: 1px solid #223145;
+        }
+
+        .workspace-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .notes {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="intro">
+        <div class="eyebrow">ASMR Director / Project Structure Mock</div>
+        <h1>C+：双侧可折叠的项目工作区</h1>
+        <p>
+          选择 C，但补上关键约束：左侧项目轨可以折叠隐藏，右侧新增的预览层、项目元数据、保存/校验也作为整体工作栏折叠隐藏。
+          默认展示完整项目结构；需要专注编辑时间线时，一键释放中间空间。
+        </p>
+        <div class="rule-row">
+          <span class="tag">左侧：当前项目 / 未来项目列表</span>
+          <span class="tag">顶部：项目状态 / 本地保存 / 项目操作</span>
+          <span class="tag">右侧：预览层 / 项目元数据 / 保存校验</span>
+          <span class="tag">两侧都可折叠</span>
+        </div>
+      </section>
+
+      <div class="toolbar-demo">
+        <button class="control" id="toggle-left">收起/展开左侧项目</button>
+        <button class="control" id="toggle-right">收起/展开右侧工作栏</button>
+        <button class="control" id="toggle-focus">专注编辑</button>
+      </div>
+
+      <section class="shell" id="shell">
+        <aside class="project-rail">
+          <div class="rail-top">
+            <div class="side-title">项目</div>
+            <button class="icon-btn" id="left-icon" aria-label="收起左侧">‹</button>
+          </div>
+          <div class="collapsed-label">项目</div>
+          <div class="rail-content">
+            <div class="current-project">
+              <div class="project-name">雨夜理发店</div>
+              <div class="project-meta-line">当前项目 · 本地草稿</div>
+            </div>
+            <div class="rail-item">最近项目</div>
+            <div class="rail-item future">未来：项目列表</div>
+            <div class="rail-item future">未来：新建 / 复制 / 归档</div>
+          </div>
+        </aside>
+
+        <section class="workspace">
+          <header class="workspace-head">
+            <div class="workspace-title">
+              <strong>雨夜理发店</strong>
+              <span>3:00 · 中文 · 项目 ID: demo-rain-barber · v0.3</span>
+              <div class="status-row">
+                <span class="badge">已编辑</span>
+                <span class="badge ok">校验通过</span>
+                <span class="badge">本地已保存</span>
+                <span class="badge warn">预览未生成</span>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="action">导出</button>
+              <button class="action">载入</button>
+              <button class="action">重置</button>
+            </div>
+          </header>
+
+          <div class="workspace-grid">
+            <section class="panel">
+              <h4>分镜</h4>
+              <div class="bar accent"></div>
+              <div class="bar"></div>
+              <div class="bar mid"></div>
+              <div class="bar short"></div>
+              <div class="bar"></div>
+            </section>
+            <section class="panel timeline">
+              <h4>时间线 / 情绪 / 校验</h4>
+              <div class="track">
+                <div class="track-name">Ambience</div>
+                <div class="clip"></div>
+              </div>
+              <div class="track">
+                <div class="track-name">Foley</div>
+                <div class="clip alt"></div>
+              </div>
+              <div class="track">
+                <div class="track-name">Voice</div>
+                <div class="clip short"></div>
+              </div>
+              <div class="bar mid"></div>
+              <div class="bar short"></div>
+            </section>
+            <section class="panel">
+              <h4>检查器</h4>
+              <div class="bar"></div>
+              <div class="bar short"></div>
+              <div class="bar mid"></div>
+              <div class="bar"></div>
+            </section>
+          </div>
+        </section>
+
+        <aside class="right-dock">
+          <div class="dock-top">
+            <div class="side-title">项目详情</div>
+            <button class="icon-btn" id="right-icon" aria-label="收起右侧">›</button>
+          </div>
+          <div class="collapsed-label">详情</div>
+          <div class="dock-content">
+            <section class="dock-card">
+              <h4>预览层</h4>
+              <div class="preview-window"></div>
+              <div class="meta-row"><span>状态</span><strong>未生成</strong></div>
+            </section>
+            <section class="dock-card">
+              <h4>项目元数据</h4>
+              <div class="meta-row"><span>语言</span><strong>中文</strong></div>
+              <div class="meta-row"><span>时长</span><strong>3:00</strong></div>
+              <div class="meta-row"><span>版本</span><strong>v0.3</strong></div>
+            </section>
+            <section class="dock-card">
+              <h4>保存 / 校验</h4>
+              <div class="meta-row"><span>本地保存</span><strong>已保存</strong></div>
+              <div class="meta-row"><span>校验</span><strong>通过</strong></div>
+              <div class="meta-row"><span>问题</span><strong>0</strong></div>
+            </section>
+          </div>
+        </aside>
+      </section>
+
+      <section class="notes">
+        <div class="note">
+          <b>默认态</b>
+          <span>完整展示项目轨、顶部状态壳、右侧项目详情，强化“这是一个项目工作区”。</span>
+        </div>
+        <div class="note">
+          <b>折叠态</b>
+          <span>左侧保留窄图标轨，右侧保留窄标签，用户能恢复结构，不会迷路。</span>
+        </div>
+        <div class="note">
+          <b>专注编辑</b>
+          <span>同时收起左右两侧，释放分镜、时间线、检查器的中间空间。</span>
+        </div>
+      </section>
+
+      <p class="archive">
+        留档文件：docs/mockups/2026-06-17-project-structure-upgrade-collapsible-c.html。
+      </p>
+    </main>
+
+    <script>
+      const shell = document.getElementById("shell");
+      const leftIcon = document.getElementById("left-icon");
+      const rightIcon = document.getElementById("right-icon");
+
+      function syncIcons() {
+        leftIcon.textContent = shell.classList.contains("left-collapsed") ? "›" : "‹";
+        rightIcon.textContent = shell.classList.contains("right-collapsed") ? "‹" : "›";
+      }
+
+      document.getElementById("toggle-left").addEventListener("click", () => {
+        shell.classList.toggle("left-collapsed");
+        syncIcons();
+      });
+
+      document.getElementById("toggle-right").addEventListener("click", () => {
+        shell.classList.toggle("right-collapsed");
+        syncIcons();
+      });
+
+      document.getElementById("toggle-focus").addEventListener("click", () => {
+        const focused =
+          shell.classList.contains("left-collapsed") &&
+          shell.classList.contains("right-collapsed");
+
+        shell.classList.toggle("left-collapsed", !focused);
+        shell.classList.toggle("right-collapsed", !focused);
+        syncIcons();
+      });
+
+      leftIcon.addEventListener("click", () => {
+        shell.classList.toggle("left-collapsed");
+        syncIcons();
+      });
+
+      rightIcon.addEventListener("click", () => {
+        shell.classList.toggle("right-collapsed");
+        syncIcons();
+      });
+
+      syncIcons();
+    </script>
+  </body>
+</html>

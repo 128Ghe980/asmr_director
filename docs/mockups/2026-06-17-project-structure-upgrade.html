@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>项目结构升级 Mock - 2026-06-17</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #121923;
+        --panel-2: #17202c;
+        --panel-3: #1d2936;
+        --line: #2b394a;
+        --line-soft: #202c3b;
+        --text: #edf3f8;
+        --muted: #95a5b8;
+        --soft: #c7d3df;
+        --accent: #66a9a6;
+        --accent-2: #f1c766;
+        --danger: #e98080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 16% 6%, rgba(102, 169, 166, 0.12), transparent 32rem),
+          linear-gradient(180deg, #0d1117 0%, #0b0f15 100%);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Microsoft YaHei", sans-serif;
+        line-height: 1.5;
+      }
+
+      .page {
+        width: min(1480px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 36px 0 56px;
+      }
+
+      .intro {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 24px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 28px;
+        letter-spacing: 0;
+      }
+
+      .intro p {
+        max-width: 920px;
+        color: var(--muted);
+      }
+
+      .requirements {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+
+      .tag {
+        border: 1px solid var(--line);
+        background: rgba(23, 32, 44, 0.8);
+        border-radius: 999px;
+        padding: 5px 10px;
+        color: var(--soft);
+        font-size: 12px;
+      }
+
+      .options {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 22px;
+      }
+
+      .option {
+        border: 1px solid var(--line);
+        background: rgba(18, 25, 35, 0.84);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 18px 55px rgba(0, 0, 0, 0.25);
+        cursor: pointer;
+      }
+
+      .option.selected {
+        border-color: rgba(102, 169, 166, 0.95);
+        box-shadow: 0 0 0 2px rgba(102, 169, 166, 0.24), 0 18px 55px rgba(0, 0, 0, 0.28);
+      }
+
+      .option-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 18px 14px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .option-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .letter {
+        width: 28px;
+        height: 28px;
+        display: inline-grid;
+        place-items: center;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #07100f;
+        font-weight: 800;
+      }
+
+      .recommend {
+        color: #0b1114;
+        background: var(--accent-2);
+        border-radius: 999px;
+        padding: 4px 9px;
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .option-desc {
+        color: var(--muted);
+        max-width: 740px;
+        font-size: 13px;
+      }
+
+      .mock {
+        padding: 18px;
+        background: #0b1017;
+      }
+
+      .shell {
+        border: 1px solid #314052;
+        background: #101721;
+        border-radius: 12px;
+        min-height: 420px;
+        overflow: hidden;
+      }
+
+      .layout-a {
+        display: grid;
+        grid-template-columns: 218px 1fr;
+      }
+
+      .project-rail {
+        border-right: 1px solid var(--line-soft);
+        background: #0d141d;
+        padding: 14px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+
+      .rail-title {
+        color: var(--soft);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .current-project {
+        border: 1px solid #385064;
+        background: #172432;
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .project-name {
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .project-meta-line {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 5px;
+      }
+
+      .rail-list {
+        display: grid;
+        gap: 7px;
+      }
+
+      .rail-item {
+        border: 1px solid #233244;
+        background: #121c28;
+        border-radius: 8px;
+        padding: 8px;
+        color: #aebdcd;
+        font-size: 12px;
+      }
+
+      .rail-item.ghost {
+        border-style: dashed;
+        color: #718296;
+      }
+
+      .main-area {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-width: 0;
+      }
+
+      .workspace-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: center;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line-soft);
+        background: #121b27;
+      }
+
+      .workspace-title {
+        display: grid;
+        gap: 4px;
+      }
+
+      .workspace-title strong {
+        font-size: 16px;
+      }
+
+      .workspace-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status-row,
+      .toolbar {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .badge {
+        border: 1px solid #365067;
+        background: #182636;
+        color: var(--soft);
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .badge.ok {
+        border-color: rgba(102, 169, 166, 0.7);
+        color: #9fd5d2;
+      }
+
+      .button {
+        border: 1px solid #40556b;
+        background: #233144;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .content-grid {
+        display: grid;
+        grid-template-columns: 1fr 1.22fr 0.86fr;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .panel {
+        border: 1px solid #273648;
+        background: #151f2b;
+        border-radius: 10px;
+        min-height: 280px;
+        padding: 10px;
+        display: grid;
+        align-content: start;
+        gap: 9px;
+      }
+
+      .panel h4 {
+        margin: 0;
+        color: var(--soft);
+        font-size: 12px;
+      }
+
+      .bar {
+        height: 10px;
+        border-radius: 999px;
+        background: #2b3b4e;
+      }
+
+      .bar.short {
+        width: 58%;
+      }
+
+      .bar.mid {
+        width: 76%;
+      }
+
+      .bar.accent {
+        background: #5b9c99;
+      }
+
+      .stacked {
+        min-height: 0;
+      }
+
+      .preview {
+        border-color: rgba(241, 199, 102, 0.45);
+        background: #1a2230;
+        min-height: 104px;
+      }
+
+      .preview-window {
+        height: 56px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #26384b, #182334);
+        border: 1px solid #3c5064;
+      }
+
+      .inspector {
+        min-height: 166px;
+      }
+
+      .layout-b .workspace-top {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .layout-b .content-grid {
+        grid-template-columns: 1fr 1.18fr 0.9fr;
+      }
+
+      .project-switcher {
+        border: 1px dashed #465a70;
+        border-radius: 10px;
+        margin: 12px;
+        padding: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .layout-c {
+        display: grid;
+        grid-template-columns: 188px 1fr 230px;
+      }
+
+      .right-meta {
+        border-left: 1px solid var(--line-soft);
+        background: #101721;
+        padding: 14px;
+        display: grid;
+        align-content: start;
+        gap: 10px;
+      }
+
+      .tradeoffs {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        padding: 14px 18px 18px;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .tradeoff {
+        border: 1px solid var(--line-soft);
+        background: rgba(23, 32, 44, 0.66);
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .tradeoff b {
+        display: block;
+        color: var(--soft);
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+
+      .tradeoff span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .archive-note {
+        margin-top: 22px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 1100px) {
+        .layout-a,
+        .layout-c {
+          grid-template-columns: 1fr;
+        }
+
+        .project-rail,
+        .right-meta {
+          border-right: 0;
+          border-left: 0;
+          border-bottom: 1px solid var(--line-soft);
+        }
+
+        .content-grid,
+        .layout-b .content-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .tradeoffs {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="intro">
+        <div class="eyebrow">ASMR Director / Project Structure Mock</div>
+        <h1>项目结构升级：按原计划重新设计</h1>
+        <p>
+          这版 mock 覆盖原计划里的结构要求：明确“当前项目、项目状态、本地保存状态”，整理项目级操作，
+          并给未来项目列表、项目元数据、预览层留出位置。这里是结构选择，不是最终视觉稿。
+        </p>
+        <div class="requirements">
+          <span class="tag">当前项目</span>
+          <span class="tag">项目状态</span>
+          <span class="tag">本地保存状态</span>
+          <span class="tag">项目级操作</span>
+          <span class="tag">未来项目列表</span>
+          <span class="tag">项目元数据</span>
+          <span class="tag">预览层</span>
+        </div>
+      </section>
+
+      <section class="options">
+        <article class="option selected" data-choice="a">
+          <div class="option-head">
+            <div>
+              <div class="option-title">
+                <span class="letter">A</span>
+                <h2>左侧项目轨 + 顶部状态壳 + 右侧预览/检查器栈</h2>
+                <span class="recommend">推荐底盘</span>
+              </div>
+              <p class="option-desc">
+                左侧明确留给未来项目列表；顶部承载当前项目、校验、本地保存和项目操作；右侧把预览层放在检查器上方。
+                它完整回应原计划，同时不会把现有三栏编辑流推倒重做。
+              </p>
+            </div>
+          </div>
+          <div class="mock">
+            <div class="shell layout-a">
+              <aside class="project-rail">
+                <div class="rail-title">项目</div>
+                <div class="current-project">
+                  <div class="project-name">雨夜理发店</div>
+                  <div class="project-meta-line">当前项目 · 本地草稿</div>
+                </div>
+                <div class="rail-list">
+                  <div class="rail-item">最近项目</div>
+                  <div class="rail-item ghost">未来：项目列表</div>
+                  <div class="rail-item ghost">未来：新建/复制</div>
+                </div>
+              </aside>
+              <section class="main-area">
+                <div class="workspace-top">
+                  <div class="workspace-title">
+                    <strong>雨夜理发店</strong>
+                    <span>3:00 · 中文 · 项目 ID: demo-rain-barber · v0.3</span>
+                    <div class="status-row">
+                      <span class="badge">已编辑</span>
+                      <span class="badge ok">校验通过</span>
+                      <span class="badge">本地已保存</span>
+                    </div>
+                  </div>
+                  <div class="toolbar">
+                    <span class="button">导出</span>
+                    <span class="button">载入</span>
+                    <span class="button">重置</span>
+                  </div>
+                </div>
+                <div class="content-grid">
+                  <div class="panel">
+                    <h4>分镜</h4>
+                    <div class="bar accent"></div>
+                    <div class="bar"></div>
+                    <div class="bar short"></div>
+                    <div class="bar mid"></div>
+                  </div>
+                  <div class="panel">
+                    <h4>时间线 / 情绪 / 校验</h4>
+                    <div class="bar"></div>
+                    <div class="bar accent mid"></div>
+                    <div class="bar"></div>
+                    <div class="bar short"></div>
+                  </div>
+                  <div class="panel stacked">
+                    <div class="panel preview">
+                      <h4>预览层占位</h4>
+                      <div class="preview-window"></div>
+                    </div>
+                    <div class="panel inspector">
+                      <h4>检查器</h4>
+                      <div class="bar"></div>
+                      <div class="bar short"></div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div class="tradeoffs">
+            <div class="tradeoff"><b>优点</b><span>最完整覆盖项目列表、状态、元数据和预览层。</span></div>
+            <div class="tradeoff"><b>代价</b><span>比纯顶部栏稍重，移动端需要折叠项目轨。</span></div>
+            <div class="tradeoff"><b>适合现在吗</b><span>适合。项目轨和预览都可以先是轻占位。</span></div>
+          </div>
+        </article>
+
+        <article class="option" data-choice="b">
+          <div class="option-head">
+            <div>
+              <div class="option-title">
+                <span class="letter">B</span>
+                <h2>顶部项目壳 + 项目切换下拉 + 右侧预览栈</h2>
+              </div>
+              <p class="option-desc">
+                所有项目结构集中在顶部，未来项目列表通过下拉或弹层出现。页面更轻，但“项目列表”不是第一眼可见。
+              </p>
+            </div>
+          </div>
+          <div class="mock">
+            <div class="shell layout-b">
+              <div class="workspace-top">
+                <div class="workspace-title">
+                  <strong>当前项目：雨夜理发店</strong>
+                  <span>本地草稿 · 3:00 · 中文 · 校验通过 · 已保存</span>
+                </div>
+                <div class="toolbar">
+                  <span class="button">项目</span>
+                  <span class="button">导出</span>
+                  <span class="button">载入</span>
+                  <span class="button">重置</span>
+                </div>
+              </div>
+              <div class="project-switcher">项目切换下拉占位：未来展示最近项目、新建、复制、归档。</div>
+              <div class="content-grid">
+                <div class="panel"><h4>分镜</h4><div class="bar accent"></div><div class="bar"></div></div>
+                <div class="panel"><h4>时间线 / 情绪 / 校验</h4><div class="bar"></div><div class="bar accent mid"></div></div>
+                <div class="panel stacked">
+                  <div class="panel preview"><h4>预览层占位</h4><div class="preview-window"></div></div>
+                  <div class="panel inspector"><h4>检查器</h4><div class="bar"></div><div class="bar short"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="tradeoffs">
+            <div class="tradeoff"><b>优点</b><span>主工作区宽，第一版实现最轻。</span></div>
+            <div class="tradeoff"><b>代价</b><span>未来项目列表不够明确，容易继续像单项目工具。</span></div>
+            <div class="tradeoff"><b>适合现在吗</b><span>适合保守迭代，但不完全回应原计划。</span></div>
+          </div>
+        </article>
+
+        <article class="option" data-choice="c">
+          <div class="option-head">
+            <div>
+              <div class="option-title">
+                <span class="letter">C</span>
+                <h2>项目轨 + 主工作台 + 独立元数据栏</h2>
+              </div>
+              <p class="option-desc">
+                把项目元数据和预览层做成独立右栏，项目结构最强。但现在会挤压时间线和检查器，整体更像复杂生产系统。
+              </p>
+            </div>
+          </div>
+          <div class="mock">
+            <div class="shell layout-c">
+              <aside class="project-rail">
+                <div class="rail-title">项目</div>
+                <div class="current-project">
+                  <div class="project-name">雨夜理发店</div>
+                  <div class="project-meta-line">当前项目 · 本地草稿</div>
+                </div>
+                <div class="rail-item ghost">未来项目列表</div>
+              </aside>
+              <section class="main-area">
+                <div class="workspace-top">
+                  <div class="workspace-title">
+                    <strong>Studio Console</strong>
+                    <span>分镜、时间线和检查器集中编辑</span>
+                  </div>
+                  <div class="toolbar"><span class="button">导出</span><span class="button">载入</span></div>
+                </div>
+                <div class="content-grid">
+                  <div class="panel"><h4>分镜</h4><div class="bar accent"></div><div class="bar"></div></div>
+                  <div class="panel"><h4>时间线</h4><div class="bar"></div><div class="bar accent"></div></div>
+                  <div class="panel"><h4>检查器</h4><div class="bar short"></div><div class="bar"></div></div>
+                </div>
+              </section>
+              <aside class="right-meta">
+                <div class="panel preview">
+                  <h4>预览层</h4>
+                  <div class="preview-window"></div>
+                </div>
+                <div class="panel">
+                  <h4>项目元数据</h4>
+                  <div class="bar"></div>
+                  <div class="bar mid"></div>
+                  <div class="bar short"></div>
+                </div>
+                <div class="panel">
+                  <h4>保存 / 校验</h4>
+                  <div class="bar accent"></div>
+                  <div class="bar short"></div>
+                </div>
+              </aside>
+            </div>
+          </div>
+          <div class="tradeoffs">
+            <div class="tradeoff"><b>优点</b><span>项目层、元数据层、预览层最清楚。</span></div>
+            <div class="tradeoff"><b>代价</b><span>过早变成四区复杂工具，当前编辑空间被压缩。</span></div>
+            <div class="tradeoff"><b>适合现在吗</b><span>偏重。更适合作为后续版本方向。</span></div>
+          </div>
+        </article>
+      </section>
+
+      <p class="archive-note">
+        留档文件：docs/mockups/2026-06-17-project-structure-upgrade.html。以后上下文压缩或其他 AI 接手时，可以直接打开这个文件理解结构选择。
+      </p>
+    </main>
+
+    <script>
+      const options = document.querySelectorAll(".option");
+      options.forEach((option) => {
+        option.addEventListener("click", () => {
+          options.forEach((item) => item.classList.remove("selected"));
+          option.classList.add("selected");
+        });
+      });
+    </script>
+  </body>
+</html>
