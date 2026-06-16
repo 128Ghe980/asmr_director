@@ -25,12 +25,15 @@ The app is a Next.js frontend prototype at `apps/web`.
 Current user-facing capabilities:
 
 - Renders the "雨夜睡前陪伴" demo project from a validated ASMR Project JSON / Timeline DSL.
-- Shows Studio Console UI: Project Header, Storyboard, Timeline, Emotion Curve, Clip Inspector, Validation Panel, Project Controls.
+- Shows the C+ Project Shell: collapsible left project rail, top workspace status/action bar, center editor, and right project details dock.
+- Lets the left project rail and right project details dock collapse independently.
+- `专注编辑` collapses both side regions together; clicking it again restores the prior workspace shape.
+- Keeps project-level operations `导出`, `载入`, and `重置` in the workspace header.
 - Allows selecting clips from Storyboard or Timeline.
 - Allows editing selected clip fields in Inspector.
-- Syncs edits across Storyboard, Timeline, Inspector, Validation Panel, and Export JSON.
+- Syncs edits across Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, workspace summaries, and Export JSON.
 - Validates current project live via Zod schema.
-- Exports current project JSON.
+- Exports current project JSON from the workspace header.
 - Autosaves current project to browser `localStorage`.
 - Restores saved project on reload.
 - Imports pasted JSON if schema-valid.
@@ -52,12 +55,16 @@ Core app:
 
 - `apps/web/src/app/page.tsx` renders the studio with `demoProject`.
 - `apps/web/src/components/studio/studio-app.tsx` owns local editable project state and wires export, import, autosave, reset, validation, selected clip state, and director preset application.
-- `apps/web/src/components/studio/project-header.tsx` shows project context and Export JSON.
+- `apps/web/src/components/studio/project-workspace.tsx` composes the C+ workspace shell around the editor panels.
+- `apps/web/src/components/studio/project-workspace-header.tsx` shows workspace status, project summary, focus controls, and project-level `导出` / `载入` / `重置` actions.
+- `apps/web/src/components/studio/project-rail.tsx` renders the collapsible left project rail.
+- `apps/web/src/components/studio/project-details-dock.tsx` renders the collapsible right project details dock.
+- `apps/web/src/components/studio/project-workspace-badge.tsx` provides compact workspace badge display helpers.
 - `apps/web/src/components/studio/storyboard-panel.tsx` renders chronological clip cards.
 - `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks.
 - `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields, displays field-level validation state, and exposes compact timing actions.
 - `apps/web/src/components/studio/validation-panel.tsx` shows live schema issues.
-- `apps/web/src/components/studio/project-controls.tsx` handles paste-import, reset, and Demo/Edited/Restored state.
+- The former `project-header.tsx` and `project-controls.tsx` have been deleted; do not reintroduce project-level actions there.
 
 Domain/data:
 
@@ -69,6 +76,7 @@ Domain/data:
 - `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers, selected-clip timing nudges, validation issue formatting, and selected-clip field issue mapping.
 - `apps/web/src/lib/asmr/project-persistence.ts` contains import parsing, JSON serialization, and localStorage helpers.
 - `apps/web/src/lib/asmr/director-presets.ts` contains deterministic Director Action preset behavior for voice clips.
+- `apps/web/src/lib/asmr/project-summary.ts` derives project-level summary metrics for the workspace shell.
 
 Tests:
 
@@ -78,6 +86,7 @@ Tests:
 - `apps/web/src/lib/asmr/project-persistence.test.ts`
 - `apps/web/src/lib/asmr/director-presets.test.ts`
 - `apps/web/src/lib/asmr/ui-copy.test.ts`
+- `apps/web/src/lib/asmr/project-summary.test.ts`
 
 Docs:
 
@@ -122,12 +131,13 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 Latest verified state before this handoff:
 
-- 6 test files passed.
-- 51 tests passed.
+- 7 test files passed.
+- 55 tests passed.
 - lint passed.
 - build passed.
 - Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
-- Browser verification passed via local Chrome CDP fallback. Verified: core visible UI copy and button labels are Chinese, old English control labels are absent, schema errors render in Chinese, and desktop 1440px plus mobile 390px viewports have no document-level horizontal overflow.
+- Browser verification passed for the C+ Project Shell: default desktop around 1259px, `专注编辑`, independent left/right collapse, invalid import plus reset, 1024px, and 390px mobile all had no document-level horizontal overflow.
+- Export button click was verified with no console error. Codex in-app browser does not support the download event, so download-to-disk could not be confirmed via that event.
 
 Run locally:
 
@@ -145,6 +155,16 @@ http://localhost:3000/
 
 Most recent feature commits:
 
+- `baf2f30 fix: avoid nested workspace columns at lg`
+- `1894673 feat: wire studio into project workspace`
+- `6a06d17 fix: stabilize workspace aria controls`
+- `c49a733 fix: expose workspace control states`
+- `b29129f feat: add collapsible project workspace shell`
+- `42232a1 feat: add project workspace side panels`
+- `9411f29 fix: mark edited projects as locally saved`
+- `f124766 feat: add project workspace summary`
+- `c0e9860 docs: plan project structure upgrade`
+- `f2cd8f8 docs: design project structure upgrade`
 - `154f973 feat: localize studio ui copy`
 - `6dbee1a feat: add inspector timing actions`
 - `26ec01d feat: add clip timing nudges`
@@ -183,20 +203,18 @@ Earlier V0.1 foundation:
 
 ## Recommended Next Work
 
-Recommended next step: **implement the C+ project structure upgrade**.
+Recommended next step: **preview layer before real audio**.
 
-Why this next: the app can now edit raw fields, apply director intent presets, persist/import projects, show field-level validation feedback, and perform small timing operations without raw number entry. The project structure upgrade has an approved C+ design and archived mockups, so the next layer should implement the durable project workspace shell rather than keep iterating on ad hoc header/control placement.
+Why this next: the C+ Project Shell is now in place and has reserved product space for a preview layer, but the preview experience is still placeholder-only. Before connecting real TTS/SFX/audio generation, the app should make playback state, waveform/status surfaces, and generation slots feel coherent inside the local-first director workflow.
 
 Approved scope:
 
-- Implement the C+ collapsible workspace from `docs/superpowers/specs/2026-06-17-project-structure-upgrade-design.md` and `docs/superpowers/specs/2026-06-17-project-structure-upgrade-design.zh.md`.
-- Use `docs/mockups/2026-06-17-project-structure-upgrade-collapsible-c.html` as the visual reference.
-- Add a left project rail, top workspace header, center editor, and right project details dock.
-- Let the left project rail and right project details dock collapse independently.
-- Add a focused editing action that collapses both side regions.
+- Add explicit placeholder playback states without pretending real audio exists.
+- Add waveform/status UI surfaces that can later bind to generated audio metadata.
+- Add generation slots for clips/tracks so users can see what is pending, ready, failed, or queued.
 - Keep state local-first and continue using the single `AsmrProject` source of truth.
-- Preserve editing, validation, persistence, import, export, reset, and concise Chinese UI copy.
-- Avoid adding backend persistence, auth, collaboration, real generation, or full multi-project management yet.
+- Preserve editing, validation, persistence, import, export, reset, C+ workspace layout, and concise Chinese UI copy.
+- Avoid adding backend persistence, auth, collaboration, real generation, or full audio export yet.
 
 Do not jump to real TTS/audio generation yet.
 
@@ -206,8 +224,8 @@ This is the current early roadmap. Treat it as directional, not a rigid release 
 
 1. Field-level validation highlighting: completed for selected Clip Inspector fields while keeping the global Validation Panel.
 2. Light timeline editing: completed for selected clip start/duration nudges without building a full DAW.
-3. Project structure upgrade: design approved; implement the C+ collapsible project workspace with left project rail, top status header, center editor, and right project details dock.
-4. Preview layer before real audio: add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.
+3. Project structure upgrade: completed as the C+ collapsible project workspace with left project rail, top status header, center editor, right project details dock, and focused editing mode.
+4. Preview layer before real audio: next; add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.
 5. Real generation chain: only after the director workflow feels stable, introduce real TTS/SFX generation, listening, regeneration, and export.
 
 The key sequencing rule: keep strengthening the editable Timeline DSL and director workflow before connecting expensive or brittle audio generation.
@@ -239,7 +257,7 @@ Do not jump straight into:
 - Real TTS.
 - Real SFX generation.
 - Backend job queues.
-- Waveform rendering.
+- Real waveform rendering from generated audio.
 - Full DAW drag/drop timeline.
 - User accounts or cloud sync.
 - Payment or publishing flows.
@@ -249,7 +267,7 @@ Those are later versions. The near-term path should keep proving the editable Ti
 ## Working Rules For Future Agents
 
 - Prefer existing schema and helpers over ad hoc object manipulation.
-- Keep Storyboard, Timeline, Inspector, Validation Panel, Project Controls, and Export JSON driven by the same `AsmrProject` state.
+- Keep Project Workspace, Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, and Export JSON driven by the same `AsmrProject` state.
 - Use TDD for behavior changes in `apps/web/src/lib/asmr/`.
 - After meaningful UI changes, run browser verification at desktop and mobile widths.
 - Preserve the Studio Console visual direction: professional tool first, restrained ASMR atmosphere second.

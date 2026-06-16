@@ -380,3 +380,41 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 - 这不是替换“项目结构升级”的路线项，只是进入下一步前的体验修正。
 - 下一步仍然回到 `docs/AI_HANDOFF.md` 记录的 `project structure upgrade`。
+
+## 2026-06-17 - C+ 项目工作区实现
+
+这一轮完成了用户批准的 C+ 项目工作区结构，把原先偏单页编辑器的 Studio Console 推进成更清晰的本地优先项目工作区。实现对应了中英规格与 mock 的方向：左侧项目栏、顶部工作区状态/操作栏、中间编辑器、右侧项目详情栏，并保留中文为主、必要英文技术名词保留的界面口径。
+
+已实现内容：
+
+- 新增 `apps/web/src/lib/asmr/project-summary.ts` 与 `apps/web/src/lib/asmr/project-summary.test.ts`，用于从当前 `AsmrProject` 派生项目级摘要和工作区指标。
+- 新增工作区组件：`project-workspace.tsx`、`project-workspace-header.tsx`、`project-rail.tsx`、`project-details-dock.tsx`、`project-workspace-badge.tsx`。
+- 左侧项目栏和右侧项目详情栏可独立折叠；`专注编辑` 会同时折叠两侧，再次点击可恢复。
+- 项目级操作已集中到 `ProjectWorkspaceHeader`：`导出`、`载入`、`重置`。
+- 旧的 `project-header.tsx` 和 `project-controls.tsx` 已删除，避免继续维护两套项目级入口。
+- `StudioApp` 仍然拥有单一 `AsmrProject` 状态，继续负责选择、验证、导入、导出、重置、本地保存和把编辑结果同步到各个视图。
+- 本轮没有加入后端、真实音频生成、云端项目、多项目管理或真实播放能力。
+
+浏览器验证覆盖：
+
+- 默认桌面宽度约 1259px。
+- `专注编辑`。
+- 左右侧栏独立折叠。
+- 无效导入与重置。
+- 1024px 视口。
+- 390px 移动端。
+- 上述场景均未发现文档级水平溢出。
+- `导出` 按钮已点击验证，页面无 console error；但 Codex in-app browser 不支持 download event，因此无法用下载事件确认文件落盘。
+
+实现过程中验证通过：
+
+- `npm.cmd run test --prefix apps/web`：7 个 test files / 55 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过；build 可能出现已知 SWC Win32 optional warning，但 webpack/WASM 构建完成。
+
+路线更新：
+
+- 当前初步路径第 3 项“项目结构升级”已完成。
+- 下一步推荐改为 **preview layer before real audio**。
+- 原因是 C+ shell 已经给预览层留出结构位置，但仍是占位；下一轮应先做播放状态、波形/状态界面和 generation slots，让流程像音频产品，但不假装已有真实音频。
+- 真实 TTS/SFX、真实音频播放、真实 waveform 和导出仍应等导演工作流与 Timeline DSL 更稳定后再接入。
