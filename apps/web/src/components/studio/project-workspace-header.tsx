@@ -174,42 +174,41 @@ export function ProjectWorkspaceHeader({
         </div>
       </div>
 
-      {isImportOpen ? (
-        <div
-          id={importPanelId}
-          className="mt-4 rounded-lg border border-studio-line bg-black/16 p-3"
-        >
-          <label className="block">
-            <span className="mb-2 flex items-center gap-2 text-xs font-semibold text-studio-muted">
-              <FileJson className="h-4 w-4" aria-hidden="true" />
-              导入 JSON
-            </span>
-            <textarea
-              value={importText}
-              onChange={(event) => setImportText(event.target.value)}
-              placeholder="粘贴 ASMR Project JSON"
-              className="min-h-28 w-full resize-y rounded-md border border-white/[0.08] bg-black/20 px-3 py-2 text-sm leading-6 text-studio-text outline-none transition-colors placeholder:text-studio-muted/60 focus:border-sky-300/45 focus:ring-2 focus:ring-sky-300/20"
-            />
-          </label>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => onImportJson(importText)}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-sky-300/25 bg-sky-300/12 px-4 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
-            >
-              确认载入
-            </button>
-          </div>
-          {importError ? (
-            <div
-              role="alert"
-              className="mt-3 whitespace-pre-wrap rounded-md border border-amber-300/16 bg-amber-300/[0.055] px-3 py-2 text-sm leading-6 text-amber-100"
-            >
-              {importError}
-            </div>
-          ) : null}
+      <div
+        id={importPanelId}
+        hidden={!isImportOpen}
+        className="mt-4 rounded-lg border border-studio-line bg-black/16 p-3"
+      >
+        <label className="block">
+          <span className="mb-2 flex items-center gap-2 text-xs font-semibold text-studio-muted">
+            <FileJson className="h-4 w-4" aria-hidden="true" />
+            导入 JSON
+          </span>
+          <textarea
+            value={importText}
+            onChange={(event) => setImportText(event.target.value)}
+            placeholder="粘贴 ASMR Project JSON"
+            className="min-h-28 w-full resize-y rounded-md border border-white/[0.08] bg-black/20 px-3 py-2 text-sm leading-6 text-studio-text outline-none transition-colors placeholder:text-studio-muted/60 focus:border-sky-300/45 focus:ring-2 focus:ring-sky-300/20"
+          />
+        </label>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onImportJson(importText)}
+            className="inline-flex h-10 items-center justify-center rounded-lg border border-sky-300/25 bg-sky-300/12 px-4 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+          >
+            确认载入
+          </button>
         </div>
-      ) : null}
+        {isImportOpen && importError ? (
+          <div
+            role="alert"
+            className="mt-3 whitespace-pre-wrap rounded-md border border-amber-300/16 bg-amber-300/[0.055] px-3 py-2 text-sm leading-6 text-amber-100"
+          >
+            {importError}
+          </div>
+        ) : null}
+      </div>
     </header>
   );
 }

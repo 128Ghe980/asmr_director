@@ -77,7 +77,7 @@ export function ProjectRail({
               >
                 {summary.localState.label}
               </span>
-              <span className="inline-flex h-6 items-center rounded-full border border-white/[0.1] bg-white/[0.035] px-2 text-[11px] font-semibold leading-none text-studio-muted">
+              <span className={getProjectWorkspaceBadgeClassName("neutral")}>
                 {summary.identity.status}
               </span>
             </div>
