@@ -27,7 +27,7 @@ Current user-facing capabilities:
 - Renders the "雨夜睡前陪伴" demo project from a validated ASMR Project JSON / Timeline DSL.
 - Shows the C+ Project Shell: collapsible left project rail, top workspace status/action bar, center editor, and right project details dock.
 - Lets the left project rail and right project details dock collapse independently.
-- `专注编辑` collapses both side regions together; clicking it again restores the prior workspace shape.
+- `专注编辑` collapses both side regions together; when both sides are collapsed, clicking it again expands both sides.
 - Keeps project-level operations `导出`, `载入`, and `重置` in the workspace header.
 - Allows selecting clips from Storyboard or Timeline.
 - Allows editing selected clip fields in Inspector.

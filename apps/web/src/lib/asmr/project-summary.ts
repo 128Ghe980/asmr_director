@@ -149,7 +149,7 @@ export function getProjectWorkspaceSummary({
     validation: getValidationBadge(validationIssueCount),
     preview: {
       label: "预览未生成",
-      tone: "warn",
+      tone: "neutral",
     },
     metadataRows: [
       { label: "场景", value: project.scene.name },

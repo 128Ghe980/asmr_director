@@ -57,6 +57,10 @@ export function ProjectWorkspaceHeader({
   const importToggleLabel = isImportOpen ? "收起导入 JSON" : "展开导入 JSON";
   const leftToggleLabel = leftCollapsed ? "展开项目栏" : "收起项目栏";
   const rightToggleLabel = rightCollapsed ? "展开项目详情" : "收起项目详情";
+  const statusBadge = {
+    label: `状态 ${summary.identity.status}`,
+    tone: "neutral" as const,
+  };
 
   return (
     <header className="min-w-0 border-b border-studio-line bg-studio-panel/92 px-4 py-4 md:px-5">
@@ -67,6 +71,7 @@ export function ProjectWorkspaceHeader({
             <WorkspaceBadge badge={summary.localState} />
             <WorkspaceBadge badge={summary.validation} />
             <WorkspaceBadge badge={summary.saveState} />
+            <WorkspaceBadge badge={statusBadge} />
           </div>
 
           <h1 className="mt-2 truncate text-2xl font-semibold tracking-normal text-studio-text">

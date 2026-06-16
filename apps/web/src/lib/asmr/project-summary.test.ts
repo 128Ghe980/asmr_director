@@ -46,7 +46,7 @@ describe("project workspace summary", () => {
     });
     expect(summary.preview).toEqual({
       label: "预览未生成",
-      tone: "warn",
+      tone: "neutral",
     });
     expect(summary.metadataRows).toEqual([
       { label: "场景", value: demoProject.scene.name },
