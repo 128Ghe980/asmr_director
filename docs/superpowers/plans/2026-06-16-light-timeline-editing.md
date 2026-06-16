@@ -31,7 +31,7 @@
 - Modify: `apps/web/src/lib/asmr/edit-project.test.ts`
 - Modify: `apps/web/src/lib/asmr/edit-project.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add these imports in `apps/web/src/lib/asmr/edit-project.test.ts`:
 
@@ -133,7 +133,7 @@ it("returns the same project when nudging a missing clip", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -143,7 +143,7 @@ npm.cmd run test --prefix apps/web -- src/lib/asmr/edit-project.test.ts
 
 Expected: fail because `nudgeClipTiming` is not exported.
 
-- [ ] **Step 3: Implement timing nudge helper**
+- [x] **Step 3: Implement timing nudge helper**
 
 Add to `apps/web/src/lib/asmr/edit-project.ts`:
 
@@ -198,7 +198,7 @@ export function nudgeClipTiming(
 }
 ```
 
-- [ ] **Step 4: Run tests to verify GREEN**
+- [x] **Step 4: Run tests to verify GREEN**
 
 Run:
 
@@ -208,7 +208,7 @@ npm.cmd run test --prefix apps/web -- src/lib/asmr/edit-project.test.ts
 
 Expected: all `edit-project.test.ts` tests pass.
 
-- [ ] **Step 5: Commit helper**
+- [x] **Step 5: Commit helper**
 
 Run:
 

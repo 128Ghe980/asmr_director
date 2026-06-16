@@ -46,6 +46,8 @@ export type ClipFieldValidationIssues = Partial<
   Record<ClipFieldValidationKey, ProjectValidationIssue[]>
 >;
 
+const TIMING_STEP_SECONDS = 0.1;
+
 const clipFieldValidationKeys = new Set<ClipFieldValidationKey>([
   "text",
   "emotion",
@@ -62,6 +64,10 @@ const clipFieldValidationKeys = new Set<ClipFieldValidationKey>([
   "position.distance",
   "position.movement",
 ]);
+
+export type ClipTimingNudge =
+  | { field: "start"; delta: number }
+  | { field: "duration"; delta: number };
 
 function applyClipPatch<TClip extends TimelineClip>(
   clip: TClip,
@@ -81,6 +87,27 @@ function applyClipPatch<TClip extends TimelineClip>(
   }
 
   return nextClip as TClip;
+}
+
+function roundToTimingStep(value: number): number {
+  return Number(
+    (Math.round(value / TIMING_STEP_SECONDS) * TIMING_STEP_SECONDS).toFixed(1),
+  );
+}
+
+function findClip(
+  project: AsmrProject,
+  clipId: string,
+): TimelineClip | undefined {
+  for (const track of project.timeline.tracks) {
+    const clip = track.clips.find((candidate) => candidate.id === clipId);
+
+    if (clip) {
+      return clip;
+    }
+  }
+
+  return undefined;
 }
 
 export function updateClipInProject(
@@ -119,6 +146,31 @@ export function updateClipInProject(
       tracks,
     },
   };
+}
+
+export function nudgeClipTiming(
+  project: AsmrProject,
+  clipId: string,
+  nudge: ClipTimingNudge,
+): AsmrProject {
+  const clip = findClip(project, clipId);
+
+  if (!clip) {
+    return project;
+  }
+
+  if (nudge.field === "start") {
+    return updateClipInProject(project, clipId, {
+      start: Math.max(0, roundToTimingStep(clip.start + nudge.delta)),
+    });
+  }
+
+  return updateClipInProject(project, clipId, {
+    duration: Math.max(
+      TIMING_STEP_SECONDS,
+      roundToTimingStep(clip.duration + nudge.delta),
+    ),
+  });
 }
 
 export function getProjectValidationIssues(
