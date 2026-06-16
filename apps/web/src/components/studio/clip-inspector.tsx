@@ -1,11 +1,14 @@
 "use client";
 
 import {
+  Clock3,
   Ear,
   Heart,
+  Minus,
   MoveLeft,
   MoveRight,
   Pause,
+  Plus,
   Volume1,
   type LucideIcon,
 } from "lucide-react";
@@ -15,6 +18,7 @@ import type {
   ClipFieldValidationIssues,
   ClipFieldValidationKey,
   ClipPatch,
+  ClipTimingNudge,
   ProjectValidationIssue,
 } from "@/lib/asmr/edit-project";
 import type { TimelineClip } from "@/lib/asmr/schema";
@@ -26,6 +30,7 @@ type ClipInspectorProps = {
   fieldValidationIssues: ClipFieldValidationIssues;
   selectedClip: TimelineClip | undefined;
   onApplyDirectorPreset: (clipId: string, preset: DirectorPreset) => void;
+  onNudgeClipTiming: (clipId: string, nudge: ClipTimingNudge) => void;
   onUpdateClip: (clipId: string, patch: ClipPatch) => void;
 };
 
@@ -167,6 +172,77 @@ function DirectorActionStrip({
   );
 }
 
+function TimingActionStrip({
+  onNudge,
+}: {
+  onNudge: (nudge: ClipTimingNudge) => void;
+}) {
+  const timingActions = [
+    {
+      icon: Minus,
+      label: "Start -0.5s",
+      title: "Move selected clip earlier by 0.5 seconds",
+      nudge: { field: "start", delta: -0.5 },
+    },
+    {
+      icon: Plus,
+      label: "Start +0.5s",
+      title: "Move selected clip later by 0.5 seconds",
+      nudge: { field: "start", delta: 0.5 },
+    },
+    {
+      icon: Minus,
+      label: "Duration -0.5s",
+      title: "Shorten selected clip by 0.5 seconds",
+      nudge: { field: "duration", delta: -0.5 },
+    },
+    {
+      icon: Plus,
+      label: "Duration +0.5s",
+      title: "Lengthen selected clip by 0.5 seconds",
+      nudge: { field: "duration", delta: 0.5 },
+    },
+  ] satisfies Array<{
+    icon: LucideIcon;
+    label: string;
+    title: string;
+    nudge: ClipTimingNudge;
+  }>;
+
+  return (
+    <div className="border-b border-white/[0.06] py-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Clock3 className="h-3.5 w-3.5 text-studio-gold" aria-hidden="true" />
+        <p className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
+          Timing Actions
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {timingActions.map((action) => {
+          const Icon = action.icon;
+
+          return (
+            <button
+              key={action.label}
+              type="button"
+              onClick={() => onNudge(action.nudge)}
+              title={action.title}
+              aria-label={`${action.label}: ${action.title}`}
+              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 text-xs font-semibold text-studio-text transition-colors hover:border-sky-300/30 hover:bg-sky-300/12 focus:outline-none focus:ring-2 focus:ring-sky-300/35"
+            >
+              <Icon
+                className="h-3.5 w-3.5 shrink-0 text-studio-gold"
+                aria-hidden="true"
+              />
+              <span className="truncate">{action.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FieldError({
   id,
   issues,
@@ -205,6 +281,7 @@ export function ClipInspector({
   fieldValidationIssues,
   selectedClip,
   onApplyDirectorPreset,
+  onNudgeClipTiming,
   onUpdateClip,
 }: ClipInspectorProps) {
   if (!selectedClip) {
@@ -232,6 +309,10 @@ export function ClipInspector({
     }
 
     onApplyDirectorPreset(selectedClip.id, preset);
+  }
+
+  function nudgeTiming(nudge: ClipTimingNudge) {
+    onNudgeClipTiming(selectedClipId, nudge);
   }
 
   function getFieldIssues(
@@ -271,6 +352,8 @@ export function ClipInspector({
         {selectedClip.type === "voice" ? (
           <DirectorActionStrip onApplyPreset={applyPreset} />
         ) : null}
+
+        <TimingActionStrip onNudge={nudgeTiming} />
 
         {selectedClip.type === "voice" ? (
           <>

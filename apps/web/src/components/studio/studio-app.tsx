@@ -9,8 +9,10 @@ import {
 import {
   getClipFieldValidationIssues,
   getProjectValidationIssues,
+  nudgeClipTiming,
   updateClipInProject,
   type ClipPatch,
+  type ClipTimingNudge,
 } from "@/lib/asmr/edit-project";
 import {
   clearSavedProject,
@@ -181,6 +183,13 @@ export function StudioApp({ project }: StudioAppProps) {
     setImportError(undefined);
   }
 
+  function handleNudgeClipTiming(clipId: string, nudge: ClipTimingNudge) {
+    setEditableProject((currentProject) =>
+      nudgeClipTiming(currentProject, clipId, nudge),
+    );
+    setImportError(undefined);
+  }
+
   function handleImportJson(text: string) {
     const importedProject = parseImportedProject(text);
 
@@ -251,6 +260,7 @@ export function StudioApp({ project }: StudioAppProps) {
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={selectedClip}
             onApplyDirectorPreset={handleApplyDirectorPreset}
+            onNudgeClipTiming={handleNudgeClipTiming}
             onUpdateClip={handleUpdateClip}
           />
         </div>

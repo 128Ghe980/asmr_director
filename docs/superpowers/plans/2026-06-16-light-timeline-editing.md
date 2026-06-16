@@ -223,7 +223,7 @@ git commit -m "feat: add clip timing nudges"
 - Modify: `apps/web/src/components/studio/studio-app.tsx`
 - Modify: `apps/web/src/components/studio/clip-inspector.tsx`
 
-- [ ] **Step 1: Wire timing nudge handler**
+- [x] **Step 1: Wire timing nudge handler**
 
 In `apps/web/src/components/studio/studio-app.tsx`, import `ClipTimingNudge` and `nudgeClipTiming`:
 
@@ -261,7 +261,7 @@ Pass to `ClipInspector`:
 />
 ```
 
-- [ ] **Step 2: Add Timing Actions controls**
+- [x] **Step 2: Add Timing Actions controls**
 
 In `apps/web/src/components/studio/clip-inspector.tsx`, import `Clock3`, `Minus`, and `Plus` from `lucide-react`, and import `ClipTimingNudge`.
 
@@ -366,7 +366,7 @@ Render `TimingActionStrip` after optional `DirectorActionStrip` and before edita
 <TimingActionStrip onNudge={nudgeTiming} />
 ```
 
-- [ ] **Step 3: Run focused verification**
+- [x] **Step 3: Run focused verification**
 
 Run:
 
@@ -377,7 +377,7 @@ npm.cmd run lint --prefix apps/web
 
 Expected: both commands pass.
 
-- [ ] **Step 4: Commit UI**
+- [x] **Step 4: Commit UI**
 
 Run:
 
