@@ -17,6 +17,7 @@ import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
 
 type ProjectDetailsDockProps = {
   collapsed: boolean;
+  panelId: string;
   summary: ProjectWorkspaceSummary;
   onToggle: () => void;
 };
@@ -41,6 +42,7 @@ function MetadataRows({ rows }: { rows: ProjectWorkspaceMetadataRow[] }) {
 
 export function ProjectDetailsDock({
   collapsed,
+  panelId,
   summary,
   onToggle,
 }: ProjectDetailsDockProps) {
@@ -50,6 +52,7 @@ export function ProjectDetailsDock({
 
   return (
     <aside
+      id={panelId}
       aria-label="项目详情"
       className="min-w-0 border-t border-studio-line bg-studio-bg/72 p-3 lg:border-l lg:border-t-0"
     >
@@ -96,12 +99,10 @@ export function ProjectDetailsDock({
               </div>
             </div>
             <span
-              className={[
-                getProjectWorkspaceBadgeClassName(
-                  summary.preview.tone,
-                  "mt-3",
-                ),
-              ].join(" ")}
+              className={getProjectWorkspaceBadgeClassName(
+                summary.preview.tone,
+                "mt-3",
+              )}
             >
               {summary.preview.label}
             </span>
@@ -122,16 +123,16 @@ export function ProjectDetailsDock({
             </div>
             <div className="flex flex-wrap gap-2">
               <span
-                className={[
-                  getProjectWorkspaceBadgeClassName(summary.saveState.tone),
-                ].join(" ")}
+                className={getProjectWorkspaceBadgeClassName(
+                  summary.saveState.tone,
+                )}
               >
                 {summary.saveState.label}
               </span>
               <span
-                className={[
-                  getProjectWorkspaceBadgeClassName(summary.validation.tone),
-                ].join(" ")}
+                className={getProjectWorkspaceBadgeClassName(
+                  summary.validation.tone,
+                )}
               >
                 {summary.validation.label}
               </span>

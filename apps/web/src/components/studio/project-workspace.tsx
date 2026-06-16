@@ -9,6 +9,10 @@ import { ProjectDetailsDock } from "./project-details-dock";
 import { ProjectRail } from "./project-rail";
 import { ProjectWorkspaceHeader } from "./project-workspace-header";
 
+const PROJECT_WORKSPACE_RAIL_ID = "project-workspace-rail";
+const PROJECT_WORKSPACE_DETAILS_ID = "project-workspace-details";
+const PROJECT_WORKSPACE_IMPORT_ID = "project-workspace-import";
+
 type ProjectWorkspaceProps = {
   children: ReactNode;
   importError: string | undefined;
@@ -57,6 +61,7 @@ export function ProjectWorkspace({
     >
       <ProjectRail
         collapsed={leftCollapsed}
+        panelId={PROJECT_WORKSPACE_RAIL_ID}
         summary={summary}
         onToggle={() => setLeftCollapsed((current) => !current)}
       />
@@ -64,8 +69,11 @@ export function ProjectWorkspace({
       <div className="min-w-0">
         <ProjectWorkspaceHeader
           importError={importError}
+          importPanelId={PROJECT_WORKSPACE_IMPORT_ID}
           leftCollapsed={leftCollapsed}
+          leftPanelId={PROJECT_WORKSPACE_RAIL_ID}
           rightCollapsed={rightCollapsed}
+          rightPanelId={PROJECT_WORKSPACE_DETAILS_ID}
           summary={summary}
           onExportJson={onExportJson}
           onImportJson={onImportJson}
@@ -80,6 +88,7 @@ export function ProjectWorkspace({
 
       <ProjectDetailsDock
         collapsed={rightCollapsed}
+        panelId={PROJECT_WORKSPACE_DETAILS_ID}
         summary={summary}
         onToggle={() => setRightCollapsed((current) => !current)}
       />

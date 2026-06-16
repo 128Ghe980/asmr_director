@@ -19,8 +19,11 @@ import { WorkspaceBadge } from "./project-workspace-badge";
 
 type ProjectWorkspaceHeaderProps = {
   importError: string | undefined;
+  importPanelId: string;
   leftCollapsed: boolean;
+  leftPanelId: string;
   rightCollapsed: boolean;
+  rightPanelId: string;
   summary: ProjectWorkspaceSummary;
   onExportJson: () => void;
   onImportJson: (text: string) => void;
@@ -32,8 +35,11 @@ type ProjectWorkspaceHeaderProps = {
 
 export function ProjectWorkspaceHeader({
   importError,
+  importPanelId,
   leftCollapsed,
+  leftPanelId,
   rightCollapsed,
+  rightPanelId,
   summary,
   onExportJson,
   onImportJson,
@@ -44,6 +50,13 @@ export function ProjectWorkspaceHeader({
 }: ProjectWorkspaceHeaderProps) {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const isFocusActive = leftCollapsed && rightCollapsed;
+  const focusLabel = isFocusActive
+    ? "两侧已收起，退出专注编辑"
+    : "进入专注编辑";
+  const importToggleLabel = isImportOpen ? "收起导入 JSON" : "展开导入 JSON";
+  const leftToggleLabel = leftCollapsed ? "展开项目栏" : "收起项目栏";
+  const rightToggleLabel = rightCollapsed ? "展开项目详情" : "收起项目详情";
 
   return (
     <header className="min-w-0 border-b border-studio-line bg-studio-panel/92 px-4 py-4 md:px-5">
@@ -92,6 +105,9 @@ export function ProjectWorkspaceHeader({
             type="button"
             onClick={onToggleLeft}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            aria-controls={leftPanelId}
+            aria-expanded={!leftCollapsed}
+            aria-label={leftToggleLabel}
           >
             {leftCollapsed ? (
               <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
@@ -104,6 +120,9 @@ export function ProjectWorkspaceHeader({
             type="button"
             onClick={onToggleRight}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            aria-controls={rightPanelId}
+            aria-expanded={!rightCollapsed}
+            aria-label={rightToggleLabel}
           >
             {rightCollapsed ? (
               <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
@@ -116,6 +135,8 @@ export function ProjectWorkspaceHeader({
             type="button"
             onClick={onToggleFocus}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            aria-label={focusLabel}
+            aria-pressed={isFocusActive}
           >
             <Focus className="h-4 w-4" aria-hidden="true" />
             专注编辑
@@ -132,6 +153,9 @@ export function ProjectWorkspaceHeader({
             type="button"
             onClick={() => setIsImportOpen((current) => !current)}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/25 bg-sky-300/12 px-3 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            aria-controls={importPanelId}
+            aria-expanded={isImportOpen}
+            aria-label={importToggleLabel}
           >
             <Upload className="h-4 w-4" aria-hidden="true" />
             载入
@@ -151,7 +175,10 @@ export function ProjectWorkspaceHeader({
       </div>
 
       {isImportOpen ? (
-        <div className="mt-4 rounded-lg border border-studio-line bg-black/16 p-3">
+        <div
+          id={importPanelId}
+          className="mt-4 rounded-lg border border-studio-line bg-black/16 p-3"
+        >
           <label className="block">
             <span className="mb-2 flex items-center gap-2 text-xs font-semibold text-studio-muted">
               <FileJson className="h-4 w-4" aria-hidden="true" />
@@ -174,7 +201,10 @@ export function ProjectWorkspaceHeader({
             </button>
           </div>
           {importError ? (
-            <div className="mt-3 whitespace-pre-wrap rounded-md border border-amber-300/16 bg-amber-300/[0.055] px-3 py-2 text-sm leading-6 text-amber-100">
+            <div
+              role="alert"
+              className="mt-3 whitespace-pre-wrap rounded-md border border-amber-300/16 bg-amber-300/[0.055] px-3 py-2 text-sm leading-6 text-amber-100"
+            >
               {importError}
             </div>
           ) : null}

@@ -14,15 +14,22 @@ import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
 
 type ProjectRailProps = {
   collapsed: boolean;
+  panelId: string;
   summary: ProjectWorkspaceSummary;
   onToggle: () => void;
 };
 
-export function ProjectRail({ collapsed, summary, onToggle }: ProjectRailProps) {
+export function ProjectRail({
+  collapsed,
+  panelId,
+  summary,
+  onToggle,
+}: ProjectRailProps) {
   const toggleLabel = collapsed ? "展开项目栏" : "收起项目栏";
 
   return (
     <aside
+      id={panelId}
       aria-label="项目导航"
       className="min-w-0 border-b border-studio-line bg-studio-bg/72 p-3 lg:border-b-0 lg:border-r"
     >
@@ -64,9 +71,9 @@ export function ProjectRail({ collapsed, summary, onToggle }: ProjectRailProps) 
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <span
-                className={[
-                  getProjectWorkspaceBadgeClassName(summary.localState.tone),
-                ].join(" ")}
+                className={getProjectWorkspaceBadgeClassName(
+                  summary.localState.tone,
+                )}
               >
                 {summary.localState.label}
               </span>
