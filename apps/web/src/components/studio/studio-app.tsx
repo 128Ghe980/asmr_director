@@ -241,8 +241,8 @@ export function StudioApp({ project }: StudioAppProps) {
       onImportJson={handleImportJson}
       onResetDemo={handleResetDemo}
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)_minmax(280px,340px)]">
-        <div className="min-h-[520px] lg:h-[calc(100vh-112px)]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(220px,0.86fr)_minmax(0,1.26fr)_minmax(220px,0.86fr)]">
+        <div className="min-h-[520px] xl:h-[calc(100vh-152px)]">
           <StoryboardPanel
             project={editableProject}
             selectedClipId={activeClipId}
@@ -260,7 +260,7 @@ export function StudioApp({ project }: StudioAppProps) {
           <ValidationPanel issues={validationIssues} />
         </div>
 
-        <div>
+        <div className="min-w-0">
           <ClipInspector
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={selectedClip}
