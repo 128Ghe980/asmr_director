@@ -3,6 +3,7 @@
 import clsx from "clsx";
 
 import type { AsmrProject, TimelineClip, TrackType } from "@/lib/asmr/schema";
+import { getTrackLabel, getValueLabel } from "@/lib/asmr/ui-copy";
 import { formatTimeRange } from "@/lib/asmr/view-model";
 
 type TimelinePanelProps = {
@@ -14,11 +15,11 @@ type TimelinePanelProps = {
 type ClipTrackType = TimelineClip["track"];
 
 const fixedTracks: Array<{ type: TrackType; label: string }> = [
-  { type: "voice", label: "Voice" },
-  { type: "breath", label: "Breath" },
-  { type: "sfx", label: "SFX" },
-  { type: "ambience", label: "Room" },
-  { type: "post_processing", label: "Post" },
+  { type: "voice", label: getTrackLabel("voice") },
+  { type: "breath", label: getTrackLabel("breath") },
+  { type: "sfx", label: getTrackLabel("sfx") },
+  { type: "ambience", label: getTrackLabel("ambience") },
+  { type: "post_processing", label: getTrackLabel("post_processing") },
 ];
 
 const clipTones: Record<ClipTrackType, string> = {
@@ -39,13 +40,13 @@ function getTrackClips(project: AsmrProject, trackType: ClipTrackType): Timeline
 function getClipLabel(clip: TimelineClip): string {
   switch (clip.type) {
     case "voice":
-      return clip.emotion.replaceAll("_", " ");
+      return getValueLabel(clip.emotion);
     case "breath":
-      return clip.breath.replaceAll("_", " ");
+      return getValueLabel(clip.breath);
     case "sfx":
-      return clip.sfx.replaceAll("_", " ");
+      return getValueLabel(clip.sfx);
     case "ambience":
-      return clip.ambience.replaceAll("_", " ");
+      return getValueLabel(clip.ambience);
   }
 }
 
@@ -68,8 +69,8 @@ export function TimelinePanel({
     <section className="rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
         <div>
-          <h2 className="text-sm font-semibold text-studio-text">Timeline</h2>
-          <p className="text-xs text-studio-muted">V0.1 fixed tracks</p>
+          <h2 className="text-sm font-semibold text-studio-text">时间线</h2>
+          <p className="text-xs text-studio-muted">固定轨道</p>
         </div>
         <div className="text-xs tabular-nums text-studio-muted">
           {formatTimeRange(0, project.duration)}
@@ -108,7 +109,7 @@ export function TimelinePanel({
                         key={clip.id}
                         type="button"
                         onClick={() => onSelectClip(clip.id)}
-                        aria-label={`${clip.track} ${getClipLabel(
+                        aria-label={`${getTrackLabel(clip.track)} ${getClipLabel(
                           clip,
                         )} ${timeRange}`}
                         aria-pressed={isSelected}

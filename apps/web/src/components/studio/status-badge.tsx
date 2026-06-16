@@ -1,6 +1,7 @@
 import clsx from "clsx";
 
 import type { AssetStatus, ProjectStatus } from "@/lib/asmr/schema";
+import { getStatusLabel } from "@/lib/asmr/ui-copy";
 
 type StatusBadgeStatus = AssetStatus | ProjectStatus;
 
@@ -24,7 +25,7 @@ export function StatusBadge({ status }: { status: StatusBadgeStatus }) {
         statusTones[status],
       )}
     >
-      {status.replaceAll("_", " ")}
+      {getStatusLabel(status)}
     </span>
   );
 }

@@ -22,6 +22,7 @@ import {
   serializeProject,
 } from "@/lib/asmr/project-persistence";
 import type { AsmrProject } from "@/lib/asmr/schema";
+import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 
 import { ClipInspector } from "./clip-inspector";
@@ -55,9 +56,9 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
     <section className="rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
         <div>
-          <h2 className="text-sm font-semibold text-studio-text">Emotion Curve</h2>
+          <h2 className="text-sm font-semibold text-studio-text">情绪曲线</h2>
           <p className="text-xs text-studio-muted">
-            {project.emotion_curve.length} director beats
+            {project.emotion_curve.length} 个导演节拍
           </p>
         </div>
       </div>
@@ -75,7 +76,7 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
                 style={{ width }}
               >
                 <span className="truncate text-sm font-semibold text-studio-text">
-                  {point.emotion.replaceAll("_", " ")}
+                  {getValueLabel(point.emotion)}
                 </span>
                 <span className="truncate text-xs text-studio-muted">
                   {formatTimeRange(point.start, duration)}

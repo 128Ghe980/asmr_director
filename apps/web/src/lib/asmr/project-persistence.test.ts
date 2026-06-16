@@ -47,7 +47,7 @@ describe("project persistence", () => {
 
     expect(imported).toEqual({
       success: false,
-      error: "Import JSON could not be parsed.",
+      error: "JSON 解析失败。",
     });
   });
 

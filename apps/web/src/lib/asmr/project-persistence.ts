@@ -1,4 +1,5 @@
 import type { AsmrProject } from "./schema";
+import { getValidationIssueMessage } from "./ui-copy";
 import { safeParseAsmrProject } from "./validate";
 
 export const PROJECT_STORAGE_KEY = "ai-asmr-studio:v0:project";
@@ -36,7 +37,7 @@ function formatSchemaError(input: unknown): string {
     .map((issue) => {
       const path = issue.path.join(".") || "project";
 
-      return `${path}: ${issue.message}`;
+      return `${path}: ${getValidationIssueMessage(issue.message)}`;
     })
     .join("\n");
 }
@@ -49,7 +50,7 @@ export function parseImportedProject(text: string): ImportProjectResult {
   } catch {
     return {
       success: false,
-      error: "Import JSON could not be parsed.",
+      error: getValidationIssueMessage("Import JSON could not be parsed."),
     };
   }
 

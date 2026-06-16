@@ -3,10 +3,11 @@
 import clsx from "clsx";
 
 import type { AsmrProject, TimelineClip } from "@/lib/asmr/schema";
+import { getTrackLabel, getValueLabel } from "@/lib/asmr/ui-copy";
 import {
   flattenClips,
   formatTimeRange,
-  getPositionLabel,
+  getLocalizedPositionLabel,
 } from "@/lib/asmr/view-model";
 
 import { StatusBadge } from "./status-badge";
@@ -22,24 +23,24 @@ function getClipTitle(clip: TimelineClip): string {
     case "voice":
       return clip.text;
     case "breath":
-      return clip.breath.replaceAll("_", " ");
+      return getValueLabel(clip.breath);
     case "sfx":
-      return clip.sfx.replaceAll("_", " ");
+      return getValueLabel(clip.sfx);
     case "ambience":
-      return clip.ambience.replaceAll("_", " ");
+      return getValueLabel(clip.ambience);
   }
 }
 
 function getClipMetadata(clip: TimelineClip): string {
   const details = [
-    clip.track.toUpperCase(),
+    getTrackLabel(clip.track),
     formatTimeRange(clip.start, clip.duration),
-    getPositionLabel(clip.position),
+    getLocalizedPositionLabel(clip.position),
     `${clip.volume_db} dB`,
   ];
 
   if (clip.type === "voice") {
-    details.splice(1, 0, clip.emotion.replaceAll("_", " "));
+    details.splice(1, 0, getValueLabel(clip.emotion));
   }
 
   return details.join(" · ");
@@ -56,8 +57,8 @@ export function StoryboardPanel({
     <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-studio-line px-4">
         <div>
-          <h2 className="text-sm font-semibold text-studio-text">Storyboard</h2>
-          <p className="text-xs text-studio-muted">{clips.length} timeline clips</p>
+          <h2 className="text-sm font-semibold text-studio-text">分镜</h2>
+          <p className="text-xs text-studio-muted">{clips.length} 个片段</p>
         </div>
       </div>
 

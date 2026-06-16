@@ -131,7 +131,7 @@ describe("edit project helpers", () => {
     expect(fieldIssues.duration).toEqual([
       {
         path: "timeline.tracks.0.clips.3.duration",
-        message: "clip end must be within project duration",
+        message: "片段结束不能超过项目总时长",
       },
     ]);
   });
@@ -155,7 +155,7 @@ describe("edit project helpers", () => {
 
     expect(issues).toContainEqual({
       path: "timeline.tracks.0.clips.3.duration",
-      message: "clip end must be within project duration",
+      message: "片段结束不能超过项目总时长",
     });
   });
 
@@ -175,7 +175,7 @@ describe("edit project helpers", () => {
     expect(fieldIssues.duration).toEqual([
       {
         path: "timeline.tracks.0.clips.3.duration",
-        message: "clip end must be within project duration",
+        message: "片段结束不能超过项目总时长",
       },
     ]);
   });
@@ -211,7 +211,7 @@ describe("edit project helpers", () => {
     expect(fieldIssues["position.pan"]).toEqual([
       {
         path: "timeline.tracks.0.clips.0.position.pan",
-        message: "Too big: expected number to be <=1",
+        message: "数值不能大于 1",
       },
     ]);
   });

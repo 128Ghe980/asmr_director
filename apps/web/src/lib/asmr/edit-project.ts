@@ -1,4 +1,5 @@
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
+import { getValidationIssueMessage } from "./ui-copy";
 import { safeParseAsmrProject } from "./validate";
 
 type EditableClipFields = Pick<
@@ -184,7 +185,7 @@ export function getProjectValidationIssues(
 
   return parsed.error.issues.map((issue) => ({
     path: issue.path.join("."),
-    message: issue.message,
+    message: getValidationIssueMessage(issue.message),
   }));
 }
 

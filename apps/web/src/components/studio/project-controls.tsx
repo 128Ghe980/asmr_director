@@ -19,10 +19,10 @@ function getStateLabel({
   restoreState: "demo" | "restored";
 }) {
   if (isDirty) {
-    return "Edited";
+    return "已编辑";
   }
 
-  return restoreState === "restored" ? "Restored from browser" : "Demo";
+  return restoreState === "restored" ? "已恢复" : "示例";
 }
 
 export function ProjectControls({
@@ -40,10 +40,10 @@ export function ProjectControls({
       <div className="flex min-h-12 items-center justify-between gap-3 border-b border-studio-line px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-studio-text">
-            Project Controls
+            项目操作
           </h2>
           <p className="text-xs text-studio-muted">
-            Browser restore, pasted JSON import, and demo reset.
+            本地恢复、JSON 导入和示例重置。
           </p>
         </div>
         <span
@@ -61,12 +61,12 @@ export function ProjectControls({
         <label className="block">
           <span className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-normal text-studio-muted">
             <FileJson className="h-4 w-4" aria-hidden="true" />
-            Import JSON
+            导入 JSON
           </span>
           <textarea
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
-            placeholder="Paste an ASMR Project JSON here"
+            placeholder="粘贴 ASMR Project JSON"
             className="min-h-28 w-full resize-y rounded-md border border-white/[0.08] bg-black/20 px-3 py-2 text-sm leading-6 text-studio-text outline-none transition placeholder:text-studio-muted/60 focus:border-sky-300/45 focus:ring-2 focus:ring-sky-300/20"
           />
         </label>
@@ -78,7 +78,7 @@ export function ProjectControls({
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/25 bg-sky-300/12 px-4 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
           >
             <Upload className="h-4 w-4" aria-hidden="true" />
-            Load JSON
+            载入
           </button>
           <button
             type="button"
@@ -89,7 +89,7 @@ export function ProjectControls({
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.035] px-4 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
           >
             <RotateCcw className="h-4 w-4" aria-hidden="true" />
-            Reset Demo
+            重置
           </button>
         </div>
 

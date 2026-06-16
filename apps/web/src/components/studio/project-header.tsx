@@ -3,6 +3,11 @@
 import { Download, Radio, SlidersHorizontal } from "lucide-react";
 
 import type { AsmrProject } from "@/lib/asmr/schema";
+import {
+  getBinauralLabel,
+  getLanguageLabel,
+  getLimiterLabel,
+} from "@/lib/asmr/ui-copy";
 import { formatSeconds } from "@/lib/asmr/view-model";
 
 import { StatusBadge } from "./status-badge";
@@ -17,12 +22,12 @@ export function ProjectHeader({ project, onExportJson }: ProjectHeaderProps) {
   const projectDetails = [
     project.scene.name,
     formatSeconds(project.duration),
-    project.language.toUpperCase(),
+    getLanguageLabel(project.language),
   ].join(" · ");
   const mixDetails = [
     `${mixing.target_lufs} LUFS`,
-    mixing.binaural ? "Binaural" : "Stereo",
-    mixing.master_limiter ? "Limiter on" : "Limiter off",
+    getBinauralLabel(mixing.binaural),
+    getLimiterLabel(mixing.master_limiter),
   ].join(" · ");
 
   return (
@@ -35,7 +40,7 @@ export function ProjectHeader({ project, onExportJson }: ProjectHeaderProps) {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-                AI ASMR Studio
+                AI ASMR 导演台
               </p>
               <StatusBadge status={project.status} />
             </div>
@@ -57,7 +62,7 @@ export function ProjectHeader({ project, onExportJson }: ProjectHeaderProps) {
             className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-sky-300/25 bg-sky-300/12 px-4 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
           >
             <Download className="h-4 w-4" aria-hidden="true" />
-            Export JSON
+            导出 JSON
           </button>
         </div>
       </div>

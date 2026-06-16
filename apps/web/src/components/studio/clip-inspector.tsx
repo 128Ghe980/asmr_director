@@ -22,7 +22,14 @@ import type {
   ProjectValidationIssue,
 } from "@/lib/asmr/edit-project";
 import type { TimelineClip } from "@/lib/asmr/schema";
-import { formatTimeRange, getPositionLabel } from "@/lib/asmr/view-model";
+import {
+  getDistanceLabel,
+  getMovementLabel,
+} from "@/lib/asmr/ui-copy";
+import {
+  formatTimeRange,
+  getLocalizedPositionLabel,
+} from "@/lib/asmr/view-model";
 
 import { StatusBadge } from "./status-badge";
 
@@ -64,39 +71,39 @@ type DirectorAction = {
 const directorActions: DirectorAction[] = [
   {
     icon: Heart,
-    label: "Softer",
+    label: "更柔",
     preset: "softer",
-    title: "Make this voice delivery softer",
+    title: "让人声更柔和",
   },
   {
     icon: Ear,
-    label: "Closer",
+    label: "更近",
     preset: "closer",
-    title: "Move this voice closer to the listener",
+    title: "让人声更贴近",
   },
   {
     icon: MoveLeft,
-    label: "Left",
+    label: "左耳",
     preset: "left-ear",
-    title: "Place this voice in the left ear",
+    title: "放到左耳",
   },
   {
     icon: MoveRight,
-    label: "Right",
+    label: "右耳",
     preset: "right-ear",
-    title: "Place this voice in the right ear",
+    title: "放到右耳",
   },
   {
     icon: Pause,
-    label: "Pause",
+    label: "停顿",
     preset: "add-pause",
-    title: "Add a readable performance pause",
+    title: "增加表演停顿",
   },
   {
     icon: Volume1,
-    label: "Quiet",
+    label: "降低",
     preset: "quieter",
-    title: "Lower this voice volume",
+    title: "降低音量",
   },
 ];
 
@@ -143,7 +150,7 @@ function DirectorActionStrip({
     <div className="border-b border-white/[0.06] py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-          Director Actions
+          导演动作
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -180,26 +187,26 @@ function TimingActionStrip({
   const timingActions = [
     {
       icon: Minus,
-      label: "Start -0.5s",
-      title: "Move selected clip earlier by 0.5 seconds",
+      label: "开始 -0.5秒",
+      title: "选中片段提前 0.5 秒",
       nudge: { field: "start", delta: -0.5 },
     },
     {
       icon: Plus,
-      label: "Start +0.5s",
-      title: "Move selected clip later by 0.5 seconds",
+      label: "开始 +0.5秒",
+      title: "选中片段延后 0.5 秒",
       nudge: { field: "start", delta: 0.5 },
     },
     {
       icon: Minus,
-      label: "Duration -0.5s",
-      title: "Shorten selected clip by 0.5 seconds",
+      label: "时长 -0.5秒",
+      title: "选中片段缩短 0.5 秒",
       nudge: { field: "duration", delta: -0.5 },
     },
     {
       icon: Plus,
-      label: "Duration +0.5s",
-      title: "Lengthen selected clip by 0.5 seconds",
+      label: "时长 +0.5秒",
+      title: "选中片段延长 0.5 秒",
       nudge: { field: "duration", delta: 0.5 },
     },
   ] satisfies Array<{
@@ -214,7 +221,7 @@ function TimingActionStrip({
       <div className="mb-2 flex items-center gap-2">
         <Clock3 className="h-3.5 w-3.5 text-studio-gold" aria-hidden="true" />
         <p className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-          Timing Actions
+          时间微调
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -287,8 +294,8 @@ export function ClipInspector({
   if (!selectedClip) {
     return (
       <section className="rounded-lg border border-studio-line bg-studio-panel/88 p-4">
-        <h2 className="text-sm font-semibold text-studio-text">Clip Inspector</h2>
-        <p className="mt-3 text-sm text-studio-muted">No clip selected.</p>
+        <h2 className="text-sm font-semibold text-studio-text">片段检查</h2>
+        <p className="mt-3 text-sm text-studio-muted">未选择片段。</p>
       </section>
     );
   }
@@ -342,7 +349,7 @@ export function ClipInspector({
     <section className="rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-studio-text">Clip Inspector</h2>
+          <h2 className="text-sm font-semibold text-studio-text">片段检查</h2>
           <p className="truncate text-xs text-studio-muted">{selectedClip.id}</p>
         </div>
         <StatusBadge status={selectedClip.generation.status} />
@@ -357,7 +364,7 @@ export function ClipInspector({
 
         {selectedClip.type === "voice" ? (
           <>
-            <InspectorField label="Text">
+            <InspectorField label="台词">
               <textarea
                 value={selectedClip.text}
                 onChange={(event) => updateClip({ text: event.target.value })}
@@ -372,7 +379,7 @@ export function ClipInspector({
                 issues={getFieldIssues("text")}
               />
             </InspectorField>
-            <InspectorField label="Emotion">
+            <InspectorField label="情绪">
               <input
                 value={selectedClip.emotion}
                 onChange={(event) => updateClip({ emotion: event.target.value })}
@@ -384,7 +391,7 @@ export function ClipInspector({
                 issues={getFieldIssues("emotion")}
               />
             </InspectorField>
-            <InspectorField label="Style">
+            <InspectorField label="风格">
               <input
                 value={selectedClip.style}
                 onChange={(event) => updateClip({ style: event.target.value })}
@@ -396,7 +403,7 @@ export function ClipInspector({
                 issues={getFieldIssues("style")}
               />
             </InspectorField>
-            <InspectorField label="Pace">
+            <InspectorField label="语速">
               <input
                 value={selectedClip.pace}
                 onChange={(event) => updateClip({ pace: event.target.value })}
@@ -412,7 +419,7 @@ export function ClipInspector({
         ) : null}
 
         {selectedClip.type === "breath" ? (
-          <InspectorField label="Breath">
+          <InspectorField label="呼吸">
             <input
               value={selectedClip.breath}
               onChange={(event) => updateClip({ breath: event.target.value })}
@@ -427,7 +434,7 @@ export function ClipInspector({
         ) : null}
 
         {selectedClip.type === "sfx" ? (
-          <InspectorField label="SFX">
+          <InspectorField label="音效">
             <input
               value={selectedClip.sfx}
               onChange={(event) => updateClip({ sfx: event.target.value })}
@@ -443,7 +450,7 @@ export function ClipInspector({
 
         {selectedClip.type === "ambience" ? (
           <>
-            <InspectorField label="Room">
+            <InspectorField label="环境">
               <input
                 value={selectedClip.ambience}
                 onChange={(event) => updateClip({ ambience: event.target.value })}
@@ -457,7 +464,7 @@ export function ClipInspector({
             </InspectorField>
             <label className="grid grid-cols-[82px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-3">
               <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-                Loop
+                循环
               </span>
               <span className="flex min-w-0 items-center">
                 <input
@@ -479,7 +486,7 @@ export function ClipInspector({
         <div className="grid grid-cols-2 gap-3 border-b border-white/[0.06] py-3">
           <label>
             <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-              Start
+              开始
             </span>
             <input
               type="number"
@@ -499,7 +506,7 @@ export function ClipInspector({
           </label>
           <label>
             <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-              Duration
+              时长
             </span>
             <input
               type="number"
@@ -522,7 +529,7 @@ export function ClipInspector({
         <div className="grid grid-cols-2 gap-3 border-b border-white/[0.06] py-3">
           <label>
             <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-              Volume
+              音量
             </span>
             <input
               type="number"
@@ -541,7 +548,7 @@ export function ClipInspector({
           </label>
           <label>
             <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-              Pan
+              声像
             </span>
             <input
               type="number"
@@ -564,7 +571,7 @@ export function ClipInspector({
           </label>
         </div>
 
-        <InspectorField label="Distance">
+        <InspectorField label="距离">
           <select
             value={selectedClip.position.distance}
             onChange={(event) =>
@@ -583,7 +590,7 @@ export function ClipInspector({
           >
             {distanceOptions.map((distance) => (
               <option key={distance} value={distance}>
-                {distance}
+                {getDistanceLabel(distance)}
               </option>
             ))}
           </select>
@@ -593,7 +600,7 @@ export function ClipInspector({
           />
         </InspectorField>
 
-        <InspectorField label="Move">
+        <InspectorField label="移动">
           <select
             value={selectedClip.position.movement}
             onChange={(event) =>
@@ -612,7 +619,7 @@ export function ClipInspector({
           >
             {movementOptions.map((movement) => (
               <option key={movement} value={movement}>
-                {movement.replaceAll("_", " ")}
+                {getMovementLabel(movement)}
               </option>
             ))}
           </select>
@@ -623,16 +630,16 @@ export function ClipInspector({
         </InspectorField>
 
         <ReadOnlyRow
-          label="Time"
+          label="时间"
           value={formatTimeRange(selectedClip.start, selectedClip.duration)}
         />
         <ReadOnlyRow
-          label="Position"
-          value={getPositionLabel(selectedClip.position)}
+          label="位置"
+          value={getLocalizedPositionLabel(selectedClip.position)}
         />
-        <ReadOnlyRow label="Model" value={getClipModelDetails(selectedClip)} />
+        <ReadOnlyRow label="模型" value={getClipModelDetails(selectedClip)} />
         <ReadOnlyRow
-          label="Status"
+          label="状态"
           value={<StatusBadge status={selectedClip.generation.status} />}
         />
       </div>

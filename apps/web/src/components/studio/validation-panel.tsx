@@ -16,10 +16,10 @@ export function ValidationPanel({ issues }: ValidationPanelProps) {
       <div className="flex min-h-12 items-center justify-between gap-3 border-b border-studio-line px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-studio-text">
-            Project Validation
+            项目校验
           </h2>
           <p className="text-xs text-studio-muted">
-            Live schema check for the editable Timeline DSL.
+            实时检查当前时间线。
           </p>
         </div>
         <div
@@ -34,7 +34,7 @@ export function ValidationPanel({ issues }: ValidationPanelProps) {
           ) : (
             <AlertTriangle className="h-4 w-4" aria-hidden="true" />
           )}
-          {isValid ? "Project valid" : `${issues.length} issue(s)`}
+          {isValid ? "校验通过" : `${issues.length} 个问题`}
         </div>
       </div>
 
@@ -47,7 +47,7 @@ export function ValidationPanel({ issues }: ValidationPanelProps) {
                 className="rounded-md border border-amber-300/16 bg-amber-300/[0.055] px-3 py-2"
               >
                 <p className="break-words text-xs font-semibold text-amber-100">
-                  {issue.path || "project"}
+                  {issue.path || "项目"}
                 </p>
                 <p className="mt-1 text-sm text-studio-text">{issue.message}</p>
               </li>
@@ -56,7 +56,7 @@ export function ValidationPanel({ issues }: ValidationPanelProps) {
         </div>
       ) : (
         <p className="px-4 py-3 text-sm text-studio-muted">
-          Current project JSON passes the V0.2 schema checks.
+          当前项目 JSON 通过校验。
         </p>
       )}
     </section>

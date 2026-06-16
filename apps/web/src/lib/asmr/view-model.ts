@@ -1,4 +1,5 @@
 import type { AsmrProject, TimelineClip } from "./schema";
+import { getDistanceLabel } from "./ui-copy";
 import { getAllClips } from "./validate";
 
 export function formatSeconds(seconds: number): string {
@@ -24,6 +25,15 @@ export function getPositionLabel(position: TimelineClip["position"]): string {
         : "中间";
 
   return `${ear} · ${position.distance}`;
+}
+
+export function getLocalizedPositionLabel(
+  position: TimelineClip["position"],
+): string {
+  const ear =
+    position.pan < -0.35 ? "左耳" : position.pan > 0.35 ? "右耳" : "中间";
+
+  return `${ear} 路 ${getDistanceLabel(position.distance)}`;
 }
 
 export function flattenClips(project: AsmrProject): TimelineClip[] {

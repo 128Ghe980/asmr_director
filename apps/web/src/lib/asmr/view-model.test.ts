@@ -3,6 +3,7 @@ import { demoProject } from "./mock-project";
 import {
   flattenClips,
   formatSeconds,
+  getLocalizedPositionLabel,
   getPositionLabel,
   getTrackSummary,
 } from "./view-model";
@@ -32,6 +33,16 @@ describe("view model helpers", () => {
     expect(
       getPositionLabel({ pan: 0.1, distance: "far", movement: "static" }),
     ).toBe("中间 · far");
+  });
+
+  it("labels positions for Chinese UI display", () => {
+    expect(
+      getLocalizedPositionLabel({
+        pan: 0.56,
+        distance: "very_close",
+        movement: "approach",
+      }),
+    ).toBe("右耳 路 贴耳");
   });
 
   it("flattens clips across tracks in time order", () => {
