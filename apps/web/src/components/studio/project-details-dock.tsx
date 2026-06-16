@@ -9,27 +9,17 @@ import {
 } from "lucide-react";
 
 import type {
-  ProjectWorkspaceBadgeTone,
   ProjectWorkspaceMetadataRow,
   ProjectWorkspaceSummary,
 } from "@/lib/asmr/project-summary";
+
+import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
 
 type ProjectDetailsDockProps = {
   collapsed: boolean;
   summary: ProjectWorkspaceSummary;
   onToggle: () => void;
 };
-
-const toneClasses: Record<ProjectWorkspaceBadgeTone, string> = {
-  neutral: "border-white/[0.1] bg-white/[0.035] text-studio-muted",
-  accent: "border-sky-300/35 bg-sky-300/10 text-sky-100",
-  ok: "border-emerald-400/35 bg-emerald-500/10 text-emerald-100",
-  warn: "border-amber-400/35 bg-amber-500/10 text-amber-100",
-};
-
-function getToneClass(tone: ProjectWorkspaceBadgeTone) {
-  return toneClasses[tone];
-}
 
 function MetadataRows({ rows }: { rows: ProjectWorkspaceMetadataRow[] }) {
   return (
@@ -59,7 +49,10 @@ export function ProjectDetailsDock({
     : "收起项目详情";
 
   return (
-    <aside className="min-w-0 border-t border-studio-line bg-studio-bg/72 p-3 lg:border-l lg:border-t-0">
+    <aside
+      aria-label="项目详情"
+      className="min-w-0 border-t border-studio-line bg-studio-bg/72 p-3 lg:border-l lg:border-t-0"
+    >
       <div className="flex items-center justify-between gap-2">
         {collapsed ? null : (
           <h2 className="text-sm font-semibold text-studio-text">
@@ -104,8 +97,10 @@ export function ProjectDetailsDock({
             </div>
             <span
               className={[
-                "mt-3 inline-flex h-6 items-center rounded-full border px-2 text-[11px] font-semibold leading-none",
-                getToneClass(summary.preview.tone),
+                getProjectWorkspaceBadgeClassName(
+                  summary.preview.tone,
+                  "mt-3",
+                ),
               ].join(" ")}
             >
               {summary.preview.label}
@@ -128,16 +123,14 @@ export function ProjectDetailsDock({
             <div className="flex flex-wrap gap-2">
               <span
                 className={[
-                  "inline-flex h-6 items-center rounded-full border px-2 text-[11px] font-semibold leading-none",
-                  getToneClass(summary.saveState.tone),
+                  getProjectWorkspaceBadgeClassName(summary.saveState.tone),
                 ].join(" ")}
               >
                 {summary.saveState.label}
               </span>
               <span
                 className={[
-                  "inline-flex h-6 items-center rounded-full border px-2 text-[11px] font-semibold leading-none",
-                  getToneClass(summary.validation.tone),
+                  getProjectWorkspaceBadgeClassName(summary.validation.tone),
                 ].join(" ")}
               >
                 {summary.validation.label}

@@ -8,10 +8,9 @@ import {
   Plus,
 } from "lucide-react";
 
-import type {
-  ProjectWorkspaceBadgeTone,
-  ProjectWorkspaceSummary,
-} from "@/lib/asmr/project-summary";
+import type { ProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
+
+import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
 
 type ProjectRailProps = {
   collapsed: boolean;
@@ -19,22 +18,14 @@ type ProjectRailProps = {
   onToggle: () => void;
 };
 
-const toneClasses: Record<ProjectWorkspaceBadgeTone, string> = {
-  neutral: "border-white/[0.1] bg-white/[0.035] text-studio-muted",
-  accent: "border-sky-300/35 bg-sky-300/10 text-sky-100",
-  ok: "border-emerald-400/35 bg-emerald-500/10 text-emerald-100",
-  warn: "border-amber-400/35 bg-amber-500/10 text-amber-100",
-};
-
-function getToneClass(tone: ProjectWorkspaceBadgeTone) {
-  return toneClasses[tone];
-}
-
 export function ProjectRail({ collapsed, summary, onToggle }: ProjectRailProps) {
   const toggleLabel = collapsed ? "展开项目栏" : "收起项目栏";
 
   return (
-    <aside className="min-w-0 border-b border-studio-line bg-studio-bg/72 p-3 lg:border-b-0 lg:border-r">
+    <aside
+      aria-label="项目导航"
+      className="min-w-0 border-b border-studio-line bg-studio-bg/72 p-3 lg:border-b-0 lg:border-r"
+    >
       <div className="flex items-center justify-between gap-2">
         {collapsed ? null : (
           <h2 className="text-sm font-semibold text-studio-text">项目</h2>
@@ -74,8 +65,7 @@ export function ProjectRail({ collapsed, summary, onToggle }: ProjectRailProps) 
             <div className="mt-3 flex flex-wrap gap-2">
               <span
                 className={[
-                  "inline-flex h-6 items-center rounded-full border px-2 text-[11px] font-semibold leading-none",
-                  getToneClass(summary.localState.tone),
+                  getProjectWorkspaceBadgeClassName(summary.localState.tone),
                 ].join(" ")}
               >
                 {summary.localState.label}
