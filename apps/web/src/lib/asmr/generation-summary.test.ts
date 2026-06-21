@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,6 +16,8 @@ import type {
 } from "./generation-summary";
 import { demoProject } from "./mock-project";
 import type { AsmrProject, AssetStatus, TimelineClip } from "./schema";
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
 
 function cloneProject(): AsmrProject {
   return structuredClone(demoProject);
@@ -83,7 +90,48 @@ function expectPublicPreviewTypes(
   };
 }
 
+function getExportedTypeNames(): string[] {
+  const sourceText = readFileSync(
+    join(currentDir, "generation-summary.ts"),
+    "utf8",
+  );
+  const sourceFile = ts.createSourceFile(
+    "generation-summary.ts",
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const exportedTypeNames: string[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (
+      (ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement)) &&
+      isExportedDeclaration(statement)
+    ) {
+      exportedTypeNames.push(statement.name.text);
+    }
+  }
+
+  return exportedTypeNames.sort();
+}
+
+function isExportedDeclaration(node: ts.Declaration): boolean {
+  return Boolean(
+    ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export,
+  );
+}
+
 describe("generation summary", () => {
+  it("exports only the planned public preview summary type names", () => {
+    expect(getExportedTypeNames()).toEqual([
+      "GenerationSlot",
+      "GenerationSlotTone",
+      "ProjectPreviewSummary",
+    ]);
+  });
+
   it("maps asset statuses to display labels and tones", () => {
     expect(getAssetStatusDisplay("asset_pending")).toEqual({
       statusLabel: "待生成",

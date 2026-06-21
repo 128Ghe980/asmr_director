@@ -3,9 +3,8 @@ import { getTrackLabel } from "./ui-copy";
 import { flattenClips, formatSeconds, formatTimeRange } from "./view-model";
 
 export type GenerationSlotTone = "neutral" | "accent" | "ok" | "warn";
-export type GenerationSummaryTone = GenerationSlotTone;
 
-export type AssetStatusDisplay = {
+type AssetStatusDisplay = {
   statusLabel: string;
   tone: GenerationSlotTone;
 };
@@ -16,7 +15,6 @@ export type GenerationSlot = AssetStatusDisplay & {
   detail: string;
   clipCount: number;
 };
-export type GenerationSummarySlot = GenerationSlot;
 
 type PreviewTrackType = Exclude<TrackType, "post_processing">;
 
@@ -127,7 +125,7 @@ function getProjectStatusTone({
   generatedClipCount: number;
   generatingClipCount: number;
   failedClipCount: number;
-}): GenerationSummaryTone {
+}): GenerationSlotTone {
   if (failedClipCount > 0) {
     return "warn";
   }
