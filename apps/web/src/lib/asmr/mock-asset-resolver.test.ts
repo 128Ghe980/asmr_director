@@ -20,6 +20,24 @@ describe("mock asset resolver", () => {
     expect(first).toMatch(/^data:audio\/wav;base64,/);
   });
 
+  it("generates WAV data URLs with playable PCM headers", () => {
+    const prefix = "data:audio/wav;base64,";
+    const dataUrl = resolveMockAssetUri("mock://asset/voice_001/job_1");
+
+    expect(dataUrl?.slice(0, prefix.length)).toBe(prefix);
+
+    const bytes = Buffer.from(dataUrl?.slice(prefix.length) ?? "", "base64");
+
+    expect(bytes.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(bytes.toString("ascii", 8, 12)).toBe("WAVE");
+    expect(bytes.toString("ascii", 12, 16)).toBe("fmt ");
+    expect(bytes.readUInt16LE(20)).toBe(1);
+    expect(bytes.readUInt16LE(22)).toBe(1);
+    expect(bytes.readUInt32LE(24)).toBe(8000);
+    expect(bytes.readUInt16LE(34)).toBe(16);
+    expect(bytes.toString("ascii", 36, 40)).toBe("data");
+  });
+
   it("passes non-mock URIs through unchanged", () => {
     expect(resolveMockAssetUri("https://example.com/audio.wav")).toBe(
       "https://example.com/audio.wav",
