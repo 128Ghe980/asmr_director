@@ -6,6 +6,7 @@ import type {
   GenerationSlotTone,
   ProjectPreviewSummary,
 } from "@/lib/asmr/generation-summary";
+import type { SelectedClipPreview } from "@/lib/asmr/generation-view";
 
 import {
   GenerationSlotList,
@@ -15,6 +16,8 @@ import { PreviewWaveformPlaceholder } from "./preview-waveform-placeholder";
 
 type PreviewLayerPanelProps = {
   preview: ProjectPreviewSummary;
+  selectedClipPreview: SelectedClipPreview;
+  onPlaySelectedClip: () => void;
 };
 
 const playbackUnavailableLabel = "无法播放预览：真实音频尚未生成";
@@ -23,7 +26,14 @@ function getPreviewStatusClassName(tone: GenerationSlotTone) {
   return getGenerationSlotToneClassName(tone, "shrink-0");
 }
 
-export function PreviewLayerPanel({ preview }: PreviewLayerPanelProps) {
+export function PreviewLayerPanel({
+  preview,
+  selectedClipPreview,
+  onPlaySelectedClip,
+}: PreviewLayerPanelProps) {
+  const selectedClipPlaybackLabel = selectedClipPreview.canPlay
+    ? selectedClipPreview.label
+    : playbackUnavailableLabel;
   const stats = [
     { label: "片段", value: preview.totalClipCount },
     { label: "真实音频", value: preview.realAudioCount },
@@ -51,10 +61,16 @@ export function PreviewLayerPanel({ preview }: PreviewLayerPanelProps) {
           </span>
           <button
             type="button"
-            disabled
-            aria-label={playbackUnavailableLabel}
-            title={playbackUnavailableLabel}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-studio-line bg-white/[0.035] text-studio-muted opacity-55"
+            disabled={!selectedClipPreview.canPlay}
+            onClick={onPlaySelectedClip}
+            aria-label={selectedClipPlaybackLabel}
+            title={selectedClipPlaybackLabel}
+            className={[
+              "inline-flex h-8 w-8 items-center justify-center rounded-md border transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/35",
+              selectedClipPreview.canPlay
+                ? "border-sky-300/24 bg-sky-300/12 text-sky-50 hover:bg-sky-300/18"
+                : "border-studio-line bg-white/[0.035] text-studio-muted opacity-55 disabled:cursor-not-allowed",
+            ].join(" ")}
           >
             <Play className="h-4 w-4" aria-hidden="true" />
           </button>

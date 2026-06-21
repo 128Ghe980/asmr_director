@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
+import type { SelectedClipPreview } from "@/lib/asmr/generation-view";
 import type {
   ProjectWorkspaceMetadataRow,
   ProjectWorkspaceSummary,
@@ -21,6 +22,8 @@ type ProjectDetailsDockProps = {
   panelId: string;
   summary: ProjectWorkspaceSummary;
   preview: ProjectPreviewSummary;
+  selectedClipPreview: SelectedClipPreview;
+  onPlaySelectedClip: () => void;
   onToggle: () => void;
 };
 
@@ -47,6 +50,8 @@ export function ProjectDetailsDock({
   panelId,
   summary,
   preview,
+  selectedClipPreview,
+  onPlaySelectedClip,
   onToggle,
 }: ProjectDetailsDockProps) {
   const toggleLabel = collapsed
@@ -86,7 +91,11 @@ export function ProjectDetailsDock({
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          <PreviewLayerPanel preview={preview} />
+          <PreviewLayerPanel
+            preview={preview}
+            selectedClipPreview={selectedClipPreview}
+            onPlaySelectedClip={onPlaySelectedClip}
+          />
 
           <section className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-studio-muted">
