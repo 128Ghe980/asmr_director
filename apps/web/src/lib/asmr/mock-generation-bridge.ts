@@ -13,7 +13,9 @@ type MockGenerationBridgeOptions = {
 };
 
 type InFlightJob = {
-  cancelled: boolean;
+  request: GenerateClipRequest;
+  onUpdate: (update: GenerationJobUpdate) => void;
+  createdAt: string;
   timers: ReturnType<typeof setTimeout>[];
 };
 
@@ -34,7 +36,8 @@ export function createMockGenerationBridge({
   function makeSnapshot(
     request: GenerateClipRequest,
     jobId: string,
-    timestamp: string,
+    createdAt: string,
+    updatedAt: string,
     progress: number,
     status: GenerationJobSnapshot["status"],
     message: string,
@@ -45,20 +48,28 @@ export function createMockGenerationBridge({
       status,
       progress,
       message,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt,
+      updatedAt,
     };
   }
 
   function emitCanceled(
     request: GenerateClipRequest,
     jobId: string,
-    timestamp: string,
+    createdAt: string,
     onUpdate: (update: GenerationJobUpdate) => void,
   ) {
     onUpdate({
       type: "canceled",
-      job: makeSnapshot(request, jobId, timestamp, 0, "canceled", "已取消"),
+      job: makeSnapshot(
+        request,
+        jobId,
+        createdAt,
+        now(),
+        0,
+        "canceled",
+        "已取消",
+      ),
     });
   }
 
@@ -66,25 +77,30 @@ export function createMockGenerationBridge({
     async generateClip(request, onUpdate) {
       const jobId = `${jobIdPrefix}_${nextJobNumber}`;
       nextJobNumber += 1;
-      const timestamp = now();
-      const inFlightJob: InFlightJob = {
-        cancelled: false,
-        timers: [],
-      };
+      const createdAt = now();
       const clip = flattenClips(request.project).find(
         (candidate) => candidate.id === request.clipId,
       );
 
       onUpdate({
         type: "snapshot",
-        job: makeSnapshot(request, jobId, timestamp, 0, "queued", "等待生成"),
+        job: makeSnapshot(
+          request,
+          jobId,
+          createdAt,
+          createdAt,
+          0,
+          "queued",
+          "等待生成",
+        ),
       });
 
       if (!clip) {
         const failedJob = makeSnapshot(
           request,
           jobId,
-          timestamp,
+          createdAt,
+          now(),
           100,
           "failed",
           "片段不存在",
@@ -97,15 +113,18 @@ export function createMockGenerationBridge({
         return { jobId };
       }
 
+      const inFlightJob: InFlightJob = {
+        request,
+        onUpdate,
+        createdAt,
+        timers: [],
+      };
+
       inFlightJobs.set(jobId, inFlightJob);
 
       defaultProgressSteps.forEach((progress, index) => {
         const timer = setTimeout(() => {
-          if (inFlightJob.cancelled) {
-            if (inFlightJobs.has(jobId)) {
-              emitCanceled(request, jobId, timestamp, onUpdate);
-              inFlightJobs.delete(jobId);
-            }
+          if (!inFlightJobs.has(jobId)) {
             return;
           }
 
@@ -115,7 +134,8 @@ export function createMockGenerationBridge({
               job: makeSnapshot(
                 request,
                 jobId,
-                timestamp,
+                createdAt,
+                now(),
                 progress,
                 "generating",
                 "生成中",
@@ -130,7 +150,8 @@ export function createMockGenerationBridge({
               job: makeSnapshot(
                 request,
                 jobId,
-                timestamp,
+                createdAt,
+                now(),
                 100,
                 "failed",
                 "生成失败",
@@ -146,7 +167,8 @@ export function createMockGenerationBridge({
             job: makeSnapshot(
               request,
               jobId,
-              timestamp,
+              createdAt,
+              now(),
               100,
               "succeeded",
               "生成完成",
@@ -173,7 +195,14 @@ export function createMockGenerationBridge({
         return;
       }
 
-      inFlightJob.cancelled = true;
+      inFlightJob.timers.forEach((timer) => clearTimeout(timer));
+      emitCanceled(
+        inFlightJob.request,
+        jobId,
+        inFlightJob.createdAt,
+        inFlightJob.onUpdate,
+      );
+      inFlightJobs.delete(jobId);
     },
   };
 }

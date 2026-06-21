@@ -51,6 +51,33 @@ describe("mock generation bridge", () => {
       "snapshot",
       "succeeded",
     ]);
+    expect(
+      updates.slice(1, 4).map((update) => ({
+        status: update.job.status,
+        progress: update.job.progress,
+        createdAt: update.job.createdAt,
+        updatedAt: update.job.updatedAt,
+      })),
+    ).toEqual([
+      {
+        status: "generating",
+        progress: 18,
+        createdAt: "2026-06-22T00:00:00.000Z",
+        updatedAt: "2026-06-22T00:00:00.100Z",
+      },
+      {
+        status: "generating",
+        progress: 42,
+        createdAt: "2026-06-22T00:00:00.000Z",
+        updatedAt: "2026-06-22T00:00:00.200Z",
+      },
+      {
+        status: "generating",
+        progress: 76,
+        createdAt: "2026-06-22T00:00:00.000Z",
+        updatedAt: "2026-06-22T00:00:00.300Z",
+      },
+    ]);
     expect(updates.at(-1)).toEqual({
       type: "succeeded",
       job: {
@@ -60,7 +87,7 @@ describe("mock generation bridge", () => {
         progress: 100,
         message: "生成完成",
         createdAt: "2026-06-22T00:00:00.000Z",
-        updatedAt: "2026-06-22T00:00:00.000Z",
+        updatedAt: "2026-06-22T00:00:00.400Z",
       },
       asset: {
         assetId: "mock_voice_001_test_job_1",
@@ -161,8 +188,17 @@ describe("mock generation bridge", () => {
 
     await vi.advanceTimersByTimeAsync(100);
     await bridge.cancelGeneration(started.jobId);
+
+    expect(updates.map((update) => update.type)).toEqual([
+      "snapshot",
+      "snapshot",
+      "canceled",
+    ]);
+    const updatesAfterCancel = updates.length;
+
     await vi.advanceTimersByTimeAsync(400);
 
+    expect(updates).toHaveLength(updatesAfterCancel);
     expect(updates.at(-1)).toMatchObject({
       type: "canceled",
       job: {
@@ -171,6 +207,9 @@ describe("mock generation bridge", () => {
         status: "canceled",
       },
     });
+    expect(updates.filter((update) => update.type === "canceled")).toHaveLength(
+      1,
+    );
     expect(updates.some((update) => update.type === "succeeded")).toBe(false);
   });
 });
