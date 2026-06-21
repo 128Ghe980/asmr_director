@@ -21,6 +21,7 @@ import {
   saveProject,
   serializeProject,
 } from "@/lib/asmr/project-persistence";
+import { getProjectPreviewSummary } from "@/lib/asmr/generation-summary";
 import { getProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
@@ -132,6 +133,14 @@ export function StudioApp({ project }: StudioAppProps) {
       }),
     [editableProject, isDirty, restoreState, validationIssues.length],
   );
+  const previewSummary = useMemo(
+    () =>
+      getProjectPreviewSummary({
+        project: editableProject,
+        selectedClip,
+      }),
+    [editableProject, selectedClip],
+  );
 
   useEffect(() => {
     let isCancelled = false;
@@ -237,6 +246,7 @@ export function StudioApp({ project }: StudioAppProps) {
     <ProjectWorkspace
       importError={importError}
       summary={workspaceSummary}
+      preview={previewSummary}
       onExportJson={() => exportProjectJson(editableProject)}
       onImportJson={handleImportJson}
       onResetDemo={handleResetDemo}

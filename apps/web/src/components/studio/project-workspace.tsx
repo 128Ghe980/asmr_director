@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useMemo, useState } from "react";
 
+import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
 import type { ProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 
 import { ProjectDetailsDock } from "./project-details-dock";
@@ -17,6 +18,7 @@ type ProjectWorkspaceProps = {
   children: ReactNode;
   importError: string | undefined;
   summary: ProjectWorkspaceSummary;
+  preview: ProjectPreviewSummary;
   onExportJson: () => void;
   onImportJson: (text: string) => void;
   onResetDemo: () => void;
@@ -26,6 +28,7 @@ export function ProjectWorkspace({
   children,
   importError,
   summary,
+  preview,
   onExportJson,
   onImportJson,
   onResetDemo,
@@ -90,6 +93,7 @@ export function ProjectWorkspace({
         collapsed={rightCollapsed}
         panelId={PROJECT_WORKSPACE_DETAILS_ID}
         summary={summary}
+        preview={preview}
         onToggle={() => setRightCollapsed((current) => !current)}
       />
     </div>

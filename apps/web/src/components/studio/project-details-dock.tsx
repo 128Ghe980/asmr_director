@@ -2,23 +2,25 @@
 
 import {
   CheckCircle2,
-  Film,
   Info,
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
 
+import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
 import type {
   ProjectWorkspaceMetadataRow,
   ProjectWorkspaceSummary,
 } from "@/lib/asmr/project-summary";
 
+import { PreviewLayerPanel } from "./preview-layer-panel";
 import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
 
 type ProjectDetailsDockProps = {
   collapsed: boolean;
   panelId: string;
   summary: ProjectWorkspaceSummary;
+  preview: ProjectPreviewSummary;
   onToggle: () => void;
 };
 
@@ -44,6 +46,7 @@ export function ProjectDetailsDock({
   collapsed,
   panelId,
   summary,
+  preview,
   onToggle,
 }: ProjectDetailsDockProps) {
   const toggleLabel = collapsed
@@ -83,30 +86,7 @@ export function ProjectDetailsDock({
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          <section className="rounded-lg border border-amber-300/18 bg-amber-300/[0.055] p-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-amber-100">
-              <Film className="h-4 w-4" aria-hidden="true" />
-              预览层
-            </div>
-            <div className="mt-3 overflow-hidden rounded-lg border border-white/[0.08] bg-black/20">
-              <div className="flex h-7 items-center gap-1.5 border-b border-white/[0.08] px-2">
-                <span className="h-2 w-2 rounded-full bg-rose-300/65" />
-                <span className="h-2 w-2 rounded-full bg-amber-300/65" />
-                <span className="h-2 w-2 rounded-full bg-emerald-300/65" />
-              </div>
-              <div className="flex h-20 items-center justify-center px-3 text-center text-xs text-studio-muted">
-                {summary.preview.label}
-              </div>
-            </div>
-            <span
-              className={getProjectWorkspaceBadgeClassName(
-                summary.preview.tone,
-                "mt-3",
-              )}
-            >
-              {summary.preview.label}
-            </span>
-          </section>
+          <PreviewLayerPanel preview={preview} />
 
           <section className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-studio-muted">
