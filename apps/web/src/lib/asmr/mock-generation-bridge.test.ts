@@ -101,6 +101,48 @@ describe("mock generation bridge", () => {
     });
   });
 
+  it("emits queued before failed when a clip is missing", async () => {
+    const bridge = createMockGenerationBridge({
+      jobIdPrefix: "test_job",
+      stepMs: 100,
+    });
+    const updates: GenerationJobUpdate[] = [];
+
+    const started = await bridge.generateClip(
+      {
+        project: demoProject,
+        clipId: "missing_clip",
+        reason: "generate",
+      },
+      (update) => updates.push(update),
+    );
+
+    expect(started.jobId).toBe("test_job_1");
+    expect(updates.map((update) => update.type)).toEqual([
+      "snapshot",
+      "failed",
+    ]);
+    expect(updates[0]).toMatchObject({
+      type: "snapshot",
+      job: {
+        jobId: "test_job_1",
+        clipId: "missing_clip",
+        status: "queued",
+        progress: 0,
+      },
+    });
+    expect(updates[1]).toMatchObject({
+      type: "failed",
+      error: "Clip not found",
+      job: {
+        jobId: "test_job_1",
+        clipId: "missing_clip",
+        status: "failed",
+        progress: 100,
+      },
+    });
+  });
+
   it("can cancel an in-flight job", async () => {
     const bridge = createMockGenerationBridge({
       jobIdPrefix: "test_job",

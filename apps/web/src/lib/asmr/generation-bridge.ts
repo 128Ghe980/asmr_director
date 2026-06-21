@@ -43,10 +43,10 @@ export type GenerationJobUpdate =
   | { type: "failed"; job: GenerationJobSnapshot; error: string }
   | { type: "canceled"; job: GenerationJobSnapshot };
 
-export type GenerationBridge = {
+export interface GenerationBridge {
   generateClip(
     request: GenerateClipRequest,
     onUpdate: (update: GenerationJobUpdate) => void,
   ): Promise<{ jobId: string }>;
   cancelGeneration(jobId: string): Promise<void>;
-};
+}

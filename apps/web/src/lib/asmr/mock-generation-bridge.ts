@@ -75,6 +75,11 @@ export function createMockGenerationBridge({
         (candidate) => candidate.id === request.clipId,
       );
 
+      onUpdate({
+        type: "snapshot",
+        job: makeSnapshot(request, jobId, timestamp, 0, "queued", "等待生成"),
+      });
+
       if (!clip) {
         const failedJob = makeSnapshot(
           request,
@@ -93,11 +98,6 @@ export function createMockGenerationBridge({
       }
 
       inFlightJobs.set(jobId, inFlightJob);
-
-      onUpdate({
-        type: "snapshot",
-        job: makeSnapshot(request, jobId, timestamp, 0, "queued", "等待生成"),
-      });
 
       defaultProgressSteps.forEach((progress, index) => {
         const timer = setTimeout(() => {
