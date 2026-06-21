@@ -2,19 +2,21 @@ import type { AsmrProject, AssetStatus, TimelineClip, TrackType } from "./schema
 import { getTrackLabel } from "./ui-copy";
 import { flattenClips, formatSeconds, formatTimeRange } from "./view-model";
 
-export type GenerationSummaryTone = "neutral" | "accent" | "ok" | "warn";
+export type GenerationSlotTone = "neutral" | "accent" | "ok" | "warn";
+export type GenerationSummaryTone = GenerationSlotTone;
 
 export type AssetStatusDisplay = {
   statusLabel: string;
-  tone: GenerationSummaryTone;
+  tone: GenerationSlotTone;
 };
 
-export type GenerationSummarySlot = AssetStatusDisplay & {
+export type GenerationSlot = AssetStatusDisplay & {
   id: "project_mix" | "selected_clip" | PreviewTrackType;
   label: string;
   detail: string;
   clipCount: number;
 };
+export type GenerationSummarySlot = GenerationSlot;
 
 type PreviewTrackType = Exclude<TrackType, "post_processing">;
 
@@ -23,10 +25,10 @@ type ProjectPreviewSummaryInput = {
   selectedClip?: TimelineClip;
 };
 
-type ProjectPreviewSummary = {
+export type ProjectPreviewSummary = {
   previewTitle: "项目预览";
   statusLabel: string;
-  statusTone: GenerationSummaryTone;
+  statusTone: GenerationSlotTone;
   realAudioCount: number;
   totalClipCount: number;
   pendingClipCount: number;
@@ -34,8 +36,8 @@ type ProjectPreviewSummary = {
   generatingClipCount: number;
   failedClipCount: number;
   waveformBars: number[];
-  slots: GenerationSummarySlot[];
-  selectedClipSlot?: GenerationSummarySlot;
+  slots: GenerationSlot[];
+  selectedClipSlot?: GenerationSlot;
 };
 
 const waveformBars = [28, 44, 36, 62, 48, 76, 42, 58, 34, 66, 46, 30];
@@ -52,6 +54,11 @@ const assetStatusDisplays: Record<AssetStatus, AssetStatusDisplay> = {
   asset_generating: { statusLabel: "队列中", tone: "accent" },
   asset_generated: { statusLabel: "可预览", tone: "ok" },
   asset_failed: { statusLabel: "失败", tone: "warn" },
+};
+
+const noClipsDisplay: AssetStatusDisplay = {
+  statusLabel: "无片段",
+  tone: "neutral",
 };
 
 export function getAssetStatusDisplay(
@@ -79,10 +86,11 @@ export function getProjectPreviewSummary({
 
   return {
     previewTitle: "项目预览",
-    statusLabel:
-      totalClipCount > 0 && generatedClipCount === totalClipCount
-        ? "可预览"
-        : "等待素材槽完成",
+    statusLabel: getProjectStatusLabel({
+      totalClipCount,
+      pendingClipCount,
+      generatedClipCount,
+    }),
     statusTone,
     realAudioCount: clips.filter(hasRealAudio).length,
     totalClipCount,
@@ -135,10 +143,34 @@ function getProjectStatusTone({
   return "neutral";
 }
 
+function getProjectStatusLabel({
+  totalClipCount,
+  pendingClipCount,
+  generatedClipCount,
+}: {
+  totalClipCount: number;
+  pendingClipCount: number;
+  generatedClipCount: number;
+}): string {
+  if (totalClipCount === 0) {
+    return "无片段";
+  }
+
+  if (generatedClipCount === totalClipCount) {
+    return "可预览";
+  }
+
+  if (pendingClipCount === totalClipCount) {
+    return "未生成";
+  }
+
+  return "等待素材槽完成";
+}
+
 function buildGenerationSlots(
   project: AsmrProject,
   clips: TimelineClip[],
-): GenerationSummarySlot[] {
+): GenerationSlot[] {
   return [
     buildProjectMixSlot(project, clips),
     ...previewTrackTypes.map((trackType) =>
@@ -150,8 +182,8 @@ function buildGenerationSlots(
 function buildProjectMixSlot(
   project: AsmrProject,
   clips: TimelineClip[],
-): GenerationSummarySlot {
-  const display = getAssetStatusDisplay(getAggregateAssetStatus(clips));
+): GenerationSlot {
+  const display = getAggregateAssetStatusDisplay(clips);
 
   return {
     id: "project_mix",
@@ -165,11 +197,11 @@ function buildProjectMixSlot(
 function buildTrackSlot(
   project: AsmrProject,
   trackType: PreviewTrackType,
-): GenerationSummarySlot {
+): GenerationSlot {
   const clips =
     project.timeline.tracks.find((track) => track.track_type === trackType)
       ?.clips ?? [];
-  const display = getAssetStatusDisplay(getAggregateAssetStatus(clips));
+  const display = getAggregateAssetStatusDisplay(clips);
 
   return {
     id: trackType,
@@ -182,7 +214,7 @@ function buildTrackSlot(
 
 function buildSelectedClipSlot(
   selectedClip: TimelineClip,
-): GenerationSummarySlot {
+): GenerationSlot {
   const display = getAssetStatusDisplay(selectedClip.generation.status);
 
   return {
@@ -195,6 +227,16 @@ function buildSelectedClipSlot(
     ...display,
     clipCount: 1,
   };
+}
+
+function getAggregateAssetStatusDisplay(
+  clips: TimelineClip[],
+): AssetStatusDisplay {
+  if (clips.length === 0) {
+    return { ...noClipsDisplay };
+  }
+
+  return getAssetStatusDisplay(getAggregateAssetStatus(clips));
 }
 
 function getAggregateAssetStatus(clips: TimelineClip[]): AssetStatus {

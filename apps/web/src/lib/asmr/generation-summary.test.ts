@@ -4,6 +4,11 @@ import {
   getAssetStatusDisplay,
   getProjectPreviewSummary,
 } from "./generation-summary";
+import type {
+  GenerationSlot,
+  GenerationSlotTone,
+  ProjectPreviewSummary,
+} from "./generation-summary";
 import { demoProject } from "./mock-project";
 import type { AsmrProject, AssetStatus, TimelineClip } from "./schema";
 
@@ -44,6 +49,40 @@ function setClipStatus(
   });
 }
 
+function setAllClipStatuses(
+  project: AsmrProject,
+  status: AssetStatus,
+): AsmrProject {
+  const nextProject = structuredClone(project);
+
+  for (const track of nextProject.timeline.tracks) {
+    for (const clip of track.clips) {
+      clip.generation.status = status;
+    }
+  }
+
+  return nextProject;
+}
+
+function clearAllClips(project: AsmrProject): AsmrProject {
+  const nextProject = structuredClone(project);
+
+  for (const track of nextProject.timeline.tracks) {
+    track.clips = [];
+  }
+
+  return nextProject;
+}
+
+function expectPublicPreviewTypes(
+  summary: ProjectPreviewSummary,
+): { tone: GenerationSlotTone; slot?: GenerationSlot } {
+  return {
+    tone: summary.statusTone,
+    slot: summary.slots[0],
+  };
+}
+
 describe("generation summary", () => {
   it("maps asset statuses to display labels and tones", () => {
     expect(getAssetStatusDisplay("asset_pending")).toEqual({
@@ -66,10 +105,13 @@ describe("generation summary", () => {
 
   it("summarizes the pending demo project preview slots", () => {
     const summary = getProjectPreviewSummary({ project: demoProject });
+    const publicTypes = expectPublicPreviewTypes(summary);
 
     expect(summary.previewTitle).toBe("项目预览");
-    expect(summary.statusLabel).toBe("等待素材槽完成");
+    expect(summary.statusLabel).toBe("未生成");
     expect(summary.statusTone).toBe("neutral");
+    expect(publicTypes.tone).toBe("neutral");
+    expect(publicTypes.slot?.id).toBe("project_mix");
     expect(summary.realAudioCount).toBe(0);
     expect(summary.totalClipCount).toBe(9);
     expect(summary.pendingClipCount).toBe(9);
@@ -122,6 +164,41 @@ describe("generation summary", () => {
       },
     ]);
     expect(summary.selectedClipSlot).toBeUndefined();
+  });
+
+  it("shows no-clips state for empty projects and track slots", () => {
+    const project = clearAllClips(cloneProject());
+
+    const summary = getProjectPreviewSummary({ project });
+
+    expect(summary.statusLabel).toBe("无片段");
+    expect(summary.statusTone).toBe("neutral");
+    expect(summary.totalClipCount).toBe(0);
+    expect(summary.pendingClipCount).toBe(0);
+    expect(summary.generatedClipCount).toBe(0);
+    expect(summary.generatingClipCount).toBe(0);
+    expect(summary.failedClipCount).toBe(0);
+    expect(summary.slots).toHaveLength(5);
+    for (const slot of summary.slots) {
+      expect(slot.clipCount).toBe(0);
+      expect(slot.statusLabel).toBe("无片段");
+      expect(slot.tone).toBe("neutral");
+    }
+  });
+
+  it("marks all generated clips and populated aggregate slots as previewable", () => {
+    const project = setAllClipStatuses(cloneProject(), "asset_generated");
+
+    const summary = getProjectPreviewSummary({ project });
+
+    expect(summary.statusLabel).toBe("可预览");
+    expect(summary.statusTone).toBe("ok");
+    for (const slot of summary.slots) {
+      if (slot.clipCount > 0) {
+        expect(slot.statusLabel).toBe("可预览");
+        expect(slot.tone).toBe("ok");
+      }
+    }
   });
 
   it("counts mixed generation states and exposes a generated selected clip", () => {
