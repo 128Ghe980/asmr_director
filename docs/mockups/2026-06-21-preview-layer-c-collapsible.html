@@ -1,0 +1,870 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>第 10 步 C 方案：可折叠混合轻量预览层</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #070b12;
+        --panel: #111827;
+        --panel-2: #0c1422;
+        --line: rgba(148, 163, 184, 0.2);
+        --line-strong: rgba(148, 163, 184, 0.34);
+        --text: #e5edf7;
+        --muted: #91a0b5;
+        --sky: #7dd3fc;
+        --green: #86efac;
+        --amber: #fde68a;
+        --violet: #c4b5fd;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, "Microsoft YaHei", "PingFang SC", system-ui, -apple-system,
+          BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        width: min(1380px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 32px 0 56px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      .page-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 24px;
+        align-items: end;
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        font-size: 28px;
+        line-height: 1.18;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        max-width: 860px;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      .rule-box {
+        max-width: 390px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.035);
+        color: #cbd5e1;
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .state-block {
+        margin-top: 20px;
+        border: 1px solid var(--line-strong);
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.72);
+        overflow: hidden;
+      }
+
+      .state-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: center;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(17, 24, 39, 0.92);
+      }
+
+      .kicker {
+        color: var(--sky);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      h2 {
+        margin-top: 6px;
+        font-size: 20px;
+        letter-spacing: 0;
+      }
+
+      .state-copy {
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .metric-row,
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .chip {
+        display: inline-flex;
+        min-height: 24px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        border-radius: 999px;
+        padding: 3px 9px;
+        color: #cbd5e1;
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 11px;
+        font-weight: 760;
+        white-space: nowrap;
+      }
+
+      .chip.info {
+        border-color: rgba(125, 211, 252, 0.34);
+        color: #bae6fd;
+        background: rgba(14, 165, 233, 0.11);
+      }
+
+      .chip.ok {
+        border-color: rgba(134, 239, 172, 0.34);
+        color: var(--green);
+        background: rgba(22, 163, 74, 0.11);
+      }
+
+      .chip.warn {
+        border-color: rgba(253, 230, 138, 0.34);
+        color: var(--amber);
+        background: rgba(245, 158, 11, 0.11);
+      }
+
+      .chip.violet {
+        border-color: rgba(196, 181, 253, 0.34);
+        color: var(--violet);
+        background: rgba(124, 58, 237, 0.12);
+      }
+
+      .screen {
+        margin: 16px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #090e18;
+        overflow: hidden;
+      }
+
+      .app-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: start;
+        min-height: 84px;
+        padding: 15px 18px;
+        border-bottom: 1px solid var(--line);
+        background: #121b2b;
+      }
+
+      .eyebrow {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .title {
+        margin-top: 8px;
+        font-size: 23px;
+        font-weight: 780;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .button {
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0 10px;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 760;
+      }
+
+      .button.primary {
+        border-color: rgba(125, 211, 252, 0.32);
+        background: rgba(14, 165, 233, 0.13);
+        color: #bae6fd;
+      }
+
+      .workspace {
+        display: grid;
+        min-height: 590px;
+      }
+
+      .expanded {
+        grid-template-columns: 208px minmax(0, 1fr) 320px;
+      }
+
+      .focused {
+        grid-template-columns: 56px minmax(0, 1fr) 56px;
+      }
+
+      .rail,
+      .dock {
+        background: rgba(15, 23, 42, 0.76);
+      }
+
+      .rail {
+        border-right: 1px solid var(--line);
+        padding: 14px;
+      }
+
+      .dock {
+        border-left: 1px solid var(--line);
+        padding: 14px;
+      }
+
+      .focused .rail,
+      .focused .dock {
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 12px 8px;
+      }
+
+      .vertical-label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        writing-mode: vertical-rl;
+      }
+
+      .center {
+        min-width: 0;
+        padding: 14px;
+      }
+
+      .section-title {
+        margin-bottom: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 820;
+      }
+
+      .mini-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.035);
+        padding: 12px;
+      }
+
+      .mini-card + .mini-card {
+        margin-top: 10px;
+      }
+
+      .project-card {
+        border-color: rgba(125, 211, 252, 0.28);
+        background: rgba(14, 165, 233, 0.1);
+      }
+
+      .small-title {
+        font-size: 13px;
+        font-weight: 800;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .small-copy {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .editor-grid {
+        display: grid;
+        grid-template-columns: 0.9fr 1.25fr 0.9fr;
+        gap: 12px;
+      }
+
+      .focused .editor-grid {
+        grid-template-columns: minmax(230px, 0.8fr) minmax(520px, 1.65fr) minmax(230px, 0.75fr);
+      }
+
+      .panel {
+        min-height: 500px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.028);
+        padding: 12px;
+      }
+
+      .clip-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .clip {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        min-height: 54px;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 8px;
+        padding: 9px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .clip.selected {
+        border-color: rgba(125, 211, 252, 0.38);
+        background: rgba(14, 165, 233, 0.1);
+      }
+
+      .clip-name {
+        font-size: 12px;
+        font-weight: 780;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .clip-meta {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 12px;
+      }
+
+      .track {
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+      }
+
+      .track-name {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 760;
+      }
+
+      .track-line {
+        position: relative;
+        height: 34px;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 8px;
+        background: rgba(2, 6, 23, 0.42);
+        overflow: hidden;
+      }
+
+      .block {
+        position: absolute;
+        top: 7px;
+        height: 18px;
+        border-radius: 6px;
+        background: rgba(148, 163, 184, 0.4);
+      }
+
+      .ready {
+        background: rgba(52, 211, 153, 0.6);
+      }
+
+      .pending {
+        background: rgba(148, 163, 184, 0.4);
+      }
+
+      .queued {
+        background: rgba(196, 181, 253, 0.58);
+      }
+
+      .wave {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        height: 76px;
+        padding: 0 10px;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 8px;
+        background: rgba(2, 6, 23, 0.42);
+        overflow: hidden;
+      }
+
+      .wave.compact {
+        height: 58px;
+      }
+
+      .bar {
+        width: 7px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.35);
+      }
+
+      .play-row {
+        display: grid;
+        grid-template-columns: 46px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+      }
+
+      .play-button {
+        display: inline-flex;
+        width: 46px;
+        height: 46px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        border-radius: 999px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.035);
+        font-size: 18px;
+      }
+
+      .stat-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .stat {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 16px;
+      }
+
+      .stat span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .slot-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .slot {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid rgba(148, 163, 184, 0.15);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .slot-name {
+        font-size: 12px;
+        font-weight: 780;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .slot-meta {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .field {
+        border: 1px solid rgba(148, 163, 184, 0.13);
+        border-radius: 7px;
+        padding: 8px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .field + .field {
+        margin-top: 8px;
+      }
+
+      .field label {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .field div {
+        margin-top: 5px;
+        font-size: 12px;
+      }
+
+      .width-note {
+        display: grid;
+        grid-template-columns: 208px minmax(0, 1fr) 320px;
+        gap: 0;
+        margin: 0 16px 16px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .width-note.focus-note {
+        grid-template-columns: 56px minmax(0, 1fr) 56px;
+      }
+
+      .width-note span {
+        min-height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-right: 1px solid var(--line);
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.03);
+        font-size: 11px;
+        font-weight: 760;
+      }
+
+      .width-note span:last-child {
+        border-right: 0;
+      }
+
+      @media (max-width: 1120px) {
+        main {
+          width: min(980px, calc(100vw - 28px));
+        }
+
+        .page-head,
+        .state-head,
+        .app-top {
+          grid-template-columns: 1fr;
+        }
+
+        .metric-row,
+        .chip-row,
+        .actions {
+          justify-content: flex-start;
+        }
+
+        .expanded,
+        .focused {
+          grid-template-columns: 1fr;
+        }
+
+        .rail,
+        .dock {
+          border-right: 0;
+          border-left: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .focused .rail,
+        .focused .dock {
+          display: block;
+        }
+
+        .vertical-label {
+          writing-mode: horizontal-tb;
+        }
+
+        .editor-grid,
+        .focused .editor-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="page-head">
+        <div>
+          <h1>C 方案确认：混合轻量，但左右必须可折叠</h1>
+          <p class="lead">
+            这版把“可折叠”作为硬约束展示出来：展开时右侧承载预览层和生成槽；需要认真剪时间线时，左项目栏和右详情栏都能收成窄 rail，让中间 Timeline 获得足够宽度。
+          </p>
+        </div>
+        <div class="rule-box">
+          规格约束：第 10 步不新增真实音频、不新增后端队列、不移除现有 C+ 工作区折叠。预览层必须跟右详情栏一起可折叠，不能永久挤压中间 Timeline。
+        </div>
+      </header>
+
+      <section class="state-block">
+        <div class="state-head">
+          <div>
+            <div class="kicker">State 1</div>
+            <h2>展开态：看项目预览和生成槽</h2>
+            <p class="state-copy">
+              日常浏览项目时保持左右展开。右侧预览层给出项目级假播放、占位波形和生成槽摘要；中间 Timeline 仍可用，但不是最宽状态。
+            </p>
+          </div>
+          <div class="metric-row">
+            <span class="chip">左栏 208px</span>
+            <span class="chip info">中间正常</span>
+            <span class="chip">右栏 320px</span>
+          </div>
+        </div>
+
+        <div class="screen">
+          <div class="app-top">
+            <div>
+              <div class="eyebrow">当前项目</div>
+              <div class="title">雨夜睡前陪伴</div>
+              <div class="meta">
+                <span>状态 可预览</span>
+                <span>预览未生成</span>
+                <span>5 轨 · 9 clips</span>
+                <span>本地已保存</span>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="button">项目</button>
+              <button class="button">详情</button>
+              <button class="button">专注编辑</button>
+              <button class="button primary">导出</button>
+              <button class="button primary">载入</button>
+              <button class="button">重置</button>
+            </div>
+          </div>
+
+          <div class="workspace expanded">
+            <aside class="rail">
+              <div class="section-title">项目</div>
+              <div class="mini-card project-card">
+                <div class="small-title">雨夜睡前陪伴</div>
+                <p class="small-copy">当前项目 · 可预览</p>
+              </div>
+              <div class="mini-card">
+                <div class="small-title">预览状态</div>
+                <p class="small-copy">项目预览未生成，但已有 clip 级生成状态。</p>
+              </div>
+            </aside>
+
+            <section class="center">
+              <div class="editor-grid">
+                <div class="panel">
+                  <div class="section-title">Storyboard</div>
+                  <div class="clip-list">
+                    <div class="clip selected"><div><div class="clip-name">雨夜房间</div><div class="clip-meta">环境 · full project bed</div></div><span class="chip">待生成</span></div>
+                    <div class="clip"><div><div class="clip-name">你还没睡吗？</div><div class="clip-meta">人声 · 安抚</div></div><span class="chip ok">可预览</span></div>
+                    <div class="clip"><div><div class="clip-name">被褥摩擦</div><div class="clip-meta">音效 · 00:42-00:45</div></div><span class="chip violet">队列中</span></div>
+                    <div class="clip"><div><div class="clip-name">雨声刚刚好</div><div class="clip-meta">人声 · 温柔</div></div><span class="chip">待生成</span></div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="section-title">Timeline + 轻量状态</div>
+                  <div class="timeline">
+                    <div class="track"><div class="track-name">人声</div><div class="track-line"><span class="block ready" style="left:8%;width:14%"></span><span class="block pending" style="left:34%;width:16%"></span><span class="block ready" style="left:72%;width:13%"></span></div></div>
+                    <div class="track"><div class="track-name">呼吸</div><div class="track-line"><span class="block pending" style="left:22%;width:9%"></span><span class="block queued" style="left:66%;width:8%"></span></div></div>
+                    <div class="track"><div class="track-name">音效</div><div class="track-line"><span class="block queued" style="left:28%;width:12%"></span><span class="block pending" style="left:58%;width:10%"></span></div></div>
+                    <div class="track"><div class="track-name">环境</div><div class="track-line"><span class="block pending" style="left:0%;width:100%"></span></div></div>
+                  </div>
+
+                  <div class="mini-card">
+                    <div class="section-title">项目占位波形</div>
+                    <div class="wave compact">
+                      <span class="bar" style="height:14px"></span>
+                      <span class="bar" style="height:28px"></span>
+                      <span class="bar" style="height:44px"></span>
+                      <span class="bar" style="height:20px"></span>
+                      <span class="bar" style="height:38px"></span>
+                      <span class="bar" style="height:30px"></span>
+                      <span class="bar" style="height:46px"></span>
+                      <span class="bar" style="height:24px"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="section-title">Inspector</div>
+                  <div class="field"><label>片段</label><div>雨夜房间</div></div>
+                  <div class="field"><label>生成状态</label><div><span class="chip">待生成</span></div></div>
+                  <div class="field"><label>资产槽</label><div>环境轨预览素材</div></div>
+                  <button class="button primary" style="margin-top:10px">标记为排队</button>
+                </div>
+              </div>
+            </section>
+
+            <aside class="dock">
+              <div class="section-title">项目详情</div>
+              <div class="mini-card">
+                <div class="section-title">预览层</div>
+                <div class="play-row">
+                  <div class="play-button">▶</div>
+                  <div>
+                    <div class="small-title">项目预览</div>
+                    <p class="small-copy">未生成 · 等待素材槽完成</p>
+                  </div>
+                </div>
+                <div class="wave" style="margin-top:12px">
+                  <span class="bar" style="height:18px"></span>
+                  <span class="bar" style="height:34px"></span>
+                  <span class="bar" style="height:58px"></span>
+                  <span class="bar" style="height:24px"></span>
+                  <span class="bar" style="height:46px"></span>
+                  <span class="bar" style="height:30px"></span>
+                  <span class="bar" style="height:68px"></span>
+                  <span class="bar" style="height:38px"></span>
+                  <span class="bar" style="height:52px"></span>
+                </div>
+                <div class="stat-row">
+                  <div class="stat"><strong>2</strong><span>可预览</span></div>
+                  <div class="stat"><strong>5</strong><span>待生成</span></div>
+                  <div class="stat"><strong>0</strong><span>真实音频</span></div>
+                </div>
+              </div>
+
+              <div class="mini-card">
+                <div class="section-title">生成槽</div>
+                <div class="slot-list">
+                  <div class="slot"><div><div class="slot-name">项目混音预览</div><div class="slot-meta">full · placeholder</div></div><span class="chip">待生成</span></div>
+                  <div class="slot"><div><div class="slot-name">人声轨</div><div class="slot-meta">4 clips</div></div><span class="chip ok">2/4</span></div>
+                  <div class="slot"><div><div class="slot-name">呼吸轨</div><div class="slot-meta">2 clips</div></div><span class="chip violet">1 队列</span></div>
+                  <div class="slot"><div><div class="slot-name">音效轨</div><div class="slot-meta">2 clips</div></div><span class="chip">0/2</span></div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+        <div class="width-note">
+          <span>左项目栏展开</span>
+          <span>中间编辑区正常宽度</span>
+          <span>右预览详情展开</span>
+        </div>
+      </section>
+
+      <section class="state-block">
+        <div class="state-head">
+          <div>
+            <div class="kicker">State 2</div>
+            <h2>专注态：左右折叠，Timeline 得到主空间</h2>
+            <p class="state-copy">
+              当用户需要认真调整 Timeline，点击“专注编辑”或单独折叠两侧。左侧和右侧只保留窄 rail，中间三栏编辑器重新分配宽度，Timeline 明显变长。
+            </p>
+          </div>
+          <div class="metric-row">
+            <span class="chip">左 56px</span>
+            <span class="chip ok">Timeline 变宽</span>
+            <span class="chip">右 56px</span>
+          </div>
+        </div>
+
+        <div class="screen">
+          <div class="app-top">
+            <div>
+              <div class="eyebrow">当前项目</div>
+              <div class="title">雨夜睡前陪伴</div>
+              <div class="meta">
+                <span>状态 可预览</span>
+                <span>专注编辑</span>
+                <span>预览层已折叠</span>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="button">项目</button>
+              <button class="button">详情</button>
+              <button class="button primary">退出专注</button>
+              <button class="button primary">导出</button>
+              <button class="button primary">载入</button>
+              <button class="button">重置</button>
+            </div>
+          </div>
+
+          <div class="workspace focused">
+            <aside class="rail">
+              <div class="vertical-label">项目</div>
+            </aside>
+
+            <section class="center">
+              <div class="editor-grid">
+                <div class="panel">
+                  <div class="section-title">Storyboard</div>
+                  <div class="clip-list">
+                    <div class="clip selected"><div><div class="clip-name">雨夜房间</div><div class="clip-meta">环境 · full project bed</div></div><span class="chip">待生成</span></div>
+                    <div class="clip"><div><div class="clip-name">你还没睡吗？</div><div class="clip-meta">人声 · 安抚</div></div><span class="chip ok">可预览</span></div>
+                    <div class="clip"><div><div class="clip-name">被褥摩擦</div><div class="clip-meta">音效 · 00:42-00:45</div></div><span class="chip violet">队列中</span></div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="section-title">Timeline 获得主宽度</div>
+                  <div class="timeline">
+                    <div class="track"><div class="track-name">人声</div><div class="track-line"><span class="block ready" style="left:7%;width:10%"></span><span class="block pending" style="left:31%;width:13%"></span><span class="block ready" style="left:72%;width:10%"></span></div></div>
+                    <div class="track"><div class="track-name">呼吸</div><div class="track-line"><span class="block pending" style="left:20%;width:7%"></span><span class="block queued" style="left:65%;width:6%"></span></div></div>
+                    <div class="track"><div class="track-name">音效</div><div class="track-line"><span class="block queued" style="left:27%;width:9%"></span><span class="block pending" style="left:57%;width:8%"></span></div></div>
+                    <div class="track"><div class="track-name">环境</div><div class="track-line"><span class="block pending" style="left:0%;width:100%"></span></div></div>
+                  </div>
+
+                  <div class="mini-card">
+                    <div class="section-title">轻量生成状态仍保留在 Timeline</div>
+                    <div class="chip-row" style="justify-content:flex-start">
+                      <span class="chip ok">绿色 可预览</span>
+                      <span class="chip">灰色 待生成</span>
+                      <span class="chip violet">紫色 队列中</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="section-title">Inspector</div>
+                  <div class="field"><label>片段</label><div>雨夜房间</div></div>
+                  <div class="field"><label>生成状态</label><div><span class="chip">待生成</span></div></div>
+                  <div class="field"><label>当前操作</label><div>调整时间线，不查看预览详情</div></div>
+                </div>
+              </div>
+            </section>
+
+            <aside class="dock">
+              <div class="vertical-label">详情</div>
+            </aside>
+          </div>
+        </div>
+        <div class="width-note focus-note">
+          <span>窄项目 rail</span>
+          <span>中间 Timeline 获得主要宽度</span>
+          <span>窄详情 rail</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
