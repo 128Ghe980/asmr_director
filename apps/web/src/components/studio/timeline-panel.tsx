@@ -2,6 +2,7 @@
 
 import clsx from "clsx";
 
+import { getAssetStatusDisplay } from "@/lib/asmr/generation-summary";
 import type { AsmrProject, TimelineClip, TrackType } from "@/lib/asmr/schema";
 import { getTrackLabel, getValueLabel } from "@/lib/asmr/ui-copy";
 import { formatTimeRange } from "@/lib/asmr/view-model";
@@ -27,6 +28,13 @@ const clipTones: Record<ClipTrackType, string> = {
   breath: "border-emerald-300/50 bg-emerald-300/16 text-emerald-50",
   sfx: "border-amber-300/55 bg-amber-300/18 text-amber-50",
   ambience: "border-violet-300/50 bg-violet-300/18 text-violet-50",
+};
+
+const statusDotTones = {
+  neutral: "bg-slate-200/70",
+  accent: "bg-sky-200/85",
+  ok: "bg-emerald-200/85",
+  warn: "bg-amber-200/85",
 };
 
 function getTrackClips(project: AsmrProject, trackType: ClipTrackType): TimelineClip[] {
@@ -103,6 +111,9 @@ export function TimelinePanel({
                     const isSelected = clip.id === selectedClipId;
 
                     const timeRange = formatTimeRange(clip.start, clip.duration);
+                    const generationStatus = getAssetStatusDisplay(
+                      clip.generation.status,
+                    );
 
                     return (
                       <button
@@ -121,7 +132,17 @@ export function TimelinePanel({
                         )}
                         style={getTimelineStyle(clip, project.duration)}
                       >
-                        <span className="truncate">{getClipLabel(clip)}</span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {getClipLabel(clip)}
+                        </span>
+                        <span
+                          className={clsx(
+                            "h-2 w-2 shrink-0 rounded-full",
+                            statusDotTones[generationStatus.tone],
+                          )}
+                          aria-label={generationStatus.statusLabel}
+                          title={generationStatus.statusLabel}
+                        />
                       </button>
                     );
                   })}

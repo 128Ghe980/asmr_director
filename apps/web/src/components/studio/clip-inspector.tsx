@@ -21,6 +21,7 @@ import type {
   ClipTimingNudge,
   ProjectValidationIssue,
 } from "@/lib/asmr/edit-project";
+import type { GenerationSlot } from "@/lib/asmr/generation-summary";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import {
   getDistanceLabel,
@@ -31,11 +32,13 @@ import {
   getLocalizedPositionLabel,
 } from "@/lib/asmr/view-model";
 
+import { GenerationSlotList } from "./generation-slot-list";
 import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
   fieldValidationIssues: ClipFieldValidationIssues;
   selectedClip: TimelineClip | undefined;
+  selectedClipSlot: GenerationSlot | undefined;
   onApplyDirectorPreset: (clipId: string, preset: DirectorPreset) => void;
   onNudgeClipTiming: (clipId: string, nudge: ClipTimingNudge) => void;
   onUpdateClip: (clipId: string, patch: ClipPatch) => void;
@@ -287,6 +290,7 @@ function parseNumericInput(value: string): number {
 export function ClipInspector({
   fieldValidationIssues,
   selectedClip,
+  selectedClipSlot,
   onApplyDirectorPreset,
   onNudgeClipTiming,
   onUpdateClip,
@@ -361,6 +365,12 @@ export function ClipInspector({
         ) : null}
 
         <TimingActionStrip onNudge={nudgeTiming} />
+
+        {selectedClipSlot ? (
+          <div className="border-b border-white/[0.06] py-3">
+            <GenerationSlotList title="素材槽" slots={[selectedClipSlot]} compact />
+          </div>
+        ) : null}
 
         {selectedClip.type === "voice" ? (
           <>

@@ -274,6 +274,7 @@ export function StudioApp({ project }: StudioAppProps) {
           <ClipInspector
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={selectedClip}
+            selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}
             onNudgeClipTiming={handleNudgeClipTiming}
             onUpdateClip={handleUpdateClip}
