@@ -34,7 +34,39 @@ const generatingJob: GenerationJobSnapshot = {
   updatedAt: "2026-06-22T00:00:01.000Z",
 };
 
+function makeRuntimeJob(
+  status: GenerationJobSnapshot["status"],
+  overrides: Partial<GenerationJobSnapshot> = {},
+): GenerationJobSnapshot {
+  return {
+    ...generatingJob,
+    status,
+    ...overrides,
+  };
+}
+
 describe("generation view", () => {
+  it("shows a no-op control when no clip is selected", () => {
+    const view = getGenerationView({
+      project: demoProject,
+      selectedClip: undefined,
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.selectedClipControl).toMatchObject({
+      action: "none",
+      label: "无片段",
+      disabled: true,
+      disabledReason: "未选择片段",
+      statusLabel: "无片段",
+    });
+    expect(view.selectedClipPreview).toEqual({
+      canPlay: false,
+      label: "暂无音频",
+    });
+  });
+
   it("shows generate action for a valid pending selected clip", () => {
     const view = getGenerationView({
       project: demoProject,
@@ -88,6 +120,97 @@ describe("generation view", () => {
       progress: 42,
       statusLabel: "生成中",
     });
+  });
+
+  it("shows queued runtime jobs as active generation", () => {
+    const runtimeState = upsertGenerationJob(
+      emptyGenerationRuntimeState,
+      makeRuntimeJob("queued", { progress: 8 }),
+    );
+    const view = getGenerationView({
+      project: demoProject,
+      selectedClip: findClip(demoProject, "voice_001"),
+      runtimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.preview.generatingClipCount).toBe(1);
+    expect(view.selectedClipControl).toMatchObject({
+      action: "cancel",
+      label: "取消",
+      disabled: false,
+      progress: 8,
+      statusLabel: "生成中",
+      jobId: "job_1",
+    });
+  });
+
+  it("shows canceling runtime jobs as disabled cancel controls", () => {
+    const runtimeState = upsertGenerationJob(
+      emptyGenerationRuntimeState,
+      makeRuntimeJob("canceling", { progress: 88 }),
+    );
+    const view = getGenerationView({
+      project: demoProject,
+      selectedClip: findClip(demoProject, "voice_001"),
+      runtimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.preview.generatingClipCount).toBe(1);
+    expect(view.selectedClipControl).toMatchObject({
+      action: "cancel",
+      label: "取消",
+      disabled: true,
+      disabledReason: "正在取消",
+      progress: 88,
+      statusLabel: "取消中",
+    });
+  });
+
+  it.each(["succeeded", "failed", "canceled"] as const)(
+    "ignores terminal runtime %s jobs",
+    (status) => {
+      const runtimeState = upsertGenerationJob(
+        emptyGenerationRuntimeState,
+        makeRuntimeJob(status),
+      );
+      const view = getGenerationView({
+        project: demoProject,
+        selectedClip: findClip(demoProject, "voice_001"),
+        runtimeState,
+        selectedClipHasValidationIssues: false,
+      });
+
+      expect(view.preview.generatingClipCount).toBe(0);
+      expect(view.selectedClipControl).toMatchObject({
+        action: "generate",
+        label: "生成",
+        disabled: false,
+        statusLabel: "待生成",
+      });
+      expect(view.selectedClipControl.jobId).toBeUndefined();
+    },
+  );
+
+  it("does not mutate the original project when applying runtime jobs", () => {
+    const before = JSON.stringify(demoProject);
+    const runtimeState = upsertGenerationJob(
+      emptyGenerationRuntimeState,
+      makeRuntimeJob("generating"),
+    );
+
+    getGenerationView({
+      project: demoProject,
+      selectedClip: findClip(demoProject, "voice_001"),
+      runtimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(findClip(demoProject, "voice_001").generation.status).toBe(
+      "asset_pending",
+    );
+    expect(JSON.stringify(demoProject)).toBe(before);
   });
 
   it("shows regenerate and playable preview for generated clips", () => {

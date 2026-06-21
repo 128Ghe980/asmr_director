@@ -41,6 +41,22 @@ describe("generation runtime state", () => {
     expect(second.jobIdByClipId.voice_001).toBe("job_2");
   });
 
+  it("removes stale clip mappings when the same job id moves clips", () => {
+    const first = upsertGenerationJob(emptyGenerationRuntimeState, job);
+    const movedJob = {
+      ...job,
+      clipId: "voice_002",
+      progress: 64,
+    };
+    const second = upsertGenerationJob(first, movedJob);
+
+    expect(second.jobsById.job_1).toEqual(movedJob);
+    expect(second.jobIdByClipId.voice_001).toBeUndefined();
+    expect(second.jobIdByClipId.voice_002).toBe("job_1");
+    expect(getGenerationJobForClip(second, "voice_001")).toBeUndefined();
+    expect(getGenerationJobForClip(second, "voice_002")).toEqual(movedJob);
+  });
+
   it("clears jobs by job id", () => {
     const state = upsertGenerationJob(emptyGenerationRuntimeState, job);
     const cleared = clearGenerationJob(state, "job_1");

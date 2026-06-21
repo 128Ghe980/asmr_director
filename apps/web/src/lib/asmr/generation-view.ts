@@ -5,7 +5,10 @@ import type {
 } from "./generation-summary";
 import type { GenerationJobSnapshot } from "./generation-bridge";
 import type { GenerationRuntimeState } from "./generation-runtime";
-import { getGenerationJobForClip } from "./generation-runtime";
+import {
+  getGenerationJobForClip,
+  isActiveGenerationJob,
+} from "./generation-runtime";
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
 
 export type SelectedClipGenerationAction =
@@ -54,7 +57,7 @@ function cloneProjectWithRuntimeJobs(
     const clips = (track.clips as TimelineClip[]).map((clip) => {
       const job = getGenerationJobForClip(runtimeState, clip.id);
 
-      if (!job || job.status === "failed" || job.status === "canceled") {
+      if (!job || !isActiveGenerationJob(job)) {
         return clip;
       }
 
@@ -116,7 +119,7 @@ function getSelectedClipControl({
     };
   }
 
-  if (job && job.status !== "failed" && job.status !== "canceled") {
+  if (job && isActiveGenerationJob(job)) {
     return getRuntimeControl(job);
   }
 

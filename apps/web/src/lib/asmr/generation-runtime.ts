@@ -10,6 +10,14 @@ export const emptyGenerationRuntimeState: GenerationRuntimeState = {
   jobIdByClipId: {},
 };
 
+export function isActiveGenerationJob(job: GenerationJobSnapshot): boolean {
+  return (
+    job.status === "queued" ||
+    job.status === "generating" ||
+    job.status === "canceling"
+  );
+}
+
 export function getGenerationJobForClip(
   state: GenerationRuntimeState,
   clipId: string,
@@ -25,19 +33,24 @@ export function upsertGenerationJob(
 ): GenerationRuntimeState {
   const previousJobId = state.jobIdByClipId[job.clipId];
   const jobsById = { ...state.jobsById };
+  const jobIdByClipId = { ...state.jobIdByClipId };
 
   if (previousJobId && previousJobId !== job.jobId) {
     delete jobsById[previousJobId];
   }
 
+  for (const [clipId, mappedJobId] of Object.entries(jobIdByClipId)) {
+    if (clipId !== job.clipId && mappedJobId === job.jobId) {
+      delete jobIdByClipId[clipId];
+    }
+  }
+
   jobsById[job.jobId] = job;
+  jobIdByClipId[job.clipId] = job.jobId;
 
   return {
     jobsById,
-    jobIdByClipId: {
-      ...state.jobIdByClipId,
-      [job.clipId]: job.jobId,
-    },
+    jobIdByClipId,
   };
 }
 
