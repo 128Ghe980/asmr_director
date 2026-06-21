@@ -122,11 +122,11 @@ export function TimelinePanel({
                         onClick={() => onSelectClip(clip.id)}
                         aria-label={`${getTrackLabel(clip.track)} ${getClipLabel(
                           clip,
-                        )} ${timeRange}`}
+                        )} ${timeRange} ${generationStatus.statusLabel}`}
                         aria-pressed={isSelected}
-                        title={`${getClipLabel(clip)} · ${timeRange}`}
+                        title={`${getClipLabel(clip)} · ${timeRange} · ${generationStatus.statusLabel}`}
                         className={clsx(
-                          "absolute top-3 flex h-10 min-w-24 items-center overflow-hidden rounded-md border px-2 text-left text-[11px] font-semibold leading-none shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45",
+                          "absolute top-3 flex h-10 min-w-24 items-center gap-1.5 overflow-hidden rounded-md border px-2 text-left text-[11px] font-semibold leading-none shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45",
                           clipTones[clip.track],
                           isSelected && "ring-2 ring-sky-200/70",
                         )}
@@ -140,8 +140,7 @@ export function TimelinePanel({
                             "h-2 w-2 shrink-0 rounded-full",
                             statusDotTones[generationStatus.tone],
                           )}
-                          aria-label={generationStatus.statusLabel}
-                          title={generationStatus.statusLabel}
+                          aria-hidden="true"
                         />
                       </button>
                     );
