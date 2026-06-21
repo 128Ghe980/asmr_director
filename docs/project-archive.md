@@ -418,3 +418,26 @@ npm.cmd run build --prefix apps/web -- --webpack
 - 下一步推荐改为 **preview layer before real audio**。
 - 原因是 C+ shell 已经给预览层留出结构位置，但仍是占位；下一轮应先做播放状态、波形/状态界面和 generation slots，让流程像音频产品，但不假装已有真实音频。
 - 真实 TTS/SFX、真实音频播放、真实 waveform 和导出仍应等导演工作流与 Timeline DSL 更稳定后再接入。
+
+## 2026-06-21 - Preview Layer Before Real Audio
+
+这一轮实现了已批准的 C hybrid lightweight preview layer，对应设计文档：
+
+- `docs/superpowers/specs/2026-06-21-preview-layer-before-real-audio-design.md`
+- `docs/superpowers/specs/2026-06-21-preview-layer-before-real-audio-design.zh.md`
+
+已实现内容：
+
+- 在右侧项目详情栏添加项目预览 surface：禁用播放按钮、fake waveform/status strip、preview counts、generation slots。
+- 新增 derived generation-summary 数据，从现有 `AsmrProject` 纯派生预览计数与素材槽，不修改 `AsmrProject` schema，也不改变导出 JSON。
+- Inspector 新增 selected-clip asset slot，Timeline 新增 compact generation-status signals。
+- 保留左侧项目栏与右侧详情栏的独立折叠；`专注编辑` 仍会给 Timeline 释放空间。
+- 本轮仍未接入真实播放、真实 waveform、真实 TTS/SFX/ambience 生成或后端任务队列。
+
+验证覆盖：
+
+- `npm.cmd run test --prefix apps/web`：8 个 test files / 62 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web`：通过。
+- 浏览器验证使用 production server `npm.cmd run start --prefix apps/web -- --port 3011`，避开异常关机后 stale dev-HMR websocket。
+- 1440x1000 desktop、`专注编辑`、左右独立折叠、Inspector 素材槽、字段级校验、无效导入、重置、导出下载、390x900 mobile overflow 均通过。

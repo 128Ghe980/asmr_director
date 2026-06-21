@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-06-17
+Last updated: 2026-06-21
 
 Read this first when resuming the project after context compaction or as a new AI agent. This file is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -29,8 +29,13 @@ Current user-facing capabilities:
 - Lets the left project rail and right project details dock collapse independently.
 - `专注编辑` collapses both side regions together; when both sides are collapsed, clicking it again expands both sides.
 - Keeps project-level operations `导出`, `载入`, and `重置` in the workspace header.
+- Shows the approved C hybrid lightweight preview layer in the right project details dock before real audio integration.
+- The preview layer includes a disabled play button, fake waveform/status strip, clip/real-audio/pending/previewable counts, and project/track generation slots.
+- Preview-layer data comes from a pure derived generation summary helper; it does not change the `AsmrProject` schema and does not change exported JSON.
 - Allows selecting clips from Storyboard or Timeline.
+- Shows lightweight generation-status dots on Timeline clips.
 - Allows editing selected clip fields in Inspector.
+- Shows the selected clip's `素材槽` in Inspector.
 - Syncs edits across Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, workspace summaries, and Export JSON.
 - Validates current project live via Zod schema.
 - Exports current project JSON from the workspace header.
@@ -47,7 +52,7 @@ Current user-facing capabilities:
 - Shows compact Timing Actions for the selected clip: 开始 -0.5秒, 开始 +0.5秒, 时长 -0.5秒, 时长 +0.5秒.
 - Applies Timing Actions as deterministic local Timeline DSL edits through a tested pure helper.
 
-Current status is frontend-only. There is no backend, real audio generation, audio playback, waveform rendering, TTS, SFX generation, cloud persistence, auth, billing, or collaboration.
+Current status is frontend-only. There is no backend, real audio generation, audio playback, real audio-backed waveform rendering, TTS, SFX generation, cloud persistence, auth, billing, or collaboration.
 
 ## Architecture Map
 
@@ -58,11 +63,14 @@ Core app:
 - `apps/web/src/components/studio/project-workspace.tsx` composes the C+ workspace shell around the editor panels.
 - `apps/web/src/components/studio/project-workspace-header.tsx` shows workspace status, project summary, focus controls, and project-level `导出` / `载入` / `重置` actions.
 - `apps/web/src/components/studio/project-rail.tsx` renders the collapsible left project rail.
-- `apps/web/src/components/studio/project-details-dock.tsx` renders the collapsible right project details dock.
+- `apps/web/src/components/studio/project-details-dock.tsx` renders the collapsible right project details dock and hosts the preview layer surface.
 - `apps/web/src/components/studio/project-workspace-badge.tsx` provides compact workspace badge display helpers.
+- `apps/web/src/components/studio/preview-layer-panel.tsx` renders the lightweight preview layer: disabled playback control, fake waveform/status strip, preview counts, and generation slots.
+- `apps/web/src/components/studio/preview-waveform-placeholder.tsx` renders the non-audio waveform placeholder.
+- `apps/web/src/components/studio/generation-slot-list.tsx` renders project/track/clip asset slot summaries.
 - `apps/web/src/components/studio/storyboard-panel.tsx` renders chronological clip cards.
-- `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks.
-- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields, displays field-level validation state, and exposes compact timing actions.
+- `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks and compact generation-status dots.
+- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields, displays field-level validation state, exposes compact timing actions, and shows the selected clip `素材槽`.
 - `apps/web/src/components/studio/validation-panel.tsx` shows live schema issues.
 - The former `project-header.tsx` and `project-controls.tsx` have been deleted; do not reintroduce project-level actions there.
 
@@ -77,6 +85,7 @@ Domain/data:
 - `apps/web/src/lib/asmr/project-persistence.ts` contains import parsing, JSON serialization, and localStorage helpers.
 - `apps/web/src/lib/asmr/director-presets.ts` contains deterministic Director Action preset behavior for voice clips.
 - `apps/web/src/lib/asmr/project-summary.ts` derives project-level summary metrics for the workspace shell.
+- `apps/web/src/lib/asmr/generation-summary.ts` derives preview-layer generation counts and asset slots from `AsmrProject` without mutating the schema or export contract.
 
 Tests:
 
@@ -87,6 +96,7 @@ Tests:
 - `apps/web/src/lib/asmr/director-presets.test.ts`
 - `apps/web/src/lib/asmr/ui-copy.test.ts`
 - `apps/web/src/lib/asmr/project-summary.test.ts`
+- `apps/web/src/lib/asmr/generation-summary.test.ts`
 
 Docs:
 
@@ -126,18 +136,16 @@ Use these commands from repo root:
 ```powershell
 npm.cmd run test --prefix apps/web
 npm.cmd run lint --prefix apps/web
-npm.cmd run build --prefix apps/web -- --webpack
+npm.cmd run build --prefix apps/web
 ```
 
 Latest verified state before this handoff:
 
-- 7 test files passed.
-- 55 tests passed.
-- lint passed.
-- build passed.
-- Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
-- Browser verification passed for the C+ Project Shell: default desktop around 1259px, `专注编辑`, independent left/right collapse, invalid import plus reset, 1024px, and 390px mobile all had no document-level horizontal overflow.
-- Export button click was verified with no console error. Codex in-app browser does not support the download event, so download-to-disk could not be confirmed via that event.
+- `npm.cmd run test --prefix apps/web`: 8 test files passed, 62 tests passed.
+- `npm.cmd run lint --prefix apps/web`: passed.
+- `npm.cmd run build --prefix apps/web`: passed.
+- Browser verification used the production server `npm.cmd run start --prefix apps/web -- --port 3011` to avoid a stale dev-HMR websocket after an abnormal shutdown.
+- Browser verification passed for 1440x1000 desktop, `专注编辑`, independent left/right collapse, Inspector `素材槽`, field-level validation, invalid import, reset, export download, and 390x900 mobile overflow.
 
 Run locally:
 
@@ -155,6 +163,15 @@ http://localhost:3000/
 
 Most recent feature commits:
 
+- `44b9abf fix: expose timeline generation status accessibly`
+- `04e3ce4 feat: show lightweight generation status`
+- `59f373e feat: wire preview layer into project shell`
+- `91cca6e feat: add preview layer components`
+- `ad85af5 fix: align preview summary public types`
+- `8dbd589 fix: refine preview generation summary`
+- `b34b2c4 feat: derive preview generation summary`
+- `1fffef3 docs: plan preview layer implementation`
+- `f74568c docs: design preview layer before real audio`
 - `baf2f30 fix: avoid nested workspace columns at lg`
 - `1894673 feat: wire studio into project workspace`
 - `6a06d17 fix: stabilize workspace aria controls`
@@ -203,20 +220,19 @@ Earlier V0.1 foundation:
 
 ## Recommended Next Work
 
-Recommended next step: **preview layer before real audio**.
+Recommended next step: **real generation integration design**.
 
-Why this next: the C+ Project Shell is now in place and has reserved product space for a preview layer, but the preview experience is still placeholder-only. Before connecting real TTS/SFX/audio generation, the app should make playback state, waveform/status surfaces, and generation slots feel coherent inside the local-first director workflow.
+Why this next: preview and asset-slot surfaces are now stable. The next step should decide the real generation integration shape before any service wiring: local-only queued state vs backend job model vs mock generation bridge. This is a design task for the generation contract and state model, not a direct jump into real TTS/SFX/ambience services.
 
 Approved scope:
 
-- Add explicit placeholder playback states without pretending real audio exists.
-- Add waveform/status UI surfaces that can later bind to generated audio metadata.
-- Add generation slots for clips/tracks so users can see what is pending, ready, failed, or queued.
-- Keep state local-first and continue using the single `AsmrProject` source of truth.
-- Preserve editing, validation, persistence, import, export, reset, C+ workspace layout, and concise Chinese UI copy.
-- Avoid adding backend persistence, auth, collaboration, real generation, or full audio export yet.
+- Decide whether generation state remains local-only, becomes backend job-driven, or first routes through a mock generation bridge.
+- Define how generated asset metadata should connect to preview-layer slots without breaking the `AsmrProject` export contract.
+- Decide the boundary between durable project data, ephemeral queued/job state, and eventual generated file references.
+- Preserve the existing preview layer, Timeline status signals, Inspector `素材槽`, validation, persistence, import, export, reset, C+ workspace layout, independent side collapse, and concise Chinese UI copy.
+- Avoid adding backend persistence, auth, collaboration, real generation, or full audio export during the design step.
 
-Do not jump to real TTS/audio generation yet.
+Do not jump directly to real TTS/SFX/ambience generation yet.
 
 ## Initial Product Path
 
@@ -225,8 +241,8 @@ This is the current early roadmap. Treat it as directional, not a rigid release 
 1. Field-level validation highlighting: completed for selected Clip Inspector fields while keeping the global Validation Panel.
 2. Light timeline editing: completed for selected clip start/duration nudges without building a full DAW.
 3. Project structure upgrade: completed as the C+ collapsible project workspace with left project rail, top status header, center editor, right project details dock, and focused editing mode.
-4. Preview layer before real audio: next; add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.
-5. Real generation chain: only after the director workflow feels stable, introduce real TTS/SFX generation, listening, regeneration, and export.
+4. Preview layer before real audio: completed as the C hybrid lightweight preview layer with disabled playback, fake waveform/status strip, preview counts, generation slots, Timeline status dots, and Inspector `素材槽`.
+5. Real generation chain: next design target; first design the generation integration contract and state model, then later introduce real TTS/SFX/ambience generation, listening, regeneration, and export.
 
 The key sequencing rule: keep strengthening the editable Timeline DSL and director workflow before connecting expensive or brittle audio generation.
 
