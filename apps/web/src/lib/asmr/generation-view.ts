@@ -9,6 +9,7 @@ import {
   getGenerationJobForClip,
   isActiveGenerationJob,
 } from "./generation-runtime";
+import { isMockAssetUri } from "./mock-asset-resolver";
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
 
 export type SelectedClipGenerationAction =
@@ -170,6 +171,14 @@ function getSelectedClipPreview(
     return {
       canPlay: false,
       label: "暂无音频",
+    };
+  }
+
+  if (!isMockAssetUri(selectedClip.asset.uri)) {
+    return {
+      canPlay: false,
+      label: "暂无音频",
+      uri: selectedClip.asset.uri,
     };
   }
 

@@ -239,6 +239,30 @@ describe("generation view", () => {
     });
   });
 
+  it("does not enable selected clip preview for non-mock assets", () => {
+    const project = commitGenerationSuccess(demoProject, "voice_001", {
+      assetId: "real_voice_001_job_1",
+      uri: "https://example.com/audio.wav",
+      duration: 7.5,
+    });
+    const view = getGenerationView({
+      project,
+      selectedClip: findClip(project, "voice_001"),
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.selectedClipControl).toMatchObject({
+      action: "regenerate",
+      disabled: false,
+    });
+    expect(view.selectedClipPreview).toEqual({
+      canPlay: false,
+      label: "暂无音频",
+      uri: "https://example.com/audio.wav",
+    });
+  });
+
   it("shows retry for failed clips", () => {
     const project = commitGenerationFailure(demoProject, "voice_001", {
       reason: "generate",

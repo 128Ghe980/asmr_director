@@ -277,6 +277,7 @@ function GenerationActionPanel({
       ? RefreshCcw
       : Sparkles;
   const progress = control.progress ?? 0;
+  const clampedProgress = Math.max(0, Math.min(100, progress));
 
   return (
     <div className="border-b border-white/[0.06] py-3">
@@ -308,10 +309,16 @@ function GenerationActionPanel({
       </div>
 
       {control.progress !== undefined ? (
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+        <div
+          className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={clampedProgress}
+        >
           <div
             className="h-full rounded-full bg-sky-300/80 transition-[width]"
-            style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+            style={{ width: `${clampedProgress}%` }}
           />
         </div>
       ) : null}

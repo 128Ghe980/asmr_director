@@ -16,6 +16,7 @@ import {
 } from "@/lib/asmr/edit-project";
 import type {
   GenerateClipReason,
+  GenerationBridge,
   GenerationJobUpdate,
 } from "@/lib/asmr/generation-bridge";
 import {
@@ -112,9 +113,11 @@ export function StudioApp({ project }: StudioAppProps) {
   const [importError, setImportError] = useState<string>();
   const [restoreState, setRestoreState] = useState<"demo" | "restored">("demo");
   const skipNextSaveRef = useRef(false);
-  const bridgeRef = useRef(createMockGenerationBridge());
+  const bridgeRef = useRef<GenerationBridge | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const generationSessionRef = useRef(0);
   const generationReasonsRef = useRef<Record<string, GenerateClipReason>>({});
+  const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
   const [generationRuntimeState, setGenerationRuntimeState] = useState(
     emptyGenerationRuntimeState,
   );
@@ -173,6 +176,14 @@ export function StudioApp({ project }: StudioAppProps) {
   );
   const previewSummary = generationView.preview;
 
+  function getGenerationBridge() {
+    if (bridgeRef.current === null) {
+      bridgeRef.current = createMockGenerationBridge();
+    }
+
+    return bridgeRef.current;
+  }
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -221,32 +232,66 @@ export function StudioApp({ project }: StudioAppProps) {
   }, [editableProject, hasLoadedStorage]);
 
   useEffect(() => {
+    generationRuntimeStateRef.current = generationRuntimeState;
+  }, [generationRuntimeState]);
+
+  useEffect(() => {
     return () => {
+      generationSessionRef.current += 1;
+      const jobIds = new Set([
+        ...Object.keys(generationReasonsRef.current),
+        ...Object.keys(generationRuntimeStateRef.current.jobsById),
+      ]);
+      const bridge = bridgeRef.current;
+
+      if (bridge) {
+        for (const jobId of jobIds) {
+          void bridge.cancelGeneration(jobId);
+        }
+      }
+
+      generationReasonsRef.current = {};
       audioRef.current?.pause();
+      audioRef.current = null;
     };
   }, []);
 
   function clearGenerationSession() {
+    generationSessionRef.current += 1;
     const jobIds = new Set([
       ...Object.keys(generationReasonsRef.current),
-      ...Object.keys(generationRuntimeState.jobsById),
+      ...Object.keys(generationRuntimeStateRef.current.jobsById),
     ]);
+    const bridge = bridgeRef.current;
 
-    for (const jobId of jobIds) {
-      void bridgeRef.current.cancelGeneration(jobId);
+    if (bridge) {
+      for (const jobId of jobIds) {
+        void bridge.cancelGeneration(jobId);
+      }
     }
 
     generationReasonsRef.current = {};
+    generationRuntimeStateRef.current = emptyGenerationRuntimeState;
     setGenerationRuntimeState(emptyGenerationRuntimeState);
     audioRef.current?.pause();
     audioRef.current = null;
   }
 
-  function handleGenerationUpdate(update: GenerationJobUpdate) {
+  function handleGenerationUpdate(
+    update: GenerationJobUpdate,
+    generationSession: number,
+  ) {
+    if (generationSession !== generationSessionRef.current) {
+      return;
+    }
+
     if (update.type === "snapshot") {
-      setGenerationRuntimeState((current) =>
-        upsertGenerationJob(current, update.job),
-      );
+      setGenerationRuntimeState((current) => {
+        const next = upsertGenerationJob(current, update.job);
+        generationRuntimeStateRef.current = next;
+
+        return next;
+      });
       return;
     }
 
@@ -254,9 +299,12 @@ export function StudioApp({ project }: StudioAppProps) {
       setEditableProject((currentProject) =>
         commitGenerationSuccess(currentProject, update.job.clipId, update.asset),
       );
-      setGenerationRuntimeState((current) =>
-        clearGenerationJob(current, update.job.jobId),
-      );
+      setGenerationRuntimeState((current) => {
+        const next = clearGenerationJob(current, update.job.jobId);
+        generationRuntimeStateRef.current = next;
+
+        return next;
+      });
       delete generationReasonsRef.current[update.job.jobId];
       return;
     }
@@ -271,16 +319,22 @@ export function StudioApp({ project }: StudioAppProps) {
           error: update.error,
         }),
       );
-      setGenerationRuntimeState((current) =>
-        clearGenerationJob(current, update.job.jobId),
-      );
+      setGenerationRuntimeState((current) => {
+        const next = clearGenerationJob(current, update.job.jobId);
+        generationRuntimeStateRef.current = next;
+
+        return next;
+      });
       delete generationReasonsRef.current[update.job.jobId];
       return;
     }
 
-    setGenerationRuntimeState((current) =>
-      clearGenerationJob(current, update.job.jobId),
-    );
+    setGenerationRuntimeState((current) => {
+      const next = clearGenerationJob(current, update.job.jobId);
+      generationRuntimeStateRef.current = next;
+
+      return next;
+    });
     delete generationReasonsRef.current[update.job.jobId];
   }
 
@@ -297,8 +351,9 @@ export function StudioApp({ project }: StudioAppProps) {
           ? "regenerate"
           : "generate";
     let didFinishBeforeStart = false;
+    const generationSession = generationSessionRef.current;
 
-    void bridgeRef.current
+    void getGenerationBridge()
       .generateClip(
         {
           project: editableProject,
@@ -306,8 +361,12 @@ export function StudioApp({ project }: StudioAppProps) {
           reason,
         },
         (update) => {
+          if (generationSession !== generationSessionRef.current) {
+            return;
+          }
+
           generationReasonsRef.current[update.job.jobId] = reason;
-          handleGenerationUpdate(update);
+          handleGenerationUpdate(update, generationSession);
 
           if (update.type !== "snapshot") {
             didFinishBeforeStart = true;
@@ -315,10 +374,15 @@ export function StudioApp({ project }: StudioAppProps) {
         },
       )
       .then((started) => {
+        if (generationSession !== generationSessionRef.current) {
+          return;
+        }
+
         if (!didFinishBeforeStart) {
           generationReasonsRef.current[started.jobId] = reason;
         }
-      });
+      })
+      .catch(() => undefined);
   }
 
   function handleCancelSelectedGeneration() {
@@ -328,10 +392,14 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
-    void bridgeRef.current.cancelGeneration(jobId);
+    void bridgeRef.current?.cancelGeneration(jobId);
   }
 
   function handlePlaySelectedClip() {
+    if (!generationView.selectedClipPreview.canPlay) {
+      return;
+    }
+
     const resolvedUri = resolveMockAssetUri(generationView.selectedClipPreview.uri);
 
     if (!resolvedUri) {
@@ -339,8 +407,15 @@ export function StudioApp({ project }: StudioAppProps) {
     }
 
     audioRef.current?.pause();
-    audioRef.current = new Audio(resolvedUri);
-    void audioRef.current.play();
+    const audio = new Audio(resolvedUri);
+    audioRef.current = audio;
+    void audio.play().catch(() => {
+      audio.pause();
+
+      if (audioRef.current === audio) {
+        audioRef.current = null;
+      }
+    });
   }
 
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
