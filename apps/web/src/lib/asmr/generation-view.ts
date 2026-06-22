@@ -11,6 +11,7 @@ import {
 } from "./generation-runtime";
 import { isMockAssetUri } from "./mock-asset-resolver";
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
+import { flattenClips } from "./view-model";
 
 export type SelectedClipGenerationAction =
   | "generate"
@@ -197,9 +198,7 @@ export function getGenerationView({
 }: GenerationViewInput): GenerationView {
   const displayProject = cloneProjectWithRuntimeJobs(project, runtimeState);
   const displaySelectedClip = selectedClip
-    ? displayProject.timeline.tracks
-        .flatMap((track) => track.clips)
-        .find((clip) => clip.id === selectedClip.id)
+    ? flattenClips(displayProject).find((clip) => clip.id === selectedClip.id)
     : undefined;
   const selectedClipJob = selectedClip
     ? getGenerationJobForClip(runtimeState, selectedClip.id)
