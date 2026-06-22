@@ -287,6 +287,31 @@ describe("generation summary", () => {
     });
   });
 
+  it("does not count mock asset URIs as real audio", () => {
+    const project = updateClip(cloneProject(), "voice_001", (clip) => {
+      clip.generation.status = "asset_generated";
+      clip.asset.asset_id = "mock_voice_001_job_1";
+      clip.asset.uri = "mock://asset/voice_001/job_1";
+      clip.asset.duration = 7.5;
+    });
+
+    const summary = getProjectPreviewSummary({ project });
+
+    expect(summary.realAudioCount).toBe(0);
+  });
+
+  it("counts non-mock asset URIs as real audio", () => {
+    const project = updateClip(cloneProject(), "voice_001", (clip) => {
+      clip.generation.status = "asset_generated";
+      clip.asset.uri = "file:///tmp/voice_001.wav";
+      clip.asset.duration = 7.5;
+    });
+
+    const summary = getProjectPreviewSummary({ project });
+
+    expect(summary.realAudioCount).toBe(1);
+  });
+
   it("shows a pending selected sfx clip without mutating project JSON", () => {
     const project = cloneProject();
     const beforeJson = JSON.stringify(project);

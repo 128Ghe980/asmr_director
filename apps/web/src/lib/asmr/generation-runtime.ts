@@ -75,3 +75,26 @@ export function clearGenerationJob(
     jobIdByClipId,
   };
 }
+
+export function markGenerationJobCanceling(
+  state: GenerationRuntimeState,
+  jobId: string,
+): GenerationRuntimeState {
+  const job = state.jobsById[jobId];
+
+  if (!job || !isActiveGenerationJob(job) || job.status === "canceling") {
+    return state;
+  }
+
+  return {
+    jobsById: {
+      ...state.jobsById,
+      [jobId]: {
+        ...job,
+        status: "canceling",
+        message: "正在取消",
+      },
+    },
+    jobIdByClipId: state.jobIdByClipId,
+  };
+}

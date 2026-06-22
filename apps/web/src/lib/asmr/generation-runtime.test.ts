@@ -4,6 +4,7 @@ import {
   clearGenerationJob,
   emptyGenerationRuntimeState,
   getGenerationJobForClip,
+  markGenerationJobCanceling,
   upsertGenerationJob,
 } from "./generation-runtime";
 import type { GenerationJobSnapshot } from "./generation-bridge";
@@ -63,5 +64,27 @@ describe("generation runtime state", () => {
 
     expect(cleared.jobsById).toEqual({});
     expect(cleared.jobIdByClipId).toEqual({});
+  });
+
+  it("marks only the requested active job as canceling", () => {
+    const otherJob: GenerationJobSnapshot = {
+      ...job,
+      jobId: "job_2",
+      clipId: "voice_002",
+      progress: 12,
+    };
+    const state = upsertGenerationJob(
+      upsertGenerationJob(emptyGenerationRuntimeState, job),
+      otherJob,
+    );
+
+    const canceling = markGenerationJobCanceling(state, "job_1");
+
+    expect(canceling.jobsById.job_1).toMatchObject({
+      status: "canceling",
+      progress: 42,
+    });
+    expect(canceling.jobsById.job_2).toEqual(otherJob);
+    expect(canceling.jobIdByClipId).toEqual(state.jobIdByClipId);
   });
 });

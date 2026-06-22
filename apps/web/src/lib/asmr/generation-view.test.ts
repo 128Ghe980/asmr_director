@@ -122,6 +122,32 @@ describe("generation view", () => {
     });
   });
 
+  it("exposes a display project with runtime generation state without mutating the durable project", () => {
+    const before = JSON.stringify(demoProject);
+    const runtimeState = upsertGenerationJob(
+      emptyGenerationRuntimeState,
+      generatingJob,
+    );
+
+    const view = getGenerationView({
+      project: demoProject,
+      selectedClip: findClip(demoProject, "voice_001"),
+      runtimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(findClip(view.displayProject, "voice_001").generation.status).toBe(
+      "asset_generating",
+    );
+    expect(view.displaySelectedClip?.generation.status).toBe(
+      "asset_generating",
+    );
+    expect(findClip(demoProject, "voice_001").generation.status).toBe(
+      "asset_pending",
+    );
+    expect(JSON.stringify(demoProject)).toBe(before);
+  });
+
   it("shows queued runtime jobs as active generation", () => {
     const runtimeState = upsertGenerationJob(
       emptyGenerationRuntimeState,

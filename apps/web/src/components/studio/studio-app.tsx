@@ -20,12 +20,19 @@ import type {
   GenerationJobUpdate,
 } from "@/lib/asmr/generation-bridge";
 import {
+  getClipGenerationFingerprint,
+  isCurrentClipGenerationFingerprint,
+} from "@/lib/asmr/generation-fingerprint";
+import {
   commitGenerationFailure,
   commitGenerationSuccess,
 } from "@/lib/asmr/generation-project-state";
 import {
   clearGenerationJob,
   emptyGenerationRuntimeState,
+  getGenerationJobForClip,
+  isActiveGenerationJob,
+  markGenerationJobCanceling,
   upsertGenerationJob,
 } from "@/lib/asmr/generation-runtime";
 import { getGenerationView } from "@/lib/asmr/generation-view";
@@ -117,6 +124,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const generationSessionRef = useRef(0);
   const generationReasonsRef = useRef<Record<string, GenerateClipReason>>({});
+  const generationFingerprintsRef = useRef<Record<string, string>>({});
   const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
   const [generationRuntimeState, setGenerationRuntimeState] = useState(
     emptyGenerationRuntimeState,
@@ -175,6 +183,8 @@ export function StudioApp({ project }: StudioAppProps) {
     ],
   );
   const previewSummary = generationView.preview;
+  const displayProject = generationView.displayProject;
+  const displaySelectedClip = generationView.displaySelectedClip ?? selectedClip;
 
   function getGenerationBridge() {
     if (bridgeRef.current === null) {
@@ -251,6 +261,7 @@ export function StudioApp({ project }: StudioAppProps) {
       }
 
       generationReasonsRef.current = {};
+      generationFingerprintsRef.current = {};
       audioRef.current?.pause();
       audioRef.current = null;
     };
@@ -271,10 +282,37 @@ export function StudioApp({ project }: StudioAppProps) {
     }
 
     generationReasonsRef.current = {};
+    generationFingerprintsRef.current = {};
     generationRuntimeStateRef.current = emptyGenerationRuntimeState;
     setGenerationRuntimeState(emptyGenerationRuntimeState);
     audioRef.current?.pause();
     audioRef.current = null;
+  }
+
+  function setRuntimeState(nextState: typeof generationRuntimeStateRef.current) {
+    generationRuntimeStateRef.current = nextState;
+    setGenerationRuntimeState(nextState);
+  }
+
+  function cancelGenerationForClip(clipId: string) {
+    const job = getGenerationJobForClip(
+      generationRuntimeStateRef.current,
+      clipId,
+    );
+
+    if (!job || !isActiveGenerationJob(job)) {
+      return;
+    }
+
+    const next = clearGenerationJob(
+      generationRuntimeStateRef.current,
+      job.jobId,
+    );
+
+    delete generationReasonsRef.current[job.jobId];
+    delete generationFingerprintsRef.current[job.jobId];
+    setRuntimeState(next);
+    void bridgeRef.current?.cancelGeneration(job.jobId);
   }
 
   function handleGenerationUpdate(
@@ -296,8 +334,21 @@ export function StudioApp({ project }: StudioAppProps) {
     }
 
     if (update.type === "succeeded") {
+      const fingerprint = generationFingerprintsRef.current[update.job.jobId];
+
       setEditableProject((currentProject) =>
-        commitGenerationSuccess(currentProject, update.job.clipId, update.asset),
+        fingerprint &&
+        isCurrentClipGenerationFingerprint(
+          currentProject,
+          update.job.clipId,
+          fingerprint,
+        )
+          ? commitGenerationSuccess(
+              currentProject,
+              update.job.clipId,
+              update.asset,
+            )
+          : currentProject,
       );
       setGenerationRuntimeState((current) => {
         const next = clearGenerationJob(current, update.job.jobId);
@@ -306,18 +357,27 @@ export function StudioApp({ project }: StudioAppProps) {
         return next;
       });
       delete generationReasonsRef.current[update.job.jobId];
+      delete generationFingerprintsRef.current[update.job.jobId];
       return;
     }
 
     if (update.type === "failed") {
       const reason =
         generationReasonsRef.current[update.job.jobId] ?? "generate";
+      const fingerprint = generationFingerprintsRef.current[update.job.jobId];
 
       setEditableProject((currentProject) =>
-        commitGenerationFailure(currentProject, update.job.clipId, {
-          reason,
-          error: update.error,
-        }),
+        fingerprint &&
+        isCurrentClipGenerationFingerprint(
+          currentProject,
+          update.job.clipId,
+          fingerprint,
+        )
+          ? commitGenerationFailure(currentProject, update.job.clipId, {
+              reason,
+              error: update.error,
+            })
+          : currentProject,
       );
       setGenerationRuntimeState((current) => {
         const next = clearGenerationJob(current, update.job.jobId);
@@ -326,6 +386,7 @@ export function StudioApp({ project }: StudioAppProps) {
         return next;
       });
       delete generationReasonsRef.current[update.job.jobId];
+      delete generationFingerprintsRef.current[update.job.jobId];
       return;
     }
 
@@ -336,6 +397,7 @@ export function StudioApp({ project }: StudioAppProps) {
       return next;
     });
     delete generationReasonsRef.current[update.job.jobId];
+    delete generationFingerprintsRef.current[update.job.jobId];
   }
 
   function handleGenerateSelectedClip() {
@@ -352,6 +414,7 @@ export function StudioApp({ project }: StudioAppProps) {
           : "generate";
     let didFinishBeforeStart = false;
     const generationSession = generationSessionRef.current;
+    const fingerprint = getClipGenerationFingerprint(selectedClip);
 
     void getGenerationBridge()
       .generateClip(
@@ -366,6 +429,7 @@ export function StudioApp({ project }: StudioAppProps) {
           }
 
           generationReasonsRef.current[update.job.jobId] = reason;
+          generationFingerprintsRef.current[update.job.jobId] = fingerprint;
           handleGenerationUpdate(update, generationSession);
 
           if (update.type !== "snapshot") {
@@ -380,6 +444,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
         if (!didFinishBeforeStart) {
           generationReasonsRef.current[started.jobId] = reason;
+          generationFingerprintsRef.current[started.jobId] = fingerprint;
         }
       })
       .catch(() => undefined);
@@ -392,6 +457,12 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
+    setGenerationRuntimeState((current) => {
+      const next = markGenerationJobCanceling(current, jobId);
+      generationRuntimeStateRef.current = next;
+
+      return next;
+    });
     void bridgeRef.current?.cancelGeneration(jobId);
   }
 
@@ -419,6 +490,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
+    cancelGenerationForClip(clipId);
     setEditableProject((currentProject) =>
       updateClipInProject(currentProject, clipId, patch),
     );
@@ -426,6 +498,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleApplyDirectorPreset(clipId: string, preset: DirectorPreset) {
+    cancelGenerationForClip(clipId);
     setEditableProject((currentProject) =>
       applyDirectorPreset(currentProject, clipId, preset),
     );
@@ -433,6 +506,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleNudgeClipTiming(clipId: string, nudge: ClipTimingNudge) {
+    cancelGenerationForClip(clipId);
     setEditableProject((currentProject) =>
       nudgeClipTiming(currentProject, clipId, nudge),
     );
@@ -487,7 +561,7 @@ export function StudioApp({ project }: StudioAppProps) {
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(220px,0.86fr)_minmax(0,1.26fr)_minmax(220px,0.86fr)]">
         <div className="min-h-[520px] xl:h-[calc(100vh-152px)]">
           <StoryboardPanel
-            project={editableProject}
+            project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
           />
@@ -495,7 +569,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
         <div className="flex min-w-0 flex-col gap-4">
           <TimelinePanel
-            project={editableProject}
+            project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
           />
@@ -506,7 +580,7 @@ export function StudioApp({ project }: StudioAppProps) {
         <div className="min-w-0">
           <ClipInspector
             fieldValidationIssues={selectedClipValidationIssues}
-            selectedClip={selectedClip}
+            selectedClip={displaySelectedClip}
             selectedClipGeneration={generationView.selectedClipControl}
             selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}

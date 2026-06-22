@@ -1,4 +1,5 @@
 import type { AsmrProject, AssetStatus, TimelineClip, TrackType } from "./schema";
+import { isMockAssetUri } from "./mock-asset-resolver";
 import { getTrackLabel } from "./ui-copy";
 import { flattenClips, formatSeconds, formatTimeRange } from "./view-model";
 
@@ -112,6 +113,10 @@ function countClipsByStatus(
 }
 
 function hasRealAudio(clip: TimelineClip): boolean {
+  if (clip.asset.uri && isMockAssetUri(clip.asset.uri)) {
+    return false;
+  }
+
   return Boolean(clip.asset.asset_id || clip.asset.uri);
 }
 

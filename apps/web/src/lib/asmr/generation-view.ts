@@ -39,6 +39,8 @@ export type SelectedClipPreview = {
 };
 
 export type GenerationView = {
+  displayProject: AsmrProject;
+  displaySelectedClip?: TimelineClip;
   preview: ProjectPreviewSummary;
   selectedClipControl: SelectedClipGenerationControl;
   selectedClipPreview: SelectedClipPreview;
@@ -205,6 +207,8 @@ export function getGenerationView({
     : undefined;
 
   return {
+    displayProject,
+    displaySelectedClip,
     preview: getProjectPreviewSummary({
       project: displayProject,
       selectedClip: displaySelectedClip,
