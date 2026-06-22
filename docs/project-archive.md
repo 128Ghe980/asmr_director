@@ -419,6 +419,46 @@ npm.cmd run build --prefix apps/web -- --webpack
 - 原因是 C+ shell 已经给预览层留出结构位置，但仍是占位；下一轮应先做播放状态、波形/状态界面和 generation slots，让流程像音频产品，但不假装已有真实音频。
 - 真实 TTS/SFX、真实音频播放、真实 waveform 和导出仍应等导演工作流与 Timeline DSL 更稳定后再接入。
 
+## 2026-06-22 - Generation Bridge
+
+This round implemented the mock-first Generation Bridge described by:
+
+- `docs/superpowers/specs/2026-06-22-generation-bridge-design.md`
+- `docs/superpowers/specs/2026-06-22-generation-bridge-design.zh.md`
+- `docs/superpowers/plans/2026-06-22-generation-bridge.md`
+
+What changed:
+
+- Added a backend-shaped `GenerationBridge` contract and a local mock implementation.
+- Added runtime-only job state for queued/generating/progress/succeeded/failed/canceled behavior.
+- Added pure durable project commits for generated mock assets and failed generation state.
+- Kept runtime `jobId`, progress, queue/generating/canceling state, `blob:` URLs, and `data:audio` URLs out of `AsmrProject`, local saved project JSON, and exported JSON.
+- Added `mock://asset/<clipId>/<jobId>` asset URIs and a runtime resolver that turns them into playable local mock WAV data URLs.
+- Added selected clip generation controls in Inspector: `生成`, `重生成`, `重试`, and `取消`.
+- Enabled selected clip mock preview playback in the right Preview Layer while keeping project-mix preview disabled/out of scope.
+- Preserved import/export/reset/autosave, validation, Timeline status display, and the collapsible C+ project workspace.
+
+Implementation notes:
+
+- `StudioApp` owns the bridge instance, runtime generation state, session guards, callback handling, and mock playback.
+- Generation view state is derived by `generation-view.ts`, which merges durable project data and runtime jobs before rendering UI.
+- `generation-project-state.ts` is responsible for final project mutation only: success commits asset metadata; failure commits `asset_failed`; failed regeneration preserves previous generated assets.
+- A TypeScript build failure surfaced in `generation-view.ts` because direct union-track `flatMap` bypassed the existing `flattenClips` helper. The fix uses `flattenClips(displayProject)` and is covered by build verification.
+
+Verification:
+
+- `npm.cmd run test --prefix apps/web`: 13 test files / 92 tests passed.
+- `npm.cmd run lint --prefix apps/web`: passed.
+- `npm.cmd run build --prefix apps/web`: passed.
+- Browser verification used `http://localhost:3000/` plus Playwright with system Chrome because the in-app browser Node runtime returned `failed to write kernel assets`.
+- Browser checks covered Chinese UI text, selected clip generation, progress and cancel state, success to `重生成`, enabled selected clip preview playback, local saved project containing `mock://asset/`, local saved project excluding runtime job state, focus/collapse controls, desktop overflow, collapsed desktop overflow, 390x900 mobile overflow, and no console/page errors.
+
+Roadmap update:
+
+- The previous "real generation integration design" target has now been refined by implementation: the mock bridge boundary exists.
+- Recommended next work is **API-backed generation bridge design**: define the real API/job/storage contract that can replace the mock bridge without disturbing the director workflow.
+- Do not jump directly into real TTS/SFX/ambience provider wiring until that API-backed bridge design is agreed.
+
 ## 2026-06-21 - Preview Layer Before Real Audio
 
 这一轮实现了已批准的 C hybrid lightweight preview layer，对应设计文档：
