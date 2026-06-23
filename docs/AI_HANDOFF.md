@@ -1,16 +1,21 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-06-17
+Last updated: 2026-06-22
 
-Read this first when resuming the project after context compaction or as a new AI agent. This file is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
+Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
 ## Workspace Location
 
-Current Codex desktop workspace path for this repo:
+Primary Codex desktop workspace path:
 
 - `D:\CodexWorkplace\asmr_director`
 
-This is a local recovery hint, not a portable project requirement. In other environments, treat the repository root as the source of truth.
+Current feature work was completed in the Superpowers worktree:
+
+- `C:\Users\Yuki1\.config\superpowers\worktrees\asmr_director\preview-layer-before-real-audio`
+- Branch: `codex/preview-layer-before-real-audio`
+
+Treat the repository root as the source of truth if the project is opened from another environment.
 
 ## Product North Star
 
@@ -29,10 +34,17 @@ Current user-facing capabilities:
 - Lets the left project rail and right project details dock collapse independently.
 - `专注编辑` collapses both side regions together; when both sides are collapsed, clicking it again expands both sides.
 - Keeps project-level operations `导出`, `载入`, and `重置` in the workspace header.
+- Shows the approved C hybrid lightweight preview layer in the right project details dock.
 - Allows selecting clips from Storyboard or Timeline.
+- Shows lightweight generation-status dots on Timeline clips.
 - Allows editing selected clip fields in Inspector.
-- Syncs edits across Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, workspace summaries, and Export JSON.
+- Shows the selected clip asset slot in Inspector.
+- Syncs edits across Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, workspace summaries, Preview Layer, and Export JSON.
 - Validates current project live via Zod schema.
+- Highlights selected Clip Inspector fields when their schema validation issues map to editable inputs.
+- Shows compact inline field messages while keeping the global Validation Panel as the full issue list.
+- Shows voice-only Director Actions in Clip Inspector: `更柔`, `更近`, `左耳`, `右耳`, `停顿`, `降低`.
+- Shows compact Timing Actions for the selected clip: `开始 -0.5秒`, `开始 +0.5秒`, `时长 -0.5秒`, `时长 +0.5秒`.
 - Exports current project JSON from the workspace header.
 - Autosaves current project to browser `localStorage`.
 - Restores saved project on reload.
@@ -40,43 +52,53 @@ Current user-facing capabilities:
 - Rejects invalid import JSON without replacing current project.
 - Resets to the built-in demo project.
 - Uses Chinese-first interface copy with short, clear button names while keeping technical abbreviations such as `ASMR`, `JSON`, `dB`, `LUFS`, and `seed`.
-- Shows voice-only Director Actions in Clip Inspector: 更柔, 更近, 左耳, 右耳, 停顿, 降低.
-- Applies Director Actions as deterministic local Timeline DSL edits through a tested pure helper.
-- Highlights selected Clip Inspector fields when their schema validation issues map to editable inputs.
-- Shows compact inline field messages while keeping the global Validation Panel as the full issue list.
-- Shows compact Timing Actions for the selected clip: 开始 -0.5秒, 开始 +0.5秒, 时长 -0.5秒, 时长 +0.5秒.
-- Applies Timing Actions as deterministic local Timeline DSL edits through a tested pure helper.
+- Adds a mock-first Generation Bridge for selected clips.
+- Keeps runtime generation job state outside `AsmrProject` and out of exported project JSON.
+- Commits only final `asset_generated` / `asset_failed` state and final asset metadata into the durable project.
+- Resolves `mock://asset/<clipId>/<jobId>` URIs to playable local mock audio at runtime.
+- Exposes selected clip `生成`, `重生成`, `重试`, and `取消` controls in Inspector.
+- Enables selected clip mock preview in the right Preview Layer while keeping project-mix preview out of scope.
 
-Current status is frontend-only. There is no backend, real audio generation, audio playback, waveform rendering, TTS, SFX generation, cloud persistence, auth, billing, or collaboration.
+Current status is frontend-only. There is no backend, real TTS, real SFX generation, real ambience generation, real audio-backed waveform rendering, cloud persistence, auth, billing, collaboration, or full audio export. Audio playback exists only for runtime-resolved mock assets.
 
 ## Architecture Map
 
 Core app:
 
 - `apps/web/src/app/page.tsx` renders the studio with `demoProject`.
-- `apps/web/src/components/studio/studio-app.tsx` owns local editable project state and wires export, import, autosave, reset, validation, selected clip state, and director preset application.
+- `apps/web/src/components/studio/studio-app.tsx` owns editable project state, runtime generation state, bridge callbacks, export, import, autosave, reset, validation, selected clip state, mock playback, director presets, and timing nudges.
 - `apps/web/src/components/studio/project-workspace.tsx` composes the C+ workspace shell around the editor panels.
 - `apps/web/src/components/studio/project-workspace-header.tsx` shows workspace status, project summary, focus controls, and project-level `导出` / `载入` / `重置` actions.
 - `apps/web/src/components/studio/project-rail.tsx` renders the collapsible left project rail.
-- `apps/web/src/components/studio/project-details-dock.tsx` renders the collapsible right project details dock.
+- `apps/web/src/components/studio/project-details-dock.tsx` renders the collapsible right project details dock and hosts the Preview Layer surface.
 - `apps/web/src/components/studio/project-workspace-badge.tsx` provides compact workspace badge display helpers.
+- `apps/web/src/components/studio/preview-layer-panel.tsx` renders the lightweight Preview Layer and selected clip mock playback control.
+- `apps/web/src/components/studio/preview-waveform-placeholder.tsx` renders the non-audio waveform placeholder.
+- `apps/web/src/components/studio/generation-slot-list.tsx` renders project/track/clip asset slot summaries.
 - `apps/web/src/components/studio/storyboard-panel.tsx` renders chronological clip cards.
-- `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks.
-- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields, displays field-level validation state, and exposes compact timing actions.
+- `apps/web/src/components/studio/timeline-panel.tsx` renders fixed track timeline blocks and compact generation-status dots.
+- `apps/web/src/components/studio/clip-inspector.tsx` edits selected clip fields, displays field-level validation state, exposes Director Actions, Timing Actions, selected clip asset slot, and selected clip generation controls.
 - `apps/web/src/components/studio/validation-panel.tsx` shows live schema issues.
-- The former `project-header.tsx` and `project-controls.tsx` have been deleted; do not reintroduce project-level actions there.
+- The former `project-header.tsx` and `project-controls.tsx` were deleted; do not reintroduce project-level actions there.
 
 Domain/data:
 
 - `apps/web/src/lib/asmr/schema.ts` defines the Zod schema and TypeScript types for ASMR Project JSON / Timeline DSL.
 - `apps/web/src/lib/asmr/mock-project.ts` is the canonical "雨夜睡前陪伴" demo project.
 - `apps/web/src/lib/asmr/validate.ts` wraps schema parsing and clip flattening.
-- `apps/web/src/lib/asmr/view-model.ts` contains display helpers.
+- `apps/web/src/lib/asmr/view-model.ts` contains display helpers and `flattenClips`.
 - `apps/web/src/lib/asmr/ui-copy.ts` contains shared Chinese UI labels and validation-message translations.
 - `apps/web/src/lib/asmr/edit-project.ts` contains immutable clip update helpers, selected-clip timing nudges, validation issue formatting, and selected-clip field issue mapping.
 - `apps/web/src/lib/asmr/project-persistence.ts` contains import parsing, JSON serialization, and localStorage helpers.
 - `apps/web/src/lib/asmr/director-presets.ts` contains deterministic Director Action preset behavior for voice clips.
 - `apps/web/src/lib/asmr/project-summary.ts` derives project-level summary metrics for the workspace shell.
+- `apps/web/src/lib/asmr/generation-summary.ts` derives preview-layer generation counts and asset slots from `AsmrProject` without mutating the schema or export contract.
+- `apps/web/src/lib/asmr/generation-bridge.ts` defines the backend-shaped generation bridge contract.
+- `apps/web/src/lib/asmr/mock-generation-bridge.ts` implements the local mock bridge.
+- `apps/web/src/lib/asmr/generation-project-state.ts` commits final generation success/failure into `AsmrProject`.
+- `apps/web/src/lib/asmr/generation-runtime.ts` manages runtime-only generation jobs keyed by `jobId` and `clipId`.
+- `apps/web/src/lib/asmr/generation-view.ts` merges durable project data and runtime generation state into UI-ready controls and preview summaries.
+- `apps/web/src/lib/asmr/mock-asset-resolver.ts` resolves `mock://` asset URIs to runtime-only playable WAV data URLs.
 
 Tests:
 
@@ -87,9 +109,16 @@ Tests:
 - `apps/web/src/lib/asmr/director-presets.test.ts`
 - `apps/web/src/lib/asmr/ui-copy.test.ts`
 - `apps/web/src/lib/asmr/project-summary.test.ts`
+- `apps/web/src/lib/asmr/generation-summary.test.ts`
+- `apps/web/src/lib/asmr/mock-generation-bridge.test.ts`
+- `apps/web/src/lib/asmr/generation-project-state.test.ts`
+- `apps/web/src/lib/asmr/generation-runtime.test.ts`
+- `apps/web/src/lib/asmr/generation-view.test.ts`
+- `apps/web/src/lib/asmr/mock-asset-resolver.test.ts`
 
 Docs:
 
+- `docs/AI_HANDOFF.md` is the high-signal recovery entrypoint.
 - `docs/project-archive.md` is the running project archive.
 - `docs/asmr导演早期设计.md` is the original product/technical vision.
 - `docs/superpowers/specs/` contains approved specs.
@@ -115,6 +144,15 @@ Important validation rules:
 - Emotion curve points must have `end > start`.
 - Emotion curve start/end must be within project duration.
 
+Generation persistence rules:
+
+- Runtime `jobId`, progress, queued/generating/canceling state, and callback state stay outside `AsmrProject`.
+- Successful mock generation commits `asset_generated` plus final asset metadata with a `mock://asset/<clipId>/<jobId>` URI.
+- Normal generation failure commits `asset_failed` and an error.
+- Failed regeneration preserves a previous generated asset.
+- `mock://` URIs are resolved into data URLs only at runtime for playback.
+- Exported JSON must not contain browser `blob:` URLs, `data:audio` URLs, runtime progress, or runtime job state.
+
 localStorage key:
 
 - `ai-asmr-studio:v0:project`
@@ -126,23 +164,21 @@ Use these commands from repo root:
 ```powershell
 npm.cmd run test --prefix apps/web
 npm.cmd run lint --prefix apps/web
-npm.cmd run build --prefix apps/web -- --webpack
+npm.cmd run build --prefix apps/web
 ```
 
 Latest verified state before this handoff:
 
-- 7 test files passed.
-- 55 tests passed.
-- lint passed.
-- build passed.
-- Build may emit the known local warning: `@next/swc-win32-x64-msvc ... is not a valid Win32 application`; webpack/WASM still completes successfully.
-- Browser verification passed for the C+ Project Shell: default desktop around 1259px, `专注编辑`, independent left/right collapse, invalid import plus reset, 1024px, and 390px mobile all had no document-level horizontal overflow.
-- Export button click was verified with no console error. Codex in-app browser does not support the download event, so download-to-disk could not be confirmed via that event.
+- `npm.cmd run test --prefix apps/web`: 13 test files passed, 92 tests passed.
+- `npm.cmd run lint --prefix apps/web`: passed.
+- `npm.cmd run build --prefix apps/web`: passed.
+- Browser verification used a local dev server at `http://localhost:3000/` and Playwright with system Chrome, because the in-app browser Node runtime returned `failed to write kernel assets`.
+- Browser verification passed for Chinese UI text, selected clip `生成`, progress and `取消`, mock success to `重生成`, enabled selected clip preview playback, local saved project containing `mock://asset/`, no runtime job state in local saved project, independent/focus collapse, desktop overflow, collapsed desktop overflow, 390x900 mobile overflow, and no console/page errors.
 
 Run locally:
 
 ```powershell
-npm.cmd run dev --prefix apps/web -- --port 3000 --webpack
+npm.cmd run dev --prefix apps/web -- --port 3000
 ```
 
 Open:
@@ -153,70 +189,54 @@ http://localhost:3000/
 
 ## Recent Commit Trail
 
-Most recent feature commits:
+Most recent generation bridge commits:
 
-- `baf2f30 fix: avoid nested workspace columns at lg`
-- `1894673 feat: wire studio into project workspace`
-- `6a06d17 fix: stabilize workspace aria controls`
-- `c49a733 fix: expose workspace control states`
+- `aed50b5 fix: use flattened clips in generation view`
+- `2bee9bc fix: harden mock generation controls`
+- `a024267 feat: wire mock generation controls`
+- `acc91b9 test: harden mock asset WAV headers`
+- `18e29c8 feat: resolve mock audio assets`
+- `3bf98ae fix: handle terminal generation jobs`
+- `863ce65 feat: derive runtime generation view`
+- `848f8d6 feat: commit generated assets to project state`
+- `7c2f429 fix: make mock generation cancellation immediate`
+- `df9b14d fix: align mock generation bridge contract`
+- `bf2ec6c feat: add mock generation bridge`
+
+Recent preview/workspace commits:
+
+- `44b9abf fix: expose timeline generation status accessibly`
+- `04e3ce4 feat: show lightweight generation status`
+- `59f373e feat: wire preview layer into project shell`
+- `91cca6e feat: add preview layer components`
+- `ad85af5 fix: align preview summary public types`
+- `8dbd589 fix: refine preview generation summary`
+- `b34b2c4 feat: derive preview generation summary`
+- `1fffef3 docs: plan preview layer implementation`
+- `f74568c docs: design preview layer before real audio`
 - `b29129f feat: add collapsible project workspace shell`
-- `42232a1 feat: add project workspace side panels`
-- `9411f29 fix: mark edited projects as locally saved`
-- `f124766 feat: add project workspace summary`
-- `c0e9860 docs: plan project structure upgrade`
-- `f2cd8f8 docs: design project structure upgrade`
 - `154f973 feat: localize studio ui copy`
 - `6dbee1a feat: add inspector timing actions`
-- `26ec01d feat: add clip timing nudges`
-- `f716786 docs: plan light timeline editing`
-- `f9f0384 docs: design light timeline editing`
-- `a8cfacc fix: stabilize inspector field error ids`
 - `cbfee19 feat: highlight invalid inspector fields`
-- `c85d2fd feat: map validation issues to clip fields`
-- `5d2d845 docs: plan field validation highlighting`
-- `381cbcb docs: design field validation highlighting`
-- `e67f0cb fix: make pause preset idempotent`
-- `8026b27 docs: record director presets implementation`
-- `766c637 fix: include visible director action labels`
-- `aaca380 feat: add director action buttons`
-- `a1cdbf0 feat: add director preset helper`
-- `bee8085 docs: plan director action presets`
-- `e8f585e docs: design director action presets`
 - `b207728 feat: persist studio projects locally`
-- `fc3644e feat: add project persistence helpers`
-- `303a8f8 docs: plan v0 project persistence`
 - `8d6b4c1 feat: add v0 editing loop`
-- `4e5a75c feat: add clip editing helpers`
-- `5b29542 docs: plan v0 editing loop`
-- `14fbdc5 docs: archive studio project decisions`
-
-Earlier V0.1 foundation:
-
-- `7a97e73 docs: add v0 studio planning artifacts`
-- `11e96bc fix: validate timeline ranges`
-- `0b169d4 polish: verify studio console layout`
-- `745350d feat: render v0 studio prototype`
-- `22a98e3 feat: build studio console components`
-- `4a5943f style: add studio visual foundation`
-- `1854c4a feat: add demo project and timeline helpers`
-- `a7caffb feat: define asmr project schema`
 
 ## Recommended Next Work
 
-Recommended next step: **preview layer before real audio**.
+Recommended next step: **API-backed generation bridge design**.
 
-Why this next: the C+ Project Shell is now in place and has reserved product space for a preview layer, but the preview experience is still placeholder-only. Before connecting real TTS/SFX/audio generation, the app should make playback state, waveform/status surfaces, and generation slots feel coherent inside the local-first director workflow.
+Why this next: the product now has the bridge boundary, runtime job semantics, durable asset commits, mock playback, and UI controls. The next design should replace the mock bridge with a backend-shaped API contract for real TTS/SFX/ambience services, storage, cancellation, failures, polling/subscription, and generated file references.
 
 Approved scope:
 
-- Add explicit placeholder playback states without pretending real audio exists.
-- Add waveform/status UI surfaces that can later bind to generated audio metadata.
-- Add generation slots for clips/tracks so users can see what is pending, ready, failed, or queued.
-- Keep state local-first and continue using the single `AsmrProject` source of truth.
-- Preserve editing, validation, persistence, import, export, reset, C+ workspace layout, and concise Chinese UI copy.
-- Avoid adding backend persistence, auth, collaboration, real generation, or full audio export yet.
+- Design the API contract that can back `GenerationBridge` without rewiring the whole studio.
+- Decide job creation, progress updates, cancellation, retry, regeneration, and terminal failure semantics.
+- Decide where real generated files live and what durable asset URI/reference format should be committed to `AsmrProject`.
+- Decide whether selected-clip generation remains the first real target before project-mix generation.
+- Preserve the existing Preview Layer, Timeline status signals, Inspector asset slot, validation, persistence, import, export, reset, C+ workspace layout, independent side collapse, and concise Chinese UI copy.
+- Avoid adding auth, billing, collaboration, cloud project persistence, full audio export, or project-mix rendering during this design step.
 
-Do not jump to real TTS/audio generation yet.
+Do not jump directly to real TTS/SFX/ambience wiring before this API-backed bridge design is agreed.
 
 ## Initial Product Path
 
@@ -225,8 +245,10 @@ This is the current early roadmap. Treat it as directional, not a rigid release 
 1. Field-level validation highlighting: completed for selected Clip Inspector fields while keeping the global Validation Panel.
 2. Light timeline editing: completed for selected clip start/duration nudges without building a full DAW.
 3. Project structure upgrade: completed as the C+ collapsible project workspace with left project rail, top status header, center editor, right project details dock, and focused editing mode.
-4. Preview layer before real audio: next; add placeholder playback states, waveform/status surfaces, and generation slots so the workflow feels ready for audio without pretending real audio exists.
-5. Real generation chain: only after the director workflow feels stable, introduce real TTS/SFX generation, listening, regeneration, and export.
+4. Preview layer before real audio: completed as the C hybrid lightweight preview layer with fake waveform/status strip, preview counts, generation slots, Timeline status dots, and Inspector asset slot.
+5. Mock-first generation bridge: completed for selected clip generation, cancellation, runtime progress, durable asset commits, failed state, and mock playback.
+6. API-backed generation bridge design: next target.
+7. Real generation chain: later target; introduce real TTS/SFX/ambience generation, listening, regeneration, and export after the API contract is designed.
 
 The key sequencing rule: keep strengthening the editable Timeline DSL and director workflow before connecting expensive or brittle audio generation.
 
@@ -254,20 +276,22 @@ If the documented path feels stale, conflicts with current implementation, or th
 
 Do not jump straight into:
 
-- Real TTS.
-- Real SFX generation.
-- Backend job queues.
+- Real TTS/SFX/ambience provider wiring without the API-backed bridge design.
+- Backend project persistence.
+- Auth or cloud sync.
+- Real project-mix rendering.
 - Real waveform rendering from generated audio.
 - Full DAW drag/drop timeline.
-- User accounts or cloud sync.
 - Payment or publishing flows.
 
 Those are later versions. The near-term path should keep proving the editable Timeline DSL and director workflow.
 
 ## Working Rules For Future Agents
 
+- Speak Chinese to the user unless they ask otherwise.
 - Prefer existing schema and helpers over ad hoc object manipulation.
-- Keep Project Workspace, Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, and Export JSON driven by the same `AsmrProject` state.
+- Keep Project Workspace, Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, Preview Layer, and Export JSON driven by the same `AsmrProject` state plus runtime-only UI state.
+- Keep runtime generation state out of `AsmrProject`, localStorage project JSON, and export JSON.
 - Use TDD for behavior changes in `apps/web/src/lib/asmr/`.
 - After meaningful UI changes, run browser verification at desktop and mobile widths.
 - Preserve the Studio Console visual direction: professional tool first, restrained ASMR atmosphere second.

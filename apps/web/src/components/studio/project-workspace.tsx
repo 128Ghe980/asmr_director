@@ -3,6 +3,8 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useMemo, useState } from "react";
 
+import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
+import type { SelectedClipPreview } from "@/lib/asmr/generation-view";
 import type { ProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 
 import { ProjectDetailsDock } from "./project-details-dock";
@@ -17,8 +19,11 @@ type ProjectWorkspaceProps = {
   children: ReactNode;
   importError: string | undefined;
   summary: ProjectWorkspaceSummary;
+  preview: ProjectPreviewSummary;
+  selectedClipPreview: SelectedClipPreview;
   onExportJson: () => void;
   onImportJson: (text: string) => void;
+  onPlaySelectedClip: () => void;
   onResetDemo: () => void;
 };
 
@@ -26,8 +31,11 @@ export function ProjectWorkspace({
   children,
   importError,
   summary,
+  preview,
+  selectedClipPreview,
   onExportJson,
   onImportJson,
+  onPlaySelectedClip,
   onResetDemo,
 }: ProjectWorkspaceProps) {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -90,6 +98,9 @@ export function ProjectWorkspace({
         collapsed={rightCollapsed}
         panelId={PROJECT_WORKSPACE_DETAILS_ID}
         summary={summary}
+        preview={preview}
+        selectedClipPreview={selectedClipPreview}
+        onPlaySelectedClip={onPlaySelectedClip}
         onToggle={() => setRightCollapsed((current) => !current)}
       />
     </div>

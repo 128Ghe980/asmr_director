@@ -4,12 +4,16 @@ import {
   Clock3,
   Ear,
   Heart,
+  LoaderCircle,
   Minus,
   MoveLeft,
   MoveRight,
   Pause,
   Plus,
+  RefreshCcw,
+  Sparkles,
   Volume1,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,6 +25,8 @@ import type {
   ClipTimingNudge,
   ProjectValidationIssue,
 } from "@/lib/asmr/edit-project";
+import type { GenerationSlot } from "@/lib/asmr/generation-summary";
+import type { SelectedClipGenerationControl } from "@/lib/asmr/generation-view";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import {
   getDistanceLabel,
@@ -31,12 +37,17 @@ import {
   getLocalizedPositionLabel,
 } from "@/lib/asmr/view-model";
 
+import { GenerationSlotList } from "./generation-slot-list";
 import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
   fieldValidationIssues: ClipFieldValidationIssues;
   selectedClip: TimelineClip | undefined;
+  selectedClipGeneration: SelectedClipGenerationControl;
+  selectedClipSlot: GenerationSlot | undefined;
   onApplyDirectorPreset: (clipId: string, preset: DirectorPreset) => void;
+  onGenerateSelectedClip: () => void;
+  onCancelSelectedGeneration: () => void;
   onNudgeClipTiming: (clipId: string, nudge: ClipTimingNudge) => void;
   onUpdateClip: (clipId: string, patch: ClipPatch) => void;
 };
@@ -250,6 +261,77 @@ function TimingActionStrip({
   );
 }
 
+function GenerationActionPanel({
+  control,
+  onCancel,
+  onGenerate,
+}: {
+  control: SelectedClipGenerationControl;
+  onCancel: () => void;
+  onGenerate: () => void;
+}) {
+  const isCancel = control.action === "cancel";
+  const Icon = isCancel
+    ? X
+    : control.action === "regenerate" || control.action === "retry"
+      ? RefreshCcw
+      : Sparkles;
+  const progress = control.progress ?? 0;
+  const clampedProgress = Math.max(0, Math.min(100, progress));
+
+  return (
+    <div className="border-b border-white/[0.06] py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
+            生成
+          </p>
+          <p className="mt-1 truncate text-xs text-studio-muted">
+            {control.disabledReason ?? control.statusLabel}
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={control.disabled}
+          onClick={isCancel ? onCancel : onGenerate}
+          className="inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded-md border border-sky-300/24 bg-sky-300/12 px-3 text-xs font-semibold text-sky-50 transition hover:bg-sky-300/18 disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.035] disabled:text-studio-muted"
+        >
+          {control.action === "cancel" && control.progress !== undefined ? (
+            <LoaderCircle
+              className="h-3.5 w-3.5 animate-spin"
+              aria-hidden="true"
+            />
+          ) : (
+            <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          <span>{control.label}</span>
+        </button>
+      </div>
+
+      {control.progress !== undefined ? (
+        <div
+          className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={clampedProgress}
+        >
+          <div
+            className="h-full rounded-full bg-sky-300/80 transition-[width]"
+            style={{ width: `${clampedProgress}%` }}
+          />
+        </div>
+      ) : null}
+
+      {control.error ? (
+        <p className="mt-2 text-xs leading-5 text-amber-100">
+          {control.error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function FieldError({
   id,
   issues,
@@ -287,7 +369,11 @@ function parseNumericInput(value: string): number {
 export function ClipInspector({
   fieldValidationIssues,
   selectedClip,
+  selectedClipGeneration,
+  selectedClipSlot,
   onApplyDirectorPreset,
+  onGenerateSelectedClip,
+  onCancelSelectedGeneration,
   onNudgeClipTiming,
   onUpdateClip,
 }: ClipInspectorProps) {
@@ -361,6 +447,18 @@ export function ClipInspector({
         ) : null}
 
         <TimingActionStrip onNudge={nudgeTiming} />
+
+        <GenerationActionPanel
+          control={selectedClipGeneration}
+          onCancel={onCancelSelectedGeneration}
+          onGenerate={onGenerateSelectedClip}
+        />
+
+        {selectedClipSlot ? (
+          <div className="border-b border-white/[0.06] py-3">
+            <GenerationSlotList title="素材槽" slots={[selectedClipSlot]} compact />
+          </div>
+        ) : null}
 
         {selectedClip.type === "voice" ? (
           <>

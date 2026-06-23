@@ -14,6 +14,30 @@ import {
   type ClipPatch,
   type ClipTimingNudge,
 } from "@/lib/asmr/edit-project";
+import type {
+  GenerateClipReason,
+  GenerationBridge,
+  GenerationJobUpdate,
+} from "@/lib/asmr/generation-bridge";
+import {
+  getClipGenerationFingerprint,
+  isCurrentClipGenerationFingerprint,
+} from "@/lib/asmr/generation-fingerprint";
+import {
+  commitGenerationFailure,
+  commitGenerationSuccess,
+} from "@/lib/asmr/generation-project-state";
+import {
+  clearGenerationJob,
+  emptyGenerationRuntimeState,
+  getGenerationJobForClip,
+  isActiveGenerationJob,
+  markGenerationJobCanceling,
+  upsertGenerationJob,
+} from "@/lib/asmr/generation-runtime";
+import { getGenerationView } from "@/lib/asmr/generation-view";
+import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
+import { resolveMockAssetUri } from "@/lib/asmr/mock-asset-resolver";
 import {
   clearSavedProject,
   loadSavedProject,
@@ -96,6 +120,15 @@ export function StudioApp({ project }: StudioAppProps) {
   const [importError, setImportError] = useState<string>();
   const [restoreState, setRestoreState] = useState<"demo" | "restored">("demo");
   const skipNextSaveRef = useRef(false);
+  const bridgeRef = useRef<GenerationBridge | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const generationSessionRef = useRef(0);
+  const generationReasonsRef = useRef<Record<string, GenerateClipReason>>({});
+  const generationFingerprintsRef = useRef<Record<string, string>>({});
+  const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
+  const [generationRuntimeState, setGenerationRuntimeState] = useState(
+    emptyGenerationRuntimeState,
+  );
   const clips = useMemo(() => flattenClips(editableProject), [editableProject]);
   const [selectedClipId, setSelectedClipId] = useState<string | undefined>(
     () => clips[0]?.id,
@@ -118,6 +151,8 @@ export function StudioApp({ project }: StudioAppProps) {
         : {},
     [activeClipId, editableProject, validationIssues],
   );
+  const selectedClipHasValidationIssues =
+    Object.keys(selectedClipValidationIssues).length > 0;
   const isDirty = useMemo(
     () => serializeProject(editableProject) !== serializeProject(project),
     [editableProject, project],
@@ -132,6 +167,32 @@ export function StudioApp({ project }: StudioAppProps) {
       }),
     [editableProject, isDirty, restoreState, validationIssues.length],
   );
+  const generationView = useMemo(
+    () =>
+      getGenerationView({
+        project: editableProject,
+        selectedClip,
+        runtimeState: generationRuntimeState,
+        selectedClipHasValidationIssues,
+      }),
+    [
+      editableProject,
+      generationRuntimeState,
+      selectedClip,
+      selectedClipHasValidationIssues,
+    ],
+  );
+  const previewSummary = generationView.preview;
+  const displayProject = generationView.displayProject;
+  const displaySelectedClip = generationView.displaySelectedClip ?? selectedClip;
+
+  function getGenerationBridge() {
+    if (bridgeRef.current === null) {
+      bridgeRef.current = createMockGenerationBridge();
+    }
+
+    return bridgeRef.current;
+  }
 
   useEffect(() => {
     let isCancelled = false;
@@ -180,7 +241,256 @@ export function StudioApp({ project }: StudioAppProps) {
     }
   }, [editableProject, hasLoadedStorage]);
 
+  useEffect(() => {
+    generationRuntimeStateRef.current = generationRuntimeState;
+  }, [generationRuntimeState]);
+
+  useEffect(() => {
+    return () => {
+      generationSessionRef.current += 1;
+      const jobIds = new Set([
+        ...Object.keys(generationReasonsRef.current),
+        ...Object.keys(generationRuntimeStateRef.current.jobsById),
+      ]);
+      const bridge = bridgeRef.current;
+
+      if (bridge) {
+        for (const jobId of jobIds) {
+          void bridge.cancelGeneration(jobId);
+        }
+      }
+
+      generationReasonsRef.current = {};
+      generationFingerprintsRef.current = {};
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, []);
+
+  function clearGenerationSession() {
+    generationSessionRef.current += 1;
+    const jobIds = new Set([
+      ...Object.keys(generationReasonsRef.current),
+      ...Object.keys(generationRuntimeStateRef.current.jobsById),
+    ]);
+    const bridge = bridgeRef.current;
+
+    if (bridge) {
+      for (const jobId of jobIds) {
+        void bridge.cancelGeneration(jobId);
+      }
+    }
+
+    generationReasonsRef.current = {};
+    generationFingerprintsRef.current = {};
+    generationRuntimeStateRef.current = emptyGenerationRuntimeState;
+    setGenerationRuntimeState(emptyGenerationRuntimeState);
+    audioRef.current?.pause();
+    audioRef.current = null;
+  }
+
+  function setRuntimeState(nextState: typeof generationRuntimeStateRef.current) {
+    generationRuntimeStateRef.current = nextState;
+    setGenerationRuntimeState(nextState);
+  }
+
+  function cancelGenerationForClip(clipId: string) {
+    const job = getGenerationJobForClip(
+      generationRuntimeStateRef.current,
+      clipId,
+    );
+
+    if (!job || !isActiveGenerationJob(job)) {
+      return;
+    }
+
+    const next = clearGenerationJob(
+      generationRuntimeStateRef.current,
+      job.jobId,
+    );
+
+    delete generationReasonsRef.current[job.jobId];
+    delete generationFingerprintsRef.current[job.jobId];
+    setRuntimeState(next);
+    void bridgeRef.current?.cancelGeneration(job.jobId);
+  }
+
+  function handleGenerationUpdate(
+    update: GenerationJobUpdate,
+    generationSession: number,
+  ) {
+    if (generationSession !== generationSessionRef.current) {
+      return;
+    }
+
+    if (update.type === "snapshot") {
+      setGenerationRuntimeState((current) => {
+        const next = upsertGenerationJob(current, update.job);
+        generationRuntimeStateRef.current = next;
+
+        return next;
+      });
+      return;
+    }
+
+    if (update.type === "succeeded") {
+      const fingerprint = generationFingerprintsRef.current[update.job.jobId];
+
+      setEditableProject((currentProject) =>
+        fingerprint &&
+        isCurrentClipGenerationFingerprint(
+          currentProject,
+          update.job.clipId,
+          fingerprint,
+        )
+          ? commitGenerationSuccess(
+              currentProject,
+              update.job.clipId,
+              update.asset,
+            )
+          : currentProject,
+      );
+      setGenerationRuntimeState((current) => {
+        const next = clearGenerationJob(current, update.job.jobId);
+        generationRuntimeStateRef.current = next;
+
+        return next;
+      });
+      delete generationReasonsRef.current[update.job.jobId];
+      delete generationFingerprintsRef.current[update.job.jobId];
+      return;
+    }
+
+    if (update.type === "failed") {
+      const reason =
+        generationReasonsRef.current[update.job.jobId] ?? "generate";
+      const fingerprint = generationFingerprintsRef.current[update.job.jobId];
+
+      setEditableProject((currentProject) =>
+        fingerprint &&
+        isCurrentClipGenerationFingerprint(
+          currentProject,
+          update.job.clipId,
+          fingerprint,
+        )
+          ? commitGenerationFailure(currentProject, update.job.clipId, {
+              reason,
+              error: update.error,
+            })
+          : currentProject,
+      );
+      setGenerationRuntimeState((current) => {
+        const next = clearGenerationJob(current, update.job.jobId);
+        generationRuntimeStateRef.current = next;
+
+        return next;
+      });
+      delete generationReasonsRef.current[update.job.jobId];
+      delete generationFingerprintsRef.current[update.job.jobId];
+      return;
+    }
+
+    setGenerationRuntimeState((current) => {
+      const next = clearGenerationJob(current, update.job.jobId);
+      generationRuntimeStateRef.current = next;
+
+      return next;
+    });
+    delete generationReasonsRef.current[update.job.jobId];
+    delete generationFingerprintsRef.current[update.job.jobId];
+  }
+
+  function handleGenerateSelectedClip() {
+    if (!selectedClip || generationView.selectedClipControl.disabled) {
+      return;
+    }
+
+    const action = generationView.selectedClipControl.action;
+    const reason: GenerateClipReason =
+      action === "retry"
+        ? "retry"
+        : action === "regenerate"
+          ? "regenerate"
+          : "generate";
+    let didFinishBeforeStart = false;
+    const generationSession = generationSessionRef.current;
+    const fingerprint = getClipGenerationFingerprint(selectedClip);
+
+    void getGenerationBridge()
+      .generateClip(
+        {
+          project: editableProject,
+          clipId: selectedClip.id,
+          reason,
+        },
+        (update) => {
+          if (generationSession !== generationSessionRef.current) {
+            return;
+          }
+
+          generationReasonsRef.current[update.job.jobId] = reason;
+          generationFingerprintsRef.current[update.job.jobId] = fingerprint;
+          handleGenerationUpdate(update, generationSession);
+
+          if (update.type !== "snapshot") {
+            didFinishBeforeStart = true;
+          }
+        },
+      )
+      .then((started) => {
+        if (generationSession !== generationSessionRef.current) {
+          return;
+        }
+
+        if (!didFinishBeforeStart) {
+          generationReasonsRef.current[started.jobId] = reason;
+          generationFingerprintsRef.current[started.jobId] = fingerprint;
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  function handleCancelSelectedGeneration() {
+    const jobId = generationView.selectedClipControl.jobId;
+
+    if (!jobId) {
+      return;
+    }
+
+    setGenerationRuntimeState((current) => {
+      const next = markGenerationJobCanceling(current, jobId);
+      generationRuntimeStateRef.current = next;
+
+      return next;
+    });
+    void bridgeRef.current?.cancelGeneration(jobId);
+  }
+
+  function handlePlaySelectedClip() {
+    if (!generationView.selectedClipPreview.canPlay) {
+      return;
+    }
+
+    const resolvedUri = resolveMockAssetUri(generationView.selectedClipPreview.uri);
+
+    if (!resolvedUri) {
+      return;
+    }
+
+    audioRef.current?.pause();
+    const audio = new Audio(resolvedUri);
+    audioRef.current = audio;
+    void audio.play().catch(() => {
+      audio.pause();
+
+      if (audioRef.current === audio) {
+        audioRef.current = null;
+      }
+    });
+  }
+
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
+    cancelGenerationForClip(clipId);
     setEditableProject((currentProject) =>
       updateClipInProject(currentProject, clipId, patch),
     );
@@ -188,6 +498,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleApplyDirectorPreset(clipId: string, preset: DirectorPreset) {
+    cancelGenerationForClip(clipId);
     setEditableProject((currentProject) =>
       applyDirectorPreset(currentProject, clipId, preset),
     );
@@ -195,6 +506,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleNudgeClipTiming(clipId: string, nudge: ClipTimingNudge) {
+    cancelGenerationForClip(clipId);
     setEditableProject((currentProject) =>
       nudgeClipTiming(currentProject, clipId, nudge),
     );
@@ -209,6 +521,7 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
+    clearGenerationSession();
     setEditableProject(importedProject.project);
     setSelectedClipId(flattenClips(importedProject.project)[0]?.id);
     setRestoreState("restored");
@@ -228,6 +541,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
       return project;
     });
+    clearGenerationSession();
     setSelectedClipId(flattenClips(project)[0]?.id);
     setRestoreState("demo");
     setImportError(undefined);
@@ -237,14 +551,17 @@ export function StudioApp({ project }: StudioAppProps) {
     <ProjectWorkspace
       importError={importError}
       summary={workspaceSummary}
+      preview={previewSummary}
+      selectedClipPreview={generationView.selectedClipPreview}
       onExportJson={() => exportProjectJson(editableProject)}
       onImportJson={handleImportJson}
+      onPlaySelectedClip={handlePlaySelectedClip}
       onResetDemo={handleResetDemo}
     >
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(220px,0.86fr)_minmax(0,1.26fr)_minmax(220px,0.86fr)]">
         <div className="min-h-[520px] xl:h-[calc(100vh-152px)]">
           <StoryboardPanel
-            project={editableProject}
+            project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
           />
@@ -252,7 +569,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
         <div className="flex min-w-0 flex-col gap-4">
           <TimelinePanel
-            project={editableProject}
+            project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
           />
@@ -263,8 +580,12 @@ export function StudioApp({ project }: StudioAppProps) {
         <div className="min-w-0">
           <ClipInspector
             fieldValidationIssues={selectedClipValidationIssues}
-            selectedClip={selectedClip}
+            selectedClip={displaySelectedClip}
+            selectedClipGeneration={generationView.selectedClipControl}
+            selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}
+            onGenerateSelectedClip={handleGenerateSelectedClip}
+            onCancelSelectedGeneration={handleCancelSelectedGeneration}
             onNudgeClipTiming={handleNudgeClipTiming}
             onUpdateClip={handleUpdateClip}
           />
