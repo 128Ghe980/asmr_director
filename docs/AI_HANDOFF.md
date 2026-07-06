@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-07-06
+Last updated: 2026-07-07
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -10,12 +10,12 @@ Primary Codex desktop workspace path:
 
 - `D:\CodexWorkplace\asmr_director`
 
-Current feature work was completed in the Superpowers worktree:
+Current feature work is in the primary workspace:
 
-- `C:\Users\Yuki1\.config\superpowers\worktrees\asmr_director\preview-layer-before-real-audio`
-- Branch: `codex/preview-layer-before-real-audio`
+- `D:\CodexWorkplace\asmr_director`
+- Branch at the time of this handoff: `master`
 
-Treat the repository root as the source of truth if the project is opened from another environment.
+Treat the repository root as the source of truth if the project is opened from another environment. The local runtime lives outside git under `D:\CodexWorkplace\asmr_director_runtime`.
 
 ## Product North Star
 
@@ -52,16 +52,17 @@ Current user-facing capabilities:
 - Rejects invalid import JSON without replacing current project.
 - Resets to the built-in demo project.
 - Uses Chinese-first interface copy with short, clear button names while keeping technical abbreviations such as `ASMR`, `JSON`, `dB`, `LUFS`, and `seed`.
-- Adds a mock-first Generation Bridge for selected clips.
+- Adds a local real Generation Bridge for selected voice clips, using mock only when `NEXT_PUBLIC_ASMR_GENERATION_MODE=mock`.
 - Keeps runtime generation job state outside `AsmrProject` and out of exported project JSON.
 - Commits only final `asset_generated` / `asset_failed` state and final asset metadata into the durable project.
 - Resolves `mock://asset/<clipId>/<jobId>` URIs to playable local mock audio at runtime.
+- Resolves `asset://clip/<assetId>` URIs to `/api/assets/clip/<assetId>` for local generated WAV playback.
 - Exposes selected clip `生成`, `重生成`, `重试`, and `取消` controls in Inspector.
-- Enables selected clip mock preview in the right Preview Layer while keeping project-mix preview out of scope.
+- Enables selected clip preview in the right Preview Layer for both mock assets and local real `asset://clip/...` assets while keeping real project-mix preview out of scope.
 
-Current product status: the checked-in Next.js app still uses the mock Generation Bridge in the UI. Real local TTS has now been proven manually through a GPT-SoVITS runtime, but it is not yet wired into the app's selected-clip generation control, durable asset flow, or Preview Layer.
+Current product status: roadmap Step 7, **Real Generation MVP**, is implemented for voice clips. The checked-in Next.js app defaults to the local GPT-SoVITS bridge, writes stable `asset://clip/...` references into Project JSON, and serves generated WAV playback through a local asset API route.
 
-There is still no checked-in backend route, real SFX generation, real ambience generation, real waveform rendering, cloud persistence, auth, billing, collaboration, or production export flow.
+There is still no real SFX generation, real ambience generation, real breath generation, real waveform rendering, real project-mix rendering/export, cloud persistence, auth, billing, collaboration, or production export flow.
 
 ## Real Generation Runtime Notes
 
@@ -107,12 +108,41 @@ Known runtime lessons:
 - C drive space has been critically low. Keep Hugging Face, ModelScope, Torch, temp files, generated assets, and runtime models on D drive.
 - Cleared C drive Hugging Face / Torch / pip caches once during this work. Do not assume C drive has enough headroom.
 
+2026-07-07 product integration:
+
+- Roadmap Step 7 is now wired into the app for voice clips.
+- Default local runtime config:
+  - Runtime root: `D:\CodexWorkplace\asmr_director_runtime`.
+  - GPT-SoVITS URL: `http://127.0.0.1:9880`.
+  - Voice pack path: `D:\CodexWorkplace\asmr_director_runtime\voice-packs\default\voice-pack.json`.
+  - App clip asset root: `D:\CodexWorkplace\asmr_director_runtime\assets\clips\app`.
+- Environment overrides:
+  - `ASMR_DIRECTOR_RUNTIME_ROOT`
+  - `ASMR_GPT_SOVITS_URL`
+  - `ASMR_VOICE_PACK_PATH`
+  - `ASMR_CLIP_ASSET_ROOT`
+  - `NEXT_PUBLIC_ASMR_GENERATION_MODE=mock` switches the UI back to the mock bridge.
+- App routes:
+  - `POST /api/generation/clip` accepts `{ project, clipId, reason }`, validates the project, only allows voice clips, calls GPT-SoVITS, saves a WAV, and returns `{ asset }`.
+  - `GET /api/assets/clip/[assetId]` serves local generated clip WAV bytes as `audio/wav`.
+- The browser-side local bridge emits the same queued/generating/succeeded/failed/canceled update shapes as the previous mock bridge. Runtime `jobId` and progress still never enter Project JSON.
+- A generated voice clip stores only final asset metadata and a stable `asset://clip/<assetId>` URI in Project JSON.
+- Playback resolution:
+  - `asset://clip/<assetId>` -> `/api/assets/clip/<assetId>`
+  - `mock://asset/<clipId>/<jobId>` -> runtime mock WAV data URL
+- Verified generated app asset:
+  - `asset://clip/voice_001_20260706T211523064Z_d3b95513`
+  - Playback response: `audio/wav`, `241,964` bytes, WAV header `RIFF`.
+- Cancel limitation for Step 7: cancellation is client-side best effort for the synchronous local provider. The UI cancels local commit / ignores late success, but GPT-SoVITS itself is not interrupted after a request is already sent.
+
 ## Architecture Map
 
 Core app:
 
 - `apps/web/src/app/page.tsx` renders the studio with `demoProject`.
-- `apps/web/src/components/studio/studio-app.tsx` owns editable project state, runtime generation state, bridge callbacks, export, import, autosave, reset, validation, selected clip state, mock playback, director presets, and timing nudges.
+- `apps/web/src/app/api/generation/clip/route.ts` runs selected voice clip generation through the local provider and returns stable asset metadata.
+- `apps/web/src/app/api/assets/clip/[assetId]/route.ts` serves local generated clip WAV bytes for playback.
+- `apps/web/src/components/studio/studio-app.tsx` owns editable project state, runtime generation state, bridge callbacks, export, import, autosave, reset, validation, selected clip state, playback, director presets, and timing nudges. It uses the local real bridge by default and the mock bridge only when `NEXT_PUBLIC_ASMR_GENERATION_MODE=mock`.
 - `apps/web/src/components/studio/project-workspace.tsx` composes the C+ workspace shell around the editor panels.
 - `apps/web/src/components/studio/project-workspace-header.tsx` shows workspace status, project summary, focus controls, and project-level `导出` / `载入` / `重置` actions.
 - `apps/web/src/components/studio/project-rail.tsx` renders the collapsible left project rail.
@@ -145,6 +175,13 @@ Domain/data:
 - `apps/web/src/lib/asmr/generation-runtime.ts` manages runtime-only generation jobs keyed by `jobId` and `clipId`.
 - `apps/web/src/lib/asmr/generation-view.ts` merges durable project data and runtime generation state into UI-ready controls and preview summaries.
 - `apps/web/src/lib/asmr/mock-asset-resolver.ts` resolves `mock://` asset URIs to runtime-only playable WAV data URLs.
+- `apps/web/src/lib/asmr/local-runtime-config.ts` reads local runtime paths and provider URL with D-drive defaults and environment overrides.
+- `apps/web/src/lib/asmr/voice-pack.ts` loads and validates the GPT-SoVITS voice pack and prompt transcript.
+- `apps/web/src/lib/asmr/gpt-sovits-provider.ts` maps voice clips into GPT-SoVITS `/tts` payloads and requests WAV bytes.
+- `apps/web/src/lib/asmr/local-asset-store.ts` writes local generated WAVs and resolves safe `asset://clip/...` IDs.
+- `apps/web/src/lib/asmr/local-clip-generation.ts` ties project clip lookup, voice pack loading, provider call, and asset saving together.
+- `apps/web/src/lib/asmr/local-generation-bridge.ts` implements the browser-side bridge for the local generation API.
+- `apps/web/src/lib/asmr/playback-asset-resolver.ts` resolves both `asset://clip/...` and `mock://asset/...` playback URIs.
 
 Tests:
 
@@ -161,6 +198,13 @@ Tests:
 - `apps/web/src/lib/asmr/generation-runtime.test.ts`
 - `apps/web/src/lib/asmr/generation-view.test.ts`
 - `apps/web/src/lib/asmr/mock-asset-resolver.test.ts`
+- `apps/web/src/lib/asmr/local-runtime-config.test.ts`
+- `apps/web/src/lib/asmr/voice-pack.test.ts`
+- `apps/web/src/lib/asmr/local-asset-store.test.ts`
+- `apps/web/src/lib/asmr/gpt-sovits-provider.test.ts`
+- `apps/web/src/lib/asmr/local-clip-generation.test.ts`
+- `apps/web/src/lib/asmr/local-generation-bridge.test.ts`
+- `apps/web/src/lib/asmr/playback-asset-resolver.test.ts`
 
 Docs:
 
@@ -197,9 +241,11 @@ Generation persistence rules:
 
 - Runtime `jobId`, progress, queued/generating/canceling state, and callback state stay outside `AsmrProject`.
 - Successful mock generation commits `asset_generated` plus final asset metadata with a `mock://asset/<clipId>/<jobId>` URI.
+- Successful local real voice generation commits `asset_generated` plus final asset metadata with an `asset://clip/<assetId>` URI.
 - Normal generation failure commits `asset_failed` and an error.
 - Failed regeneration preserves a previous generated asset.
 - `mock://` URIs are resolved into data URLs only at runtime for playback.
+- `asset://clip/...` URIs are resolved into local API playback URLs only at runtime for playback.
 - Exported JSON must not contain browser `blob:` URLs, `data:audio` URLs, runtime progress, or runtime job state.
 
 localStorage key:
@@ -213,21 +259,21 @@ Use these commands from repo root:
 ```powershell
 npm.cmd run test --prefix apps/web
 npm.cmd run lint --prefix apps/web
-npm.cmd run build --prefix apps/web
+npm.cmd run build --prefix apps/web -- --webpack
 ```
 
 Latest verified state before this handoff:
 
-- `npm.cmd run test --prefix apps/web`: 13 test files passed, 92 tests passed.
+- `npm.cmd run test --prefix apps/web`: 21 test files passed, 118 tests passed.
 - `npm.cmd run lint --prefix apps/web`: passed.
-- `npm.cmd run build --prefix apps/web`: passed.
-- Browser verification used a local dev server at `http://localhost:3000/` and Playwright with system Chrome, because the in-app browser Node runtime returned `failed to write kernel assets`.
-- Browser verification passed for Chinese UI text, selected clip `生成`, progress and `取消`, mock success to `重生成`, enabled selected clip preview playback, local saved project containing `mock://asset/`, no runtime job state in local saved project, independent/focus collapse, desktop overflow, collapsed desktop overflow, 390x900 mobile overflow, and no console/page errors.
+- `npm.cmd run build --prefix apps/web -- --webpack`: passed. The default Turbopack build is not the verification command on this Windows environment because Turbopack reports an unsupported native binding and asks to use Webpack.
+- Browser verification used a local dev server at `http://localhost:3000/` and a temporary headless Chrome controlled through CDP. The in-app browser was able to display the page but its snapshot / click control was unreliable in this session.
+- Browser verification passed for hydrated UI, selecting `voice_001`, selected clip `生成`, real local GPT-SoVITS generation to `asset://clip/voice_001_20260706T211523064Z_d3b95513`, Project JSON/localStorage containing the stable `asset://clip/...` reference, `重生成` after success, playback API returning `audio/wav` with `RIFF` header, and no page error/warning logs.
 
 Run locally:
 
 ```powershell
-npm.cmd run dev --prefix apps/web -- --port 3000
+npm.cmd run dev --prefix apps/web -- --port 3000 --webpack
 ```
 
 Open:
@@ -272,24 +318,21 @@ Recent preview/workspace commits:
 
 ## Recommended Next Work
 
-Recommended next step: **Continue Real Generation MVP by wiring the proven local GPT-SoVITS runtime into the workbench generation flow**.
+Recommended next step: **Roadmap Step 8, 多类型真实 Clip 生成**.
 
 Why this next:
 
-- The UI already has a stable generation/mix asset surface.
-- The generation interaction loop, asset references, preview surface, and project mix skeleton are in place.
-- The next useful project step must produce at least one real playable generated audio result, not another mock-only bridge milestone.
+- Step 7 has proven the product path for one real voice clip: selected clip control -> provider -> durable `asset://clip/...` -> Preview Layer playback.
+- The system is still incomplete because breath, SFX, and ambience clips remain mock / pending.
+- Step 8 should extend the same project contract beyond voice without jumping ahead to full project mixing.
 
 Concrete next scope:
 
-- Prioritize one voice clip generation path.
-- Use the existing generation contract and asset reference model.
-- Add adapter / API / provider wrapper code only as an implementation detail of this work.
-- Reuse the proven local GPT-SoVITS runtime as the first real provider.
-- Produce a real playable audio file through the selected voice clip generation control, not only through manual scripts.
-- Persist only the stable asset reference in project JSON.
-- Play the result through the existing selected-clip preview / Preview Layer flow.
-- Preserve failure, retry, and cancellation behavior.
+- Choose at least two non-voice clip classes from `breath`, `sfx`, and `ambience`.
+- Keep the same durable asset model: final project state stores `asset://clip/...`, not local paths, runtime job IDs, blobs, or data URLs.
+- Add provider wrappers or local asset-library adapters only as Step 8 implementation details.
+- Preserve clip-level regeneration: generating one selected clip must not mutate unrelated clips.
+- Do not start real project mix/export until Step 8 has enough real clip assets to make Step 9 meaningful.
 
 ## Initial Product Path
 
@@ -297,8 +340,8 @@ The canonical roadmap is `docs/ROADMAP.md`.
 
 Do not treat this file as a competing roadmap. Current summary only:
 
-- Completed: roadmap steps 1-6.
-- Current / next: Real Generation MVP. Manual local GPT-SoVITS generation has been proven; product integration is still pending.
+- Completed: roadmap steps 1-7.
+- Current / next: roadmap Step 8, 多类型真实 Clip 生成.
 - Pending: the remaining post-MVP generation, real mix/export, and product workflow hardening work.
 
 When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.

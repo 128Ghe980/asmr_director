@@ -9,6 +9,7 @@ import {
   getGenerationJobForClip,
   isActiveGenerationJob,
 } from "./generation-runtime";
+import { isLocalClipAssetUri } from "./playback-asset-resolver";
 import { isMockAssetUri } from "./mock-asset-resolver";
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
 import { flattenClips } from "./view-model";
@@ -177,7 +178,10 @@ function getSelectedClipPreview(
     };
   }
 
-  if (!isMockAssetUri(selectedClip.asset.uri)) {
+  if (
+    !isMockAssetUri(selectedClip.asset.uri) &&
+    !isLocalClipAssetUri(selectedClip.asset.uri)
+  ) {
     return {
       canPlay: false,
       label: "暂无音频",

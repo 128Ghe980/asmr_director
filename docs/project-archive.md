@@ -468,6 +468,53 @@ Roadmap update (superseded by 2026-06-26 roadmap governance reset):
 - Historical recommendation at the time was **API-backed generation bridge design**.
 - This is no longer the current next-step instruction. Current top-level route is defined only in `docs/ROADMAP.md`.
 
+## 2026-07-07 - Roadmap Step 7 Real Generation MVP 接入工作台
+
+本轮把 2026-07-06 已经手动跑通的本地 GPT-SoVITS runtime 接入 checked-in Next.js 工作台，完成 roadmap 第 7 步“真实生成 MVP”的产品内接线。
+
+实现内容：
+
+- 新增 `local-runtime-config.ts`，默认指向 `D:\CodexWorkplace\asmr_director_runtime`，并支持 `ASMR_DIRECTOR_RUNTIME_ROOT`、`ASMR_GPT_SOVITS_URL`、`ASMR_VOICE_PACK_PATH`、`ASMR_CLIP_ASSET_ROOT` 覆盖。
+- 新增 `voice-pack.ts`，读取本地 voice pack JSON、参考音频路径、日语 prompt transcript，并要求 `licenseStatus: "user_confirmed"` 和 `consentConfirmedAt`。
+- 新增 `gpt-sovits-provider.ts`，把 voice clip 映射到 GPT-SoVITS `/tts` 请求，使用 `clip.text` 作为实际生成文本，使用 voice pack prompt text 作为参考音频转写。
+- 新增 `local-asset-store.ts`，把生成的 WAV 写入 runtime asset store，并只向项目返回 `asset://clip/<assetId>`。
+- 新增 `local-clip-generation.ts`，串起 clip 查找、voice pack 加载、provider 请求和资产保存。
+- 新增 `POST /api/generation/clip`，用于 selected clip generation；本步骤只允许 voice clip。
+- 新增 `GET /api/assets/clip/[assetId]`，用于把本地 generated WAV 作为 `audio/wav` 播放。
+- 新增 `local-generation-bridge.ts`，浏览器侧默认调用本地 API，保留 queued / generating / succeeded / failed / canceled 的原有 update 形状。
+- 新增 `playback-asset-resolver.ts`，让 Preview Layer 同时支持 `asset://clip/...` 与 `mock://asset/...`。
+- `studio-app.tsx` 默认使用 local real bridge；只有 `NEXT_PUBLIC_ASMR_GENERATION_MODE=mock` 时才回到 mock bridge。
+- `generation-view.ts` 允许 `asset://clip/...` 成为可播放的 selected clip preview asset。
+
+关键设计边界：
+
+- Project JSON 仍然只保存 final durable asset reference 和最终 asset metadata。
+- runtime job、progress、callback state、local absolute path、`blob:`、`data:audio` 都不进入 Project JSON。
+- 本地 GPT-SoVITS 请求是同步式 provider 调用；取消在 Step 7 中是客户端 best-effort：UI 可以取消本地提交并忽略晚到结果，但不能中断已经发出的 GPT-SoVITS 请求。
+- 默认 bridge 已切到真实本地生成，mock 只是显式配置回退，不再是产品默认路径。
+
+端到端验收：
+
+- 启动 GPT-SoVITS API：`http://127.0.0.1:9880/docs` 返回 200。
+- 启动 Next dev server：`http://localhost:3000/` 返回 200。
+- Headless Chrome CDP 验收中，页面 hydrate 成功，选中 `voice_001` 后点击 `生成`。
+- 生成结果写入 localStorage / Project JSON：`asset://clip/voice_001_20260706T211523064Z_d3b95513`。
+- 播放接口 `GET /api/assets/clip/voice_001_20260706T211523064Z_d3b95513` 返回 `audio/wav`，`241,964` bytes，WAV header 为 `RIFF`。
+- 页面 error/warning 日志为空。
+
+自动化验证：
+
+- `npm.cmd run test --prefix apps/web`：21 个 test files / 118 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过。
+- `npm.cmd run build --prefix apps/web` 在当前 Windows 环境会触发 Turbopack native binding 不支持提示；这不是本轮代码失败，验证命令固定使用 `-- --webpack`。
+
+对 roadmap 的影响：
+
+- 第 7 步已完成。
+- 下一步按 `docs/ROADMAP.md` 进入第 8 步：多类型真实 Clip 生成。
+- 不要再把 adapter、API route、provider wrapper、bridge cleanup 提成新的顶层阶段；这些只能作为第 8 步或后续步骤的内部实现细节。
+
 ## 2026-07-06 - GPT-SoVITS 本地真实生成实验
 
 本轮没有修改 checked-in 前端代码，而是在项目外的本地 runtime 中打通了一条真实 TTS 生成链路，用于验证 roadmap 第 7 步“真实生成 MVP”的技术可行性和听感边界。

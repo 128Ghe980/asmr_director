@@ -289,6 +289,26 @@ describe("generation view", () => {
     });
   });
 
+  it("enables selected clip preview for durable local clip assets", () => {
+    const project = commitGenerationSuccess(demoProject, "voice_001", {
+      assetId: "voice_001_20260707T000000000Z_abcd1234",
+      uri: "asset://clip/voice_001_20260707T000000000Z_abcd1234",
+      duration: 7.5,
+    });
+    const view = getGenerationView({
+      project,
+      selectedClip: findClip(project, "voice_001"),
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.selectedClipPreview).toEqual({
+      canPlay: true,
+      label: "播放片段",
+      uri: "asset://clip/voice_001_20260707T000000000Z_abcd1234",
+    });
+  });
+
   it("shows retry for failed clips", () => {
     const project = commitGenerationFailure(demoProject, "voice_001", {
       reason: "generate",

@@ -36,8 +36,9 @@ import {
   upsertGenerationJob,
 } from "@/lib/asmr/generation-runtime";
 import { getGenerationView } from "@/lib/asmr/generation-view";
+import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
-import { resolveMockAssetUri } from "@/lib/asmr/mock-asset-resolver";
+import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
 import {
   clearSavedProject,
   loadSavedProject,
@@ -188,7 +189,10 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function getGenerationBridge() {
     if (bridgeRef.current === null) {
-      bridgeRef.current = createMockGenerationBridge();
+      bridgeRef.current =
+        process.env.NEXT_PUBLIC_ASMR_GENERATION_MODE === "mock"
+          ? createMockGenerationBridge()
+          : createLocalGenerationBridge();
     }
 
     return bridgeRef.current;
@@ -471,7 +475,9 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
-    const resolvedUri = resolveMockAssetUri(generationView.selectedClipPreview.uri);
+    const resolvedUri = resolvePlayableAssetUri(
+      generationView.selectedClipPreview.uri,
+    );
 
     if (!resolvedUri) {
       return;
