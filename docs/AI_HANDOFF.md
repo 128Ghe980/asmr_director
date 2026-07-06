@@ -59,10 +59,11 @@ Current user-facing capabilities:
 - Resolves `asset://clip/<assetId>` URIs to `/api/assets/clip/<assetId>` for local generated WAV playback.
 - Exposes selected clip `生成`, `重生成`, `重试`, and `取消` controls in Inspector.
 - Enables selected clip preview in the right Preview Layer for both mock assets and local real `asset://clip/...` assets while keeping real project-mix preview out of scope.
+- Generates local semi-real WAV assets for `breath`, `sfx`, and `ambience` clips through the same selected-clip `生成` / `重生成` flow.
 
-Current product status: roadmap Step 7, **Real Generation MVP**, is implemented for voice clips. The checked-in Next.js app defaults to the local GPT-SoVITS bridge, writes stable `asset://clip/...` references into Project JSON, and serves generated WAV playback through a local asset API route.
+Current product status: roadmap Steps 7 and 8 are implemented. Voice clips use local GPT-SoVITS; breath, SFX, and ambience clips use the local procedural WAV renderer. All generated clips write stable `asset://clip/...` references into Project JSON and are served through the local clip asset playback API.
 
-There is still no real SFX generation, real ambience generation, real breath generation, real waveform rendering, real project-mix rendering/export, cloud persistence, auth, billing, collaboration, or production export flow.
+There is still no real project-mix rendering/export, real waveform rendering, cloud persistence, auth, billing, collaboration, or production export flow.
 
 ## Real Generation Runtime Notes
 
@@ -135,6 +136,24 @@ Known runtime lessons:
   - Playback response: `audio/wav`, `241,964` bytes, WAV header `RIFF`.
 - Cancel limitation for Step 7: cancellation is client-side best effort for the synchronous local provider. The UI cancels local commit / ignores late success, but GPT-SoVITS itself is not interrupted after a request is already sent.
 
+2026-07-07 multi-type generation integration:
+
+- Roadmap Step 8 is now wired into the app for non-voice clips.
+- Non-voice provider: `apps/web/src/lib/asmr/procedural-audio.ts`.
+- Supported procedural clip types:
+  - `breath`: soft noise shaped with inhale/exhale envelopes.
+  - `sfx`: friction noise for cloth / blanket / rubbing labels, with a tap-like impulse branch for future tapping labels.
+  - `ambience`: rain-like continuous bed plus sparse droplet ticks.
+- `apps/web/src/lib/asmr/local-clip-generation.ts` now exports `generateLocalClip`:
+  - `voice` routes to GPT-SoVITS.
+  - `breath`, `sfx`, and `ambience` route to the procedural renderer.
+  - `generateLocalVoiceClip` remains as a compatibility wrapper.
+- `POST /api/generation/clip` calls `generateLocalClip`, so the existing browser bridge and Inspector generation button work for voice and non-voice clips.
+- Verified generated assets:
+  - `asset://clip/breath_001_20260706T213815920Z_b55ae7b8`, playback `audio/wav`, `153,644` bytes, WAV header `RIFF`.
+  - `asset://clip/sfx_blanket_001_20260706T213816276Z_0089677d`, playback `audio/wav`, `217,644` bytes, WAV header `RIFF`.
+- Procedural generation is intentionally a local semi-real preview provider, not final studio-quality sound design. It exists to make the timeline contract real enough for Step 9 mixing.
+
 ## Architecture Map
 
 Core app:
@@ -179,7 +198,8 @@ Domain/data:
 - `apps/web/src/lib/asmr/voice-pack.ts` loads and validates the GPT-SoVITS voice pack and prompt transcript.
 - `apps/web/src/lib/asmr/gpt-sovits-provider.ts` maps voice clips into GPT-SoVITS `/tts` payloads and requests WAV bytes.
 - `apps/web/src/lib/asmr/local-asset-store.ts` writes local generated WAVs and resolves safe `asset://clip/...` IDs.
-- `apps/web/src/lib/asmr/local-clip-generation.ts` ties project clip lookup, voice pack loading, provider call, and asset saving together.
+- `apps/web/src/lib/asmr/procedural-audio.ts` renders deterministic local WAV files for breath, SFX, and ambience clips.
+- `apps/web/src/lib/asmr/local-clip-generation.ts` ties project clip lookup, voice pack loading, GPT-SoVITS voice generation, procedural non-voice generation, and asset saving together.
 - `apps/web/src/lib/asmr/local-generation-bridge.ts` implements the browser-side bridge for the local generation API.
 - `apps/web/src/lib/asmr/playback-asset-resolver.ts` resolves both `asset://clip/...` and `mock://asset/...` playback URIs.
 
@@ -202,6 +222,7 @@ Tests:
 - `apps/web/src/lib/asmr/voice-pack.test.ts`
 - `apps/web/src/lib/asmr/local-asset-store.test.ts`
 - `apps/web/src/lib/asmr/gpt-sovits-provider.test.ts`
+- `apps/web/src/lib/asmr/procedural-audio.test.ts`
 - `apps/web/src/lib/asmr/local-clip-generation.test.ts`
 - `apps/web/src/lib/asmr/local-generation-bridge.test.ts`
 - `apps/web/src/lib/asmr/playback-asset-resolver.test.ts`
@@ -241,7 +262,7 @@ Generation persistence rules:
 
 - Runtime `jobId`, progress, queued/generating/canceling state, and callback state stay outside `AsmrProject`.
 - Successful mock generation commits `asset_generated` plus final asset metadata with a `mock://asset/<clipId>/<jobId>` URI.
-- Successful local real voice generation commits `asset_generated` plus final asset metadata with an `asset://clip/<assetId>` URI.
+- Successful local voice and non-voice generation commits `asset_generated` plus final asset metadata with an `asset://clip/<assetId>` URI.
 - Normal generation failure commits `asset_failed` and an error.
 - Failed regeneration preserves a previous generated asset.
 - `mock://` URIs are resolved into data URLs only at runtime for playback.
@@ -264,11 +285,12 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 Latest verified state before this handoff:
 
-- `npm.cmd run test --prefix apps/web`: 21 test files passed, 118 tests passed.
+- `npm.cmd run test --prefix apps/web`: 22 test files passed, 124 tests passed.
 - `npm.cmd run lint --prefix apps/web`: passed.
 - `npm.cmd run build --prefix apps/web -- --webpack`: passed. The default Turbopack build is not the verification command on this Windows environment because Turbopack reports an unsupported native binding and asks to use Webpack.
 - Browser verification used a local dev server at `http://localhost:3000/` and a temporary headless Chrome controlled through CDP. The in-app browser was able to display the page but its snapshot / click control was unreliable in this session.
 - Browser verification passed for hydrated UI, selecting `voice_001`, selected clip `生成`, real local GPT-SoVITS generation to `asset://clip/voice_001_20260706T211523064Z_d3b95513`, Project JSON/localStorage containing the stable `asset://clip/...` reference, `重生成` after success, playback API returning `audio/wav` with `RIFF` header, and no page error/warning logs.
+- Step 8 browser verification passed for `breath_001` and `sfx_blanket_001`: both generated through the workbench UI, wrote `asset://clip/...`, and served playable `audio/wav` files with `RIFF` headers.
 
 Run locally:
 
@@ -318,21 +340,21 @@ Recent preview/workspace commits:
 
 ## Recommended Next Work
 
-Recommended next step: **Roadmap Step 8, 多类型真实 Clip 生成**.
+Recommended next step: **Roadmap Step 9, 真实项目混音与导出**.
 
 Why this next:
 
-- Step 7 has proven the product path for one real voice clip: selected clip control -> provider -> durable `asset://clip/...` -> Preview Layer playback.
-- The system is still incomplete because breath, SFX, and ambience clips remain mock / pending.
-- Step 8 should extend the same project contract beyond voice without jumping ahead to full project mixing.
+- Step 7 proved voice clip generation.
+- Step 8 proved non-voice clip generation for breath, SFX, and ambience using the same `asset://clip/...` contract.
+- The next missing product capability is to combine generated clip assets according to timeline timing into one real project WAV.
 
 Concrete next scope:
 
-- Choose at least two non-voice clip classes from `breath`, `sfx`, and `ambience`.
-- Keep the same durable asset model: final project state stores `asset://clip/...`, not local paths, runtime job IDs, blobs, or data URLs.
-- Add provider wrappers or local asset-library adapters only as Step 8 implementation details.
-- Preserve clip-level regeneration: generating one selected clip must not mutate unrelated clips.
-- Do not start real project mix/export until Step 8 has enough real clip assets to make Step 9 meaningful.
+- Add a local project mix renderer that reads generated `asset://clip/...` files from the runtime asset store.
+- Place each clip by `start` / `duration` and apply basic gain, fades, and pan-aware mono/stereo handling.
+- Save the mix as `asset://mix/...` or the existing project mix reference shape, without serializing local paths.
+- Wire full-project preview / WAV download to the real mix output.
+- Keep clip-level generation independent; Step 9 should consume generated assets, not regenerate them.
 
 ## Initial Product Path
 
@@ -340,8 +362,8 @@ The canonical roadmap is `docs/ROADMAP.md`.
 
 Do not treat this file as a competing roadmap. Current summary only:
 
-- Completed: roadmap steps 1-7.
-- Current / next: roadmap Step 8, 多类型真实 Clip 生成.
+- Completed: roadmap steps 1-8.
+- Current / next: roadmap Step 9, 真实项目混音与导出.
 - Pending: the remaining post-MVP generation, real mix/export, and product workflow hardening work.
 
 When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.

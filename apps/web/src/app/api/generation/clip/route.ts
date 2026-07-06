@@ -1,4 +1,4 @@
-import { generateLocalVoiceClip } from "@/lib/asmr/local-clip-generation";
+import { generateLocalClip } from "@/lib/asmr/local-clip-generation";
 import { getLocalRuntimeConfig } from "@/lib/asmr/local-runtime-config";
 import { AsmrProjectSchema } from "@/lib/asmr/schema";
 
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Missing clip id" }, { status: 400 });
     }
 
-    const asset = await generateLocalVoiceClip({
+    const asset = await generateLocalClip({
       project,
       clipId: parsedBody.clipId,
       config: getLocalRuntimeConfig(),

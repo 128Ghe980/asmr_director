@@ -309,6 +309,30 @@ describe("generation view", () => {
     });
   });
 
+  it("enables selected clip preview for generated non-voice local clip assets", () => {
+    const project = commitGenerationSuccess(demoProject, "sfx_blanket_001", {
+      assetId: "sfx_blanket_001_20260707T000000000Z_abcd1234",
+      uri: "asset://clip/sfx_blanket_001_20260707T000000000Z_abcd1234",
+      duration: 3.4,
+    });
+    const view = getGenerationView({
+      project,
+      selectedClip: findClip(project, "sfx_blanket_001"),
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.selectedClipControl).toMatchObject({
+      action: "regenerate",
+      disabled: false,
+    });
+    expect(view.selectedClipPreview).toEqual({
+      canPlay: true,
+      label: "播放片段",
+      uri: "asset://clip/sfx_blanket_001_20260707T000000000Z_abcd1234",
+    });
+  });
+
   it("shows retry for failed clips", () => {
     const project = commitGenerationFailure(demoProject, "voice_001", {
       reason: "generate",

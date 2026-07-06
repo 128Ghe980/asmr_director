@@ -515,6 +515,53 @@ Roadmap update (superseded by 2026-06-26 roadmap governance reset):
 - 下一步按 `docs/ROADMAP.md` 进入第 8 步：多类型真实 Clip 生成。
 - 不要再把 adapter、API route、provider wrapper、bridge cleanup 提成新的顶层阶段；这些只能作为第 8 步或后续步骤的内部实现细节。
 
+## 2026-07-07 - Roadmap Step 8 多类型真实 Clip 生成
+
+本轮在第 7 步 voice clip 真实生成的基础上，把 selected clip generation flow 扩展到非 voice clip。实现策略是本地程序化 WAV renderer：不下载新模型，不引入素材库授权问题，不改变 Project JSON contract，先让 timeline 中的 breath、SFX、ambience 都能生成真实可播放 WAV。
+
+实现内容：
+
+- 新增 `apps/web/src/lib/asmr/procedural-audio.ts`：
+  - 输出 32 kHz mono 16-bit PCM WAV。
+  - 同一 clip id / type / seed 输出确定。
+  - `breath` 使用柔和噪声和呼吸包络。
+  - `sfx` 使用布料 / 被褥摩擦噪声，并预留敲击式短脉冲分支。
+  - `ambience` 使用雨声底噪和稀疏雨滴颗粒。
+- 新增 `apps/web/src/lib/asmr/procedural-audio.test.ts`，覆盖 WAV header、长度、确定性、seed / 类型差异、voice reject。
+- `apps/web/src/lib/asmr/local-clip-generation.ts` 新增 `generateLocalClip`：
+  - voice 继续走 GPT-SoVITS。
+  - breath / SFX / ambience 走程序化 renderer。
+  - 生成后仍通过 `saveClipAsset` 写入 `D:\CodexWorkplace\asmr_director_runtime\assets\clips\app`。
+  - `generateLocalVoiceClip` 保留为兼容 wrapper。
+- `POST /api/generation/clip` 改为调用通用 `generateLocalClip`。
+- `generation-view.test.ts` 增加非 voice `asset://clip/...` selected preview 回归测试。
+- 新增第 8 步设计与计划：
+  - `docs/superpowers/specs/2026-07-07-multi-type-real-clip-generation-design.md`
+  - `docs/superpowers/specs/2026-07-07-multi-type-real-clip-generation-design.zh.md`
+  - `docs/superpowers/plans/2026-07-07-multi-type-real-clip-generation.md`
+
+端到端验收：
+
+- Next dev server：`http://localhost:3000/` 返回 200。
+- GPT-SoVITS：`http://127.0.0.1:9880/docs` 返回 200，但本轮非 voice 验收不依赖 GPT。
+- Headless Chrome CDP 验收中，从工作台 UI 选中并生成：
+  - `breath_001` -> `asset://clip/breath_001_20260706T213815920Z_b55ae7b8`，播放接口返回 `audio/wav`，`153,644` bytes，WAV header `RIFF`。
+  - `sfx_blanket_001` -> `asset://clip/sfx_blanket_001_20260706T213816276Z_0089677d`，播放接口返回 `audio/wav`，`217,644` bytes，WAV header `RIFF`。
+- 页面 error/warning 日志为空。
+
+自动化验证：
+
+- `npm.cmd run test --prefix apps/web -- local-generation-bridge local-clip-generation generation-view playback-asset-resolver procedural-audio`：5 个 test files / 29 个 tests 通过。
+- `npm.cmd run test --prefix apps/web`：22 个 test files / 124 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过。输出仍包含已知 SWC native binding warning，但 build 退出码为 0。
+
+对 roadmap 的影响：
+
+- 第 8 步验收要求“至少两类非 voice clip”已经由 breath + SFX 端到端验证满足；代码同时支持 ambience。
+- 下一步进入第 9 步：真实项目混音与导出。
+- Step 9 应消费现有 `asset://clip/...` 文件，按 timeline timing 混成真实 WAV；不要回退到继续做 mock bridge 或 provider spike。
+
 ## 2026-07-06 - GPT-SoVITS 本地真实生成实验
 
 本轮没有修改 checked-in 前端代码，而是在项目外的本地 runtime 中打通了一条真实 TTS 生成链路，用于验证 roadmap 第 7 步“真实生成 MVP”的技术可行性和听感边界。

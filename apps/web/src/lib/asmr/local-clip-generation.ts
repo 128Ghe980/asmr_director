@@ -2,6 +2,10 @@ import {
   buildGptSovitsRequest,
   requestGptSovitsWav,
 } from "./gpt-sovits-provider";
+import {
+  canRenderProceduralClip,
+  renderProceduralClipWav,
+} from "./procedural-audio";
 import { saveClipAsset } from "./local-asset-store";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import type { GeneratedAssetResult } from "./generation-bridge";
@@ -9,7 +13,7 @@ import type { AsmrProject } from "./schema";
 import { flattenClips } from "./view-model";
 import { loadVoicePack } from "./voice-pack";
 
-export type GenerateLocalVoiceClipInput = {
+export type GenerateLocalClipInput = {
   project: AsmrProject;
   clipId: string;
   config: LocalRuntimeConfig;
@@ -17,17 +21,29 @@ export type GenerateLocalVoiceClipInput = {
   now?: Date;
 };
 
-export async function generateLocalVoiceClip({
+export async function generateLocalClip({
   project,
   clipId,
   config,
   fetchImpl,
   now,
-}: GenerateLocalVoiceClipInput): Promise<GeneratedAssetResult> {
+}: GenerateLocalClipInput): Promise<GeneratedAssetResult> {
   const clip = flattenClips(project).find((candidate) => candidate.id === clipId);
 
   if (!clip) {
     throw new Error("Clip not found");
+  }
+
+  if (canRenderProceduralClip(clip)) {
+    const wav = renderProceduralClipWav({ clip });
+
+    return saveClipAsset({
+      config,
+      clipId,
+      wav,
+      duration: clip.duration,
+      now,
+    });
   }
 
   const voicePack = await loadVoicePack(config);
@@ -45,4 +61,10 @@ export async function generateLocalVoiceClip({
     duration: clip.duration,
     now,
   });
+}
+
+export async function generateLocalVoiceClip(
+  input: GenerateLocalClipInput,
+): Promise<GeneratedAssetResult> {
+  return generateLocalClip(input);
 }

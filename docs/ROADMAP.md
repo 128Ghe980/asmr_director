@@ -6,9 +6,9 @@ Last updated: 2026-07-07
 
 ## 不可动摇的当前优先级
 
-当前最高优先事务是 **第 8 步：多类型真实 Clip 生成**。
+当前最高优先事务是 **第 9 步：真实项目混音与导出**。
 
-第 7 步已经完成本地 voice clip 真实生成接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
+第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
 
 ## 10 步路线
 
@@ -57,14 +57,18 @@ Last updated: 2026-07-07
      - cancel 对当前同步本地 provider 是客户端 best-effort：UI 会取消本地提交并忽略晚到结果，但已经发出的 GPT-SoVITS 请求不会被底层服务中断。
 
 8. **多类型真实 Clip 生成**
-   - Status: Current / Next.
-   - Outcome: 在 voice 之外，把真实或半真实生成扩展到 breath、SFX、ambience 中至少两类。
+   - Status: Completed.
+   - Outcome: 在 voice 之外，已把本地半真实生成扩展到 breath、SFX、ambience。非 voice clip 使用本地程序化 WAV renderer，继续通过同一 selected clip generation flow、`asset://clip/...` durable reference、Preview Layer selected clip playback 进入项目。
    - Acceptance criteria:
      - 非 voice clip 也能通过同一 project contract 生成并预览。
      - Clip-level regeneration 仍然只影响当前选中 clip。
+   - 2026-07-07 完成记录:
+     - 新增程序化非 voice renderer：breath 使用柔和噪声呼吸包络，SFX 使用摩擦 / 敲击式包络，ambience 使用雨声底噪和稀疏雨滴颗粒。
+     - `POST /api/generation/clip` 已从 voice-only helper 改为通用 local clip generation：voice 继续走 GPT-SoVITS，breath / SFX / ambience 走本地程序化 renderer。
+     - Headless Chrome 端到端验收已生成 `breath_001` 和 `sfx_blanket_001`：播放接口均返回 `audio/wav`，文件头 `RIFF`，页面无 error/warning。
 
 9. **真实项目混音与导出**
-   - Status: Pending.
+   - Status: Current / Next.
    - Outcome: 按 Timeline DSL 把已生成 clip assets 混成真实 WAV。
    - Acceptance criteria:
      - Project mix 使用真实生成的 clip assets 与 timeline timing。
