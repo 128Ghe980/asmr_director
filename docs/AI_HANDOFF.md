@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-06-22
+Last updated: 2026-07-06
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -59,7 +59,53 @@ Current user-facing capabilities:
 - Exposes selected clip `生成`, `重生成`, `重试`, and `取消` controls in Inspector.
 - Enables selected clip mock preview in the right Preview Layer while keeping project-mix preview out of scope.
 
-Current status is frontend-only. There is no backend, real TTS, real SFX generation, real ambience generation, real audio-backed waveform rendering, cloud persistence, auth, billing, collaboration, or full audio export. Audio playback exists only for runtime-resolved mock assets.
+Current product status: the checked-in Next.js app still uses the mock Generation Bridge in the UI. Real local TTS has now been proven manually through a GPT-SoVITS runtime, but it is not yet wired into the app's selected-clip generation control, durable asset flow, or Preview Layer.
+
+There is still no checked-in backend route, real SFX generation, real ambience generation, real waveform rendering, cloud persistence, auth, billing, collaboration, or production export flow.
+
+## Real Generation Runtime Notes
+
+2026-07-06 manual runtime proof:
+
+- Runtime root: `D:\CodexWorkplace\asmr_director_runtime`.
+- GPT-SoVITS repo: `D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\GPT-SoVITS`.
+- GPT-SoVITS upstream: `https://github.com/RVC-Boss/GPT-SoVITS.git`; local checked commit `bf81cdb`; root code license observed locally is MIT. See `docs/THIRD_PARTY_RUNTIMES.md`.
+- Python env: `D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\env-comfyui-clone`.
+- API command used from the GPT-SoVITS repo:
+
+```powershell
+D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\env-comfyui-clone\python.exe api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml
+```
+
+- Local API endpoint: `http://127.0.0.1:9880/tts`.
+- Voice pack: `D:\CodexWorkplace\asmr_director_runtime\voice-packs\default\voice-pack.json`.
+- Reference audio: `D:\CodexWorkplace\asmr_director_runtime\voice-packs\default\reference.wav`, converted from the user's `D:\temp\音频.MP3`.
+- ASR output for reference text: `D:\CodexWorkplace\asmr_director_runtime\asr\output\reference-input.list`.
+- Current prompt text is Japanese ASR text:
+
+```text
+助けてくれたのかなあの時はありがとう今は財布持ってないから昼休みに非常階段に来てもらって
+```
+
+- Current voice pack language settings: `promptLanguage: "ja"`, `textLanguage: "zh"`; manual longer Chinese tests used `text_lang: "all_zh"`.
+- Faster Whisper ASR model is downloaded under `D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\GPT-SoVITS\tools\asr\models\faster-whisper-large-v3`.
+- Model file check on 2026-07-06: `model.bin` is `3,087,284,237` bytes; no `.incomplete` or `.lock` files remained; ASR successfully produced the Japanese transcript above.
+- Successful single real TTS test: `D:\CodexWorkplace\asmr_director_runtime\assets\clips\manual-test-prompt-transcribed-ja-serial.wav`, duration `5.26s`.
+- Successful manual "workbench-like" multi-clip ASMR test:
+  - Mix: `D:\CodexWorkplace\asmr_director_runtime\assets\mixes\workbench-asmr-test-2026-07-06.wav`.
+  - Manifest and clip WAVs: `D:\CodexWorkplace\asmr_director_runtime\assets\clips\workbench-asmr-test-2026-07-06\manifest.json`.
+  - Duration: `59.53s`, format `32kHz mono PCM WAV`.
+  - It was generated as six real GPT-SoVITS voice clips, then concatenated with short silences. This is a manual runtime proof, not product-integrated Step 9 project mixing.
+
+Known runtime lessons:
+
+- In GPT-SoVITS, `prompt_text` is the transcript of the reference audio, not the text to synthesize. The actual generated content is `text`.
+- A Japanese reference audio should use a Japanese prompt transcript and `prompt_lang: "ja"` / possibly `all_ja`.
+- Fake Chinese prompt text against Japanese reference audio produced poor / unstable output.
+- PowerShell pipeline encoding can corrupt Chinese request text into `?`; send JSON through Python with proper UTF-8 handling or Unicode escapes.
+- On the user's RTX 3060 Laptop GPU, GPT-SoVITS parallel inference can hit CUDNN memory allocation failures. A stable test path used `parallel_infer: false`, `split_bucket: false`, `batch_size: 1`, and API restart before generation.
+- C drive space has been critically low. Keep Hugging Face, ModelScope, Torch, temp files, generated assets, and runtime models on D drive.
+- Cleared C drive Hugging Face / Torch / pip caches once during this work. Do not assume C drive has enough headroom.
 
 ## Architecture Map
 
@@ -118,6 +164,9 @@ Tests:
 
 Docs:
 
+- `docs/ROADMAP.md` is the canonical top-level roadmap and the only hard source for product sequence.
+- `docs/PROJECT_MANAGEMENT.md` defines project collaboration and roadmap-following rules.
+- `docs/THIRD_PARTY_RUNTIMES.md` records external runtime projects, licenses, and asset ownership boundaries.
 - `docs/AI_HANDOFF.md` is the high-signal recovery entrypoint.
 - `docs/project-archive.md` is the running project archive.
 - `docs/asmr导演早期设计.md` is the original product/technical vision.
@@ -223,42 +272,44 @@ Recent preview/workspace commits:
 
 ## Recommended Next Work
 
-Recommended next step: **API-backed generation bridge design**.
+Recommended next step: **Continue Real Generation MVP by wiring the proven local GPT-SoVITS runtime into the workbench generation flow**.
 
-Why this next: the product now has the bridge boundary, runtime job semantics, durable asset commits, mock playback, and UI controls. The next design should replace the mock bridge with a backend-shaped API contract for real TTS/SFX/ambience services, storage, cancellation, failures, polling/subscription, and generated file references.
+Why this next:
 
-Approved scope:
+- The UI already has a stable generation/mix asset surface.
+- The generation interaction loop, asset references, preview surface, and project mix skeleton are in place.
+- The next useful project step must produce at least one real playable generated audio result, not another mock-only bridge milestone.
 
-- Design the API contract that can back `GenerationBridge` without rewiring the whole studio.
-- Decide job creation, progress updates, cancellation, retry, regeneration, and terminal failure semantics.
-- Decide where real generated files live and what durable asset URI/reference format should be committed to `AsmrProject`.
-- Decide whether selected-clip generation remains the first real target before project-mix generation.
-- Preserve the existing Preview Layer, Timeline status signals, Inspector asset slot, validation, persistence, import, export, reset, C+ workspace layout, independent side collapse, and concise Chinese UI copy.
-- Avoid adding auth, billing, collaboration, cloud project persistence, full audio export, or project-mix rendering during this design step.
+Concrete next scope:
 
-Do not jump directly to real TTS/SFX/ambience wiring before this API-backed bridge design is agreed.
+- Prioritize one voice clip generation path.
+- Use the existing generation contract and asset reference model.
+- Add adapter / API / provider wrapper code only as an implementation detail of this work.
+- Reuse the proven local GPT-SoVITS runtime as the first real provider.
+- Produce a real playable audio file through the selected voice clip generation control, not only through manual scripts.
+- Persist only the stable asset reference in project JSON.
+- Play the result through the existing selected-clip preview / Preview Layer flow.
+- Preserve failure, retry, and cancellation behavior.
 
 ## Initial Product Path
 
-This is the current early roadmap. Treat it as directional, not a rigid release contract.
+The canonical roadmap is `docs/ROADMAP.md`.
 
-1. Field-level validation highlighting: completed for selected Clip Inspector fields while keeping the global Validation Panel.
-2. Light timeline editing: completed for selected clip start/duration nudges without building a full DAW.
-3. Project structure upgrade: completed as the C+ collapsible project workspace with left project rail, top status header, center editor, right project details dock, and focused editing mode.
-4. Preview layer before real audio: completed as the C hybrid lightweight preview layer with fake waveform/status strip, preview counts, generation slots, Timeline status dots, and Inspector asset slot.
-5. Mock-first generation bridge: completed for selected clip generation, cancellation, runtime progress, durable asset commits, failed state, and mock playback.
-6. API-backed generation bridge design: next target.
-7. Real generation chain: later target; introduce real TTS/SFX/ambience generation, listening, regeneration, and export after the API contract is designed.
+Do not treat this file as a competing roadmap. Current summary only:
 
-The key sequencing rule: keep strengthening the editable Timeline DSL and director workflow before connecting expensive or brittle audio generation.
+- Completed: roadmap steps 1-6.
+- Current / next: Real Generation MVP. Manual local GPT-SoVITS generation has been proven; product integration is still pending.
+- Pending: the remaining post-MVP generation, real mix/export, and product workflow hardening work.
+
+When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.
 
 ## Next Work Protocol
 
 When the user asks "what next?", "what should we do now?", "理论上下一步是什么？", or any equivalent roadmap question, do not answer from fresh intuition alone.
 
-First read this file, then do a fresh project reality check before recommending work. At minimum, check current git status/recent commits and inspect the relevant files or app behavior when the route depends on implementation details.
+First read `docs/ROADMAP.md`, `docs/PROJECT_MANAGEMENT.md`, and this file, then do a fresh project reality check before recommending work. At minimum, check current git status/recent commits and inspect the relevant files or app behavior when the route depends on implementation details.
 
-Answer from `Recommended Next Work`, `Initial Product Path`, and current project reality using this shape:
+Answer from `docs/ROADMAP.md`, `Recommended Next Work`, and current project reality using this shape:
 
 ```text
 Documented path points to:
@@ -276,19 +327,24 @@ If the documented path feels stale, conflicts with current implementation, or th
 
 Do not jump straight into:
 
-- Real TTS/SFX/ambience provider wiring without the API-backed bridge design.
 - Backend project persistence.
 - Auth or cloud sync.
 - Real project-mix rendering.
 - Real waveform rendering from generated audio.
 - Full DAW drag/drop timeline.
 - Payment or publishing flows.
+- New mock-only or bridge-only top-level milestones that postpone the canonical roadmap.
+- Turning adapter / API / provider wrapper work into a new top-level roadmap gate without user approval.
 
 Those are later versions. The near-term path should keep proving the editable Timeline DSL and director workflow.
 
 ## Working Rules For Future Agents
 
 - Speak Chinese to the user unless they ask otherwise.
+- Treat `docs/ROADMAP.md` as the only top-level roadmap source.
+- Read `docs/PROJECT_MANAGEMENT.md` before answering next-step / roadmap questions.
+- Do not insert, rename, or reorder top-level roadmap steps without user approval.
+- If the roadmap looks stale, explain the mismatch and propose a roadmap edit instead of silently changing direction.
 - Prefer existing schema and helpers over ad hoc object manipulation.
 - Keep Project Workspace, Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, Preview Layer, and Export JSON driven by the same `AsmrProject` state plus runtime-only UI state.
 - Keep runtime generation state out of `AsmrProject`, localStorage project JSON, and export JSON.
@@ -297,4 +353,4 @@ Those are later versions. The near-term path should keep proving the editable Ti
 - Preserve the Studio Console visual direction: professional tool first, restrained ASMR atmosphere second.
 - Keep docs updated when changing product direction, data contracts, or next-step recommendations.
 - For new approved specs, keep the English spec and add a Chinese companion `*.zh.md` version.
-- Treat roadmap questions as document-synchronized and project-synchronized work: check `Recommended Next Work`, `Initial Product Path`, `Next Work Protocol`, and current repo/app reality before recommending the next task.
+- Treat roadmap questions as document-synchronized and project-synchronized work: check `docs/ROADMAP.md`, `Recommended Next Work`, `Next Work Protocol`, and current repo/app reality before recommending the next task.

@@ -419,6 +419,15 @@ npm.cmd run build --prefix apps/web -- --webpack
 - 原因是 C+ shell 已经给预览层留出结构位置，但仍是占位；下一轮应先做播放状态、波形/状态界面和 generation slots，让流程像音频产品，但不假装已有真实音频。
 - 真实 TTS/SFX、真实音频播放、真实 waveform 和导出仍应等导演工作流与 Timeline DSL 更稳定后再接入。
 
+## 2026-06-26 - Roadmap governance reset
+
+- User identified a project-management failure: the intended route existed only as scattered conversation/context, so repeated “what next?” answers drifted into newly invented bridge/mock steps.
+- Added `docs/ROADMAP.md` as the single hard source for the 10-step product route.
+- Added `docs/PROJECT_MANAGEMENT.md` with process rules for following the roadmap, checking current project reality, updating docs, and requiring verification evidence.
+- Added root `AGENT.md` as the agent entrypoint that points to the roadmap, project-management rules, and handoff summary.
+- Updated `docs/AI_HANDOFF.md` so it summarizes the roadmap instead of defining a competing one.
+- Clarified that adapter/API/provider-wrapper work is an implementation detail only; it must not become a separate top-level gate that delays the current roadmap priority.
+
 ## 2026-06-22 - Generation Bridge
 
 This round implemented the mock-first Generation Bridge described by:
@@ -453,11 +462,127 @@ Verification:
 - Browser verification used `http://localhost:3000/` plus Playwright with system Chrome because the in-app browser Node runtime returned `failed to write kernel assets`.
 - Browser checks covered Chinese UI text, selected clip generation, progress and cancel state, success to `重生成`, enabled selected clip preview playback, local saved project containing `mock://asset/`, local saved project excluding runtime job state, focus/collapse controls, desktop overflow, collapsed desktop overflow, 390x900 mobile overflow, and no console/page errors.
 
-Roadmap update:
+Roadmap update (superseded by 2026-06-26 roadmap governance reset):
 
 - The previous "real generation integration design" target has now been refined by implementation: the mock bridge boundary exists.
-- Recommended next work is **API-backed generation bridge design**: define the real API/job/storage contract that can replace the mock bridge without disturbing the director workflow.
-- Do not jump directly into real TTS/SFX/ambience provider wiring until that API-backed bridge design is agreed.
+- Historical recommendation at the time was **API-backed generation bridge design**.
+- This is no longer the current next-step instruction. Current top-level route is defined only in `docs/ROADMAP.md`.
+
+## 2026-07-06 - GPT-SoVITS 本地真实生成实验
+
+本轮没有修改 checked-in 前端代码，而是在项目外的本地 runtime 中打通了一条真实 TTS 生成链路，用于验证 roadmap 第 7 步“真实生成 MVP”的技术可行性和听感边界。
+
+Runtime 位置：
+
+- Runtime 根目录：`D:\CodexWorkplace\asmr_director_runtime`。
+- GPT-SoVITS 仓库：`D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\GPT-SoVITS`。
+- GPT-SoVITS 上游：`https://github.com/RVC-Boss/GPT-SoVITS.git`。
+- 本地 GPT-SoVITS 提交：`bf81cdb`。
+- 本地 `LICENSE` 显示 GPT-SoVITS 根代码许可证为 MIT License；模型权重、ASR 模型、参考音频、声音包和生成音频仍需按各自来源单独确认授权。统一边界见 `docs/THIRD_PARTY_RUNTIMES.md`。
+- Python 环境：`D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\env-comfyui-clone`。
+- GPT-SoVITS API 地址：`http://127.0.0.1:9880/tts`。
+- 使用 GPT-SoVITS v2 pretrained weights，配置文件为 `GPT_SoVITS/configs/tts_infer.yaml`。
+
+启动命令：
+
+```powershell
+D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\env-comfyui-clone\python.exe api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml
+```
+
+Voice pack：
+
+- `D:\CodexWorkplace\asmr_director_runtime\voice-packs\default\voice-pack.json`
+- `D:\CodexWorkplace\asmr_director_runtime\voice-packs\default\reference.wav`
+- `D:\CodexWorkplace\asmr_director_runtime\voice-packs\default\prompt.txt`
+
+参考音频来自用户提供的 `D:\temp\音频.MP3`，转换为 `reference.wav` 后约 `6.3s`，32kHz mono PCM。
+
+一开始误把 `prompt_text` 当成“生成提示词”，写了中文占位句，导致生成内容和节奏明显不稳定。后续确认 GPT-SoVITS 的 `prompt_text` 实际含义是“参考音频真实转写”，不是要生成的文本。真正要生成的内容是请求里的 `text`。
+
+ASR 转写：
+
+- 日语 / 英语走 `tools/asr/fasterwhisper_asr.py`。
+- 中文 / 粤语偏 FunASR。
+- Faster Whisper 模型下载在 D 盘项目 runtime 下，避免占用 C 盘。
+- ASR 输入：`D:\CodexWorkplace\asmr_director_runtime\asr\reference-input\reference.wav`。
+- ASR 输出：`D:\CodexWorkplace\asmr_director_runtime\asr\output\reference-input.list`。
+
+识别结果：
+
+```text
+助けてくれたのかなあの時はありがとう今は財布持ってないから昼休みに非常階段に来てもらって
+```
+
+当前 voice pack 使用：
+
+- `promptLanguage: "ja"`
+- `textLanguage: "zh"`
+- `prompt.txt` 写入上述日语 ASR 转写。
+
+Faster Whisper 模型位置：
+
+- `D:\CodexWorkplace\asmr_director_runtime\engines\gpt-sovits\GPT-SoVITS\tools\asr\models\faster-whisper-large-v3`
+
+模型本地检查：
+
+- `model.bin`: `3,087,284,237` bytes。
+- `config.json`: `2,394` bytes。
+- `preprocessor_config.json`: `340` bytes。
+- `tokenizer.json`: `2,480,617` bytes。
+- `vocabulary.json`: `1,068,114` bytes。
+- 没有残留 `.incomplete` 或 `.lock` 文件。
+- 虽然 Hugging Face 远端元数据查询因代理 SSL 问题失败，但该模型已经实际完成 ASR，说明本地可用。
+
+单句 TTS 实验：
+
+- 成功生成真实 WAV：`D:\CodexWorkplace\asmr_director_runtime\assets\clips\manual-test-prompt-transcribed-ja-serial.wav`
+- 时长：`5.26s`
+- 格式：32kHz mono PCM WAV。
+
+关键参数：
+
+- `prompt_text`: 日语 ASR 转写。
+- `prompt_lang`: `ja`。
+- `text_lang`: `zh` 或后续长段测试中的 `all_zh`。
+- `batch_size`: `1`。
+- `parallel_infer`: `false`。
+- `split_bucket`: `false`。
+
+连贯 ASMR 试听实验：
+
+为了模拟工作台里的“多个 voice clip 组成整段试听”，手动生成 6 个 voice clip，然后拼接为一个完整 WAV。该实验没有接入前端 UI，也没有写入 Project JSON；它只是一个真实 provider 的运行时证明。
+
+- Manifest：`D:\CodexWorkplace\asmr_director_runtime\assets\clips\workbench-asmr-test-2026-07-06\manifest.json`
+- 整段输出：`D:\CodexWorkplace\asmr_director_runtime\assets\mixes\workbench-asmr-test-2026-07-06.wav`
+- 时长：`59.53s`
+- 格式：32kHz mono PCM WAV。
+
+分段输出：
+
+- `01_voice_001.wav`: `10.28s`
+- `02_voice_002.wav`: `8.08s`
+- `03_voice_003.wav`: `8.28s`
+- `04_voice_004.wav`: `8.92s`
+- `05_voice_005.wav`: `8.96s`
+- `06_voice_006.wav`: `8.46s`
+
+这条整段音频使用 GPT-SoVITS 逐段真实生成，再用静音间隔拼接。它接近未来 timeline/mix 的工作方式，但不能算 roadmap 第 9 步“真实项目混音与导出”完成，因为它没有使用 checked-in app 的 timeline DSL、asset reference、Preview Layer 或导出按钮。
+
+关键问题与结论：
+
+- `prompt_text` 必须尽量匹配参考音频的真实转写；它不是 ChatGPT 语境里的 prompt。
+- 日语参考音频可以用于中文 zero-shot，但跨语言稳定性一般，声音、口音、节奏都可能不理想。
+- 中文目标文本通过 PowerShell 管道发送时曾变成 `?`，导致 GPT-SoVITS 返回 `请输入有效文本`。后续请求应使用 Python UTF-8 JSON 或 Unicode escape。
+- GPT-SoVITS 并行推理在 RTX 3060 Laptop 6GB 显存上可能触发 CUDNN / ONNX Runtime memory allocation failure。稳定测试路径是重启 API 后使用 `parallel_infer: false`、`split_bucket: false`、`batch_size: 1`。
+- C 盘空间曾低至约 `0.12GB`，导致运行环境非常脆弱。清理了 C 盘 Hugging Face / Torch / pip cache，释放约 `5.3GB`。后续所有模型、缓存、临时目录和生成物都应继续放在 D 盘。
+
+对 roadmap 的影响：
+
+这轮证明了“真实本地 voice clip 生成”可行，但还没有完成产品集成。下一步仍属于 roadmap 第 7 步：
+
+> 把已验证的本地 GPT-SoVITS runtime 接入现有 Generation Bridge / selected clip generation / Preview Layer flow。
+
+不要把下一步重新发明成新的 mock bridge、provider spike 或架构 gate。Adapter/API/provider wrapper 只能作为第 7 步的内部实现细节。
 
 ## 2026-06-21 - Preview Layer Before Real Audio
 
