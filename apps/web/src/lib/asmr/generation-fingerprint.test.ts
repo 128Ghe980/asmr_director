@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   getClipGenerationFingerprint,
+  getProjectMixFingerprint,
   isCurrentClipGenerationFingerprint,
+  isCurrentProjectMixFingerprint,
 } from "./generation-fingerprint";
 import {
   commitGenerationFailure,
   commitGenerationSuccess,
 } from "./generation-project-state";
 import { demoProject } from "./mock-project";
+import { commitProjectMixSuccess } from "./project-mix-state";
 import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
 
@@ -31,6 +34,28 @@ function updateClip(
   update(findClip(nextProject, clipId));
 
   return nextProject;
+}
+
+function updateProject(
+  project: AsmrProject,
+  update: (project: AsmrProject) => void,
+): AsmrProject {
+  const nextProject = structuredClone(project);
+  update(nextProject);
+
+  return nextProject;
+}
+
+function generateAllClips(project = demoProject): AsmrProject {
+  return flattenClips(project).reduce(
+    (nextProject, clip) =>
+      commitGenerationSuccess(nextProject, clip.id, {
+        assetId: `${clip.id}_asset`,
+        uri: `asset://clip/${clip.id}_asset`,
+        duration: clip.duration,
+      }),
+    project,
+  );
 }
 
 describe("generation fingerprint", () => {
@@ -112,6 +137,67 @@ describe("generation fingerprint", () => {
         "voice_001",
         startedFingerprint,
       ),
+    ).toBe(true);
+  });
+
+  it("changes project mix fingerprint when clip timing, mixing, or asset uri changes", () => {
+    const generated = generateAllClips();
+    const originalFingerprint = getProjectMixFingerprint(generated);
+    const changedTiming = updateClip(generated, "voice_001", (clip) => {
+      clip.start += 0.5;
+    });
+    const changedMixing = updateProject(generated, (project) => {
+      project.timeline.mixing.target_lufs =
+        project.timeline.mixing.target_lufs === -18 ? -17 : -18;
+    });
+    const changedAssetUri = updateClip(generated, "voice_001", (clip) => {
+      clip.asset.uri = "asset://clip/voice_001_other_asset";
+    });
+
+    expect(getProjectMixFingerprint(changedTiming)).not.toBe(
+      originalFingerprint,
+    );
+    expect(getProjectMixFingerprint(changedMixing)).not.toBe(
+      originalFingerprint,
+    );
+    expect(getProjectMixFingerprint(changedAssetUri)).not.toBe(
+      originalFingerprint,
+    );
+  });
+
+  it("ignores wav export uri when computing project mix fingerprint", () => {
+    const generated = generateAllClips();
+    const firstMix = commitProjectMixSuccess(generated, {
+      assetId: "asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      uri: "asset://mix/asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      duration: generated.duration,
+    });
+    const secondMix = commitProjectMixSuccess(firstMix, {
+      assetId: "asmr_demo_001_wav_20260710T000100000Z_dcba4321",
+      uri: "asset://mix/asmr_demo_001_wav_20260710T000100000Z_dcba4321",
+      duration: generated.duration,
+    });
+
+    expect(getProjectMixFingerprint(firstMix)).toBe(
+      getProjectMixFingerprint(generated),
+    );
+    expect(getProjectMixFingerprint(secondMix)).toBe(
+      getProjectMixFingerprint(generated),
+    );
+  });
+
+  it("rejects stale project mix commits when the current project mix fingerprint changed", () => {
+    const generated = generateAllClips();
+    const startedFingerprint = getProjectMixFingerprint(generated);
+    const editedProject = updateClip(generated, "sfx_blanket_001", (clip) => {
+      clip.duration += 0.5;
+    });
+
+    expect(
+      isCurrentProjectMixFingerprint(editedProject, startedFingerprint),
+    ).toBe(false);
+    expect(
+      isCurrentProjectMixFingerprint(generated, startedFingerprint),
     ).toBe(true);
   });
 });
