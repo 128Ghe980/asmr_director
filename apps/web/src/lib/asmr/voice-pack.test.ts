@@ -25,6 +25,7 @@ function makeConfig(voicePackPath: string): LocalRuntimeConfig {
     gptSovitsBaseUrl: "http://127.0.0.1:9880",
     voicePackPath,
     clipAssetRoot: path.join(path.dirname(voicePackPath), "assets"),
+    mixAssetRoot: path.join(path.dirname(voicePackPath), "mixes"),
   };
 }
 

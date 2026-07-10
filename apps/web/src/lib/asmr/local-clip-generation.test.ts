@@ -41,6 +41,7 @@ async function makeRuntimeConfig(): Promise<LocalRuntimeConfig> {
     gptSovitsBaseUrl: "http://127.0.0.1:9880",
     voicePackPath,
     clipAssetRoot: path.join(runtimeRoot, "assets", "clips", "app"),
+    mixAssetRoot: path.join(runtimeRoot, "assets", "mixes", "app"),
   };
 }
 
