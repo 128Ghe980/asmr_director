@@ -16,12 +16,15 @@ import {
 } from "@/lib/asmr/edit-project";
 import type {
   GenerateClipReason,
+  GenerateProjectMixReason,
   GenerationBridge,
   GenerationJobUpdate,
 } from "@/lib/asmr/generation-bridge";
 import {
   getClipGenerationFingerprint,
+  getProjectMixFingerprint,
   isCurrentClipGenerationFingerprint,
+  isCurrentProjectMixFingerprint,
 } from "@/lib/asmr/generation-fingerprint";
 import {
   commitGenerationFailure,
@@ -31,6 +34,7 @@ import {
   clearGenerationJob,
   emptyGenerationRuntimeState,
   getGenerationJobForClip,
+  getGenerationJobForProjectMix,
   isActiveGenerationJob,
   markGenerationJobCanceling,
   upsertGenerationJob,
@@ -39,6 +43,10 @@ import { getGenerationView } from "@/lib/asmr/generation-view";
 import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
+import {
+  commitProjectMixFailure,
+  commitProjectMixSuccess,
+} from "@/lib/asmr/project-mix-state";
 import {
   clearSavedProject,
   loadSavedProject,
@@ -126,6 +134,9 @@ export function StudioApp({ project }: StudioAppProps) {
   const generationSessionRef = useRef(0);
   const generationReasonsRef = useRef<Record<string, GenerateClipReason>>({});
   const generationFingerprintsRef = useRef<Record<string, string>>({});
+  const projectMixReasonsRef = useRef<Record<string, GenerateProjectMixReason>>({});
+  const projectMixJobFingerprintsRef = useRef<Record<string, string>>({});
+  const [projectMixFingerprint, setProjectMixFingerprint] = useState<string>();
   const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
   const [generationRuntimeState, setGenerationRuntimeState] = useState(
     emptyGenerationRuntimeState,
@@ -175,10 +186,12 @@ export function StudioApp({ project }: StudioAppProps) {
         selectedClip,
         runtimeState: generationRuntimeState,
         selectedClipHasValidationIssues,
+        projectMixFingerprint,
       }),
     [
       editableProject,
       generationRuntimeState,
+      projectMixFingerprint,
       selectedClip,
       selectedClipHasValidationIssues,
     ],
@@ -266,6 +279,8 @@ export function StudioApp({ project }: StudioAppProps) {
 
       generationReasonsRef.current = {};
       generationFingerprintsRef.current = {};
+      projectMixReasonsRef.current = {};
+      projectMixJobFingerprintsRef.current = {};
       audioRef.current?.pause();
       audioRef.current = null;
     };
@@ -287,8 +302,11 @@ export function StudioApp({ project }: StudioAppProps) {
 
     generationReasonsRef.current = {};
     generationFingerprintsRef.current = {};
+    projectMixReasonsRef.current = {};
+    projectMixJobFingerprintsRef.current = {};
     generationRuntimeStateRef.current = emptyGenerationRuntimeState;
     setGenerationRuntimeState(emptyGenerationRuntimeState);
+    setProjectMixFingerprint(undefined);
     audioRef.current?.pause();
     audioRef.current = null;
   }
@@ -319,6 +337,27 @@ export function StudioApp({ project }: StudioAppProps) {
     void bridgeRef.current?.cancelGeneration(job.jobId);
   }
 
+  function cancelProjectMixGeneration() {
+    const job = getGenerationJobForProjectMix(
+      generationRuntimeStateRef.current,
+      "wav",
+    );
+
+    if (!job || !isActiveGenerationJob(job)) {
+      return;
+    }
+
+    const next = clearGenerationJob(
+      generationRuntimeStateRef.current,
+      job.jobId,
+    );
+
+    delete projectMixReasonsRef.current[job.jobId];
+    delete projectMixJobFingerprintsRef.current[job.jobId];
+    setRuntimeState(next);
+    void bridgeRef.current?.cancelGeneration(job.jobId);
+  }
+
   function handleGenerationUpdate(
     update: GenerationJobUpdate,
     generationSession: number,
@@ -338,6 +377,30 @@ export function StudioApp({ project }: StudioAppProps) {
     }
 
     if (update.type === "succeeded") {
+      if (update.job.target?.type === "project_mix") {
+        const fingerprint =
+          projectMixJobFingerprintsRef.current[update.job.jobId];
+
+        setEditableProject((currentProject) =>
+          fingerprint &&
+          isCurrentProjectMixFingerprint(currentProject, fingerprint)
+            ? commitProjectMixSuccess(currentProject, update.asset)
+            : currentProject,
+        );
+        if (fingerprint) {
+          setProjectMixFingerprint(fingerprint);
+        }
+        setGenerationRuntimeState((current) => {
+          const next = clearGenerationJob(current, update.job.jobId);
+          generationRuntimeStateRef.current = next;
+
+          return next;
+        });
+        delete projectMixReasonsRef.current[update.job.jobId];
+        delete projectMixJobFingerprintsRef.current[update.job.jobId];
+        return;
+      }
+
       const fingerprint = generationFingerprintsRef.current[update.job.jobId];
 
       setEditableProject((currentProject) =>
@@ -366,6 +429,32 @@ export function StudioApp({ project }: StudioAppProps) {
     }
 
     if (update.type === "failed") {
+      if (update.job.target?.type === "project_mix") {
+        const reason =
+          projectMixReasonsRef.current[update.job.jobId] ?? "mix";
+        const fingerprint =
+          projectMixJobFingerprintsRef.current[update.job.jobId];
+
+        setEditableProject((currentProject) =>
+          fingerprint &&
+          isCurrentProjectMixFingerprint(currentProject, fingerprint)
+            ? commitProjectMixFailure(currentProject, {
+                reason,
+                error: update.error,
+              })
+            : currentProject,
+        );
+        setGenerationRuntimeState((current) => {
+          const next = clearGenerationJob(current, update.job.jobId);
+          generationRuntimeStateRef.current = next;
+
+          return next;
+        });
+        delete projectMixReasonsRef.current[update.job.jobId];
+        delete projectMixJobFingerprintsRef.current[update.job.jobId];
+        return;
+      }
+
       const reason =
         generationReasonsRef.current[update.job.jobId] ?? "generate";
       const fingerprint = generationFingerprintsRef.current[update.job.jobId];
@@ -402,6 +491,8 @@ export function StudioApp({ project }: StudioAppProps) {
     });
     delete generationReasonsRef.current[update.job.jobId];
     delete generationFingerprintsRef.current[update.job.jobId];
+    delete projectMixReasonsRef.current[update.job.jobId];
+    delete projectMixJobFingerprintsRef.current[update.job.jobId];
   }
 
   function handleGenerateSelectedClip() {
@@ -470,6 +561,73 @@ export function StudioApp({ project }: StudioAppProps) {
     void bridgeRef.current?.cancelGeneration(jobId);
   }
 
+  function handleGenerateProjectMix() {
+    if (generationView.projectMixControl.disabled) {
+      return;
+    }
+
+    const action = generationView.projectMixControl.action;
+
+    if (action === "cancel" || action === "none") {
+      return;
+    }
+
+    const reason: GenerateProjectMixReason =
+      action === "retry" ? "retry" : action === "remix" ? "remix" : "mix";
+    let didFinishBeforeStart = false;
+    const generationSession = generationSessionRef.current;
+    const fingerprint = getProjectMixFingerprint(editableProject);
+
+    void getGenerationBridge()
+      .generateProjectMix(
+        {
+          project: editableProject,
+          exportType: "wav",
+          reason,
+        },
+        (update) => {
+          if (generationSession !== generationSessionRef.current) {
+            return;
+          }
+
+          projectMixReasonsRef.current[update.job.jobId] = reason;
+          projectMixJobFingerprintsRef.current[update.job.jobId] = fingerprint;
+          handleGenerationUpdate(update, generationSession);
+
+          if (update.type !== "snapshot") {
+            didFinishBeforeStart = true;
+          }
+        },
+      )
+      .then((started) => {
+        if (generationSession !== generationSessionRef.current) {
+          return;
+        }
+
+        if (!didFinishBeforeStart) {
+          projectMixReasonsRef.current[started.jobId] = reason;
+          projectMixJobFingerprintsRef.current[started.jobId] = fingerprint;
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  function handleCancelProjectMix() {
+    const jobId = generationView.projectMixControl.jobId;
+
+    if (!jobId) {
+      return;
+    }
+
+    setGenerationRuntimeState((current) => {
+      const next = markGenerationJobCanceling(current, jobId);
+      generationRuntimeStateRef.current = next;
+
+      return next;
+    });
+    void bridgeRef.current?.cancelGeneration(jobId);
+  }
+
   function handlePlaySelectedClip() {
     if (!generationView.selectedClipPreview.canPlay) {
       return;
@@ -495,8 +653,55 @@ export function StudioApp({ project }: StudioAppProps) {
     });
   }
 
+  function handlePlayProjectMix() {
+    if (!generationView.projectMixControl.canPlay) {
+      return;
+    }
+
+    const resolvedUri = resolvePlayableAssetUri(
+      generationView.projectMixControl.uri,
+    );
+
+    if (!resolvedUri) {
+      return;
+    }
+
+    audioRef.current?.pause();
+    const audio = new Audio(resolvedUri);
+    audioRef.current = audio;
+    void audio.play().catch(() => {
+      audio.pause();
+
+      if (audioRef.current === audio) {
+        audioRef.current = null;
+      }
+    });
+  }
+
+  function handleDownloadProjectMix() {
+    if (!generationView.projectMixControl.canDownload) {
+      return;
+    }
+
+    const resolvedUri = resolvePlayableAssetUri(
+      generationView.projectMixControl.uri,
+    );
+
+    if (!resolvedUri) {
+      return;
+    }
+
+    const anchor = document.createElement("a");
+    anchor.href = resolvedUri;
+    anchor.download = `${editableProject.project_id}.wav`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
     cancelGenerationForClip(clipId);
+    cancelProjectMixGeneration();
     setEditableProject((currentProject) =>
       updateClipInProject(currentProject, clipId, patch),
     );
@@ -505,6 +710,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function handleApplyDirectorPreset(clipId: string, preset: DirectorPreset) {
     cancelGenerationForClip(clipId);
+    cancelProjectMixGeneration();
     setEditableProject((currentProject) =>
       applyDirectorPreset(currentProject, clipId, preset),
     );
@@ -513,6 +719,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function handleNudgeClipTiming(clipId: string, nudge: ClipTimingNudge) {
     cancelGenerationForClip(clipId);
+    cancelProjectMixGeneration();
     setEditableProject((currentProject) =>
       nudgeClipTiming(currentProject, clipId, nudge),
     );
@@ -558,9 +765,14 @@ export function StudioApp({ project }: StudioAppProps) {
       importError={importError}
       summary={workspaceSummary}
       preview={previewSummary}
+      projectMixControl={generationView.projectMixControl}
       selectedClipPreview={generationView.selectedClipPreview}
+      onCancelProjectMix={handleCancelProjectMix}
+      onDownloadProjectMix={handleDownloadProjectMix}
       onExportJson={() => exportProjectJson(editableProject)}
+      onGenerateProjectMix={handleGenerateProjectMix}
       onImportJson={handleImportJson}
+      onPlayProjectMix={handlePlayProjectMix}
       onPlaySelectedClip={handlePlaySelectedClip}
       onResetDemo={handleResetDemo}
     >

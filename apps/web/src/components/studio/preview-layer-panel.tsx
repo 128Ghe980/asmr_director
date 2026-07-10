@@ -1,12 +1,23 @@
 "use client";
 
-import { Play, RadioTower } from "lucide-react";
+import {
+  Download,
+  LoaderCircle,
+  Play,
+  RadioTower,
+  RefreshCcw,
+  Sparkles,
+  X,
+} from "lucide-react";
 
 import type {
   GenerationSlotTone,
   ProjectPreviewSummary,
 } from "@/lib/asmr/generation-summary";
-import type { SelectedClipPreview } from "@/lib/asmr/generation-view";
+import type {
+  ProjectMixControl,
+  SelectedClipPreview,
+} from "@/lib/asmr/generation-view";
 
 import {
   GenerationSlotList,
@@ -16,7 +27,12 @@ import { PreviewWaveformPlaceholder } from "./preview-waveform-placeholder";
 
 type PreviewLayerPanelProps = {
   preview: ProjectPreviewSummary;
+  projectMixControl: ProjectMixControl;
   selectedClipPreview: SelectedClipPreview;
+  onCancelProjectMix: () => void;
+  onDownloadProjectMix: () => void;
+  onGenerateProjectMix: () => void;
+  onPlayProjectMix: () => void;
   onPlaySelectedClip: () => void;
 };
 
@@ -26,9 +42,95 @@ function getPreviewStatusClassName(tone: GenerationSlotTone) {
   return getGenerationSlotToneClassName(tone, "shrink-0");
 }
 
+function ProjectMixControls({
+  control,
+  onCancel,
+  onDownload,
+  onGenerate,
+  onPlay,
+}: {
+  control: ProjectMixControl;
+  onCancel: () => void;
+  onDownload: () => void;
+  onGenerate: () => void;
+  onPlay: () => void;
+}) {
+  const isCancel = control.action === "cancel";
+  const PrimaryIcon = isCancel
+    ? X
+    : control.action === "remix" || control.action === "retry"
+      ? RefreshCcw
+      : Sparkles;
+  const primaryLabel = control.disabledReason ?? control.statusLabel;
+
+  return (
+    <div className="mt-3 rounded-md border border-white/[0.06] bg-black/14 p-2">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={control.disabled}
+          onClick={isCancel ? onCancel : onGenerate}
+          title={primaryLabel}
+          className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border border-sky-300/24 bg-sky-300/12 px-3 text-xs font-semibold text-sky-50 transition hover:bg-sky-300/18 disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.035] disabled:text-studio-muted"
+        >
+          {control.action === "cancel" && control.progress !== undefined ? (
+            <LoaderCircle
+              className="h-3.5 w-3.5 shrink-0 animate-spin"
+              aria-hidden="true"
+            />
+          ) : (
+            <PrimaryIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          )}
+          <span className="truncate">{control.label}</span>
+        </button>
+        <button
+          type="button"
+          disabled={!control.canPlay}
+          onClick={onPlay}
+          aria-label={control.playLabel}
+          title={control.playLabel}
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-white/[0.04] text-studio-text transition hover:border-sky-300/28 hover:bg-sky-300/12 disabled:cursor-not-allowed disabled:text-studio-muted disabled:opacity-50"
+        >
+          <Play className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          disabled={!control.canDownload}
+          onClick={onDownload}
+          aria-label={control.downloadLabel}
+          title={control.downloadLabel}
+          className="inline-flex h-9 min-w-12 shrink-0 items-center justify-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 text-xs font-semibold text-studio-text transition hover:border-sky-300/28 hover:bg-sky-300/12 disabled:cursor-not-allowed disabled:text-studio-muted disabled:opacity-50"
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{control.downloadLabel}</span>
+        </button>
+      </div>
+      {control.progress !== undefined ? (
+        <div
+          className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.max(0, Math.min(100, control.progress))}
+        >
+          <div
+            className="h-full rounded-full bg-sky-300/80 transition-[width]"
+            style={{ width: `${Math.max(0, Math.min(100, control.progress))}%` }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function PreviewLayerPanel({
   preview,
+  projectMixControl,
   selectedClipPreview,
+  onCancelProjectMix,
+  onDownloadProjectMix,
+  onGenerateProjectMix,
+  onPlayProjectMix,
   onPlaySelectedClip,
 }: PreviewLayerPanelProps) {
   const selectedClipPlaybackLabel = selectedClipPreview.canPlay
@@ -76,6 +178,14 @@ export function PreviewLayerPanel({
           </button>
         </div>
       </div>
+
+      <ProjectMixControls
+        control={projectMixControl}
+        onCancel={onCancelProjectMix}
+        onDownload={onDownloadProjectMix}
+        onGenerate={onGenerateProjectMix}
+        onPlay={onPlayProjectMix}
+      />
 
       <div className="mt-3">
         <PreviewWaveformPlaceholder

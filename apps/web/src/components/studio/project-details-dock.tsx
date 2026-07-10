@@ -8,7 +8,10 @@ import {
 } from "lucide-react";
 
 import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
-import type { SelectedClipPreview } from "@/lib/asmr/generation-view";
+import type {
+  ProjectMixControl,
+  SelectedClipPreview,
+} from "@/lib/asmr/generation-view";
 import type {
   ProjectWorkspaceMetadataRow,
   ProjectWorkspaceSummary,
@@ -22,7 +25,12 @@ type ProjectDetailsDockProps = {
   panelId: string;
   summary: ProjectWorkspaceSummary;
   preview: ProjectPreviewSummary;
+  projectMixControl: ProjectMixControl;
   selectedClipPreview: SelectedClipPreview;
+  onCancelProjectMix: () => void;
+  onDownloadProjectMix: () => void;
+  onGenerateProjectMix: () => void;
+  onPlayProjectMix: () => void;
   onPlaySelectedClip: () => void;
   onToggle: () => void;
 };
@@ -50,7 +58,12 @@ export function ProjectDetailsDock({
   panelId,
   summary,
   preview,
+  projectMixControl,
   selectedClipPreview,
+  onCancelProjectMix,
+  onDownloadProjectMix,
+  onGenerateProjectMix,
+  onPlayProjectMix,
   onPlaySelectedClip,
   onToggle,
 }: ProjectDetailsDockProps) {
@@ -93,7 +106,12 @@ export function ProjectDetailsDock({
         <div className="mt-4 space-y-3">
           <PreviewLayerPanel
             preview={preview}
+            projectMixControl={projectMixControl}
             selectedClipPreview={selectedClipPreview}
+            onCancelProjectMix={onCancelProjectMix}
+            onDownloadProjectMix={onDownloadProjectMix}
+            onGenerateProjectMix={onGenerateProjectMix}
+            onPlayProjectMix={onPlayProjectMix}
             onPlaySelectedClip={onPlaySelectedClip}
           />
 
