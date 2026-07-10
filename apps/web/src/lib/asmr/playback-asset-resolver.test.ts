@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolvePlayableAssetUri } from "./playback-asset-resolver";
+import {
+  isLocalMixAssetUri,
+  resolvePlayableAssetUri,
+} from "./playback-asset-resolver";
 
 describe("playback asset resolver", () => {
   it("maps durable local clip assets to the playback API", () => {
@@ -9,6 +12,15 @@ describe("playback asset resolver", () => {
         "asset://clip/voice_001_20260707T000000000Z_abcd1234",
       ),
     ).toBe("/api/assets/clip/voice_001_20260707T000000000Z_abcd1234");
+  });
+
+  it("maps durable local mix assets to the playback API", () => {
+    const uri = "asset://mix/asmr_demo_001_wav_20260710T000000000Z_abcd1234";
+
+    expect(isLocalMixAssetUri(uri)).toBe(true);
+    expect(resolvePlayableAssetUri(uri)).toBe(
+      "/api/assets/mix/asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+    );
   });
 
   it("keeps mock assets playable through generated data URLs", () => {

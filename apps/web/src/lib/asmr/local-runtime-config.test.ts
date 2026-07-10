@@ -28,6 +28,14 @@ describe("local runtime config", () => {
         "app",
       ),
     );
+    expect(config.mixAssetRoot).toBe(
+      path.join(
+        "D:\\CodexWorkplace\\asmr_director_runtime",
+        "assets",
+        "mixes",
+        "app",
+      ),
+    );
   });
 
   it("allows explicit runtime overrides", () => {
@@ -36,6 +44,7 @@ describe("local runtime config", () => {
       ASMR_GPT_SOVITS_URL: "http://127.0.0.1:1999",
       ASMR_VOICE_PACK_PATH: "E:\\voices\\voice-pack.json",
       ASMR_CLIP_ASSET_ROOT: "E:\\assets\\clips",
+      ASMR_MIX_ASSET_ROOT: "E:\\assets\\mixes",
     });
 
     expect(config).toEqual({
@@ -43,6 +52,7 @@ describe("local runtime config", () => {
       gptSovitsBaseUrl: "http://127.0.0.1:1999",
       voicePackPath: "E:\\voices\\voice-pack.json",
       clipAssetRoot: "E:\\assets\\clips",
+      mixAssetRoot: "E:\\assets\\mixes",
     });
   });
 });
