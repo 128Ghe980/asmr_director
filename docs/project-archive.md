@@ -562,6 +562,15 @@ Roadmap update (superseded by 2026-06-26 roadmap governance reset):
 - 下一步进入第 9 步：真实项目混音与导出。
 - Step 9 应消费现有 `asset://clip/...` 文件，按 timeline timing 混成真实 WAV；不要回退到继续做 mock bridge 或 provider spike。
 
+## 2026-07-10 - 文档冲突清理：第 9 步混音优先级
+
+本轮只清理项目记录和恢复文档，不改变产品路线。
+
+- 确认 `docs/ROADMAP.md` 仍是唯一顶层路线源，第 9 步“真实项目混音与导出”是当前最高优先级。
+- 修正 `docs/AI_HANDOFF.md` 的旧表述：`Real project-mix rendering` 不再属于 `Do Not Do Yet`，而是当前 Roadmap Step 9。
+- 将“project-mix preview out of scope”的旧说法改成“当前 Step 9 目标”，避免后续 AI 或上下文压缩后误判下一步。
+- 保留 Step 10 产品化能力为后续事项，不把 backend persistence、auth/cloud、real waveform、billing、publishing 等提前混入 Step 9。
+
 ## 2026-07-06 - GPT-SoVITS 本地真实生成实验
 
 本轮没有修改 checked-in 前端代码，而是在项目外的本地 runtime 中打通了一条真实 TTS 生成链路，用于验证 roadmap 第 7 步“真实生成 MVP”的技术可行性和听感边界。

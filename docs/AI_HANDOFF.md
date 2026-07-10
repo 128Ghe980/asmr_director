@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-07-07
+Last updated: 2026-07-10
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -58,12 +58,12 @@ Current user-facing capabilities:
 - Resolves `mock://asset/<clipId>/<jobId>` URIs to playable local mock audio at runtime.
 - Resolves `asset://clip/<assetId>` URIs to `/api/assets/clip/<assetId>` for local generated WAV playback.
 - Exposes selected clip `生成`, `重生成`, `重试`, and `取消` controls in Inspector.
-- Enables selected clip preview in the right Preview Layer for both mock assets and local real `asset://clip/...` assets while keeping real project-mix preview out of scope.
+- Enables selected clip preview in the right Preview Layer for both mock assets and local real `asset://clip/...` assets. Real project-mix preview is the current Roadmap Step 9 target.
 - Generates local semi-real WAV assets for `breath`, `sfx`, and `ambience` clips through the same selected-clip `生成` / `重生成` flow.
 
 Current product status: roadmap Steps 7 and 8 are implemented. Voice clips use local GPT-SoVITS; breath, SFX, and ambience clips use the local procedural WAV renderer. All generated clips write stable `asset://clip/...` references into Project JSON and are served through the local clip asset playback API.
 
-There is still no real project-mix rendering/export, real waveform rendering, cloud persistence, auth, billing, collaboration, or production export flow.
+Roadmap Step 9 still needs real project-mix rendering/export. Step 10 still covers real waveform rendering, cloud persistence, auth, billing, collaboration, and production export flow.
 
 ## Real Generation Runtime Notes
 
@@ -364,7 +364,7 @@ Do not treat this file as a competing roadmap. Current summary only:
 
 - Completed: roadmap steps 1-8.
 - Current / next: roadmap Step 9, 真实项目混音与导出.
-- Pending: the remaining post-MVP generation, real mix/export, and product workflow hardening work.
+- Pending after Step 9: Roadmap Step 10 product workflow hardening.
 
 When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.
 
@@ -390,18 +390,17 @@ If the documented path feels stale, conflicts with current implementation, or th
 
 ## Do Not Do Yet
 
-Do not jump straight into:
+Do not jump around the canonical route into Step 10 / productization work before completing current Roadmap Step 9:
 
 - Backend project persistence.
 - Auth or cloud sync.
-- Real project-mix rendering.
 - Real waveform rendering from generated audio.
 - Full DAW drag/drop timeline.
 - Payment or publishing flows.
 - New mock-only or bridge-only top-level milestones that postpone the canonical roadmap.
 - Turning adapter / API / provider wrapper work into a new top-level roadmap gate without user approval.
 
-Those are later versions. The near-term path should keep proving the editable Timeline DSL and director workflow.
+Real project-mix rendering/export is no longer "Do Not Do Yet"; it is the current Roadmap Step 9. The Step 9 implementation should stay scoped to consuming existing generated clip assets, rendering a real mix, wiring full-project preview, and returning a real WAV download.
 
 ## Working Rules For Future Agents
 
