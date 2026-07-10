@@ -4,13 +4,23 @@ import type {
   ProjectPreviewSummary,
 } from "./generation-summary";
 import type { GenerationJobSnapshot } from "./generation-bridge";
+import { isCurrentProjectMixFingerprint } from "./generation-fingerprint";
 import type { GenerationRuntimeState } from "./generation-runtime";
 import {
   getGenerationJobForClip,
+  getGenerationJobForProjectMix,
   isActiveGenerationJob,
 } from "./generation-runtime";
-import { isLocalClipAssetUri } from "./playback-asset-resolver";
+import {
+  isLocalClipAssetUri,
+  isLocalMixAssetUri,
+} from "./playback-asset-resolver";
 import { isMockAssetUri } from "./mock-asset-resolver";
+import {
+  canGenerateProjectMix,
+  getMissingProjectMixClipIds,
+  getWavExport,
+} from "./project-mix-state";
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
 import { flattenClips } from "./view-model";
 
@@ -39,12 +49,36 @@ export type SelectedClipPreview = {
   uri?: string;
 };
 
+export type ProjectMixGenerationAction =
+  | "mix"
+  | "remix"
+  | "retry"
+  | "cancel"
+  | "none";
+
+export type ProjectMixControl = {
+  action: ProjectMixGenerationAction;
+  label: string;
+  disabled: boolean;
+  disabledReason?: string;
+  statusLabel: string;
+  tone: GenerationSlotTone;
+  progress?: number;
+  jobId?: string;
+  canPlay: boolean;
+  playLabel: "试听";
+  canDownload: boolean;
+  downloadLabel: "WAV";
+  uri?: string;
+};
+
 export type GenerationView = {
   displayProject: AsmrProject;
   displaySelectedClip?: TimelineClip;
   preview: ProjectPreviewSummary;
   selectedClipControl: SelectedClipGenerationControl;
   selectedClipPreview: SelectedClipPreview;
+  projectMixControl: ProjectMixControl;
 };
 
 type GenerationViewInput = {
@@ -52,6 +86,7 @@ type GenerationViewInput = {
   selectedClip: TimelineClip | undefined;
   runtimeState: GenerationRuntimeState;
   selectedClipHasValidationIssues: boolean;
+  projectMixFingerprint?: string;
 };
 
 function cloneProjectWithRuntimeJobs(
@@ -196,11 +231,127 @@ function getSelectedClipPreview(
   };
 }
 
+function isPlayableProjectMixUri(uri: string | null | undefined): boolean {
+  return Boolean(uri && (isLocalMixAssetUri(uri) || isMockAssetUri(uri)));
+}
+
+function getProjectMixRuntimeControl(
+  job: GenerationJobSnapshot,
+): ProjectMixControl {
+  const isCanceling = job.status === "canceling";
+
+  return {
+    action: "cancel",
+    label: "取消",
+    disabled: isCanceling,
+    disabledReason: isCanceling ? "正在取消" : undefined,
+    statusLabel: isCanceling ? "取消中" : "混音中",
+    tone: "accent",
+    progress: job.progress,
+    jobId: job.jobId,
+    canPlay: false,
+    playLabel: "试听",
+    canDownload: false,
+    downloadLabel: "WAV",
+  };
+}
+
+function getProjectMixControl({
+  project,
+  job,
+  projectMixFingerprint,
+}: {
+  project: AsmrProject;
+  job: GenerationJobSnapshot | undefined;
+  projectMixFingerprint: string | undefined;
+}): ProjectMixControl {
+  if (job && isActiveGenerationJob(job)) {
+    return getProjectMixRuntimeControl(job);
+  }
+
+  const wavExport = getWavExport(project);
+  const uri = wavExport?.uri ?? undefined;
+  const canPlay = isPlayableProjectMixUri(uri);
+  const canDownload = Boolean(uri && isLocalMixAssetUri(uri));
+  const missingClipIds = getMissingProjectMixClipIds(project);
+  const canMix =
+    canGenerateProjectMix(project) && flattenClips(project).length > 0;
+  const disabledReason =
+    missingClipIds.length > 0
+      ? `还缺 ${missingClipIds.length} 个片段`
+      : undefined;
+
+  if (wavExport?.status === "exported" && uri) {
+    const isStale =
+      projectMixFingerprint &&
+      !isCurrentProjectMixFingerprint(project, projectMixFingerprint);
+
+    return {
+      action: "remix",
+      label: "重混",
+      disabled: !canMix,
+      disabledReason: canMix ? undefined : disabledReason,
+      statusLabel: isStale ? "需重混" : "可试听",
+      tone: isStale ? "warn" : "ok",
+      canPlay,
+      playLabel: "试听",
+      canDownload,
+      downloadLabel: "WAV",
+      uri,
+    };
+  }
+
+  if (wavExport?.status === "export_failed") {
+    return {
+      action: "retry",
+      label: "重试",
+      disabled: !canMix,
+      disabledReason: canMix ? undefined : disabledReason,
+      statusLabel: "混音失败",
+      tone: "warn",
+      canPlay,
+      playLabel: "试听",
+      canDownload,
+      downloadLabel: "WAV",
+      uri,
+    };
+  }
+
+  if (canMix) {
+    return {
+      action: "mix",
+      label: "生成整段",
+      disabled: false,
+      statusLabel: "可混音",
+      tone: "accent",
+      canPlay: false,
+      playLabel: "试听",
+      canDownload: false,
+      downloadLabel: "WAV",
+    };
+  }
+
+  return {
+    action: "none",
+    label: "生成整段",
+    disabled: true,
+    disabledReason: disabledReason ?? "暂无片段",
+    statusLabel: missingClipIds.length > 0 ? "等待素材" : "无片段",
+    tone: "neutral",
+    canPlay,
+    playLabel: "试听",
+    canDownload,
+    downloadLabel: "WAV",
+    uri,
+  };
+}
+
 export function getGenerationView({
   project,
   selectedClip,
   runtimeState,
   selectedClipHasValidationIssues,
+  projectMixFingerprint,
 }: GenerationViewInput): GenerationView {
   const displayProject = cloneProjectWithRuntimeJobs(project, runtimeState);
   const displaySelectedClip = selectedClip
@@ -209,6 +360,7 @@ export function getGenerationView({
   const selectedClipJob = selectedClip
     ? getGenerationJobForClip(runtimeState, selectedClip.id)
     : undefined;
+  const projectMixJob = getGenerationJobForProjectMix(runtimeState, "wav");
 
   return {
     displayProject,
@@ -216,6 +368,8 @@ export function getGenerationView({
     preview: getProjectPreviewSummary({
       project: displayProject,
       selectedClip: displaySelectedClip,
+      projectMixJob,
+      projectMixFingerprint,
     }),
     selectedClipControl: getSelectedClipControl({
       selectedClip,
@@ -223,5 +377,10 @@ export function getGenerationView({
       selectedClipHasValidationIssues,
     }),
     selectedClipPreview: getSelectedClipPreview(selectedClip),
+    projectMixControl: getProjectMixControl({
+      project,
+      job: projectMixJob,
+      projectMixFingerprint,
+    }),
   };
 }

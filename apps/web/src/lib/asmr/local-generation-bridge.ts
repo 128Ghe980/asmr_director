@@ -1,5 +1,6 @@
 import type {
   GenerateClipRequest,
+  GenerateProjectMixRequest,
   GeneratedAssetResult,
   GenerationBridge,
   GenerationJobSnapshot,
@@ -8,13 +9,16 @@ import type {
 
 export type LocalGenerationBridgeOptions = {
   endpoint?: string;
+  mixEndpoint?: string;
   fetchImpl?: typeof fetch;
   jobIdPrefix?: string;
   now?: () => Date;
 };
 
+type LocalGenerationRequest = GenerateClipRequest | GenerateProjectMixRequest;
+
 type InFlightLocalJob = {
-  request: GenerateClipRequest;
+  request: LocalGenerationRequest;
   createdAt: string;
   onUpdate: (update: GenerationJobUpdate) => void;
   canceled: boolean;
@@ -59,8 +63,21 @@ function getAsset(payload: unknown): GeneratedAssetResult {
   throw new Error("Invalid generation response");
 }
 
+function isProjectMixRequest(
+  request: LocalGenerationRequest,
+): request is GenerateProjectMixRequest {
+  return "exportType" in request;
+}
+
+function getSnapshotClipId(request: LocalGenerationRequest): string {
+  return isProjectMixRequest(request)
+    ? `project_mix:${request.exportType}`
+    : request.clipId;
+}
+
 export function createLocalGenerationBridge({
   endpoint = "/api/generation/clip",
+  mixEndpoint = "/api/generation/mix",
   fetchImpl = fetch,
   jobIdPrefix = "local_job",
   now = () => new Date(),
@@ -73,16 +90,26 @@ export function createLocalGenerationBridge({
   }
 
   function makeSnapshot(
-    request: GenerateClipRequest,
+    request: LocalGenerationRequest,
     jobId: string,
     createdAt: string,
     progress: number,
     status: GenerationJobSnapshot["status"],
     message: string,
   ): GenerationJobSnapshot {
+    const projectMixTarget = isProjectMixRequest(request)
+      ? {
+          target: {
+            type: "project_mix" as const,
+            exportType: request.exportType,
+          },
+        }
+      : {};
+
     return {
       jobId,
-      clipId: request.clipId,
+      clipId: getSnapshotClipId(request),
+      ...projectMixTarget,
       status,
       progress,
       message,
@@ -197,6 +224,80 @@ export function createLocalGenerationBridge({
           "已取消",
         ),
       });
+    },
+
+    async generateProjectMix(request, onUpdate) {
+      const jobId = `${jobIdPrefix}_${nextJobNumber}`;
+      nextJobNumber += 1;
+      const createdAt = nowIso();
+      const job: InFlightLocalJob = {
+        request,
+        createdAt,
+        onUpdate,
+        canceled: false,
+      };
+
+      inFlightJobs.set(jobId, job);
+      emit(job, {
+        type: "snapshot",
+        job: makeSnapshot(request, jobId, createdAt, 0, "queued", "Mix queued"),
+      });
+      emit(job, {
+        type: "snapshot",
+        job: makeSnapshot(
+          request,
+          jobId,
+          createdAt,
+          65,
+          "generating",
+          "Mixing",
+        ),
+      });
+
+      try {
+        const response = await fetchImpl(mixEndpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json; charset=utf-8" },
+          body: JSON.stringify(request),
+        });
+        const payload = (await response.json()) as unknown;
+
+        if (!response.ok) {
+          throw new Error(getErrorMessage(payload, "Project mix failed"));
+        }
+
+        const asset = getAsset(payload);
+        emit(job, {
+          type: "succeeded",
+          job: makeSnapshot(
+            request,
+            jobId,
+            createdAt,
+            100,
+            "succeeded",
+            "Mix complete",
+          ),
+          asset,
+        });
+      } catch (error) {
+        emit(job, {
+          type: "failed",
+          job: makeSnapshot(
+            request,
+            jobId,
+            createdAt,
+            100,
+            "failed",
+            "Mix failed",
+          ),
+          error:
+            error instanceof Error ? error.message : "Project mix failed",
+        });
+      } finally {
+        inFlightJobs.delete(jobId);
+      }
+
+      return { jobId };
     },
   };
 }

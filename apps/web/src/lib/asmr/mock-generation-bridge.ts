@@ -1,5 +1,6 @@
 import type {
   GenerateClipRequest,
+  GenerateProjectMixRequest,
   GenerationBridge,
   GenerationJobSnapshot,
   GenerationJobUpdate,
@@ -12,14 +13,28 @@ type MockGenerationBridgeOptions = {
   stepMs?: number;
 };
 
+type MockGenerationRequest = GenerateClipRequest | GenerateProjectMixRequest;
+
 type InFlightJob = {
-  request: GenerateClipRequest;
+  request: MockGenerationRequest;
   onUpdate: (update: GenerationJobUpdate) => void;
   createdAt: string;
   timers: ReturnType<typeof setTimeout>[];
 };
 
 const defaultProgressSteps = [18, 42, 76, 100];
+
+function isProjectMixRequest(
+  request: MockGenerationRequest,
+): request is GenerateProjectMixRequest {
+  return "exportType" in request;
+}
+
+function getSnapshotClipId(request: MockGenerationRequest): string {
+  return isProjectMixRequest(request)
+    ? `project_mix:${request.exportType}`
+    : request.clipId;
+}
 
 export function createMockGenerationBridge({
   failClipIds = new Set<string>(),
@@ -34,7 +49,7 @@ export function createMockGenerationBridge({
   }
 
   function makeSnapshot(
-    request: GenerateClipRequest,
+    request: MockGenerationRequest,
     jobId: string,
     createdAt: string,
     updatedAt: string,
@@ -42,9 +57,19 @@ export function createMockGenerationBridge({
     status: GenerationJobSnapshot["status"],
     message: string,
   ): GenerationJobSnapshot {
+    const projectMixTarget = isProjectMixRequest(request)
+      ? {
+          target: {
+            type: "project_mix" as const,
+            exportType: request.exportType,
+          },
+        }
+      : {};
+
     return {
       jobId,
-      clipId: request.clipId,
+      clipId: getSnapshotClipId(request),
+      ...projectMixTarget,
       status,
       progress,
       message,
@@ -54,7 +79,7 @@ export function createMockGenerationBridge({
   }
 
   function emitCanceled(
-    request: GenerateClipRequest,
+    request: MockGenerationRequest,
     jobId: string,
     createdAt: string,
     onUpdate: (update: GenerationJobUpdate) => void,
@@ -177,6 +202,81 @@ export function createMockGenerationBridge({
               assetId: `mock_${request.clipId}_${jobId}`,
               uri: `mock://asset/${request.clipId}/${jobId}`,
               duration: clip.duration,
+            },
+          });
+          inFlightJobs.delete(jobId);
+        }, stepMs * (index + 1));
+
+        inFlightJob.timers.push(timer);
+      });
+
+      return { jobId };
+    },
+
+    async generateProjectMix(request, onUpdate) {
+      const jobId = `${jobIdPrefix}_${nextJobNumber}`;
+      nextJobNumber += 1;
+      const createdAt = now();
+
+      onUpdate({
+        type: "snapshot",
+        job: makeSnapshot(
+          request,
+          jobId,
+          createdAt,
+          createdAt,
+          0,
+          "queued",
+          "Mix queued",
+        ),
+      });
+
+      const inFlightJob: InFlightJob = {
+        request,
+        onUpdate,
+        createdAt,
+        timers: [],
+      };
+
+      inFlightJobs.set(jobId, inFlightJob);
+
+      defaultProgressSteps.forEach((progress, index) => {
+        const timer = setTimeout(() => {
+          if (!inFlightJobs.has(jobId)) {
+            return;
+          }
+
+          if (progress < 100) {
+            onUpdate({
+              type: "snapshot",
+              job: makeSnapshot(
+                request,
+                jobId,
+                createdAt,
+                now(),
+                progress,
+                "generating",
+                "Mixing",
+              ),
+            });
+            return;
+          }
+
+          onUpdate({
+            type: "succeeded",
+            job: makeSnapshot(
+              request,
+              jobId,
+              createdAt,
+              now(),
+              100,
+              "succeeded",
+              "Mix complete",
+            ),
+            asset: {
+              assetId: `mock_project_mix_${jobId}`,
+              uri: `mock://asset/project_mix/${jobId}`,
+              duration: request.project.duration,
             },
           });
           inFlightJobs.delete(jobId);

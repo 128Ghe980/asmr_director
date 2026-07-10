@@ -1,4 +1,12 @@
 import type { AsmrProject, AssetStatus, TimelineClip, TrackType } from "./schema";
+import type { GenerationJobSnapshot } from "./generation-bridge";
+import {
+  canGenerateProjectMix,
+  getMissingProjectMixClipIds,
+  getWavExport,
+} from "./project-mix-state";
+import { isCurrentProjectMixFingerprint } from "./generation-fingerprint";
+import { isActiveGenerationJob } from "./generation-runtime";
 import { isMockAssetUri } from "./mock-asset-resolver";
 import { getTrackLabel } from "./ui-copy";
 import { flattenClips, formatSeconds, formatTimeRange } from "./view-model";
@@ -22,6 +30,8 @@ type PreviewTrackType = Exclude<TrackType, "post_processing">;
 type ProjectPreviewSummaryInput = {
   project: AsmrProject;
   selectedClip?: TimelineClip;
+  projectMixJob?: GenerationJobSnapshot;
+  projectMixFingerprint?: string;
 };
 
 export type ProjectPreviewSummary = {
@@ -69,6 +79,8 @@ export function getAssetStatusDisplay(
 export function getProjectPreviewSummary({
   project,
   selectedClip,
+  projectMixJob,
+  projectMixFingerprint,
 }: ProjectPreviewSummaryInput): ProjectPreviewSummary {
   const clips = flattenClips(project);
   const pendingClipCount = countClipsByStatus(clips, "asset_pending");
@@ -98,7 +110,12 @@ export function getProjectPreviewSummary({
     generatingClipCount,
     failedClipCount,
     waveformBars: [...waveformBars],
-    slots: buildGenerationSlots(project, clips),
+    slots: buildGenerationSlots(
+      project,
+      clips,
+      projectMixJob,
+      projectMixFingerprint,
+    ),
     selectedClipSlot: selectedClip
       ? buildSelectedClipSlot(selectedClip)
       : undefined,
@@ -173,9 +190,11 @@ function getProjectStatusLabel({
 function buildGenerationSlots(
   project: AsmrProject,
   clips: TimelineClip[],
+  projectMixJob: GenerationJobSnapshot | undefined,
+  projectMixFingerprint: string | undefined,
 ): GenerationSlot[] {
   return [
-    buildProjectMixSlot(project, clips),
+    buildProjectMixSlot(project, clips, projectMixJob, projectMixFingerprint),
     ...previewTrackTypes.map((trackType) =>
       buildTrackSlot(project, trackType),
     ),
@@ -185,8 +204,15 @@ function buildGenerationSlots(
 function buildProjectMixSlot(
   project: AsmrProject,
   clips: TimelineClip[],
+  projectMixJob: GenerationJobSnapshot | undefined,
+  projectMixFingerprint: string | undefined,
 ): GenerationSlot {
-  const display = getAggregateAssetStatusDisplay(clips);
+  const display = getProjectMixAssetStatusDisplay({
+    project,
+    clips,
+    projectMixJob,
+    projectMixFingerprint,
+  });
 
   return {
     id: "project_mix",
@@ -195,6 +221,55 @@ function buildProjectMixSlot(
     ...display,
     clipCount: clips.length,
   };
+}
+
+function getProjectMixAssetStatusDisplay({
+  project,
+  clips,
+  projectMixJob,
+  projectMixFingerprint,
+}: {
+  project: AsmrProject;
+  clips: TimelineClip[];
+  projectMixJob: GenerationJobSnapshot | undefined;
+  projectMixFingerprint: string | undefined;
+}): AssetStatusDisplay {
+  if (projectMixJob && isActiveGenerationJob(projectMixJob)) {
+    return {
+      statusLabel: projectMixJob.status === "canceling" ? "取消中" : "混音中",
+      tone: "accent",
+    };
+  }
+
+  if (clips.length === 0) {
+    return { ...noClipsDisplay };
+  }
+
+  const wavExport = getWavExport(project);
+
+  if (wavExport?.status === "exported" && wavExport.uri) {
+    if (
+      projectMixFingerprint &&
+      !isCurrentProjectMixFingerprint(project, projectMixFingerprint)
+    ) {
+      return { statusLabel: "需重混", tone: "warn" };
+    }
+
+    return { statusLabel: "可试听", tone: "ok" };
+  }
+
+  if (wavExport?.status === "export_failed") {
+    return { statusLabel: "混音失败", tone: "warn" };
+  }
+
+  if (
+    canGenerateProjectMix(project) &&
+    getMissingProjectMixClipIds(project).length === 0
+  ) {
+    return { statusLabel: "可混音", tone: "accent" };
+  }
+
+  return getAggregateAssetStatusDisplay(clips);
 }
 
 function buildTrackSlot(

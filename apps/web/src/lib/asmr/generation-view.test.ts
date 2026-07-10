@@ -10,7 +10,9 @@ import {
   commitGenerationFailure,
   commitGenerationSuccess,
 } from "./generation-project-state";
+import { getProjectMixFingerprint } from "./generation-fingerprint";
 import { demoProject } from "./mock-project";
+import { commitProjectMixSuccess } from "./project-mix-state";
 import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
 
@@ -24,6 +26,29 @@ function findClip(project: AsmrProject, clipId: string): TimelineClip {
   return clip;
 }
 
+function updateClip(
+  project: AsmrProject,
+  clipId: string,
+  update: (clip: TimelineClip) => void,
+): AsmrProject {
+  const nextProject = structuredClone(project);
+  update(findClip(nextProject, clipId));
+
+  return nextProject;
+}
+
+function generateAllClipAssets(project = demoProject): AsmrProject {
+  return flattenClips(project).reduce(
+    (nextProject, clip) =>
+      commitGenerationSuccess(nextProject, clip.id, {
+        assetId: `${clip.id}_asset`,
+        uri: `asset://clip/${clip.id}_asset`,
+        duration: clip.duration,
+      }),
+    project,
+  );
+}
+
 const generatingJob: GenerationJobSnapshot = {
   jobId: "job_1",
   clipId: "voice_001",
@@ -32,6 +57,17 @@ const generatingJob: GenerationJobSnapshot = {
   message: "生成中",
   createdAt: "2026-06-22T00:00:00.000Z",
   updatedAt: "2026-06-22T00:00:01.000Z",
+};
+
+const projectMixJob: GenerationJobSnapshot = {
+  jobId: "mix_job_1",
+  clipId: "project_mix:wav",
+  target: { type: "project_mix", exportType: "wav" },
+  status: "generating",
+  progress: 66,
+  message: "Mixing",
+  createdAt: "2026-07-10T00:00:00.000Z",
+  updatedAt: "2026-07-10T00:00:01.000Z",
 };
 
 function makeRuntimeJob(
@@ -350,6 +386,112 @@ describe("generation view", () => {
       label: "重试",
       statusLabel: "失败",
       error: "Mock generation failed",
+    });
+  });
+
+  it("exposes project mix controls when clip assets are ready", () => {
+    const project = generateAllClipAssets();
+    const view = getGenerationView({
+      project,
+      selectedClip: undefined,
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.preview.slots[0]).toMatchObject({
+      id: "project_mix",
+      statusLabel: "可混音",
+    });
+    expect(view.projectMixControl).toMatchObject({
+      action: "mix",
+      label: "生成整段",
+      disabled: false,
+      statusLabel: "可混音",
+      canPlay: false,
+      playLabel: "试听",
+      canDownload: false,
+      downloadLabel: "WAV",
+    });
+  });
+
+  it("enables full-project playback and download for exported local mixes", () => {
+    const readyProject = generateAllClipAssets();
+    const fingerprint = getProjectMixFingerprint(readyProject);
+    const project = commitProjectMixSuccess(readyProject, {
+      assetId: "asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      uri: "asset://mix/asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      duration: readyProject.duration,
+    });
+    const view = getGenerationView({
+      project,
+      selectedClip: undefined,
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+      projectMixFingerprint: fingerprint,
+    });
+
+    expect(view.projectMixControl).toMatchObject({
+      action: "remix",
+      label: "重混",
+      statusLabel: "可试听",
+      canPlay: true,
+      canDownload: true,
+      uri: "asset://mix/asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+    });
+  });
+
+  it("marks exported project mixes stale when the timeline fingerprint changes", () => {
+    const readyProject = generateAllClipAssets();
+    const fingerprint = getProjectMixFingerprint(readyProject);
+    const mixedProject = commitProjectMixSuccess(readyProject, {
+      assetId: "asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      uri: "asset://mix/asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      duration: readyProject.duration,
+    });
+    const staleProject = updateClip(mixedProject, "voice_001", (clip) => {
+      clip.duration += 0.5;
+    });
+    const view = getGenerationView({
+      project: staleProject,
+      selectedClip: undefined,
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+      projectMixFingerprint: fingerprint,
+    });
+
+    expect(view.projectMixControl).toMatchObject({
+      action: "remix",
+      label: "重混",
+      statusLabel: "需重混",
+      canPlay: true,
+      canDownload: true,
+    });
+  });
+
+  it("uses active runtime project mix jobs for project mix controls", () => {
+    const project = generateAllClipAssets();
+    const runtimeState = upsertGenerationJob(
+      emptyGenerationRuntimeState,
+      projectMixJob,
+    );
+    const view = getGenerationView({
+      project,
+      selectedClip: undefined,
+      runtimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.preview.slots[0]).toMatchObject({
+      id: "project_mix",
+      statusLabel: "混音中",
+    });
+    expect(view.projectMixControl).toMatchObject({
+      action: "cancel",
+      label: "取消",
+      disabled: false,
+      statusLabel: "混音中",
+      progress: 66,
+      jobId: "mix_job_1",
     });
   });
 });

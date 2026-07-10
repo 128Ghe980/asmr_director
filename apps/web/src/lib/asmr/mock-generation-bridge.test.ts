@@ -212,4 +212,46 @@ describe("mock generation bridge", () => {
     );
     expect(updates.some((update) => update.type === "succeeded")).toBe(false);
   });
+
+  it("can emit mock project mix updates", async () => {
+    const bridge = createMockGenerationBridge({
+      jobIdPrefix: "test_job",
+      stepMs: 100,
+    });
+    const updates: GenerationJobUpdate[] = [];
+
+    const started = await bridge.generateProjectMix(
+      {
+        project: demoProject,
+        exportType: "wav",
+        reason: "mix",
+      },
+      (update) => updates.push(update),
+    );
+
+    expect(started.jobId).toBe("test_job_1");
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(updates.map((update) => update.type)).toEqual([
+      "snapshot",
+      "snapshot",
+      "snapshot",
+      "snapshot",
+      "succeeded",
+    ]);
+    expect(updates.at(-1)).toMatchObject({
+      type: "succeeded",
+      job: {
+        jobId: "test_job_1",
+        clipId: "project_mix:wav",
+        target: { type: "project_mix", exportType: "wav" },
+        status: "succeeded",
+      },
+      asset: {
+        assetId: "mock_project_mix_test_job_1",
+        uri: "mock://asset/project_mix/test_job_1",
+        duration: demoProject.duration,
+      },
+    });
+  });
 });

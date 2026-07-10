@@ -9,12 +9,16 @@ import {
   getAssetStatusDisplay,
   getProjectPreviewSummary,
 } from "./generation-summary";
+import type { GenerationJobSnapshot } from "./generation-bridge";
+import { getProjectMixFingerprint } from "./generation-fingerprint";
+import { commitGenerationSuccess } from "./generation-project-state";
 import type {
   GenerationSlot,
   GenerationSlotTone,
   ProjectPreviewSummary,
 } from "./generation-summary";
 import { demoProject } from "./mock-project";
+import { commitProjectMixSuccess } from "./project-mix-state";
 import type { AsmrProject, AssetStatus, TimelineClip } from "./schema";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -71,6 +75,22 @@ function setAllClipStatuses(
   return nextProject;
 }
 
+function generateAllClipAssets(project: AsmrProject): AsmrProject {
+  let nextProject = project;
+
+  for (const track of project.timeline.tracks) {
+    for (const clip of track.clips) {
+      nextProject = commitGenerationSuccess(nextProject, clip.id, {
+        assetId: `${clip.id}_asset`,
+        uri: `asset://clip/${clip.id}_asset`,
+        duration: clip.duration,
+      });
+    }
+  }
+
+  return nextProject;
+}
+
 function clearAllClips(project: AsmrProject): AsmrProject {
   const nextProject = structuredClone(project);
 
@@ -89,6 +109,17 @@ function expectPublicPreviewTypes(
     slot: summary.slots[0],
   };
 }
+
+const projectMixJob: GenerationJobSnapshot = {
+  jobId: "mix_job_1",
+  clipId: "project_mix:wav",
+  target: { type: "project_mix", exportType: "wav" },
+  status: "generating",
+  progress: 66,
+  message: "Mixing",
+  createdAt: "2026-07-10T00:00:00.000Z",
+  updatedAt: "2026-07-10T00:00:01.000Z",
+};
 
 function getExportedTypeNames(): string[] {
   const sourceText = readFileSync(
@@ -242,11 +273,62 @@ describe("generation summary", () => {
     expect(summary.statusLabel).toBe("可预览");
     expect(summary.statusTone).toBe("ok");
     for (const slot of summary.slots) {
+      if (slot.id === "project_mix") {
+        continue;
+      }
+
       if (slot.clipCount > 0) {
         expect(slot.statusLabel).toBe("可预览");
         expect(slot.tone).toBe("ok");
       }
     }
+  });
+
+  it("reflects project mix ready, exported, stale, and mixing states", () => {
+    const readyProject = generateAllClipAssets(cloneProject());
+    const readySummary = getProjectPreviewSummary({ project: readyProject });
+    const fingerprint = getProjectMixFingerprint(readyProject);
+    const exportedProject = commitProjectMixSuccess(readyProject, {
+      assetId: "asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      uri: "asset://mix/asmr_demo_001_wav_20260710T000000000Z_abcd1234",
+      duration: readyProject.duration,
+    });
+    const exportedSummary = getProjectPreviewSummary({
+      project: exportedProject,
+      projectMixFingerprint: fingerprint,
+    });
+    const staleProject = updateClip(exportedProject, "voice_001", (clip) => {
+      clip.duration += 0.5;
+    });
+    const staleSummary = getProjectPreviewSummary({
+      project: staleProject,
+      projectMixFingerprint: fingerprint,
+    });
+    const mixingSummary = getProjectPreviewSummary({
+      project: readyProject,
+      projectMixJob,
+    });
+
+    expect(readySummary.slots[0]).toMatchObject({
+      id: "project_mix",
+      statusLabel: "可混音",
+      tone: "accent",
+    });
+    expect(exportedSummary.slots[0]).toMatchObject({
+      id: "project_mix",
+      statusLabel: "可试听",
+      tone: "ok",
+    });
+    expect(staleSummary.slots[0]).toMatchObject({
+      id: "project_mix",
+      statusLabel: "需重混",
+      tone: "warn",
+    });
+    expect(mixingSummary.slots[0]).toMatchObject({
+      id: "project_mix",
+      statusLabel: "混音中",
+      tone: "accent",
+    });
   });
 
   it("counts mixed generation states and exposes a generated selected clip", () => {

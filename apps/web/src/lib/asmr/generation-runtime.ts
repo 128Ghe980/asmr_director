@@ -1,13 +1,19 @@
-import type { GenerationJobSnapshot } from "./generation-bridge";
+import type {
+  GenerationJobSnapshot,
+  GenerationJobTarget,
+  ProjectMixExportType,
+} from "./generation-bridge";
 
 export type GenerationRuntimeState = {
   jobsById: Record<string, GenerationJobSnapshot>;
   jobIdByClipId: Record<string, string>;
+  jobIdByProjectMixExportType: Partial<Record<ProjectMixExportType, string>>;
 };
 
 export const emptyGenerationRuntimeState: GenerationRuntimeState = {
   jobsById: {},
   jobIdByClipId: {},
+  jobIdByProjectMixExportType: {},
 };
 
 export function isActiveGenerationJob(job: GenerationJobSnapshot): boolean {
@@ -23,17 +29,41 @@ export function getGenerationJobForClip(
   clipId: string,
 ): GenerationJobSnapshot | undefined {
   const jobId = state.jobIdByClipId[clipId];
+  const job = jobId ? state.jobsById[jobId] : undefined;
 
-  return jobId ? state.jobsById[jobId] : undefined;
+  return job && getGenerationJobTarget(job).type === "clip" ? job : undefined;
+}
+
+export function getGenerationJobForProjectMix(
+  state: GenerationRuntimeState,
+  exportType: ProjectMixExportType,
+): GenerationJobSnapshot | undefined {
+  const jobId = state.jobIdByProjectMixExportType[exportType];
+  const job = jobId ? state.jobsById[jobId] : undefined;
+
+  return job && getGenerationJobTarget(job).type === "project_mix"
+    ? job
+    : undefined;
+}
+
+function getGenerationJobTarget(job: GenerationJobSnapshot): GenerationJobTarget {
+  return job.target ?? { type: "clip", clipId: job.clipId };
 }
 
 export function upsertGenerationJob(
   state: GenerationRuntimeState,
   job: GenerationJobSnapshot,
 ): GenerationRuntimeState {
-  const previousJobId = state.jobIdByClipId[job.clipId];
+  const target = getGenerationJobTarget(job);
+  const previousJobId =
+    target.type === "clip"
+      ? state.jobIdByClipId[target.clipId]
+      : state.jobIdByProjectMixExportType[target.exportType];
   const jobsById = { ...state.jobsById };
   const jobIdByClipId = { ...state.jobIdByClipId };
+  const jobIdByProjectMixExportType = {
+    ...state.jobIdByProjectMixExportType,
+  };
 
   if (previousJobId && previousJobId !== job.jobId) {
     delete jobsById[previousJobId];
@@ -45,12 +75,29 @@ export function upsertGenerationJob(
     }
   }
 
+  for (const [exportType, mappedJobId] of Object.entries(
+    jobIdByProjectMixExportType,
+  )) {
+    if (
+      (target.type !== "project_mix" || exportType !== target.exportType) &&
+      mappedJobId === job.jobId
+    ) {
+      delete jobIdByProjectMixExportType[exportType as ProjectMixExportType];
+    }
+  }
+
   jobsById[job.jobId] = job;
-  jobIdByClipId[job.clipId] = job.jobId;
+
+  if (target.type === "clip") {
+    jobIdByClipId[target.clipId] = job.jobId;
+  } else {
+    jobIdByProjectMixExportType[target.exportType] = job.jobId;
+  }
 
   return {
     jobsById,
     jobIdByClipId,
+    jobIdByProjectMixExportType,
   };
 }
 
@@ -66,13 +113,23 @@ export function clearGenerationJob(
 
   const jobsById = { ...state.jobsById };
   const jobIdByClipId = { ...state.jobIdByClipId };
+  const jobIdByProjectMixExportType = {
+    ...state.jobIdByProjectMixExportType,
+  };
+  const target = getGenerationJobTarget(job);
 
   delete jobsById[jobId];
-  delete jobIdByClipId[job.clipId];
+
+  if (target.type === "clip") {
+    delete jobIdByClipId[target.clipId];
+  } else {
+    delete jobIdByProjectMixExportType[target.exportType];
+  }
 
   return {
     jobsById,
     jobIdByClipId,
+    jobIdByProjectMixExportType,
   };
 }
 
@@ -96,5 +153,6 @@ export function markGenerationJobCanceling(
       },
     },
     jobIdByClipId: state.jobIdByClipId,
+    jobIdByProjectMixExportType: state.jobIdByProjectMixExportType,
   };
 }
