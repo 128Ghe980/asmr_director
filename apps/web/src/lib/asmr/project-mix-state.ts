@@ -80,8 +80,10 @@ export function commitProjectMixSuccess(
 
 export function commitProjectMixFailure(
   project: AsmrProject,
-  _failure: ProjectMixFailureInput,
+  failure: ProjectMixFailureInput,
 ): AsmrProject {
+  void failure;
+
   const previousWavExport = getWavExport(project);
 
   if (
