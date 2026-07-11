@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-07-10
+Last updated: 2026-07-12
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -58,12 +58,14 @@ Current user-facing capabilities:
 - Resolves `mock://asset/<clipId>/<jobId>` URIs to playable local mock audio at runtime.
 - Resolves `asset://clip/<assetId>` URIs to `/api/assets/clip/<assetId>` for local generated WAV playback.
 - Exposes selected clip `生成`, `重生成`, `重试`, and `取消` controls in Inspector.
-- Enables selected clip preview in the right Preview Layer for both mock assets and local real `asset://clip/...` assets. Real project-mix preview is the current Roadmap Step 9 target.
+- Enables selected clip preview in the right Preview Layer for both mock assets and local real `asset://clip/...` assets.
 - Generates local semi-real WAV assets for `breath`, `sfx`, and `ambience` clips through the same selected-clip `生成` / `重生成` flow.
+- Mixes generated `asset://clip/...` assets into a real full-project `asset://mix/...` WAV through the Preview Layer.
+- Exposes Preview Layer project-mix controls: `生成整段`, `重混`, `试听`, `WAV`, and `取消`.
 
-Current product status: roadmap Steps 7 and 8 are implemented. Voice clips use local GPT-SoVITS; breath, SFX, and ambience clips use the local procedural WAV renderer. All generated clips write stable `asset://clip/...` references into Project JSON and are served through the local clip asset playback API.
+Current product status: roadmap Steps 7, 8, and 9 are implemented. Voice clips use local GPT-SoVITS; breath, SFX, and ambience clips use the local procedural WAV renderer. All generated clips write stable `asset://clip/...` references into Project JSON and are served through the local clip asset playback API. Full-project mixes write stable `asset://mix/...` references into `exports[type="wav"]` and are served through the local mix asset playback API.
 
-Roadmap Step 9 still needs real project-mix rendering/export. Step 10 still covers real waveform rendering, cloud persistence, auth, billing, collaboration, and production export flow.
+Roadmap Step 10 is now current / next. It covers product workflow hardening after real generation and real mix export are established.
 
 ## Real Generation Runtime Notes
 
@@ -161,6 +163,8 @@ Core app:
 - `apps/web/src/app/page.tsx` renders the studio with `demoProject`.
 - `apps/web/src/app/api/generation/clip/route.ts` runs selected voice clip generation through the local provider and returns stable asset metadata.
 - `apps/web/src/app/api/assets/clip/[assetId]/route.ts` serves local generated clip WAV bytes for playback.
+- `apps/web/src/app/api/generation/mix/route.ts` runs local full-project mix rendering from generated clip assets and returns stable mix asset metadata.
+- `apps/web/src/app/api/assets/mix/[assetId]/route.ts` serves local generated mix WAV bytes for playback and download.
 - `apps/web/src/components/studio/studio-app.tsx` owns editable project state, runtime generation state, bridge callbacks, export, import, autosave, reset, validation, selected clip state, playback, director presets, and timing nudges. It uses the local real bridge by default and the mock bridge only when `NEXT_PUBLIC_ASMR_GENERATION_MODE=mock`.
 - `apps/web/src/components/studio/project-workspace.tsx` composes the C+ workspace shell around the editor panels.
 - `apps/web/src/components/studio/project-workspace-header.tsx` shows workspace status, project summary, focus controls, and project-level `导出` / `载入` / `重置` actions.
@@ -191,17 +195,20 @@ Domain/data:
 - `apps/web/src/lib/asmr/generation-bridge.ts` defines the backend-shaped generation bridge contract.
 - `apps/web/src/lib/asmr/mock-generation-bridge.ts` implements the local mock bridge.
 - `apps/web/src/lib/asmr/generation-project-state.ts` commits final generation success/failure into `AsmrProject`.
-- `apps/web/src/lib/asmr/generation-runtime.ts` manages runtime-only generation jobs keyed by `jobId` and `clipId`.
-- `apps/web/src/lib/asmr/generation-view.ts` merges durable project data and runtime generation state into UI-ready controls and preview summaries.
+- `apps/web/src/lib/asmr/generation-runtime.ts` manages runtime-only generation jobs keyed by `jobId`, selected clip IDs, and project mix export type.
+- `apps/web/src/lib/asmr/generation-view.ts` merges durable project data and runtime generation state into UI-ready controls, including selected-clip controls and project-mix controls.
 - `apps/web/src/lib/asmr/mock-asset-resolver.ts` resolves `mock://` asset URIs to runtime-only playable WAV data URLs.
 - `apps/web/src/lib/asmr/local-runtime-config.ts` reads local runtime paths and provider URL with D-drive defaults and environment overrides.
 - `apps/web/src/lib/asmr/voice-pack.ts` loads and validates the GPT-SoVITS voice pack and prompt transcript.
 - `apps/web/src/lib/asmr/gpt-sovits-provider.ts` maps voice clips into GPT-SoVITS `/tts` payloads and requests WAV bytes.
-- `apps/web/src/lib/asmr/local-asset-store.ts` writes local generated WAVs and resolves safe `asset://clip/...` IDs.
+- `apps/web/src/lib/asmr/local-asset-store.ts` writes local generated WAVs and resolves safe `asset://clip/...` and `asset://mix/...` IDs.
+- `apps/web/src/lib/asmr/project-mix-state.ts` derives mix readiness, updates `exports[type="wav"]`, and preserves a previous usable mix when remix fails.
+- `apps/web/src/lib/asmr/project-mix-renderer.ts` decodes PCM WAVs, renders timeline-aware stereo project mixes, applies gain/fades/pan/distance/movement/loop/normalization/limiting, and writes PCM16 WAV output.
+- `apps/web/src/lib/asmr/local-project-mix-generation.ts` reads local clip assets, calls the renderer, and saves durable mix assets.
 - `apps/web/src/lib/asmr/procedural-audio.ts` renders deterministic local WAV files for breath, SFX, and ambience clips.
 - `apps/web/src/lib/asmr/local-clip-generation.ts` ties project clip lookup, voice pack loading, GPT-SoVITS voice generation, procedural non-voice generation, and asset saving together.
 - `apps/web/src/lib/asmr/local-generation-bridge.ts` implements the browser-side bridge for the local generation API.
-- `apps/web/src/lib/asmr/playback-asset-resolver.ts` resolves both `asset://clip/...` and `mock://asset/...` playback URIs.
+- `apps/web/src/lib/asmr/playback-asset-resolver.ts` resolves `asset://clip/...`, `asset://mix/...`, and `mock://asset/...` playback URIs.
 
 Tests:
 
@@ -224,6 +231,9 @@ Tests:
 - `apps/web/src/lib/asmr/gpt-sovits-provider.test.ts`
 - `apps/web/src/lib/asmr/procedural-audio.test.ts`
 - `apps/web/src/lib/asmr/local-clip-generation.test.ts`
+- `apps/web/src/lib/asmr/project-mix-state.test.ts`
+- `apps/web/src/lib/asmr/project-mix-renderer.test.ts`
+- `apps/web/src/lib/asmr/local-project-mix-generation.test.ts`
 - `apps/web/src/lib/asmr/local-generation-bridge.test.ts`
 - `apps/web/src/lib/asmr/playback-asset-resolver.test.ts`
 
@@ -263,10 +273,13 @@ Generation persistence rules:
 - Runtime `jobId`, progress, queued/generating/canceling state, and callback state stay outside `AsmrProject`.
 - Successful mock generation commits `asset_generated` plus final asset metadata with a `mock://asset/<clipId>/<jobId>` URI.
 - Successful local voice and non-voice generation commits `asset_generated` plus final asset metadata with an `asset://clip/<assetId>` URI.
+- Successful local project mix generation commits only `exports[type="wav"] = { status: "exported", uri: "asset://mix/<assetId>" }`.
 - Normal generation failure commits `asset_failed` and an error.
 - Failed regeneration preserves a previous generated asset.
+- Failed remix preserves a previous exported `asset://mix/...` when one exists; first mix failure writes a `wav` export with `status: "export_failed"` and `uri: null`.
 - `mock://` URIs are resolved into data URLs only at runtime for playback.
 - `asset://clip/...` URIs are resolved into local API playback URLs only at runtime for playback.
+- `asset://mix/...` URIs are resolved into local API playback URLs only at runtime for full-project preview and WAV download.
 - Exported JSON must not contain browser `blob:` URLs, `data:audio` URLs, runtime progress, or runtime job state.
 
 localStorage key:
@@ -285,12 +298,12 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 Latest verified state before this handoff:
 
-- `npm.cmd run test --prefix apps/web`: 22 test files passed, 124 tests passed.
-- `npm.cmd run lint --prefix apps/web`: passed.
-- `npm.cmd run build --prefix apps/web -- --webpack`: passed. The default Turbopack build is not the verification command on this Windows environment because Turbopack reports an unsupported native binding and asks to use Webpack.
-- Browser verification used a local dev server at `http://localhost:3000/` and a temporary headless Chrome controlled through CDP. The in-app browser was able to display the page but its snapshot / click control was unreliable in this session.
-- Browser verification passed for hydrated UI, selecting `voice_001`, selected clip `生成`, real local GPT-SoVITS generation to `asset://clip/voice_001_20260706T211523064Z_d3b95513`, Project JSON/localStorage containing the stable `asset://clip/...` reference, `重生成` after success, playback API returning `audio/wav` with `RIFF` header, and no page error/warning logs.
-- Step 8 browser verification passed for `breath_001` and `sfx_blanket_001`: both generated through the workbench UI, wrote `asset://clip/...`, and served playable `audio/wav` files with `RIFF` headers.
+- `npm.cmd run test --prefix apps/web`: 25 test files passed, 158 tests passed.
+- `npm.cmd run lint --prefix apps/web`: passed with 0 warnings.
+- `npm.cmd run build --prefix apps/web -- --webpack`: passed. The default Turbopack build is not the verification command on this Windows environment because Turbopack reports an unsupported native binding and asks to use Webpack. The known SWC native binding warning can appear while Webpack/WASM still completes with exit code 0.
+- Local dev server verification at `http://localhost:3000/`: page returned HTTP 200 with rendered app HTML.
+- Step 9 API verification used a minimal schema-valid project with one generated local clip asset and called `POST /api/generation/mix`. It generated `asset://mix/step9_verify_project_wav_20260711T203915972Z_697118df`; `GET /api/assets/mix/step9_verify_project_wav_20260711T203915972Z_697118df` returned `audio/wav`, `128,044` bytes, WAV header `RIFF`.
+- Earlier Step 7/8 browser verification remains valid for selected clip generation and playback: generated app assets include `asset://clip/voice_001_20260706T211523064Z_d3b95513`, `asset://clip/breath_001_20260706T213815920Z_b55ae7b8`, and `asset://clip/sfx_blanket_001_20260706T213816276Z_0089677d`.
 
 Run locally:
 
@@ -340,21 +353,20 @@ Recent preview/workspace commits:
 
 ## Recommended Next Work
 
-Recommended next step: **Roadmap Step 9, 真实项目混音与导出**.
+Recommended next step: **Roadmap Step 10, 产品工作流硬化**.
 
 Why this next:
 
 - Step 7 proved voice clip generation.
 - Step 8 proved non-voice clip generation for breath, SFX, and ambience using the same `asset://clip/...` contract.
-- The next missing product capability is to combine generated clip assets according to timeline timing into one real project WAV.
+- Step 9 proved real project-mix rendering/export from generated clip assets into `asset://mix/...` WAV.
+- The next missing product capability is to make the now-real generation/mix workflow easier to manage as an actual product workspace.
 
 Concrete next scope:
 
-- Add a local project mix renderer that reads generated `asset://clip/...` files from the runtime asset store.
-- Place each clip by `start` / `duration` and apply basic gain, fades, and pan-aware mono/stereo handling.
-- Save the mix as `asset://mix/...` or the existing project mix reference shape, without serializing local paths.
-- Wire full-project preview / WAV download to the real mix output.
-- Keep clip-level generation independent; Step 9 should consume generated assets, not regenerate them.
+- Start Step 10 with a focused sub-spec instead of trying to implement every productization item at once.
+- Good first Step 10 candidates: project library/local project list, real waveform rendering from generated audio, quality checks/readiness checks, version/history for generated assets, or export workflow polish.
+- Before implementing Step 10, read `docs/ROADMAP.md` and compare with current code reality; if Step 10 needs decomposition, write the decomposition into docs before coding.
 
 ## Initial Product Path
 
@@ -362,9 +374,9 @@ The canonical roadmap is `docs/ROADMAP.md`.
 
 Do not treat this file as a competing roadmap. Current summary only:
 
-- Completed: roadmap steps 1-8.
-- Current / next: roadmap Step 9, 真实项目混音与导出.
-- Pending after Step 9: Roadmap Step 10 product workflow hardening.
+- Completed: roadmap steps 1-9.
+- Current / next: roadmap Step 10, 产品工作流硬化.
+- Pending after Step 10: no approved top-level Step 11 exists; user approval is required before adding one.
 
 When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.
 
@@ -390,17 +402,14 @@ If the documented path feels stale, conflicts with current implementation, or th
 
 ## Do Not Do Yet
 
-Do not jump around the canonical route into Step 10 / productization work before completing current Roadmap Step 9:
+Do not invent a new top-level roadmap or jump beyond the canonical Step 10 framing without user approval:
 
-- Backend project persistence.
-- Auth or cloud sync.
-- Real waveform rendering from generated audio.
-- Full DAW drag/drop timeline.
-- Payment or publishing flows.
-- New mock-only or bridge-only top-level milestones that postpone the canonical roadmap.
+- A new model-quality/audio-editing v2 roadmap that bypasses Step 10.
+- A new mock-only or bridge-only milestone that postpones product workflow hardening.
 - Turning adapter / API / provider wrapper work into a new top-level roadmap gate without user approval.
+- Full DAW drag/drop timeline, cloud sync, auth, payment, publishing, and collaboration should only be implemented after Step 10 is decomposed and the user confirms the concrete sub-scope.
 
-Real project-mix rendering/export is no longer "Do Not Do Yet"; it is the current Roadmap Step 9. The Step 9 implementation should stay scoped to consuming existing generated clip assets, rendering a real mix, wiring full-project preview, and returning a real WAV download.
+Real project-mix rendering/export is no longer "Do Not Do Yet"; it was completed as Roadmap Step 9. Future work should build on the real `asset://clip/...` and `asset://mix/...` contracts instead of replacing them with another mock gate.
 
 ## Working Rules For Future Agents
 

@@ -1,14 +1,14 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-07-07
+Last updated: 2026-07-12
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 不可动摇的当前优先级
 
-当前最高优先事务是 **第 9 步：真实项目混音与导出**。
+当前最高优先事务是 **第 10 步：产品工作流硬化**。
 
-第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
+第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入，第 9 步已经完成真实项目混音与 WAV 导出接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
 
 ## 10 步路线
 
@@ -68,15 +68,21 @@ Last updated: 2026-07-07
      - Headless Chrome 端到端验收已生成 `breath_001` 和 `sfx_blanket_001`：播放接口均返回 `audio/wav`，文件头 `RIFF`，页面无 error/warning。
 
 9. **真实项目混音与导出**
-   - Status: Current / Next.
-   - Outcome: 按 Timeline DSL 把已生成 clip assets 混成真实 WAV。
+   - Status: Completed.
+   - Outcome: 已按 Timeline DSL 把已生成 `asset://clip/...` assets 混成真实 `asset://mix/...` WAV，并接入 Preview Layer 的整段试听与 WAV 下载。
    - Acceptance criteria:
      - Project mix 使用真实生成的 clip assets 与 timeline timing。
      - Full-project preview 播放真实 mix。
      - WAV download 返回真实混音音频文件。
+   - 2026-07-12 完成记录:
+     - 新增 project mix readiness / export state / fingerprint helpers，用于判断素材是否齐全、旧 mix 是否过期，以及成功/失败时如何写入 `exports[type="wav"]`。
+     - 新增 PCM WAV decoder / stereo WAV writer / project mix renderer，支持 timeline placement、clip gain、fade、pan、distance、movement、ambience loop、目标响度归一和 limiter。
+     - 新增本地 project mix generation helper、`POST /api/generation/mix`、`GET /api/assets/mix/[assetId]`，并把 `asset://mix/...` 映射到可播放 API route。
+     - Generation Bridge / runtime / summary / view model 已支持 `project_mix:wav` runtime job；Preview Layer 已接入 `生成整段`、`重混`、`试听`、`WAV` 和 `取消`。
+     - 验证：`npm.cmd run test --prefix apps/web` 25 files / 158 tests 通过；`npm.cmd run lint --prefix apps/web` 通过；`npm.cmd run build --prefix apps/web -- --webpack` 通过；本地 API 验收生成 `asset://mix/step9_verify_project_wav_20260711T203915972Z_697118df`，播放接口返回 `audio/wav`、`RIFF`。
 
 10. **产品工作流硬化**
-    - Status: Pending.
+    - Status: Current / Next.
     - Outcome: 在真实生成和真实混音成立后，再推进 project library、真实 waveform rendering、quality checks、versioning、cloud persistence、account system、billing、publishing、collaboration 等产品化能力。
 
 ## Roadmap 修改协议

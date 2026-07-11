@@ -10,6 +10,34 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
 如果是新的 AI agent 接手，或者当前会话发生上下文压缩，应先读 `docs/AI_HANDOFF.md`。那份文件更短、更稳定，专门服务“快速恢复当前状态和下一步”。
 
+## 2026-07-12 - Roadmap Step 9 真实项目混音与导出完成
+
+本轮把第 9 步从“手动 runtime 整段试听实验”推进到产品内接线：工作台现在可以把已经生成的 `asset://clip/...` clip assets 按 Project Timeline DSL 混成真实 `asset://mix/...` WAV，并在 Preview Layer 提供整段试听和 WAV 下载入口。
+
+已完成内容：
+
+- 新增 mix asset 存储约定：`asset://mix/<id>`，默认落盘到 `D:\CodexWorkplace\asmr_director_runtime\assets\mixes\app`，通过 `/api/assets/mix/<assetId>` 读取。
+- 新增 project mix readiness / export state / fingerprint helpers，只有所有现存 voice、breath、sfx、ambience clip 都已经生成且拥有本地 `asset://clip/...` 时，才允许生成整段 mix。
+- 新增 `renderProjectMixWav`：读取本地 PCM WAV clip，按 start/end、gain、fade、pan、distance、movement、ambience loop、target LUFS 和 limiter 混成 stereo PCM16 WAV。
+- 新增 `/api/generation/mix`，用于从完整 Project JSON 生成真实 WAV mix；缺少 clip asset 时返回 409 missing assets，而不是假装成功。
+- 扩展 generation bridge / local bridge / mock bridge / runtime job store，让 full-project mix 与 selected clip generation 共用同一套 job snapshot、cancel、running/error/success 状态语义。
+- Preview Layer 增加整段控制：`生成整段`、`重混`、`试听`、`WAV`、`取消`。编辑 timeline 或 director preset 时，会取消当前活跃的 project mix job，避免旧 mix 被误认为当前版本。
+- `docs/ROADMAP.md` 已把 Step 9 标为 Completed，把 Step 10 标为 Current / Next；`docs/AI_HANDOFF.md` 已同步当前能力、验证证据和下一步协议。
+
+验证证据：
+
+- `npm.cmd run test --prefix apps/web`：25 个 test files、158 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过，0 warnings。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过；仍有已知 SWC native binding warning，但 exit code 为 0。
+- 本地 dev server 已在 `http://localhost:3000/` 启动，`Invoke-WebRequest http://localhost:3000/` 返回 HTTP 200。
+- API 级真实 mix 验证：用一个 schema-valid 的最小项目和一个已生成本地 clip WAV 调用 `POST /api/generation/mix`，得到 `asset://mix/step9_verify_project_wav_20260711T203915972Z_697118df`；随后 `GET /api/assets/mix/step9_verify_project_wav_20260711T203915972Z_697118df` 返回 `audio/wav`、`128,044` bytes、WAV header `RIFF`。
+
+边界与后续：
+
+- 这次 API 验证没有重新跑 GPT-SoVITS；它复用了一个最小本地 generated clip asset 来验证 Step 9 的 app 内混音和导出链路。
+- Step 9 已经不是“Do Not Do Yet”或“未来要做”；后续工作必须基于现有 `asset://clip/...` 与 `asset://mix/...` 合约继续推进。
+- 下一步应按 `docs/ROADMAP.md` 进入 Step 10：产品工作流硬化。Step 10 很大，正式编码前需要先拆成小 scope，例如 project library/local project list、真实 waveform rendering、quality/readiness checks、version/history、export workflow polish 等。
+
 ## 当前一句话定位
 
 AI ASMR Studio 不是一个普通的“AI ASMR 生成器”，而是一个 **AI ASMR 导演台**。
