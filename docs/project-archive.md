@@ -38,6 +38,36 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 - Step 9 已经不是“Do Not Do Yet”或“未来要做”；后续工作必须基于现有 `asset://clip/...` 与 `asset://mix/...` 合约继续推进。
 - 下一步应按 `docs/ROADMAP.md` 进入 Step 10：产品工作流硬化。Step 10 很大，正式编码前需要先拆成小 scope，例如 project library/local project list、真实 waveform rendering、quality/readiness checks、version/history、export workflow polish 等。
 
+## 2026-07-12 - Step 9 整段混音样例生成
+
+用户要求“生成一个我看看”后，本轮没有新增代码，而是直接通过已经接好的本地 mix API 生成了一段可试听样例，证明 Step 9 的真实混音链路能被实际调用。
+
+样例内容：
+
+- 请求入口：`POST http://localhost:3000/api/generation/mix`。
+- 项目 ID：`showcase_step9_mix_001`。
+- 项目时长：`32s`。
+- 复用的本地 clip assets：
+  - `asset://clip/voice_001_20260706T211523064Z_d3b95513`
+  - `asset://clip/breath_001_20260706T213815920Z_b55ae7b8`
+  - `asset://clip/sfx_blanket_001_20260706T213816276Z_0089677d`
+- 生成结果：`asset://mix/showcase_step9_mix_001_wav_20260711T210548715Z_c39775de`。
+- 本地文件：`D:\CodexWorkplace\asmr_director_runtime\assets\mixes\app\showcase_step9_mix_001_wav_20260711T210548715Z_c39775de.wav`。
+- 本地试听 URL：`http://localhost:3000/api/assets/mix/showcase_step9_mix_001_wav_20260711T210548715Z_c39775de`。
+
+验证证据：
+
+- `GET /api/assets/mix/showcase_step9_mix_001_wav_20260711T210548715Z_c39775de` 返回 `audio/wav`。
+- 文件大小：`4,096,044` bytes。
+- WAV 文件头：`RIFF`。
+- `git status` 仍然干净，说明 runtime 生成物没有混入 repo。
+
+边界：
+
+- 这次样例没有重新调用 GPT-SoVITS；它复用了已有 voice / breath / sfx clip WAV 来生成整段 mix。
+- 这次样例也没有写回当前浏览器页面里的 Project JSON，只是通过 API 验证和给用户试听。
+- 如果后续要让用户在 UI 里看到同一段 mix，需要在工作台里对当前项目逐个生成素材后点击 `生成整段`，或实现 Step 10 的项目库 / 项目状态持久化能力。
+
 ## 当前一句话定位
 
 AI ASMR Studio 不是一个普通的“AI ASMR 生成器”，而是一个 **AI ASMR 导演台**。
