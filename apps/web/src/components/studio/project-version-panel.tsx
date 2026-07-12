@@ -19,7 +19,6 @@ function formatRevisionTime(value: string): string {
     hour12: false,
   }).format(date);
 }
-
 export function ProjectVersionPanel({
   revisions,
   onCreate,
@@ -83,4 +82,3 @@ export function ProjectVersionPanel({
     </section>
   );
 }
-

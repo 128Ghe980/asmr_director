@@ -42,4 +42,13 @@ describe("audio analysis", () => {
 
     expect(analyzePcmWav(wav, 16).bars).toHaveLength(16);
   });
+
+  it("does not classify near-full-scale samples as clipped", () => {
+    const wav = writePcm16MonoWav(new Float32Array([0.99995, -0.99995]), 2);
+
+    const analysis = analyzePcmWav(wav, 16);
+
+    expect(analysis.peakDbfs).toBeGreaterThan(-0.01);
+    expect(analysis.clippedSampleCount).toBe(0);
+  });
 });

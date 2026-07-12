@@ -468,6 +468,27 @@ describe("generation view", () => {
     });
   });
 
+  it("treats an exported mix without a persisted fingerprint as unverified", () => {
+    const readyProject = generateAllClipAssets();
+    const project = commitProjectMixSuccess(readyProject, {
+      assetId: "unverified_mix",
+      uri: "asset://mix/unverified_mix",
+      duration: readyProject.duration,
+    });
+    const view = getGenerationView({
+      project,
+      selectedClip: undefined,
+      runtimeState: emptyGenerationRuntimeState,
+      selectedClipHasValidationIssues: false,
+    });
+
+    expect(view.projectMixControl).toMatchObject({
+      action: "remix",
+      statusLabel: "需重混",
+      tone: "warn",
+    });
+  });
+
   it("uses active runtime project mix jobs for project mix controls", () => {
     const project = generateAllClipAssets();
     const runtimeState = upsertGenerationJob(

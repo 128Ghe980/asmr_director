@@ -105,6 +105,21 @@ describe("project workspace summary", () => {
     });
   });
 
+  it("warns when browser persistence is unavailable", () => {
+    const summary = getProjectWorkspaceSummary({
+      project: demoProject,
+      isDirty: true,
+      restoreState: "restored",
+      validationIssueCount: 0,
+      storageAvailable: false,
+    });
+
+    expect(summary.saveState).toEqual({
+      label: "本地保存不可用",
+      tone: "warn",
+    });
+  });
+
   it("surfaces validation failure counts with a warning tone", () => {
     const invalidProject = updateClipInProject(demoProject, "voice_004", {
       start: 208,

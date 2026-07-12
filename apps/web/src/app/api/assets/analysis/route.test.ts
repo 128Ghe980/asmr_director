@@ -56,6 +56,20 @@ describe("GET /api/assets/analysis", () => {
     expect(unsafe.status).toBe(400);
   });
 
+  it("returns 400 for missing uri and invalid bar counts", async () => {
+    const missingUri = await GET(
+      new Request("http://localhost/api/assets/analysis"),
+    );
+    const invalidBars = await GET(
+      new Request(
+        "http://localhost/api/assets/analysis?uri=asset%3A%2F%2Fmix%2Fsafe&bars=4",
+      ),
+    );
+
+    expect(missingUri.status).toBe(400);
+    expect(invalidBars.status).toBe(400);
+  });
+
   it("reports missing and invalid WAV assets", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "asmr-analysis-"));
     const mixRoot = path.join(root, "mixes");

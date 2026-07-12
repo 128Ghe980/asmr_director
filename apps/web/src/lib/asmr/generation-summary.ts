@@ -249,7 +249,7 @@ function getProjectMixAssetStatusDisplay({
 
   if (wavExport?.status === "exported" && wavExport.uri) {
     if (
-      projectMixFingerprint &&
+      !projectMixFingerprint ||
       !isCurrentProjectMixFingerprint(project, projectMixFingerprint)
     ) {
       return { statusLabel: "需重混", tone: "warn" };

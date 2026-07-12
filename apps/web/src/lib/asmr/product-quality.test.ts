@@ -143,4 +143,3 @@ describe("product quality report", () => {
     expect(clipped.overallTone).toBe("block");
   });
 });
-

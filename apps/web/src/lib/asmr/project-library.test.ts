@@ -10,8 +10,10 @@ import {
   deleteLibraryProject,
   duplicateLibraryProject,
   loadProjectLibrary,
+  replaceLibraryProject,
   restoreProjectRevision,
   selectLibraryProject,
+  setLibraryProjectMixFingerprint,
   updateLibraryProject,
 } from "./project-library";
 import { PROJECT_STORAGE_KEY, serializeProject } from "./project-persistence";
@@ -72,6 +74,35 @@ describe("project library", () => {
     ]);
   });
 
+  it("drops stored revisions whose project id differs from their parent", () => {
+    const storage = createStorage({
+      [PROJECT_LIBRARY_STORAGE_KEY]: JSON.stringify({
+        version: 1,
+        currentProjectId: demoProject.project_id,
+        projects: [
+          {
+            projectId: demoProject.project_id,
+            title: demoProject.title,
+            updatedAt: firstTime.toISOString(),
+            project: demoProject,
+            revisions: [
+              {
+                revisionId: "wrong-revision",
+                createdAt: firstTime.toISOString(),
+                label: "错误版本",
+                project: { ...demoProject, project_id: "another_project" },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const loaded = loadProjectLibrary(storage, demoProject, firstTime);
+
+    expect(loaded.projects[0].revisions).toEqual([]);
+  });
+
   it("updates and selects projects without changing other entries", () => {
     const initial = createInitialProjectLibrary(demoProject, firstTime);
     const created = createLibraryProject(initial, demoProject, secondTime);
@@ -83,6 +114,49 @@ describe("project library", () => {
     expect(updated.projects[1].title).toBe("白噪声练习");
     expect(selected.currentProjectId).toBe(demoProject.project_id);
     expect(selected.projects[1].title).toBe("白噪声练习");
+  });
+
+  it("preserves mix fingerprints across project autosaves", () => {
+    const initial = createInitialProjectLibrary(demoProject, firstTime);
+    const fingerprinted = setLibraryProjectMixFingerprint(
+      initial,
+      demoProject.project_id,
+      "mix-fingerprint-1",
+    );
+    const updated = updateLibraryProject(
+      fingerprinted,
+      { ...demoProject, title: "已编辑" },
+      secondTime,
+    );
+
+    expect(updated.projects[0].mixFingerprint).toBe("mix-fingerprint-1");
+  });
+
+  it("protects any existing project before replacement and clears its mix fingerprint", () => {
+    const initial = createInitialProjectLibrary(demoProject, firstTime);
+    const created = createLibraryProject(initial, demoProject, secondTime);
+    const fingerprinted = setLibraryProjectMixFingerprint(
+      created,
+      demoProject.project_id,
+      "old-fingerprint",
+    );
+    const replacement = { ...demoProject, title: "外部导入版本" };
+    const replaced = replaceLibraryProject(
+      fingerprinted,
+      replacement,
+      new Date("2026-07-12T03:00:00.000Z"),
+      "导入前",
+    );
+    const entry = replaced.projects.find(
+      (item) => item.projectId === demoProject.project_id,
+    );
+
+    expect(entry?.project.title).toBe("外部导入版本");
+    expect(entry?.mixFingerprint).toBeUndefined();
+    expect(entry?.revisions.at(-1)).toMatchObject({
+      label: "导入前",
+      project: expect.objectContaining({ title: demoProject.title }),
+    });
   });
 
   it("creates a clean project from the template", () => {
@@ -246,4 +320,3 @@ describe("project revisions", () => {
     });
   });
 });
-

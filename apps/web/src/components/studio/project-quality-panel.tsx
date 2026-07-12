@@ -24,7 +24,6 @@ function ToneIcon({ tone }: { tone: ProductQualityTone }) {
 
   return <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />;
 }
-
 export function ProjectQualityPanel({
   report,
 }: {
@@ -74,4 +73,3 @@ export function ProjectQualityPanel({
     </section>
   );
 }
-

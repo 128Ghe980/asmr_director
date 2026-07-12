@@ -283,7 +283,7 @@ function getProjectMixControl({
 
   if (wavExport?.status === "exported" && uri) {
     const isStale =
-      projectMixFingerprint &&
+      !projectMixFingerprint ||
       !isCurrentProjectMixFingerprint(project, projectMixFingerprint);
 
     return {

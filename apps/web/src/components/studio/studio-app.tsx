@@ -53,9 +53,11 @@ import {
   getCurrentLibraryEntry,
   getProjectLibrarySummaries,
   loadProjectLibrary,
+  replaceLibraryProject,
   restoreProjectRevision,
   saveProjectLibrary,
   selectLibraryProject,
+  setLibraryProjectMixFingerprint,
   updateLibraryProject,
 } from "@/lib/asmr/project-library";
 import {
@@ -144,7 +146,9 @@ export function StudioApp({ project }: StudioAppProps) {
   const [projectLibrary, setProjectLibrary] = useState(() =>
     createInitialProjectLibrary(project),
   );
+  const projectLibraryRef = useRef(projectLibrary);
   const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
+  const [storageAvailable, setStorageAvailable] = useState(true);
   const [importError, setImportError] = useState<string>();
   const [restoreState, setRestoreState] = useState<"demo" | "restored">("demo");
   const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysis>();
@@ -202,9 +206,16 @@ export function StudioApp({ project }: StudioAppProps) {
         project: editableProject,
         isDirty,
         restoreState,
+        storageAvailable,
         validationIssueCount: validationIssues.length,
       }),
-    [editableProject, isDirty, restoreState, validationIssues.length],
+    [
+      editableProject,
+      isDirty,
+      restoreState,
+      storageAvailable,
+      validationIssues.length,
+    ],
   );
   const generationView = useMemo(
     () =>
@@ -292,8 +303,12 @@ export function StudioApp({ project }: StudioAppProps) {
         );
         const loadedEntry = getCurrentLibraryEntry(loadedLibrary);
 
+        saveProjectLibrary(window.localStorage, loadedLibrary);
+        setStorageAvailable(true);
+        projectLibraryRef.current = loadedLibrary;
         setProjectLibrary(loadedLibrary);
         setEditableProject(loadedEntry.project);
+        setProjectMixFingerprint(loadedEntry.mixFingerprint);
         setRestoreState(
           loadedEntry.projectId === project.project_id &&
             serializeProject(loadedEntry.project) === serializeProject(project)
@@ -303,6 +318,8 @@ export function StudioApp({ project }: StudioAppProps) {
         setSelectedClipId(flattenClips(loadedEntry.project)[0]?.id);
       } catch {
         const fallbackLibrary = createInitialProjectLibrary(project);
+        setStorageAvailable(false);
+        projectLibraryRef.current = fallbackLibrary;
         setProjectLibrary(fallbackLibrary);
         setEditableProject(project);
         setRestoreState("demo");
@@ -329,20 +346,20 @@ export function StudioApp({ project }: StudioAppProps) {
         return;
       }
 
-      setProjectLibrary((currentLibrary) => {
-        const nextLibrary = updateLibraryProject(
-          currentLibrary,
-          editableProject,
-        );
+      const nextLibrary = updateLibraryProject(
+        projectLibraryRef.current,
+        editableProject,
+      );
 
-        try {
-          saveProjectLibrary(window.localStorage, nextLibrary);
-        } catch {
-          // Browser storage can be unavailable in restrictive contexts.
-        }
+      try {
+        saveProjectLibrary(window.localStorage, nextLibrary);
+        setStorageAvailable(true);
+      } catch {
+        setStorageAvailable(false);
+      }
 
-        return nextLibrary;
-      });
+      projectLibraryRef.current = nextLibrary;
+      setProjectLibrary(nextLibrary);
     });
 
     return () => {
@@ -457,12 +474,14 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function persistLibrary(nextLibrary: typeof projectLibrary) {
+    projectLibraryRef.current = nextLibrary;
     setProjectLibrary(nextLibrary);
 
     try {
       saveProjectLibrary(window.localStorage, nextLibrary);
+      setStorageAvailable(true);
     } catch {
-      // Keep the in-memory project library usable when storage is blocked.
+      setStorageAvailable(false);
     }
   }
 
@@ -475,6 +494,7 @@ export function StudioApp({ project }: StudioAppProps) {
     clearGenerationSession();
     persistLibrary(nextLibrary);
     setEditableProject(entry.project);
+    setProjectMixFingerprint(entry.mixFingerprint);
     setSelectedClipId(flattenClips(entry.project)[0]?.id);
     setRestoreState(nextRestoreState);
     setImportError(undefined);
@@ -557,6 +577,13 @@ export function StudioApp({ project }: StudioAppProps) {
             : currentProject,
         );
         if (fingerprint) {
+          const nextLibrary = setLibraryProjectMixFingerprint(
+            projectLibraryRef.current,
+            projectLibraryRef.current.currentProjectId,
+            fingerprint,
+          );
+          projectLibraryRef.current = nextLibrary;
+          setProjectLibrary(nextLibrary);
           setProjectMixFingerprint(fingerprint);
         }
         setGenerationRuntimeState((current) => {
@@ -987,33 +1014,26 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
-    let nextLibrary = getLibraryWithCurrentProject();
-
-    if (importedProject.project.project_id === editableProject.project_id) {
-      nextLibrary = createProjectRevision(
-        nextLibrary,
-        editableProject.project_id,
-        new Date(),
-        "导入前",
-      );
-    }
-
-    nextLibrary = updateLibraryProject(nextLibrary, importedProject.project);
+    const nextLibrary = replaceLibraryProject(
+      getLibraryWithCurrentProject(),
+      importedProject.project,
+      new Date(),
+      "导入前",
+    );
     activateLibraryProject(nextLibrary);
   }
 
   function handleResetDemo() {
-    const protectedLibrary = createProjectRevision(
-      getLibraryWithCurrentProject(),
-      editableProject.project_id,
-      new Date(),
-      "重置前",
-    );
     const resetProject = {
       ...project,
       project_id: editableProject.project_id,
     };
-    const nextLibrary = updateLibraryProject(protectedLibrary, resetProject);
+    const nextLibrary = replaceLibraryProject(
+      getLibraryWithCurrentProject(),
+      resetProject,
+      new Date(),
+      "重置前",
+    );
 
     activateLibraryProject(nextLibrary, "demo");
   }

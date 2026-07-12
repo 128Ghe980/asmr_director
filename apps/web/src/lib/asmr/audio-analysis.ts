@@ -35,7 +35,7 @@ export function analyzeDecodedPcm(
     peak = Math.max(peak, absolute);
     sumSquares += sample * sample;
 
-    if (absolute >= 0.9999) {
+    if (absolute === 1) {
       clippedSampleCount += 1;
     }
   }
@@ -84,4 +84,3 @@ export function analyzePcmWav(
 ): AudioAnalysis {
   return analyzeDecodedPcm(decodePcmWav(bytes), barCount);
 }
-

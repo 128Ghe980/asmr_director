@@ -195,4 +195,3 @@ Check docs for contradictions with current code, then commit as `docs: record pr
 - [ ] **Step 5: Push the branch**
 
 Push `codex/step10-product-workflow` using the repository-specific SSH-over-443 key if GitHub HTTPS remains unreachable.
-

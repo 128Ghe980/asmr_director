@@ -127,4 +127,3 @@ Preview Layer 有真实 mix 时优先显示 mix 波形；否则显示当前可�
 - 不把音频二进制存入 `localStorage` 或 Project JSON。
 - 不实现完整 DAW 波形编辑、频谱图或母带分析套件。
 - 不修改 Timeline DSL 顶层 schema。
-

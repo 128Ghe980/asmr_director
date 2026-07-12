@@ -44,6 +44,7 @@ function getErrorStatus(error: unknown): number {
   if (
     error instanceof Error &&
     (error.message.includes("Only local") ||
+      error.message.includes("durable asset URI") ||
       error.message.includes("Invalid clip asset id") ||
       error.message.includes("Invalid mix asset id") ||
       error.message.includes("Waveform bars"))
@@ -85,4 +86,3 @@ export async function GET(request: Request) {
     );
   }
 }
-

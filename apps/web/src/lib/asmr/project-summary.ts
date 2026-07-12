@@ -40,6 +40,7 @@ export type ProjectWorkspaceSummaryInput = {
   project: AsmrProject;
   isDirty: boolean;
   restoreState: "demo" | "restored";
+  storageAvailable?: boolean;
   validationIssueCount: number;
 };
 
@@ -82,10 +83,18 @@ function getLocalStateBadge({
 function getSaveStateBadge({
   isDirty,
   restoreState,
+  storageAvailable = true,
 }: Pick<
   ProjectWorkspaceSummaryInput,
-  "isDirty" | "restoreState"
+  "isDirty" | "restoreState" | "storageAvailable"
 >): ProjectWorkspaceBadge {
+  if (!storageAvailable) {
+    return {
+      label: "本地保存不可用",
+      tone: "warn",
+    };
+  }
+
   if (isDirty || restoreState === "restored") {
     return {
       label: "本地已保存",
@@ -129,6 +138,7 @@ export function getProjectWorkspaceSummary({
   project,
   isDirty,
   restoreState,
+  storageAvailable = true,
   validationIssueCount,
 }: ProjectWorkspaceSummaryInput): ProjectWorkspaceSummary {
   const duration = formatSeconds(project.duration);
@@ -145,7 +155,11 @@ export function getProjectWorkspaceSummary({
       status,
     },
     localState: getLocalStateBadge({ isDirty, restoreState }),
-    saveState: getSaveStateBadge({ isDirty, restoreState }),
+    saveState: getSaveStateBadge({
+      isDirty,
+      restoreState,
+      storageAvailable,
+    }),
     validation: getValidationBadge(validationIssueCount),
     preview: {
       label: "预览未生成",

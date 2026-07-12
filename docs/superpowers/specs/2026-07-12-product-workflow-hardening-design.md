@@ -88,4 +88,3 @@ Keep both side regions collapsible. The left rail becomes a compact project libr
 - Audio binary data in browser storage or Project JSON.
 - Full DAW waveform editing, spectrograms, or mastering-suite analysis.
 - Timeline DSL top-level schema changes.
-

@@ -34,7 +34,6 @@ export type ProductQualityInput = {
 function formatDbfs(value: number | null): string {
   return value === null ? "静音" : `${value.toFixed(1)} dBFS`;
 }
-
 export function getProductQualityReport({
   project,
   validationIssueCount,
@@ -189,4 +188,3 @@ export function getProductQualityReport({
       blockerCount > 0 ? "block" : warningCount > 0 ? "warn" : "pass",
   };
 }
-

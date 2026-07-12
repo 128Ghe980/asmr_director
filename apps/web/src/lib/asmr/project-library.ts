@@ -24,6 +24,7 @@ export type ProjectLibraryEntry = {
   updatedAt: string;
   project: AsmrProject;
   revisions: ProjectRevision[];
+  mixFingerprint?: string;
 };
 
 export type ProjectLibrary = {
@@ -75,6 +76,7 @@ function makeEntry(
   project: AsmrProject,
   now: Date,
   revisions: ProjectRevision[] = [],
+  mixFingerprint?: string,
 ): ProjectLibraryEntry {
   const cloned = cloneProject(project);
 
@@ -84,6 +86,7 @@ function makeEntry(
     updatedAt: now.toISOString(),
     project: cloned,
     revisions,
+    mixFingerprint,
   };
 }
 
@@ -98,7 +101,10 @@ export function createInitialProjectLibrary(
   };
 }
 
-function parseRevision(input: unknown): ProjectRevision | undefined {
+function parseRevision(
+  input: unknown,
+  parentProjectId: string,
+): ProjectRevision | undefined {
   if (!input || typeof input !== "object") {
     return undefined;
   }
@@ -108,6 +114,7 @@ function parseRevision(input: unknown): ProjectRevision | undefined {
 
   if (
     !project.success ||
+    project.data.project_id !== parentProjectId ||
     typeof candidate.revisionId !== "string" ||
     typeof candidate.createdAt !== "string" ||
     typeof candidate.label !== "string"
@@ -167,7 +174,9 @@ function parseStoredLibrary(
 
     const revisions = Array.isArray(entry.revisions)
       ? entry.revisions
-          .map(parseRevision)
+          .map((revision) =>
+            parseRevision(revision, parsedProject.data.project_id),
+          )
           .filter((revision): revision is ProjectRevision => Boolean(revision))
           .slice(-MAX_PROJECT_REVISIONS)
       : [];
@@ -175,6 +184,9 @@ function parseStoredLibrary(
       parsedProject.data,
       typeof entry.updatedAt === "string" ? new Date(entry.updatedAt) : now,
       revisions,
+      typeof entry.mixFingerprint === "string"
+        ? entry.mixFingerprint
+        : undefined,
     );
 
     if (Number.isNaN(new Date(parsedEntry.updatedAt).getTime())) {
@@ -270,7 +282,12 @@ export function updateLibraryProject(
   const existing = library.projects.find(
     (entry) => entry.projectId === project.project_id,
   );
-  const nextEntry = makeEntry(project, now, existing?.revisions ?? []);
+  const nextEntry = makeEntry(
+    project,
+    now,
+    existing?.revisions ?? [],
+    existing?.mixFingerprint,
+  );
   const projects = existing
     ? library.projects.map((entry) =>
         entry.projectId === project.project_id ? nextEntry : entry,
@@ -293,6 +310,51 @@ export function selectLibraryProject(
   }
 
   return { ...library, currentProjectId: projectId };
+}
+
+export function setLibraryProjectMixFingerprint(
+  library: ProjectLibrary,
+  projectId: string,
+  mixFingerprint: string | undefined,
+): ProjectLibrary {
+  if (!library.projects.some((entry) => entry.projectId === projectId)) {
+    return library;
+  }
+
+  return {
+    ...library,
+    projects: library.projects.map((entry) =>
+      entry.projectId === projectId
+        ? { ...entry, mixFingerprint }
+        : entry,
+    ),
+  };
+}
+
+export function replaceLibraryProject(
+  library: ProjectLibrary,
+  project: AsmrProject,
+  now: Date = new Date(),
+  safetyLabel = "替换前",
+): ProjectLibrary {
+  const existing = library.projects.find(
+    (entry) => entry.projectId === project.project_id,
+  );
+  const protectedLibrary = existing
+    ? createProjectRevision(
+        library,
+        existing.projectId,
+        now,
+        safetyLabel,
+      )
+    : library;
+  const updated = updateLibraryProject(protectedLibrary, project, now);
+
+  return setLibraryProjectMixFingerprint(
+    updated,
+    project.project_id,
+    undefined,
+  );
 }
 
 function cleanTemplateProject(
@@ -467,13 +529,13 @@ export function restoreProjectRevision(
     projects: protectedLibrary.projects.map((item) =>
       item.projectId === projectId
         ? {
-            ...protectedEntry,
-            title: restoredProject.title,
-            updatedAt: now.toISOString(),
-            project: restoredProject,
+          ...protectedEntry,
+          title: restoredProject.title,
+          updatedAt: now.toISOString(),
+          project: restoredProject,
+          mixFingerprint: undefined,
           }
         : item,
     ),
   };
 }
-
