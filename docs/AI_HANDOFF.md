@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -400,6 +400,8 @@ Recent preview/workspace commits:
 ## Recommended Next Work
 
 Recommended next action: **ask the user to approve the next product direction**. The fixed 10-step roadmap is complete; no Step 11 exists.
+
+Before proposing that direction, read `docs/EFFECT_QUALITY_GAP_AUDIT.zh.md`. It records the post-MVP audit of solid foundations, explicit fallback implementations, gaps from the original product design, and the recommended improvement order. It is a handoff analysis, not an approved roadmap or Step 11.
 
 Current reality:
 
