@@ -18,15 +18,20 @@ import type {
   ProjectMixControl,
   SelectedClipPreview,
 } from "@/lib/asmr/generation-view";
+import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
+import type { AudioAnalysisStatus } from "@/lib/asmr/product-quality";
 
 import {
   GenerationSlotList,
   getGenerationSlotToneClassName,
 } from "./generation-slot-list";
-import { PreviewWaveformPlaceholder } from "./preview-waveform-placeholder";
+import { PreviewWaveform } from "./preview-waveform-placeholder";
 
 type PreviewLayerPanelProps = {
   preview: ProjectPreviewSummary;
+  audioAnalysis: AudioAnalysis | undefined;
+  audioAnalysisStatus: AudioAnalysisStatus;
+  audioAnalysisSourceLabel: string;
   projectMixControl: ProjectMixControl;
   selectedClipPreview: SelectedClipPreview;
   onCancelProjectMix: () => void;
@@ -125,6 +130,9 @@ function ProjectMixControls({
 
 export function PreviewLayerPanel({
   preview,
+  audioAnalysis,
+  audioAnalysisStatus,
+  audioAnalysisSourceLabel,
   projectMixControl,
   selectedClipPreview,
   onCancelProjectMix,
@@ -142,6 +150,20 @@ export function PreviewLayerPanel({
     { label: "待生成", value: preview.pendingClipCount },
     { label: "可预览", value: preview.generatedClipCount },
   ];
+  const waveformBars =
+    audioAnalysisStatus === "ready" && audioAnalysis
+      ? audioAnalysis.bars
+      : preview.waveformBars;
+  const waveformLabel =
+    audioAnalysisStatus === "ready"
+      ? audioAnalysisSourceLabel
+      : audioAnalysisStatus === "loading"
+        ? "正在分析真实 WAV"
+        : audioAnalysisStatus === "error"
+          ? "真实波形不可用"
+          : preview.realAudioCount > 0
+            ? "选择可试听音频"
+            : "音频尚未生成";
 
   return (
     <aside
@@ -154,7 +176,7 @@ export function PreviewLayerPanel({
             <RadioTower className="h-4 w-4 shrink-0" aria-hidden="true" />
             <h2 className="truncate">{preview.previewTitle}</h2>
           </div>
-          <p className="mt-1 text-xs text-studio-muted">真实音频尚未生成</p>
+          <p className="mt-1 text-xs text-studio-muted">{waveformLabel}</p>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -188,9 +210,11 @@ export function PreviewLayerPanel({
       />
 
       <div className="mt-3">
-        <PreviewWaveformPlaceholder
-          bars={preview.waveformBars}
+        <PreviewWaveform
+          bars={waveformBars}
           tone={preview.statusTone}
+          label={waveformLabel}
+          loading={audioAnalysisStatus === "loading"}
         />
       </div>
 

@@ -1,8 +1,10 @@
 import clsx from "clsx";
 
-type PreviewWaveformPlaceholderProps = {
+type PreviewWaveformProps = {
   bars: number[];
   tone?: "neutral" | "accent" | "ok" | "warn";
+  label: string;
+  loading?: boolean;
 };
 
 const waveformToneClasses = {
@@ -23,20 +25,22 @@ const waveformToneClasses = {
     bar: "bg-amber-300/70",
   },
 } satisfies Record<
-  NonNullable<PreviewWaveformPlaceholderProps["tone"]>,
+  NonNullable<PreviewWaveformProps["tone"]>,
   { panel: string; bar: string }
 >;
 
-export function PreviewWaveformPlaceholder({
+export function PreviewWaveform({
   bars,
   tone = "neutral",
-}: PreviewWaveformPlaceholderProps) {
+  label,
+  loading = false,
+}: PreviewWaveformProps) {
   const toneClasses = waveformToneClasses[tone];
 
   return (
     <div
       role="img"
-      aria-label="预览波形占位"
+      aria-label={label}
       className={clsx(
         "flex h-20 items-center gap-1.5 rounded-lg border px-3 py-2",
         toneClasses.panel,
@@ -50,8 +54,9 @@ export function PreviewWaveformPlaceholder({
           <span
             key={`${bar}-${index}`}
             className={clsx(
-              "min-h-1 flex-1 rounded-full shadow-[0_0_12px_rgba(255,255,255,0.04)]",
+              "min-h-1 flex-1 rounded-full shadow-[0_0_12px_rgba(255,255,255,0.04)] transition-[height,opacity]",
               toneClasses.bar,
+              loading && "animate-pulse opacity-45",
             )}
             style={{ height: `${bar}%` }}
           />

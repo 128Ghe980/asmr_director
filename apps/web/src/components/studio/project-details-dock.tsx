@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
+import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
 import type {
   ProjectMixControl,
   SelectedClipPreview,
@@ -16,22 +17,33 @@ import type {
   ProjectWorkspaceMetadataRow,
   ProjectWorkspaceSummary,
 } from "@/lib/asmr/project-summary";
+import type { AudioAnalysisStatus, ProductQualityReport } from "@/lib/asmr/product-quality";
+import type { ProjectRevision } from "@/lib/asmr/project-library";
 
 import { PreviewLayerPanel } from "./preview-layer-panel";
+import { ProjectQualityPanel } from "./project-quality-panel";
 import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
+import { ProjectVersionPanel } from "./project-version-panel";
 
 type ProjectDetailsDockProps = {
   collapsed: boolean;
   panelId: string;
   summary: ProjectWorkspaceSummary;
   preview: ProjectPreviewSummary;
+  audioAnalysis: AudioAnalysis | undefined;
+  audioAnalysisStatus: AudioAnalysisStatus;
+  audioAnalysisSourceLabel: string;
   projectMixControl: ProjectMixControl;
+  qualityReport: ProductQualityReport;
+  revisions: ProjectRevision[];
   selectedClipPreview: SelectedClipPreview;
   onCancelProjectMix: () => void;
   onDownloadProjectMix: () => void;
   onGenerateProjectMix: () => void;
   onPlayProjectMix: () => void;
   onPlaySelectedClip: () => void;
+  onCreateRevision: () => void;
+  onRestoreRevision: (revisionId: string) => void;
   onToggle: () => void;
 };
 
@@ -58,13 +70,20 @@ export function ProjectDetailsDock({
   panelId,
   summary,
   preview,
+  audioAnalysis,
+  audioAnalysisStatus,
+  audioAnalysisSourceLabel,
   projectMixControl,
+  qualityReport,
+  revisions,
   selectedClipPreview,
   onCancelProjectMix,
   onDownloadProjectMix,
   onGenerateProjectMix,
   onPlayProjectMix,
   onPlaySelectedClip,
+  onCreateRevision,
+  onRestoreRevision,
   onToggle,
 }: ProjectDetailsDockProps) {
   const toggleLabel = collapsed
@@ -106,6 +125,9 @@ export function ProjectDetailsDock({
         <div className="mt-4 space-y-3">
           <PreviewLayerPanel
             preview={preview}
+            audioAnalysis={audioAnalysis}
+            audioAnalysisStatus={audioAnalysisStatus}
+            audioAnalysisSourceLabel={audioAnalysisSourceLabel}
             projectMixControl={projectMixControl}
             selectedClipPreview={selectedClipPreview}
             onCancelProjectMix={onCancelProjectMix}
@@ -113,6 +135,14 @@ export function ProjectDetailsDock({
             onGenerateProjectMix={onGenerateProjectMix}
             onPlayProjectMix={onPlayProjectMix}
             onPlaySelectedClip={onPlaySelectedClip}
+          />
+
+          <ProjectQualityPanel report={qualityReport} />
+
+          <ProjectVersionPanel
+            revisions={revisions}
+            onCreate={onCreateRevision}
+            onRestore={onRestoreRevision}
           />
 
           <section className="rounded-lg border border-studio-line bg-white/[0.025] p-3">

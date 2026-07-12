@@ -43,17 +43,33 @@ import { getGenerationView } from "@/lib/asmr/generation-view";
 import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
+import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
+import {
+  createInitialProjectLibrary,
+  createLibraryProject,
+  createProjectRevision,
+  deleteLibraryProject,
+  duplicateLibraryProject,
+  getCurrentLibraryEntry,
+  getProjectLibrarySummaries,
+  loadProjectLibrary,
+  restoreProjectRevision,
+  saveProjectLibrary,
+  selectLibraryProject,
+  updateLibraryProject,
+} from "@/lib/asmr/project-library";
 import {
   commitProjectMixFailure,
   commitProjectMixSuccess,
 } from "@/lib/asmr/project-mix-state";
 import {
-  clearSavedProject,
-  loadSavedProject,
   parseImportedProject,
-  saveProject,
   serializeProject,
 } from "@/lib/asmr/project-persistence";
+import {
+  getProductQualityReport,
+  type AudioAnalysisStatus,
+} from "@/lib/asmr/product-quality";
 import { getProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
@@ -125,10 +141,15 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
 
 export function StudioApp({ project }: StudioAppProps) {
   const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
+  const [projectLibrary, setProjectLibrary] = useState(() =>
+    createInitialProjectLibrary(project),
+  );
   const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
   const [importError, setImportError] = useState<string>();
   const [restoreState, setRestoreState] = useState<"demo" | "restored">("demo");
-  const skipNextSaveRef = useRef(false);
+  const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysis>();
+  const [audioAnalysisStatus, setAudioAnalysisStatus] =
+    useState<AudioAnalysisStatus>("idle");
   const bridgeRef = useRef<GenerationBridge | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const generationSessionRef = useRef(0);
@@ -165,9 +186,15 @@ export function StudioApp({ project }: StudioAppProps) {
   );
   const selectedClipHasValidationIssues =
     Object.keys(selectedClipValidationIssues).length > 0;
+  const currentLibraryEntry = projectLibrary.projects.find(
+    (entry) => entry.projectId === editableProject.project_id,
+  );
   const isDirty = useMemo(
-    () => serializeProject(editableProject) !== serializeProject(project),
-    [editableProject, project],
+    () =>
+      !currentLibraryEntry ||
+      serializeProject(editableProject) !==
+        serializeProject(currentLibraryEntry.project),
+    [currentLibraryEntry, editableProject],
   );
   const workspaceSummary = useMemo(
     () =>
@@ -199,6 +226,45 @@ export function StudioApp({ project }: StudioAppProps) {
   const previewSummary = generationView.preview;
   const displayProject = generationView.displayProject;
   const displaySelectedClip = generationView.displaySelectedClip ?? selectedClip;
+  const projectMixUri = generationView.projectMixControl.uri?.startsWith(
+    "asset://mix/",
+  )
+    ? generationView.projectMixControl.uri
+    : undefined;
+  const selectedClipUri = generationView.selectedClipPreview.uri?.startsWith(
+    "asset://clip/",
+  )
+    ? generationView.selectedClipPreview.uri
+    : undefined;
+  const analysisUri = projectMixUri ?? selectedClipUri;
+  const audioAnalysisSourceLabel = projectMixUri
+    ? "整段真实波形"
+    : selectedClipUri
+      ? "片段真实波形"
+      : "等待真实音频";
+  const qualityReport = useMemo(
+    () =>
+      getProductQualityReport({
+        project: editableProject,
+        validationIssueCount: validationIssues.length,
+        mixIsStale:
+          generationView.projectMixControl.statusLabel === "需重混",
+        analysisStatus: projectMixUri ? audioAnalysisStatus : "idle",
+        analysis: projectMixUri ? audioAnalysis : undefined,
+      }),
+    [
+      audioAnalysis,
+      audioAnalysisStatus,
+      editableProject,
+      generationView.projectMixControl.statusLabel,
+      projectMixUri,
+      validationIssues.length,
+    ],
+  );
+  const projectSummaries = useMemo(
+    () => getProjectLibrarySummaries(projectLibrary),
+    [projectLibrary],
+  );
 
   function getGenerationBridge() {
     if (bridgeRef.current === null) {
@@ -220,14 +286,24 @@ export function StudioApp({ project }: StudioAppProps) {
       }
 
       try {
-        const loadedProject = loadSavedProject(window.localStorage, {
-          fallbackProject: project,
-        });
+        const loadedLibrary = loadProjectLibrary(
+          window.localStorage,
+          project,
+        );
+        const loadedEntry = getCurrentLibraryEntry(loadedLibrary);
 
-        setEditableProject(loadedProject.project);
-        setRestoreState(loadedProject.restored ? "restored" : "demo");
-        setSelectedClipId(flattenClips(loadedProject.project)[0]?.id);
+        setProjectLibrary(loadedLibrary);
+        setEditableProject(loadedEntry.project);
+        setRestoreState(
+          loadedEntry.projectId === project.project_id &&
+            serializeProject(loadedEntry.project) === serializeProject(project)
+            ? "demo"
+            : "restored",
+        );
+        setSelectedClipId(flattenClips(loadedEntry.project)[0]?.id);
       } catch {
+        const fallbackLibrary = createInitialProjectLibrary(project);
+        setProjectLibrary(fallbackLibrary);
         setEditableProject(project);
         setRestoreState("demo");
         setSelectedClipId(flattenClips(project)[0]?.id);
@@ -246,17 +322,86 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
-    if (skipNextSaveRef.current) {
-      skipNextSaveRef.current = false;
-      return;
+    let isCancelled = false;
+
+    queueMicrotask(() => {
+      if (isCancelled) {
+        return;
+      }
+
+      setProjectLibrary((currentLibrary) => {
+        const nextLibrary = updateLibraryProject(
+          currentLibrary,
+          editableProject,
+        );
+
+        try {
+          saveProjectLibrary(window.localStorage, nextLibrary);
+        } catch {
+          // Browser storage can be unavailable in restrictive contexts.
+        }
+
+        return nextLibrary;
+      });
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [editableProject, hasLoadedStorage]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    if (!analysisUri) {
+      queueMicrotask(() => {
+        if (!controller.signal.aborted) {
+          setAudioAnalysis(undefined);
+          setAudioAnalysisStatus("idle");
+        }
+      });
+
+      return () => controller.abort();
     }
 
-    try {
-      saveProject(window.localStorage, editableProject);
-    } catch {
-      // Browser storage can be unavailable in restrictive contexts.
-    }
-  }, [editableProject, hasLoadedStorage]);
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) {
+        setAudioAnalysis(undefined);
+        setAudioAnalysisStatus("loading");
+      }
+    });
+
+    void fetch(
+      `/api/assets/analysis?uri=${encodeURIComponent(analysisUri)}&bars=64`,
+      { signal: controller.signal },
+    )
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Audio analysis failed");
+        }
+
+        return (await response.json()) as { analysis?: AudioAnalysis };
+      })
+      .then((body) => {
+        if (!body.analysis) {
+          throw new Error("Audio analysis missing");
+        }
+
+        setAudioAnalysis(body.analysis);
+        setAudioAnalysisStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        void error;
+        setAudioAnalysis(undefined);
+        setAudioAnalysisStatus("error");
+      });
+
+    return () => controller.abort();
+  }, [analysisUri]);
 
   useEffect(() => {
     generationRuntimeStateRef.current = generationRuntimeState;
@@ -309,6 +454,30 @@ export function StudioApp({ project }: StudioAppProps) {
     setProjectMixFingerprint(undefined);
     audioRef.current?.pause();
     audioRef.current = null;
+  }
+
+  function persistLibrary(nextLibrary: typeof projectLibrary) {
+    setProjectLibrary(nextLibrary);
+
+    try {
+      saveProjectLibrary(window.localStorage, nextLibrary);
+    } catch {
+      // Keep the in-memory project library usable when storage is blocked.
+    }
+  }
+
+  function activateLibraryProject(
+    nextLibrary: typeof projectLibrary,
+    nextRestoreState: "demo" | "restored" = "restored",
+  ) {
+    const entry = getCurrentLibraryEntry(nextLibrary);
+
+    clearGenerationSession();
+    persistLibrary(nextLibrary);
+    setEditableProject(entry.project);
+    setSelectedClipId(flattenClips(entry.project)[0]?.id);
+    setRestoreState(nextRestoreState);
+    setImportError(undefined);
   }
 
   function setRuntimeState(nextState: typeof generationRuntimeStateRef.current) {
@@ -726,6 +895,90 @@ export function StudioApp({ project }: StudioAppProps) {
     setImportError(undefined);
   }
 
+  function getLibraryWithCurrentProject() {
+    return updateLibraryProject(projectLibrary, editableProject);
+  }
+
+  function handleSelectProject(projectId: string) {
+    if (projectId === editableProject.project_id) {
+      return;
+    }
+
+    const protectedLibrary = createProjectRevision(
+      getLibraryWithCurrentProject(),
+      editableProject.project_id,
+      new Date(),
+      "切换前",
+    );
+    activateLibraryProject(selectLibraryProject(protectedLibrary, projectId));
+  }
+
+  function handleCreateProject() {
+    const protectedLibrary = createProjectRevision(
+      getLibraryWithCurrentProject(),
+      editableProject.project_id,
+      new Date(),
+      "切换前",
+    );
+    activateLibraryProject(createLibraryProject(protectedLibrary, project));
+  }
+
+  function handleDuplicateProject() {
+    const baseLibrary = getLibraryWithCurrentProject();
+    activateLibraryProject(
+      duplicateLibraryProject(
+        baseLibrary,
+        editableProject.project_id,
+        new Date(),
+      ),
+    );
+  }
+
+  function handleDeleteProject(projectId: string) {
+    const target = projectLibrary.projects.find(
+      (entry) => entry.projectId === projectId,
+    );
+
+    if (
+      !target ||
+      projectLibrary.projects.length <= 1 ||
+      !window.confirm(`删除“${target.title}”？此操作不会删除已生成的音频文件。`)
+    ) {
+      return;
+    }
+
+    const nextLibrary = deleteLibraryProject(
+      getLibraryWithCurrentProject(),
+      projectId,
+    );
+
+    if (projectId === editableProject.project_id) {
+      activateLibraryProject(nextLibrary);
+    } else {
+      persistLibrary(nextLibrary);
+    }
+  }
+
+  function handleCreateRevision() {
+    const nextLibrary = createProjectRevision(
+      getLibraryWithCurrentProject(),
+      editableProject.project_id,
+      new Date(),
+      "手动版本",
+    );
+    persistLibrary(nextLibrary);
+  }
+
+  function handleRestoreRevision(revisionId: string) {
+    const nextLibrary = restoreProjectRevision(
+      getLibraryWithCurrentProject(),
+      editableProject.project_id,
+      revisionId,
+      new Date(),
+    );
+    activateLibraryProject(nextLibrary);
+  }
+
   function handleImportJson(text: string) {
     const importedProject = parseImportedProject(text);
 
@@ -734,47 +987,65 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
-    clearGenerationSession();
-    setEditableProject(importedProject.project);
-    setSelectedClipId(flattenClips(importedProject.project)[0]?.id);
-    setRestoreState("restored");
-    setImportError(undefined);
+    let nextLibrary = getLibraryWithCurrentProject();
+
+    if (importedProject.project.project_id === editableProject.project_id) {
+      nextLibrary = createProjectRevision(
+        nextLibrary,
+        editableProject.project_id,
+        new Date(),
+        "导入前",
+      );
+    }
+
+    nextLibrary = updateLibraryProject(nextLibrary, importedProject.project);
+    activateLibraryProject(nextLibrary);
   }
 
   function handleResetDemo() {
-    try {
-      clearSavedProject(window.localStorage);
-    } catch {
-      // Reset should still restore the in-memory demo when storage is blocked.
-    }
+    const protectedLibrary = createProjectRevision(
+      getLibraryWithCurrentProject(),
+      editableProject.project_id,
+      new Date(),
+      "重置前",
+    );
+    const resetProject = {
+      ...project,
+      project_id: editableProject.project_id,
+    };
+    const nextLibrary = updateLibraryProject(protectedLibrary, resetProject);
 
-    setEditableProject((currentProject) => {
-      skipNextSaveRef.current =
-        serializeProject(currentProject) !== serializeProject(project);
-
-      return project;
-    });
-    clearGenerationSession();
-    setSelectedClipId(flattenClips(project)[0]?.id);
-    setRestoreState("demo");
-    setImportError(undefined);
+    activateLibraryProject(nextLibrary, "demo");
   }
 
   return (
     <ProjectWorkspace
       importError={importError}
+      currentProjectId={projectLibrary.currentProjectId}
+      projects={projectSummaries}
       summary={workspaceSummary}
       preview={previewSummary}
+      audioAnalysis={audioAnalysis}
+      audioAnalysisStatus={audioAnalysisStatus}
+      audioAnalysisSourceLabel={audioAnalysisSourceLabel}
       projectMixControl={generationView.projectMixControl}
+      qualityReport={qualityReport}
+      revisions={currentLibraryEntry?.revisions ?? []}
       selectedClipPreview={generationView.selectedClipPreview}
       onCancelProjectMix={handleCancelProjectMix}
+      onCreateProject={handleCreateProject}
+      onCreateRevision={handleCreateRevision}
+      onDeleteProject={handleDeleteProject}
       onDownloadProjectMix={handleDownloadProjectMix}
+      onDuplicateProject={handleDuplicateProject}
       onExportJson={() => exportProjectJson(editableProject)}
       onGenerateProjectMix={handleGenerateProjectMix}
       onImportJson={handleImportJson}
       onPlayProjectMix={handlePlayProjectMix}
       onPlaySelectedClip={handlePlaySelectedClip}
+      onRestoreRevision={handleRestoreRevision}
       onResetDemo={handleResetDemo}
+      onSelectProject={handleSelectProject}
     >
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(220px,0.86fr)_minmax(0,1.26fr)_minmax(220px,0.86fr)]">
         <div className="min-h-[520px] xl:h-[calc(100vh-152px)]">
