@@ -10,6 +10,57 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
 如果是新的 AI agent 接手，或者当前会话发生上下文压缩，应先读 `docs/AI_HANDOFF.md`。那份文件更短、更稳定，专门服务“快速恢复当前状态和下一步”。
 
+## 2026-07-12 - Roadmap Step 10 产品工作流硬化完成
+
+本轮在第 7-9 步真实生成与真实混音成立后，完成了固定 roadmap 的最后一步。设计选择本地优先产品闭环，没有把云端、账号、计费、发布或协作伪装成已经完成的本地能力。
+
+设计与计划：
+
+- `docs/superpowers/specs/2026-07-12-product-workflow-hardening-design.md`
+- `docs/superpowers/specs/2026-07-12-product-workflow-hardening-design.zh.md`
+- `docs/superpowers/plans/2026-07-12-product-workflow-hardening.md`
+
+已完成内容：
+
+- 新增 `ai-asmr-studio:v1:project-library` 本地项目库，自动迁移旧 `ai-asmr-studio:v0:project` 单项目数据。
+- 左侧项目栏从占位文案升级为真实项目列表，支持新建、切换、复制和删除；删除最后一个项目被禁止。
+- 新增版本记录：手动 `留版本`，切换/覆盖/重置/恢复前安全版本，内容去重，每项目最多 12 个，右栏显示最近 5 个。
+- 项目库元数据保持在 Project JSON 之外；导出的 Timeline DSL 不包含项目列表、revision、waveform、analysis 或 runtime job。
+- 新增 `GET /api/assets/analysis`，只接受本地 `asset://clip/...` / `asset://mix/...`，解析 PCM16 WAV 并返回真实 peak bars、时长、采样率、声道、peak/RMS dBFS 和削波采样数。
+- Preview Layer 在真实资产存在时显示真实波形；无资产时才显示待生成占位。
+- 右侧详情新增质量检查，覆盖项目 schema、片段素材、mix 新鲜度、音频分析、声道和峰值余量。
+- 本地保存失败会显示 `本地保存不可用`；不再把内存态误报成已经持久化。
+- 成功 mix fingerprint 写入项目库元数据并随项目切换/重载恢复；未知 fingerprint 保守显示 `需重混`，但旧 WAV 仍可试听/下载。
+
+独立代码审查与修复：
+
+- 审查发现并修复本地保存失败误报、项目切换丢失 mix 新鲜度、同 ID 导入覆盖非当前项目无安全版本三项数据完整性问题。
+- 同时补齐 revision parent project ID 不变量、analysis API 缺参数 400、精确 PCM 饱和判断和全范围 `git diff --check`。
+- 每项行为先增加失败测试，再实现修复。
+
+浏览器验收：
+
+- 新建项目后项目数由 1 变 2，原项目自动产生“切换前”版本。
+- 手动留版本后把选中 clip 音量从 `-31` 改为 `-20`，恢复后回到 `-31`，同时新增“恢复前”版本。
+- 复制项目后项目数变为 3，副本使用独立 collision-safe ID。
+- 真实 showcase mix `asset://mix/showcase_step9_mix_001_wav_20260711T210548715Z_c39775de` 显示 64 段真实波形，其中 19 段非零；分析为 32.0kHz、32.0 秒、stereo、peak `-6.1 dBFS`、RMS `-35.2 dBFS`。
+- 未持久化 fingerprint 的导入 mix 会显示 `项目已修改，需重混`，同时真实 waveform/技术分析仍可用。
+- 桌面专注模式折叠后布局为 56px / center / 56px；390px 窄屏左右区域按全宽顺序排列；均无横向溢出。
+- 桌面与窄屏浏览器 console error/warning 均为空。
+
+自动化验证：
+
+- `npm.cmd run test --prefix apps/web`：29 个 test files、184 个 tests 通过。
+- `npm.cmd run lint --prefix apps/web`：通过。
+- `npm.cmd run build --prefix apps/web -- --webpack`：通过；已知 SWC native binding warning 仍存在，但 Webpack/WASM build exit code 为 0。
+- `git diff --check 2e27aa3502148aee8006e7ba1d048f5e86f0d63b`：通过。
+
+路线状态：
+
+- `docs/ROADMAP.md` 的固定 10 步现已全部完成。
+- 没有批准的 Step 11。下一阶段必须由用户选择并批准，agent 不能把候选方向自行写成新 roadmap。
+- 云端持久化、账号、计费、发布、协作仍是未来可选产品化方向，不属于本轮已实现能力。
+
 ## 2026-07-12 - Roadmap Step 9 真实项目混音与导出完成
 
 本轮把第 9 步从“手动 runtime 整段试听实验”推进到产品内接线：工作台现在可以把已经生成的 `asset://clip/...` clip assets 按 Project Timeline DSL 混成真实 `asset://mix/...` WAV，并在 Preview Layer 提供整段试听和 WAV 下载入口。

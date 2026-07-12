@@ -6,7 +6,7 @@ Last updated: 2026-07-12
 
 ## 不可动摇的当前优先级
 
-当前最高优先事务是 **第 10 步：产品工作流硬化**。
+当前固定 10 步 roadmap 已全部完成。下一阶段尚未定义；任何新的顶层路线、Step 11 或产品优先级都需要用户批准，agent 不能自行续写。
 
 第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入，第 9 步已经完成真实项目混音与 WAV 导出接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
 
@@ -82,8 +82,21 @@ Last updated: 2026-07-12
      - 验证：`npm.cmd run test --prefix apps/web` 25 files / 158 tests 通过；`npm.cmd run lint --prefix apps/web` 通过；`npm.cmd run build --prefix apps/web -- --webpack` 通过；本地 API 验收生成 `asset://mix/step9_verify_project_wav_20260711T203915972Z_697118df`，播放接口返回 `audio/wav`、`RIFF`。
 
 10. **产品工作流硬化**
-    - Status: Current / Next.
-    - Outcome: 在真实生成和真实混音成立后，再推进 project library、真实 waveform rendering、quality checks、versioning、cloud persistence、account system、billing、publishing、collaboration 等产品化能力。
+    - Status: Completed.
+    - Outcome: 已完成本地优先的产品工作流闭环：多项目库、旧单项目存储迁移、项目新建/切换/复制/删除、显式版本与破坏性操作前安全版本、真实 WAV waveform/技术分析、生成与导出质量检查，以及本地保存失败提示。云端持久化、账号、计费、发布、协作属于部署与商业化扩展，不冒充本地 MVP 已完成能力，也不自动构成新的顶层 roadmap。
+    - Acceptance criteria:
+      - 左侧项目栏显示真实本地项目列表并支持新建、切换、复制和安全删除。
+      - 当前项目自动保存；用户可以留版本并恢复，覆盖/重置/切换前保留去重安全版本。
+      - Preview Layer 对真实 `asset://clip/...` / `asset://mix/...` WAV 显示真实峰值波形，不再把伪波形当作真实结果。
+      - 质量检查同时显示 schema、素材齐全度、mix 新鲜度、音频分析、声道和峰值余量。
+      - 项目 JSON 不混入项目库、版本、波形或运行时分析数据。
+      - 本地保存失败时明确显示不可用，未知 mix fingerprint 保守标为需重混。
+    - 2026-07-12 完成记录:
+      - 新增版本化 `ai-asmr-studio:v1:project-library`，自动迁移旧 `v0` 单项目 key；每个项目最多保留 12 个版本，右栏显示最近 5 个。
+      - 新增 `GET /api/assets/analysis` 与 PCM WAV 分析，返回 16-160 段真实 peak bars、duration、sample rate、channels、peak/RMS dBFS 和 clipped sample count。
+      - 左侧占位项目栏升级为真实项目库；右侧新增质量检查与版本记录；Preview Layer 接入真实 waveform。
+      - 独立代码审查后补齐本地保存失败态、持久化 mix fingerprint、非当前项目同 ID 导入安全版本、revision project ID 不变量、API 400 分类和精确 PCM 饱和判断。
+      - 验证：`npm.cmd run test --prefix apps/web` 29 files / 184 tests 通过；`npm.cmd run lint --prefix apps/web` 通过；`npm.cmd run build --prefix apps/web -- --webpack` 通过；桌面和 390px 浏览器验收无横向溢出、无 console error/warning，真实 showcase WAV 显示 64 段波形并读出 32kHz stereo 技术指标。
 
 ## Roadmap 修改协议
 
