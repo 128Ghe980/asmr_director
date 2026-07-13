@@ -1,12 +1,22 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 不可动摇的当前优先级
 
-当前固定 10 步 roadmap 已全部完成。下一阶段尚未定义；任何新的顶层路线、Step 11 或产品优先级都需要用户批准，agent 不能自行续写。
+当前固定 10 步 roadmap 已全部完成。用户已于 2026-07-13 批准下一阶段优先解决音频实际听感，正式进入“人声导演与真实 ASMR 音效质量 V1”。本阶段不把新增 adapter、API route 或 provider wrapper 当成成果；只有实际试听能辨认表演、距离、方向和材质差异才算完成。
+
+## 当前阶段：人声导演与真实 ASMR 音效质量 V1
+
+- Status: Approved; Round 1 planned, implementation not started.
+- Design: `docs/superpowers/specs/2026-07-13-audio-director-and-sfx-quality-v1-design.zh.md`
+- Round 1 plan: `docs/superpowers/plans/2026-07-13-audio-quality-v1-round1-implementation-plan.md`
+- 主线 1：让“更柔”、近/远、左右、水平环绕与垂直环绕成为真实可听的导演动作，而不是只改文字字段、音量或普通声像。
+- 主线 2：以免费授权素材、免费本地 AI 和明确标注的基础合成扩大 ASMR 音效质量与种类；付费方案暂缓，不要求用户录音。
+- 第一轮固定样片：一句人声、衣物摩擦、指尖轻敲、雨声；完成更柔、近/远、完整水平环绕、左—上—右—下垂直环绕、三种来源比较、采用、撤回与重混。
+- 第一轮必须通过用户耳机试听，才进入全部动作和 8 类音效扩展。
 
 第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入，第 9 步已经完成真实项目混音与 WAV 导出接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
 
