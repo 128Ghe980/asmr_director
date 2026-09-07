@@ -1,6 +1,6 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-07-13
+Last updated: 2026-09-07
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
@@ -10,13 +10,24 @@ Last updated: 2026-07-13
 
 ## 当前阶段：人声导演与真实 ASMR 音效质量 V1
 
-- Status: Approved; Round 1 planned, implementation not started.
+- Status: In progress; independent listening experiments have selected a current voice/long-text recipe, but product integration and the real SFX expansion are not complete.
 - Design: `docs/superpowers/specs/2026-07-13-audio-director-and-sfx-quality-v1-design.zh.md`
 - Round 1 plan: `docs/superpowers/plans/2026-07-13-audio-quality-v1-round1-implementation-plan.md`
 - 主线 1：让“更柔”、近/远、左右、水平环绕与垂直环绕成为真实可听的导演动作，而不是只改文字字段、音量或普通声像。
 - 主线 2：以免费授权素材、免费本地 AI 和明确标注的基础合成扩大 ASMR 音效质量与种类；付费方案暂缓，不要求用户录音。
 - 第一轮固定样片：一句人声、衣物摩擦、指尖轻敲、雨声；完成更柔、近/远、完整水平环绕、左—上—右—下垂直环绕、三种来源比较、采用、撤回与重混。
 - 第一轮必须通过用户耳机试听，才进入全部动作和 8 类音效扩展。
+
+### 2026-09-07 进度记录
+
+- 已完成多轮 GPT-SoVITS、CosyVoice3 与 VoxCPM2 人声试听。对当前温柔中文参考，VoxCPM2 的整体柔和表达明显优于现有 GPT-SoVITS 方案，因此保留为可选人声引擎；但自然语言 `soft` / `whisper` 指令本身仍不稳定，不能宣布通用“更柔”已经完成。
+- 已确认当前温柔中文长文本首选：语义组最初由本地 Ollama `qwen3:1.7b` 划分，随后 DeepSeek V4 独立复核得到相同分组；每次把当前语义组放到长文本开头，后接剩余全文，完整生成后只截取开头语义组；最后一组单独生成真正结尾；组间使用 DeepSeek 给出的短/中/长分类与相邻组真实停顿计算。当前试听成品的五处组间停顿为 `350 / 350 / 350 / 440 / 290 ms`。
+- 已确认“更近”采用“贴耳说话姿态的重生成 + V2 空间处理”的组合；单独的人声方向提示“朝左耳说/朝右耳说”无法产生可辨认方向，左右与环绕仍必须由空间处理完成。
+- 水平、垂直及左/右侧环绕已有可用实验结果，垂直闭环的过渡问题已修正；这些仍是独立试听实现，尚未接入工作台正式生成流程。
+- 免费、本地优先的限制不变；DeepSeek 属于可选外部文本分析，必须保留免费本地分组和固定停顿兜底。程序噪声可以继续作为基础 SFX 兜底，但真实 ASMR 音效种类和质量仍未解决。
+- 当前结论与证据见 `docs/superpowers/specs/2026-07-26-voxcpm2-evaluation-design.zh.md` 和 `I:\AI\voxcpm2-evaluation\evidence\LISTENING_RESULTS.zh.md`。
+
+下一检查点不是继续堆试听脚本，而是先补完尚待用户确认的一条默认停顿对照，然后把已选的人声方案整理成现有 Generation Bridge 下的可选 Provider 和可配置生成模式。产品接入必须保留候选重生成、试听、采用、撤回和重混，不把单次好 seed 当成稳定能力。真实 SFX 扩展仍是同一阶段的未完成主线。
 
 第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入，第 9 步已经完成真实项目混音与 WAV 导出接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
 

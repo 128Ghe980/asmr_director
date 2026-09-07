@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-07-13
+Last updated: 2026-09-07
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -70,9 +70,86 @@ Current user-facing capabilities:
 - Persists successful mix fingerprints in project-library metadata so stale or unverified mixes remain marked `需重混` after switching or reload.
 - Surfaces `本地保存不可用` when browser persistence fails instead of claiming the project is saved.
 
-Current product status: all fixed roadmap Steps 1-10 are implemented. Voice clips use local GPT-SoVITS; breath, SFX, and ambience clips use the local procedural WAV renderer. All generated clips write stable `asset://clip/...` references into Project JSON and are served through the local clip asset playback API. Full-project mixes write stable `asset://mix/...` references into `exports[type="wav"]` and are served through the local mix asset playback API. Step 10 adds the local product-management layer without changing the Timeline DSL schema.
+Current product status: all fixed roadmap Steps 1-10 are implemented. Voice clips still use local GPT-SoVITS; breath, SFX, and ambience clips still use the local procedural WAV renderer. All generated clips write stable `asset://clip/...` references into Project JSON and are served through the local clip asset playback API. Full-project mixes write stable `asset://mix/...` references into `exports[type="wav"]` and are served through the local mix asset playback API. Step 10 adds the local product-management layer without changing the Timeline DSL schema.
 
-No Step 11 or next top-level roadmap is approved. When asked what comes next, read the canonical roadmap and current project reality, then ask the user to choose/approve the next product direction instead of inventing one.
+The user approved the current post-roadmap stage, **人声导演与真实 ASMR 音效质量 V1**, on 2026-07-13. It is an approved named stage, not a numbered Step 11. Independent audio experiments have progressed substantially, but none of the new VoxCPM2, semantic grouping, adaptive pause, or improved spatial recipes are wired into the checked-in app yet.
+
+## Audio Quality V1 Experiment Handoff (2026-09-07)
+
+### Current status boundary
+
+- The experiment assets, scripts, manifests, and listening records live outside Git under `I:\AI\voxcpm2-evaluation`.
+- The checked-in product still generates voice through GPT-SoVITS and non-voice clips through the procedural renderer.
+- Therefore the stage is `in progress`: a current experimental recipe has been selected, but product integration, stable automation, and real SFX expansion are not complete.
+
+### User-approved direction and constraints
+
+- Prioritize actual audible quality over adding UI or another bridge layer.
+- Keep solutions free/local where possible. Paid providers are postponed, and the user cannot provide newly recorded material.
+- Keep VoxCPM2 as a user-selectable candidate. For the tested soft Chinese reference, the user judged it substantially better than the current GPT-SoVITS result, but generic `soft` / `whisper` prompts remain too random to count as a stable director action.
+- Let users choose the normal/soft reference and Reference-only/reference-text mode in the generation UI instead of hiding those choices.
+- Use post-processing for left/right, horizontal/vertical motion, and distance. Direct prompts such as “朝左耳说” and “朝右耳说” produced no audible dry-voice direction and must not be presented as the source of direction.
+- The accepted “更近” experiment is a combination: regenerate a lower, more intimate speaking posture, then apply the stronger V2 spatial treatment. The dry regeneration alone did not create a strong physical near-field effect.
+- Procedural noise can remain a clearly labelled fallback, but the limited range and realism of ASMR SFX are still an unresolved main-line problem.
+
+### Current best soft-Chinese long-text recipe
+
+Current accepted output:
+
+`I:\AI\voxcpm2-evaluation\listening\longtext-deepseek-class-local-pause-20260904\03_deepseek_class_local_rule.wav`
+
+Use these exact meanings; do not shorten them to the ambiguous phrase “split generation”:
+
+1. VoxCPM2 runs locally from the GGUF runtime with `gpu_layers=0` / low-VRAM mode. The accepted source material used `cfg=2`, `timesteps=10`, and `temperature=1` with `references\soft-16k-s16.wav`. Groups 1–5 came from long-opening runs with `seed=7901` and `max_steps=420`; the true-ending run used `seed=8201` and `max_steps=220`. These seed/cap values record exact sample provenance, not product defaults.
+2. Supply the accurate reference transcript with its punctuation replaced by spaces and preserve one trailing ASCII space.
+3. The six-group layout was first produced by local Ollama `qwen3:1.7b`; DeepSeek API (`deepseek-v4-pro`) later independently returned the same groups: `1–3 / 4–5 / 6–8 / 9–10 / 11–12 / 13–16`. The short/medium/long boundary classes used in the final pause rule are from DeepSeek. Both models analyze text only; VoxCPM2 generates the audio.
+4. For each non-final group, put the **current semantic group at the start**, append the remaining full text, generate the complete long continuation, then keep only that opening semantic group. Do not synthesize the group as an isolated short prompt. In the exact experiment harness, fixed neutral continuation clauses were also appended after the remaining source text so every run stayed long (16 clauses, roughly 177–196 Chinese characters). Whether this padding is necessary is not yet proven and must be tested during product design. Generate the last group as a true ending with natural final punctuation.
+5. Main long-opening candidates connect short clauses with Chinese ellipses. The exact seed8201 ending target is `……我会一直陪在这里……不催促你，也不会突然离开，直到困意自然地靠近。`: it keeps an opening ellipsis, a linking ellipsis after “这里”, natural commas, and a terminal full stop.
+6. Keep multiple candidates and reject incomplete text, large inhalations, electrical noise, rising pitch, voice drift, or bad seams. A single seed is not a stable capability.
+7. The accepted sample is a hybrid: groups 1–4 follow the long-opening rule; group 5 is a manual clean replacement taken from the middle of another continuous long generation because the normal candidate read “一点一点变得轻松” poorly. Groups 1–5 originate from seed7901 long-opening runs (group 5 from the middle of the clause-09-start run), while group 6 uses the accepted seed8201 true ending. These seeds document this sample's provenance; they are not recommended fixed defaults.
+8. Only after the voice groups are selected should the whole result receive one loudness adjustment.
+
+Pause rule selected by the user:
+
+- In the accepted class-local output, retiming applies only to the five joins **between semantic groups**. The ten clause pauses inside those groups remain exactly as VoxCPM2 generated them; they are measurement/fallback evidence, not retiming targets. Do not silently expand this recipe to all 15 clause boundaries.
+- DeepSeek classifies each boundary as short, medium, or long. It does not choose milliseconds directly.
+- Class ranges/defaults are: short `120–260 ms` / default `180 ms`; medium `261–480 ms` / default `350 ms`; long `481–900 ms` / default `600 ms`.
+- For a join, separately average the real internal short-clause pauses in the preceding and following groups, then average those two group means equally.
+- If that value is inside the DeepSeek class range, use it. Otherwise use the mean of other measured natural pauses that have the same class and already lie inside its range. If none exist, use the class default. A measured `0 ms` participates in a group mean but is not a same-class fallback sample.
+- All five semantic-group joins in the accepted text were classified medium. The raw local values were `260 / 0 / 200 / 440 / 290 ms`; the first three were outside the medium range and had no valid same-class fallback, so the final joins are `350 / 350 / 350 / 440 / 290 ms`.
+- The user found both the fixed-350 and local versions natural and selected the local version overall because it is more adaptive.
+
+Primary records:
+
+- Chinese/English evaluation reports: `docs/superpowers/specs/2026-07-26-voxcpm2-evaluation-design.zh.md` and `.md`.
+- Key listening conclusions and evidence index: `I:\AI\voxcpm2-evaluation\evidence\LISTENING_RESULTS.zh.md`. It is not a turn-by-turn log of every experiment from 2026-08-12 through 2026-09-03; use the package READMEs and JSON evidence for those details.
+- Accepted-package README/READY: `I:\AI\voxcpm2-evaluation\listening\longtext-deepseek-class-local-pause-20260904`.
+- DeepSeek classifications: `I:\AI\voxcpm2-evaluation\evidence\longtext-deepseek-v4-pause-classes.json`.
+- Pause measurement: `I:\AI\voxcpm2-evaluation\evidence\longtext-deepseek-class-local-pause-measurement.json`.
+- Source-generation provenance: `I:\AI\voxcpm2-evaluation\evidence\longtext-clause16-long-openings-generation.json` and `longtext-api-semantic-hybrid-final-generation.json`.
+
+### One pending listening check
+
+The following comparison is technically ready but has **not** received user listening feedback:
+
+`I:\AI\voxcpm2-evaluation\listening\longtext-clause16-opening-default-pauses-20260904`
+
+- `01_original_long_generation_first_clause_only.wav` is the old 03 control.
+- `02_deepseek_default_pauses_safe_retime.wav` changes only the 15 clause-boundary timings to the DeepSeek class defaults. It does not run TTS or change gain.
+- It is a safe edge retime, not a simple silence insertion: 1525 ms of verified low-energy edges were removed and 700 ms of all-zero silence was inserted. A cropped side keeps at least an 80 ms word-edge guard and receives a 10 ms fade inside that guard; an edge with no safely removable leading quiet is left untrimmed. Spoken-body PCM is sample-exact.
+- READY, source hashes, 16/16 ASR coverage, no clipping, and boundary checks pass. Whole-file ASR wrote the last “困意” as “昆依”, while the source and retimed spoken-body PCM are identical; treat this as an ASR variation and still ask the user to verify the first/last sounds by ear.
+- Next-session listening question: which of 01/02 has more natural pauses; whether 02 clips any first or last sound; and which boundary is still too long or short.
+
+### Remaining risks and next-session entry
+
+- This is the current best result for one soft Chinese reference, one text, and manually selected takes. It is not a universal best setting.
+- Long-text generation still varies in inhalation, pace, pitch, timbre, and noise. Candidate generation plus automatic and human quality checks remain necessary.
+- DeepSeek may incur external cost. Product behavior must keep a free local semantic splitter and fixed pause defaults as fallbacks.
+- VoxCPM2 is not yet registered in the Generation Bridge, and its private parameters must not leak into the Timeline DSL.
+- Spatial recipes remain experiment scripts rather than product actions. Real SFX coverage remains limited.
+- Ignore the rejected `longtext-local-tempo-pause` packages, including `longtext-local-tempo-pause-rejected-gain-measurement-20260904`; one archived READY file still says `ready` and points at the old package root, but the method was rejected because it incorrectly used speed/milliseconds-per-character logic that the user did not request.
+
+Next session should first record the pending 01/02 listening result if the user provides it. Then it should turn the selected VoxCPM2 recipe into a focused product-integration design under the already approved Audio Quality V1 stage: optional Provider/mode controls, multi-candidate generation, semantic grouping, safe extraction, pause assembly, validation, accept/undo/remix, and local fallbacks. The checked-in app does **not** yet have a multi-candidate store/panel or explicit accept/undo flow; implement those approved boundaries while reusing the existing Generation Bridge, durable assets, playback/preview, project revisions, and remix infrastructure. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
 
 ## Real Generation Runtime Notes
 
@@ -399,25 +476,17 @@ Recent preview/workspace commits:
 
 ## Recommended Next Work
 
-Recommended next action: **ask the user to approve the next product direction**. The fixed 10-step roadmap is complete; no Step 11 exists.
+The approved current stage is **人声导演与真实 ASMR 音效质量 V1**. Do not ask the user to choose a new direction again.
 
-Before proposing that direction, read `docs/EFFECT_QUALITY_GAP_AUDIT.zh.md`. It records the post-MVP audit of solid foundations, explicit fallback implementations, gaps from the original product design, and the recommended improvement order. It is a handoff analysis, not an approved roadmap or Step 11.
+Immediate order:
 
-Current reality:
+1. If the user has listened to `longtext-clause16-opening-default-pauses-20260904`, record the 01/02 result without overriding the already accepted semantic-group recipe.
+2. Inspect the current Generation Bridge/provider code and write a focused bilingual integration design for optional VoxCPM2 generation. Implement the approved candidate/accept/undo boundaries; reuse the asset, playback/preview, project-revision, and remix infrastructure that actually exists today.
+3. Implement the selected soft-Chinese long-text route as an experimental option with multiple candidates, semantic grouping, safe extraction, adaptive/fallback pauses, and clear mode/reference controls. Keep GPT-SoVITS as a working fallback.
+4. Productize the already accepted spatial recipes without implying that direction comes from dry-voice prompts.
+5. Continue the unresolved real ASMR SFX library/local-generation work; retain procedural audio only as a labelled fallback.
 
-- Steps 1-10 are completed and recorded in `docs/ROADMAP.md`.
-- The product now has editing, real local generation, real local mix/export, multi-project management, revisions, real waveform analysis, and quality checks.
-- Remaining work is no longer a predetermined continuation of the original roadmap; it requires a product choice.
-
-Candidate directions to discuss, not approved roadmap steps:
-
-- Improve generated-audio quality and provider strategy, including better voice packs and non-procedural SFX/ambience.
-- Build true model-driven audio editing for director commands such as “更近/更柔”, instead of deterministic parameter presets.
-- Desktop/local-runtime packaging, asset cleanup, backup, and filesystem project storage.
-- Cloud/account/publishing/collaboration productization.
-- Deeper timeline editing or export formats, only if the user wants to move toward a DAW-like product.
-
-Before coding any candidate, compare it with current code reality, write a focused bilingual design, and obtain user approval for the new top-level direction.
+The fixed roadmap still has no numbered Step 11. This work belongs to the approved named Audio Quality V1 stage. Before implementation, compare the experiment assumptions with current code reality and keep the checked-in docs synchronized.
 
 ## Initial Product Path
 
@@ -426,8 +495,9 @@ The canonical roadmap is `docs/ROADMAP.md`.
 Do not treat this file as a competing roadmap. Current summary only:
 
 - Completed: roadmap steps 1-10.
-- Current / next: no approved top-level step.
-- User approval is required before adding, naming, or ordering any next roadmap.
+- Current: approved `人声导演与真实 ASMR 音效质量 V1`, status `in progress`.
+- Next checkpoint: productize the selected experimental voice/long-text route, then continue the still-unresolved SFX main line.
+- No numbered Step 11 has been created. Any different new top-level direction still requires user approval.
 
 When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.
 

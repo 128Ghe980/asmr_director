@@ -2,6 +2,8 @@
 
 记录日期：2026-06-14
 
+最后更新：2026-09-07
+
 AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
 当前本地工作区路径（Codex desktop）：`D:\CodexWorkplace\asmr_director`。这是本机恢复线索，不是跨环境要求；换机器或换环境时以 repo 根目录为准。
@@ -9,6 +11,58 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 这份文档是当前项目的历史档案，用来保存我们已经聊好的产品判断、设计方向、实现进度和决策过程。
 
 如果是新的 AI agent 接手，或者当前会话发生上下文压缩，应先读 `docs/AI_HANDOFF.md`。那份文件更短、更稳定，专门服务“快速恢复当前状态和下一步”。
+
+## 2026-09-07 - 音频质量 V1 独立实验交接
+
+本轮对应已经批准的“人声导演与真实 ASMR 音效质量 V1”。状态为 `In progress`：独立试听已选出当前温柔中文长文本方案，但 VoxCPM2、语义分组、自适应停顿和改进空间方案都尚未接入 checked-in 产品；工作台目前仍使用 GPT-SoVITS 人声和程序合成非语音兜底。
+
+用户确认的方向：
+
+- 优先解决实际听感，不把 adapter、API route 或 UI 外壳当成音质成果。
+- 免费、本地优先；付费方案暂缓；不要求用户重新录音。
+- VoxCPM2 保留为可选人声引擎。对当前温柔中文参考，它整体明显优于现有 GPT-SoVITS 结果，但通用 `soft` / `whisper` 指令仍不稳定。
+- 正常/温柔参考、Reference-only/参考文本模式应在未来生成界面中允许用户选择。
+- “更近”采用贴耳说话姿态重生成与 V2 空间处理的组合；直接“朝左耳说/朝右耳说”的干声没有方向差异，左右与环绕必须由空间层完成。
+- 程序噪声保留为明确标注的 SFX 兜底，真实 ASMR 音效的种类与质量仍是未完成主线。
+
+当前温柔中文长文本首选：
+
+`I:\AI\voxcpm2-evaluation\listening\longtext-deepseek-class-local-pause-20260904\03_deepseek_class_local_rule.wav`
+
+方案要点：
+
+1. 本地 VoxCPM2 GGUF、`gpu_layers=0` / low-VRAM、温柔中文参考；准确参考文本的标点全部换为空格，末尾保留一个 ASCII 空格。第 1–5 组来源使用 `seed=7901`、`max_steps=420`，真结尾来源使用 `seed=8201`、`max_steps=220`；其余核心参数均为 `cfg=2`、`timesteps=10`、`temperature=1`。这些值用于复现本次成品，不是产品固定默认。
+2. 六组结构最初由本地 Ollama `qwen3:1.7b` 给出，DeepSeek V4 后来独立复核得到相同结果：`1–3 / 4–5 / 6–8 / 9–10 / 11–12 / 13–16`。
+3. 每次把“当前语义组”放到剩余长文本开头，完整生成后只截取开头的当前组；不是把组作为孤立短文本生成。原实验还在剩余正文后补固定中性延续句，使每次输入都维持约 177–196 字的长上下文；该补齐是否必要尚未单独验证。最后一组单独生成真正结尾，实际文本为 `……我会一直陪在这里……不催促你，也不会突然离开，直到困意自然地靠近。`，仍包含句首省略号和“这里”后的连接省略号。
+4. 当前成品第 1–5 组均来自 seed7901 的长开头生成，其中第 5 组因读音问题，改用从第 9 句开头的连续长生成中截取的中段；第 6 组使用已认可的 seed8201 结尾。这些 seed 只记录本次成品来源，不是建议锁定的全局默认值。
+5. 当前 class-local 成品只重定时 5 个语义组间连接；组内 10 个短句停顿保持 VoxCPM2 原样，只用于测量和兜底。DeepSeek 给短/中/长停顿类别；实际毫秒优先由前后两组内部停顿计算，越界时才找同类样本，仍无样本才使用默认 `180 / 350 / 600 ms`。不得把这条方案自动扩大成重排全部 15 个短句边界。
+6. 本次五处组间边界全为中停顿，最终为 `350 / 350 / 350 / 440 / 290 ms`。用户认为固定默认版与局部版都自然，综合选择局部版，因为更自适应。
+
+技术证据：
+
+- 试听包 READY、音频哈希、48 kHz mono PCM16、16/16 ASR、无削波均通过。
+- 三个停顿版本使用完全相同的六组人声 PCM，只改变组间全零静音。
+- 主要记录：`I:\AI\voxcpm2-evaluation\evidence\LISTENING_RESULTS.zh.md`、`longtext-deepseek-v4-pause-classes.json`、`longtext-deepseek-class-local-pause-measurement.json`、`longtext-clause16-long-openings-generation.json`、`longtext-api-semantic-hybrid-final-generation.json`。
+- 中英文评估报告已同步：`docs/superpowers/specs/2026-07-26-voxcpm2-evaluation-design.md` 与 `.zh.md`。
+
+尚待用户试听：
+
+`I:\AI\voxcpm2-evaluation\listening\longtext-clause16-opening-default-pauses-20260904`
+
+- 01 是旧 `03_long_generation_first_clause_only.wav` 原样对照；02 是 15 个短句边界采用类型默认值的安全重定时版。
+- 02 没有重新 TTS 或改增益；它安全裁除 1525 ms 已验证低能边缘、补入 700 ms 全零静音，并在保护区内做 10 ms 淡变。
+- 自动检查覆盖 16/16、无削波、正文 PCM 不变，但用户尚未判断停顿自然度和首尾听感，不能写成已采用。
+
+未完成与风险：
+
+- 当前最佳是一个参考、一个文本和人工挑选候选下的结论，不是通用最优，也不是稳定的一键流程。
+- 长文本仍会随机出现吸气、电流音、后半段变尖、语速或音色漂移；必须生成多个候选并做自动与人工质检。
+- DeepSeek 是可选外部服务，可能产生费用；产品必须保留本地分组与固定停顿兜底。
+- VoxCPM2 尚未注册进 Generation Bridge；实验私有参数不能直接扩散进 Timeline DSL。
+- 空间实验仍是独立脚本，真实 SFX 扩展尚未完成。
+- `longtext-local-tempo-pause` 及其 rejected 归档使用了用户未要求的语速/每字毫秒逻辑，已作废；其中一个归档 READY 仍写 `ready`，后续必须忽略，不能误当候选。
+
+下一会话入口：先记录上述 01/02 的用户试听结果；随后为当前 VoxCPM2 方案写产品接入设计并实现实验选项。当前产品尚无多候选存储/面板和显式采用/撤回流程，需要落实已批准设计中的这些边界，并复用现有 Generation Bridge、稳定资产、播放预览、项目版本和重混基础设施。无需再次询问是否批准音频质量方向，也不得把整个阶段写成完成。
 
 ## 2026-07-12 - Roadmap Step 10 产品工作流硬化完成
 

@@ -2,7 +2,7 @@
 
 Date: 2026-07-26
 
-Status: Approved for experimental evaluation
+Status: Main listening evaluation complete; a current best soft-Chinese long-form recipe is selected but not integrated into the product
 
 Audience: implementation session
 
@@ -199,7 +199,7 @@ This report intentionally does not prescribe a detailed project file structure. 
 Required principles:
 
 - register VoxCPM2 as experimental before making it a default;
-- route generated audio through existing candidate, preview, accept, undo, and remix flows;
+- implement the approved candidate, preview, accept, and undo boundaries, while reusing the existing durable-asset, preview, revision, and remix infrastructure;
 - reuse only authorized Voice Packs;
 - record Provider, backend, quantization, weight version, seed, CFG, timesteps, control instruction, and reference identifier;
 - allow reference paths only under approved runtime / voice-pack roots;
@@ -239,3 +239,28 @@ Required principles:
 - [VoxCPM2 GGUF weights](https://huggingface.co/DennisHuang648/VoxCPM2-GGUF)
 - [One-shot click/chirp issue](https://github.com/OpenBMB/VoxCPM/issues/272)
 - [Long-form voice drift issue](https://github.com/OpenBMB/VoxCPM/issues/302)
+
+## 13. Listening Decision Update (2026-09-04)
+
+### 13.1 Current Best Candidate
+
+For the tested soft Chinese reference and 16-clause long text, the current best output is:
+
+`I:\AI\voxcpm2-evaluation\listening\longtext-deepseek-class-local-pause-20260904\03_deepseek_class_local_rule.wav`
+
+The selected recipe is:
+
+1. Use the local VoxCPM2 GGUF runtime with `gpu_layers=0` / low-VRAM and the soft Chinese reference. Supply its accurate transcript with punctuation replaced by spaces and preserve one trailing space. The accepted source uses `cfg=2`, `timesteps=10`, and `temperature=1`; groups 1–5 came from `seed=7901`, `max_steps=420` long-opening runs, while the true ending came from `seed=8201`, `max_steps=220`. These values record this sample's provenance rather than product defaults.
+2. Join clauses with Chinese ellipses for the main long-opening candidates. Generate the true ending separately. Its exact target is `……我会一直陪在这里……不催促你，也不会突然离开，直到困意自然地靠近。`, which contains an opening ellipsis, a linking ellipsis after “这里”, natural commas, and a terminal full stop. Do not keep a full one-shot long generation because later audio repeatedly became sharper, noisy, or less similar to the reference.
+3. Split the text into semantic groups. Do not synthesize a group as an isolated short prompt. Instead, place the current group at the beginning, append the remaining full text, generate the complete long continuation, and retain only the opening current group. The experiment harness also appended fixed neutral continuation clauses after the remaining source text to keep every input long (about 177–196 Chinese characters); whether this padding is necessary has not yet been isolated. Generate the final group as a true ending. Keep multiple candidates and reject incomplete, inconsistent, or noisy results.
+4. Retiming in this accepted class-local output applies only to the five joins between semantic groups. The ten clause pauses inside the groups remain exactly as VoxCPM2 generated them and serve only as measurement/fallback evidence; do not expand this recipe to all 15 clause boundaries. Let a text model classify each join as short, medium, or long, then estimate its duration from the real internal pauses of the adjacent groups. Fall back to class defaults only when no usable local measurement exists: short 180 ms, medium 350 ms, long 600 ms.
+5. The five selected joins in this sample are `350 / 350 / 350 / 440 / 290 ms`. The user found both the fixed class-default version and the local version natural, and selected the local version overall because it adapts better to adjacent material.
+
+### 13.2 Scope of the Decision
+
+- This is the best result for the tested reference, text, and selected takes. It is not a universal optimum for every voice, language, or script.
+- Most softness still comes from the soft reference and candidate selection; this does not prove that a generic natural-language "softer" instruction is reliable.
+- The output still uses candidate selection, extraction, and assembly and is not yet a reproducible one-click product feature.
+- Groups 1–5 in the accepted sample originate from seed7901 long-opening runs. To repair the fifth group, it uses a middle excerpt from the clause-09-start continuous generation; group 6 uses the accepted seed8201 true ending. These seeds record sample provenance rather than recommended fixed defaults. The group-5 replacement is a sample-specific exception; the default future rule remains to place the current semantic group at the start and extract that opening group.
+- The six-group layout was first produced by local Ollama `qwen3:1.7b`, then independently reproduced by DeepSeek V4. The final short/medium/long pause classifications came from DeepSeek. These models only analyze text; they do not synthesize audio, and the product must retain a free local analyzer and fixed pause defaults as fallbacks.
+- Key listening conclusions and the technical evidence index live at `I:\AI\voxcpm2-evaluation\evidence\LISTENING_RESULTS.zh.md`; use individual package READMEs and JSON evidence for the omitted turn-by-turn details from 2026-08-12 through 2026-09-03.
