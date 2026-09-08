@@ -25,6 +25,27 @@ function candidate(id = "candidate_1", clipId = "voice_1", projectId = "project_
 }
 
 describe("product candidate store", () => {
+  it("cancels a save waiting for another manifest owner without publishing the candidate", async () => {
+    const runtime = await config();
+    const manifest = resolveCandidateManifestPath(runtime);
+    const lock = path.join(path.dirname(manifest), ".manifest.lock");
+    const owner = path.join(lock, "deadbeef.owner");
+    await mkdir(lock, { recursive: true });
+    await writeFile(owner, JSON.stringify({ pid: process.pid }));
+    const controller = new AbortController();
+    const originalRead = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).readFile;
+    const reader = vi.mocked(fileSystem.readFile).mockImplementation(async (...args: Parameters<typeof originalRead>) => {
+      if (String(args[0]) === owner) controller.abort();
+      return originalRead(...args);
+    });
+    try {
+      await expect(saveAudioCandidate({ config: runtime, candidate: candidate(), signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+      await expect(originalRead(manifest, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect(JSON.parse(await originalRead(owner, "utf8"))).toEqual({ pid: process.pid });
+      expect(await fileSystem.readdir(path.dirname(manifest))).toEqual([".manifest.lock"]);
+    } finally { reader.mockImplementation(originalRead); }
+  });
+
   it("persists independent manifests and recovers project/clip ownership from disk", async () => {
     const runtime = await config();
     expect(resolveCandidateManifestPath(runtime)).toBe(path.join(runtime.runtimeRoot, "assets", "candidates", "voxcpm2-v1", "manifest.json"));

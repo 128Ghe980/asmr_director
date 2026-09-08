@@ -1,20 +1,16 @@
 import { spawn } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
-import { createReadStream, writeSync } from "node:fs";
-import { mkdir, mkdtemp, open, readFile, rm, stat, unlink } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AudioCandidateProvenance } from "./audio-candidate";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { decodePcmWav } from "./project-mix-renderer";
 import { resolveVoxCpm2ProfilePath, type VoiceReferenceMode } from "./voice-provider-catalog";
 import { loadVoxCpm2Profile, selectVoxCpm2Reference } from "./voxcpm2-profile";
-
-export class VoxCpm2Error extends Error {
-  constructor(message: string, public readonly statusCode = 502) {
-    super(message);
-    this.name = "VoxCpm2Error";
-  }
-}
+import { VoxCpm2Error } from "./voxcpm2-error";
+import { withVoxCpm2RuntimeSession, type VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
+export { VoxCpm2Error } from "./voxcpm2-error";
 
 type VoxCpm2Child = {
   pid?: number;
@@ -41,6 +37,7 @@ export type GenerateVoxCpm2Input = {
 
 // These controls are server/test dependencies; the HTTP route never accepts them.
 type ProviderDependencies = {
+  runtimeSession?: VoxCpm2RuntimeSession;
   spawnImpl?: VoxCpm2Spawn;
   seed?: number;
   maxSteps?: number;
@@ -131,6 +128,10 @@ export async function generateVoxCpm2(
 ): Promise<{ wav: Uint8Array; provenance: AudioCandidateProvenance; qualityWarnings: string[] }> {
   const { text, voicePackId, referenceMode, config, signal } = input;
   checkCancelled(signal);
+  if (!dependencies.runtimeSession) {
+    return withVoxCpm2RuntimeSession(config, signal, (runtimeSession) => generateVoxCpm2(input, { ...dependencies, runtimeSession }));
+  }
+  if (dependencies.runtimeSession.runtimeRoot !== path.resolve(config.runtimeRoot)) throw new VoxCpm2Error("生成会话已失效。", 503);
   const normalizedText = text.trim();
   if (!normalizedText || Array.from(normalizedText).length > 500 || normalizedText.includes("\0")) {
     throw new VoxCpm2Error("请填写 1–500 字的台词，较长内容请拆成多个片段。", 400);
@@ -156,19 +157,10 @@ export async function generateVoxCpm2(
     throw new VoxCpm2Error("这个声音尚未配置参考文本，请选择仅参考音频。", 400);
   }
 
-  const lockRoot = path.resolve(config.runtimeRoot, "locks");
-  const lockPath = path.join(lockRoot, "voxcpm2-generation.lock");
-  await mkdir(lockRoot, { recursive: true });
-  const lock = await open(lockPath, "wx").catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "EEXIST") throw new VoxCpm2Error("VoxCPM2 正在生成，请等待当前候选完成。", 409);
-    throw new VoxCpm2Error("无法准备 VoxCPM2 生成目录。", 503);
-  });
   let confirmedExit = true;
   let temporaryRoot: string | undefined;
   const temporaryBase = path.resolve(config.runtimeRoot, "voxcpm2-product", "runs");
   try {
-    const owner = { ownerPid: process.pid, childPid: null as number | null, createdAt: (input.now ?? new Date()).toISOString() };
-    await lock.writeFile(JSON.stringify(owner));
     checkCancelled(signal);
     const referenceInfo = await stat(reference.audioPath);
     if (referenceInfo.size > 16 * 1024 * 1024) throw new VoxCpm2Error("参考音频过大，请检查本机声音配置。", 503);
@@ -191,8 +183,8 @@ export async function generateVoxCpm2(
     const spawnImpl: VoxCpm2Spawn = dependencies.spawnImpl ?? ((command, parameters, options) => spawn(command, [...parameters], options));
     const child = spawnImpl(profile.cliPath, args, { cwd: path.dirname(profile.cliPath), shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     confirmedExit = false;
-    const completion = waitForProcess(child, { signal, timeoutMs, exitWaitMs }, () => { confirmedExit = true; });
-    try { writeSync(lock.fd, JSON.stringify({ ...owner, childPid: child.pid ?? null }), 0, "utf8"); } catch { /* The original owner record still reserves this runtime. */ }
+    dependencies.runtimeSession.processStarted(child.pid);
+    const completion = waitForProcess(child, { signal, timeoutMs, exitWaitMs }, () => { confirmedExit = true; dependencies.runtimeSession!.processExited(); });
     await completion;
     checkCancelled(signal);
     const outputInfo = await stat(outputPath).catch(() => { throw new VoxCpm2Error("VoxCPM2 没有生成有效音频，请重试。"); });
@@ -224,10 +216,8 @@ export async function generateVoxCpm2(
     if (error instanceof VoxCpm2Error) throw error;
     throw new VoxCpm2Error("VoxCPM2 生成失败，请检查本机运行环境后重试。");
   } finally {
-    await lock.close();
     // A failed kill never permits another request to overlap the still-running native process.
     if (confirmedExit) {
-      await unlink(lockPath);
       if (temporaryRoot && path.resolve(temporaryRoot).startsWith(temporaryBase + path.sep)) {
         await rm(temporaryRoot, { recursive: true, force: true });
       }

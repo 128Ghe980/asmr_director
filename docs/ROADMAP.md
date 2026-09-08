@@ -1,12 +1,12 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 当前优先级
 
-当前固定 10 步 roadmap 已全部完成。用户于 2026-09-08 确认 Planner“暂时算是过了”，随后批准实施 VoxCPM2 正式生成接入。Planner 本轮按已验证的 DeepSeek 路径和精简界面验收通过；优先级已转回“人声导演与真实 ASMR 音效质量 V1”。VoxCPM2 单片段生成、候选试听/采用/撤回及 48 kHz 重混导出已实施并通过技术验收，下一切片是已选长文分组/停顿方案。既有听感结论和真实音质验收要求不变。
+当前固定 10 步 roadmap 已全部完成。用户于 2026-09-08 确认 Planner“暂时算是过了”，随后批准实施 VoxCPM2 正式生成接入。Planner 本轮按已验证的 DeepSeek 路径和精简界面验收通过；优先级已转回“人声导演与真实 ASMR 音效质量 V1”。VoxCPM2 单片段生成、候选试听/采用/撤回及 48 kHz 重混导出已通过技术验收。2026-09-09 已选长文分组/停顿方案也已完成工作台接入及真实技术验收，包括完整生成、单组重生成与候选到导出的闭环。既有听感结论和真实音质验收要求不变。
 
 ## 本轮已通过：AI 创意策划 / LLM Planner V1
 
@@ -19,14 +19,14 @@ Last updated: 2026-09-08
 - 复用现有 Timeline DSL、项目库、编辑与音频链路；导演提示和音效建议独立于朗读台词，策划来源保存在项目库元数据中。
 - 默认本地 Ollama，外部 API 可选且由服务器配置；不把模板当作模型输出。
 - 读取真实语音时长，对策划工程延长过短的人声片段并顺延后续时间线，避免规划时长截断台词。
-- 本阶段为用户批准的命名阶段，不新增编号 Step 11；音质 V1 的 VoxCPM2 和真实音效扩展仍未完成。
+- 本阶段为用户批准的命名阶段，不新增编号 Step 11；音质 V1 的空间处理和真实音效扩展仍未完成。
 
 ## 当前阶段：人声导演与真实 ASMR 音效质量 V1
 
-- Status: In progress; base VoxCPM2 clip generation and candidate adoption/remix are implemented and technically verified. Selected long-text, improved spatial recipes and real SFX expansion remain unfinished; this slice's listening quality still needs user evaluation.
+- Status: In progress; base VoxCPM2 and the selected long-text workflow have passed real-workbench technical verification. Spatial recipes and real SFX expansion remain unfinished. New product samples still need user listening evaluation.
 - Design: `docs/superpowers/specs/2026-07-13-audio-director-and-sfx-quality-v1-design.zh.md`
 - Round 1 plan: `docs/superpowers/plans/2026-07-13-audio-quality-v1-round1-implementation-plan.md`
-- VoxCPM2 接入设计与首切片实施记录：`docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.zh.md`（附英文版）。基础接入已完成，长文和新空间处理尚未接入。
+- VoxCPM2 接入设计与实施记录：`docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.zh.md`（附英文版）。基础接入及长文模式均已通过技术验收；新空间处理尚未接入。
 - 主线 1：让“更柔”、近/远、左右、水平环绕与垂直环绕成为真实可听的导演动作，而不是只改文字字段、音量或普通声像。
 - 主线 2：以免费授权素材、免费本地 AI 和明确标注的基础合成扩大 ASMR 音效质量与种类；付费方案暂缓，不要求用户录音。
 - 第一轮固定样片：一句人声、衣物摩擦、指尖轻敲、雨声；完成更柔、近/远、完整水平环绕、左—上—右—下垂直环绕、三种来源比较、采用、撤回与重混。
@@ -51,7 +51,15 @@ Last updated: 2026-09-08
 - 混音默认 48 kHz，兼容 32/44.1/48 kHz，保留 stereo 声道；界面只默认显示引擎/参考/生成/试听采用操作，技术来源折叠。旧工作树保持原状。
 - 本轮全量 46 个测试文件 / 340 项测试、ESLint、TypeScript（生产构建内）及 Webpack 生产构建通过。原有 Windows native SWC 加载警告仍存在，WASM 回退构建成功。
 - 真实本地 TTS 两模式产出 5.6 / 6.4 秒候选；独立浏览器上下文通过播放、显式采用、时间线延长、刷新撤回、8.6 秒 48 kHz stereo 重混和实际 WAV 下载。桌面/390px 界面无横溢，最终浏览器错误为空。另一次真实取消验证进程退出、锁释放、候选数不变。
-- 证据目录：`D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08`。自动检查不等同于用户耳机听感验收；长文分组/安全截取/自适应停顿、V2/HRTF 空间和真实 SFX 扩展继续属于本阶段未完成项。
+- 证据目录：`D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08`。自动检查不等同于用户耳机听感验收；当时长文分组/安全截取/自适应停顿、V2/HRTF 空间和真实 SFX 扩展尚未完成。长文随后于 2026-09-09 完成技术接入，记录如下。
+
+### 2026-09-09 长文工作台接入
+
+- VoxCPM2 增加“长文分组”：非末组沿用完整剩余正文及所需固定补句，末组独立结尾；逐组本地 ASR 核对并安全截取，只调整组间停顿。模型分析默认本地，可显式选已配置外部 API，失败使用标明来源的规则兜底。没有重开补句去留或已听停顿对照。
+- 支持实际分组进度、取消、完整候选与分组试听、单组重生成；其他组复用原素材，原候选与工程保持。技术来源和各组操作按需展开，现有候选采用/撤回、时间线顺延、重混流程复用。
+- 真实 DeepSeek V4 Pro 分成 5 组；本地 VoxCPM2/离线 ASR 产出 20.352 秒完整候选，5 组覆盖率均为 1，四处实测连接为 390 ms。实际首组重生成一次成功，新候选 20.57 秒，其他四组素材 ID 不变；既有采用与混音不变。
+- 浏览器实际播放、采用、刷新撤回、再次采用、23.36 秒 / 48 kHz stereo 重混、WAV 与工程 JSON 下载通过。最终刷新保留两个候选、原采用状态和新鲜混音；桌面/390px 无横向溢出，最终浏览器 error/warn 为空。另一次真实 UI 取消确认锁释放、无新增候选、原声不变。
+- 证据：`D:\CodexWorkplace\asmr_director_runtime\voxcpm2-longtext-verification\2026-09-09`；自动检查结果见双语接入设计和本轮留档。新产品样片听感由用户判断；V2/HRTF 与真实 SFX 继续属于本阶段未完成项。
 
 第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入，第 9 步已经完成真实项目混音与 WAV 导出接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
 

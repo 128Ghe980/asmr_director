@@ -8,6 +8,7 @@ import type {
 } from "./generation-bridge";
 import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint } from "./audio-candidate";
 import { flattenClips } from "./view-model";
+import { readGenerationResponse } from "./generation-response";
 
 export type LocalGenerationBridgeOptions = {
   endpoint?: string;
@@ -160,21 +161,23 @@ export function createLocalGenerationBridge({
           request,
           jobId,
           createdAt,
-          35,
+          request.voiceOptions?.generationMode === "long_text" ? 1 : 35,
           "generating",
           "生成中",
         ),
       });
 
-      const timer = setTimeout(() => job.controller.abort(), timeoutMs);
+      const timer = setTimeout(() => job.controller.abort(), request.voiceOptions?.generationMode === "long_text" ? Math.max(timeoutMs, 35 * 60 * 1000) : timeoutMs);
       try {
         const response = await fetchImpl(endpoint, {
           method: "POST",
-          headers: { "content-type": "application/json; charset=utf-8" },
+          headers: { "content-type": "application/json; charset=utf-8", ...(request.voiceOptions?.generationMode === "long_text" ? { accept: "application/x-ndjson" } : {}) },
           body: JSON.stringify(request),
           signal: job.controller.signal,
         });
-        const payload = (await response.json()) as unknown;
+        const payload = await readGenerationResponse(response, (progress, message) => emit(job, {
+          type: "snapshot", job: makeSnapshot(request, jobId, createdAt, progress, "generating", message),
+        }));
 
         if (!response.ok) {
           throw new Error(getErrorMessage(payload, "Generation failed"));
@@ -186,9 +189,11 @@ export function createLocalGenerationBridge({
           if (candidate.projectId !== request.project.project_id || candidate.clipId !== request.clipId ||
               request.voiceOptions?.provider !== "voxcpm2" || candidate.status !== "ready" ||
               voice?.type !== "voice" || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(voice) ||
-              candidate.requestFingerprint !== getVoiceCandidateRequestFingerprint(voice, request.voiceOptions) ||
+              candidate.requestFingerprint !== getVoiceCandidateRequestFingerprint(voice, request.voiceOptions, request.longTextRetry) ||
               candidate.provenance.voicePackId !== request.voiceOptions.voicePackId ||
-              candidate.provenance.referenceMode !== request.voiceOptions.referenceMode) {
+              candidate.provenance.referenceMode !== request.voiceOptions.referenceMode ||
+              candidate.provenance.generationMode !== request.voiceOptions.generationMode ||
+              (request.longTextRetry && (candidate.provenance.longText?.baseCandidateId !== request.longTextRetry.candidateId || candidate.provenance.longText?.rerolledGroup !== request.longTextRetry.groupIndex))) {
             throw new Error("候选与本次生成请求不匹配，请重试。");
           }
           emit(job, {

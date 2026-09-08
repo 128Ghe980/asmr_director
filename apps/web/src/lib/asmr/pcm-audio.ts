@@ -46,13 +46,16 @@ export function writePcm16StereoWav(
   samples: Float32Array,
   sampleRate: number,
 ): Uint8Array {
+  return writePcm16Wav(samples, sampleRate, 2);
+}
+
+export function writePcm16Wav(samples: Float32Array, sampleRate: number, channels: 1 | 2 = 1): Uint8Array {
   assertSampleRate(sampleRate);
 
-  if (samples.length % 2 !== 0) {
+  if (samples.length % channels !== 0) {
     throw new Error("Stereo samples must be interleaved pairs");
   }
 
-  const channels = 2;
   const bytesPerSample = 2;
   const blockAlign = channels * bytesPerSample;
   const dataSize = samples.length * bytesPerSample;

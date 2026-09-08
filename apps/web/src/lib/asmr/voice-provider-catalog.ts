@@ -2,6 +2,8 @@ import path from "node:path";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { loadVoicePack } from "./voice-pack";
 import { loadVoxCpm2Profile } from "./voxcpm2-profile";
+import { getVoiceAnalysisReadiness } from "./voice-group-analysis";
+import { getPlannerProviderCatalog } from "./planner-provider";
 
 export type VoiceReferenceMode = "reference_only" | "with_reference_text";
 export type VoiceProviderCatalog = {
@@ -12,6 +14,7 @@ export type VoiceProviderCatalog = {
     defaultReferenceId: string | null;
     references: { id: string; label: string; referenceModes: VoiceReferenceMode[] }[];
     unavailableReason?: string;
+    longText?: { available: boolean; reason?: string; apiConfigured: boolean };
   }[];
 };
 
@@ -21,6 +24,8 @@ export function resolveVoxCpm2ProfilePath(config: LocalRuntimeConfig) {
 
 export async function getVoiceProviderCatalog(config: LocalRuntimeConfig): Promise<VoiceProviderCatalog> {
   const [gpt, vox] = await Promise.allSettled([loadVoicePack(config), loadVoxCpm2Profile(resolveVoxCpm2ProfilePath(config))]);
+  const analysis = vox.status === "fulfilled" ? await getVoiceAnalysisReadiness(config) : { available: false, reason: "请先配置 VoxCPM2。" };
+  const apiConfigured = getPlannerProviderCatalog().providers.some((provider) => provider.id === "api" && provider.configured);
   return {
     providers: [
       gpt.status === "fulfilled" ? {
@@ -33,6 +38,7 @@ export async function getVoiceProviderCatalog(config: LocalRuntimeConfig): Promi
       },
       vox.status === "fulfilled" ? {
         id: "voxcpm2", label: "VoxCPM2", available: true,
+        longText: { ...analysis, apiConfigured },
         defaultReferenceId: vox.value.defaultReferenceId,
         references: vox.value.references.map((ref) => ({ id: ref.id, label: ref.displayName, referenceModes: ref.promptText ? ["reference_only", "with_reference_text"] : ["reference_only"] })),
       } : {

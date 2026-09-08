@@ -9,6 +9,7 @@ import type { TimelineClip } from "@/lib/asmr/schema";
 import { flattenClips } from "@/lib/asmr/view-model";
 import { makeVoiceCandidateFixture } from "@/lib/asmr/voice-candidate-fixture";
 import type { VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
+import type { VoiceLongTextResult } from "@/lib/asmr/voice-longtext-result";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 
 import { VoiceGenerationPanel, type VoiceGenerationPanelProps } from "./voice-generation-panel";
@@ -22,7 +23,7 @@ const catalog: VoiceProviderCatalog = {
     { id: "gpt-sovits", label: "GPT-SoVITS", available: true, defaultReferenceId: "default", references: [
       { id: "default", label: "原有声音", referenceModes: ["with_reference_text"] },
     ] },
-    { id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft_zh", references: [
+    { id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft_zh", longText: { available: true, apiConfigured: true }, references: [
       { id: "normal_zh", label: "普通中文参考", referenceModes: ["reference_only"] },
       { id: "soft_zh", label: "温柔中文参考", referenceModes: ["reference_only", "with_reference_text"] },
     ] },
@@ -31,6 +32,21 @@ const catalog: VoiceProviderCatalog = {
 
 function candidate() {
   return makeVoiceCandidateFixture({ sourceFingerprint: getVoiceCandidateSourceFingerprint(selectedClip) });
+}
+
+function longTextCandidate() {
+  const take = candidate();
+  const longText: VoiceLongTextResult = {
+    version: 1, analysisProvider: "api", analysisModel: "text-analysis-model", loudnessGainDb: 0, asrModel: "local-asr",
+    groups: [0, 1, 2].map((index) => ({
+      index, text: `慢慢放松，第 ${index + 1} 组。`, inputText: "慢慢放松。", paddingClauses: [], isFinal: index === 2, pauseAfter: "medium",
+      seed: 901 + index, parameters: {}, asset: { assetId: `group_${index}`, uri: `asset://clip/group_${index}`, duration: 2 },
+      internalPausesMs: [350], internalPauseClasses: ["medium"], leadingQuietMs: 0, trailingQuietMs: 0,
+      transcript: "慢慢放松。", coverage: 1, cutStartSeconds: 0, cutEndSeconds: 2, attempts: 1,
+    })),
+    joins: [350, 440].map((actualDurationMs) => ({ durationMs: 350, actualDurationMs, source: "adjacent", category: "medium" })),
+  };
+  return { ...take, provenance: { ...take.provenance, generationMode: "long_text" as const, longText } };
 }
 
 function props(overrides: Partial<VoiceGenerationPanelProps> = {}): VoiceGenerationPanelProps {
@@ -74,6 +90,158 @@ describe("voice generation panel", () => {
     const option = screen.getByRole("option", { name: /VoxCPM2/ }) as HTMLOptionElement;
     expect(option.disabled).toBe(true);
     expect(control("人声引擎").disabled).toBe(false);
+  });
+
+  it("offers long-text generation only for VoxCPM2 and defaults its analysis to local", () => {
+    const input = props();
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect(screen.queryByRole("combobox", { name: "生成方式" })).toBeNull();
+    const voxOptions = { ...options, provider: "voxcpm2" as const, voicePackId: "soft_zh" };
+    view.rerender(<VoiceGenerationPanel {...input} options={voxOptions} />);
+    expect(control("生成方式").value).toBe("clip");
+    expect(screen.queryByRole("combobox", { name: "文本分析" })).toBeNull();
+    fireEvent.change(control("生成方式"), { target: { value: "long_text" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith({ ...voxOptions, generationMode: "long_text", analysisProvider: "local" });
+    view.rerender(<VoiceGenerationPanel {...input} options={{ ...voxOptions, generationMode: "long_text" }} />);
+    expect(control("文本分析").value).toBe("local");
+    expect(screen.queryByText("文案将发送到已配置的外部 API。")).toBeNull();
+  });
+
+  it("preserves long-text settings across reference changes and resets them when switching to GPT", () => {
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text", analysisProvider: "api" } });
+    render(<VoiceGenerationPanel {...input} />);
+    fireEvent.change(control("参考模式"), { target: { value: "reference_only" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith({ ...input.options, referenceMode: "reference_only" });
+    fireEvent.change(control("参考声音"), { target: { value: "normal_zh" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith({ ...input.options, voicePackId: "normal_zh", referenceMode: "reference_only" });
+    fireEvent.change(control("人声引擎"), { target: { value: "gpt-sovits" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith(options);
+  });
+
+  it("disables unavailable long-text generation and explains why without changing the selection", () => {
+    const unavailableCatalog: VoiceProviderCatalog = { providers: [catalog.providers[0], {
+      ...catalog.providers[1], longText: { available: false, apiConfigured: true, reason: "请配置本地语音校验工具。" },
+    }] };
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" }, catalog: unavailableCatalog });
+    render(<VoiceGenerationPanel {...input} />);
+    expect((screen.getByRole("option", { name: "长文分组" }) as HTMLOptionElement).disabled).toBe(true);
+    expect(screen.getByRole("alert").textContent).toBe("请配置本地语音校验工具。");
+    fireEvent.change(control("生成方式"), { target: { value: "long_text" } });
+    expect(input.onOptionsChange).not.toHaveBeenCalled();
+  });
+
+  it("requires a configured external API and discloses sending the script only when it is selected", () => {
+    const unconfiguredCatalog: VoiceProviderCatalog = { providers: [catalog.providers[0], {
+      ...catalog.providers[1], longText: { available: true, apiConfigured: false },
+    }] };
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" }, catalog: unconfiguredCatalog });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect((screen.getByRole("option", { name: /外部 API/ }) as HTMLOptionElement).disabled).toBe(true);
+    fireEvent.change(control("文本分析"), { target: { value: "api" } });
+    expect(input.onOptionsChange).not.toHaveBeenCalled();
+    expect(screen.queryByText("文案将发送到已配置的外部 API。")).toBeNull();
+    view.rerender(<VoiceGenerationPanel {...input} catalog={catalog} />);
+    fireEvent.change(control("文本分析"), { target: { value: "api" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith({ ...input.options, analysisProvider: "api" });
+    view.rerender(<VoiceGenerationPanel {...input} catalog={catalog} options={{ ...input.options, analysisProvider: "api" }} />);
+    expect(screen.getByText("文案将发送到已配置的外部 API。")).toBeTruthy();
+    fireEvent.change(control("文本分析"), { target: { value: "local" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith({ ...input.options, analysisProvider: "local" });
+    view.rerender(<VoiceGenerationPanel {...input} options={{ ...input.options, analysisProvider: "local" }} />);
+    expect(screen.queryByText("文案将发送到已配置的外部 API。")).toBeNull();
+  });
+
+  it("reports a previously selected API becoming unavailable instead of silently falling back", () => {
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text", analysisProvider: "api" }, catalog: { providers: [{
+      ...catalog.providers[1], longText: { available: true, apiConfigured: false },
+    }] } });
+    render(<VoiceGenerationPanel {...input} />);
+    expect(control("文本分析").value).toBe("api");
+    expect(screen.getByRole("alert").textContent).toBe("请先配置外部文本 API。");
+    expect(input.onOptionsChange).not.toHaveBeenCalled();
+  });
+
+  it("disables both long-text controls while generation is busy", () => {
+    const input = props({ busy: true, options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" } });
+    render(<VoiceGenerationPanel {...input} />);
+    expect(control("生成方式").disabled).toBe(true);
+    expect(control("文本分析").disabled).toBe(true);
+    fireEvent.change(control("生成方式"), { target: { value: "clip" } });
+    fireEvent.change(control("文本分析"), { target: { value: "api" } });
+    expect(input.onOptionsChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps long-text group counts and actual join durations inside collapsed generation details", () => {
+    render(<VoiceGenerationPanel {...props({ candidates: [longTextCandidate()] })} />);
+    const article = screen.getByRole("article", { name: "候选 1" });
+    const details = within(article).getByText("生成详情").closest("details")!;
+    expect(details.open).toBe(false);
+    expect(within(details).getByText("长文分组")).toBeTruthy();
+    expect(within(details).getByText("3 组")).toBeTruthy();
+    expect(within(details).getByText("350 / 440 ms")).toBeTruthy();
+    expect(within(details).getByText("外部 API")).toBeTruthy();
+    expect(within(details).getByText("text-analysis-model")).toBeTruthy();
+    expect(within(article).getAllByText("3 组")).toHaveLength(1);
+    expect(within(article).getAllByText("350 / 440 ms")).toHaveLength(1);
+  });
+
+  it("requests only the chosen candidate group from collapsed details without adopting it", () => {
+    const take = { ...longTextCandidate(), candidateId: "long_take" };
+    const input = props({
+      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" },
+      candidates: [candidate(), take], onRegenerateGroup: vi.fn(),
+    });
+    render(<VoiceGenerationPanel {...input} />);
+    const article = screen.getByRole("article", { name: "候选 2" });
+    const details = within(article).getByText("生成详情").closest("details")!;
+    expect(details.open).toBe(false);
+    expect(within(details).getByTitle("慢慢放松，第 2 组。")).toBeTruthy();
+    fireEvent.click(within(details).getByRole("button", { name: "重生成候选 2 第 2 组" }));
+    expect(input.onRegenerateGroup).toHaveBeenCalledExactlyOnceWith(take, 1);
+    expect(input.onAdopt).not.toHaveBeenCalled();
+    expect(input.onDiscard).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("候选 2 试听")).toBeTruthy();
+    expect(within(screen.getByRole("article", { name: "候选 1" })).queryByRole("button", { name: /重生成候选/ })).toBeNull();
+  });
+
+  it.each(["busy", "loading", "stale"] as const)("blocks group regeneration when %s", (state) => {
+    if (selectedClip.type !== "voice") throw new Error("Expected voice");
+    const input = props({
+      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" },
+      candidates: [longTextCandidate()], onRegenerateGroup: vi.fn(),
+      busy: state === "busy", loading: state === "loading",
+      selectedClip: state === "stale" ? { ...selectedClip, text: "刚刚编辑的新文案。" } : selectedClip,
+    });
+    render(<VoiceGenerationPanel {...input} />);
+    const button = screen.getByRole("button", { name: "重生成候选 1 第 1 组" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(input.onRegenerateGroup).not.toHaveBeenCalled();
+  });
+
+  it("does not expose group regeneration for clip mode, discarded candidates, or an absent handler", () => {
+    const input = props({ candidates: [longTextCandidate()], onRegenerateGroup: vi.fn() });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect(screen.queryByRole("button", { name: /重生成候选/ })).toBeNull();
+    const longOptions = { ...options, provider: "voxcpm2" as const, voicePackId: "soft_zh", generationMode: "long_text" as const };
+    view.rerender(<VoiceGenerationPanel {...input} options={longOptions} candidates={[{ ...longTextCandidate(), status: "discarded" }]} />);
+    expect(screen.queryByRole("button", { name: /重生成候选/ })).toBeNull();
+    view.rerender(<VoiceGenerationPanel {...input} options={longOptions} onRegenerateGroup={undefined} />);
+    expect(screen.queryByRole("button", { name: /重生成候选/ })).toBeNull();
+  });
+
+  it("previews the individual group asset and pauses other audio in the same panel", () => {
+    render(<VoiceGenerationPanel {...props({ candidates: [longTextCandidate()] })} />);
+    const groupAudio = screen.getByLabelText("候选 1 第 2 组试听") as HTMLAudioElement;
+    const wholeAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
+    expect(groupAudio.getAttribute("src")).toBe("/api/assets/clip/group_1");
+    expect(groupAudio.preload).toBe("none");
+    expect(groupAudio.autoplay).toBe(false);
+    const pauses = [...screen.getByRole("region", { name: "人声生成设置" }).querySelectorAll("audio")].map((audio) => vi.spyOn(audio, "pause").mockImplementation(() => {}));
+    fireEvent.play(groupAudio);
+    expect(wholeAudio.pause).toHaveBeenCalledOnce();
+    expect(groupAudio.pause).not.toHaveBeenCalled();
+    for (const pause of pauses) pause.mockRestore();
   });
 
   it("offers separate current and candidate audio without autoplay and keeps provenance collapsed", () => {

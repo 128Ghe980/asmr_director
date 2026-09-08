@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -23,13 +23,13 @@ This project is an **AI ASMR director console**, not a generic AI ASMR generator
 
 The user should receive an editable sound project: structured timeline, storyboard, emotional beats, binaural positioning, generation metadata, validation, import/export, and eventually local regeneration. The durable product moat is the director layer and Timeline DSL, not a specific TTS or SFX model.
 
-## Current Priority (2026-09-08)
+## Current Priority (2026-09-09)
 
-The user accepted **AI 创意策划 / LLM Planner V1** for this iteration on 2026-09-08 ("暂时算是过了"), asked to record/push, and subsequently authorized VoxCPM2 implementation ("好，开始实施"). Immediate priority is **人声导演与真实 ASMR 音效质量 V1**. Base VoxCPM2 clip generation/candidate adoption/remix is now implemented and technically verified; long-text, improved spatial recipes and real SFX remain unfinished. There is no numbered Step 11.
+The user accepted **AI 创意策划 / LLM Planner V1** for this iteration on 2026-09-08 ("暂时算是过了"), asked to record/push, and subsequently authorized VoxCPM2 implementation ("好，开始实施"). Immediate priority is **人声导演与真实 ASMR 音效质量 V1**. Base VoxCPM2 clip generation/candidate adoption/remix is technically verified. On 2026-09-09 the selected long-text route also passed real-workbench technical verification, including single-group regeneration and the candidate-to-export workflow. New product samples still need user listening judgment; improved spatial recipes and real SFX remain unfinished. There is no numbered Step 11.
 
 Planner design: `docs/superpowers/specs/2026-09-07-llm-planner-v1-design.md` and `.zh.md`. Accepted milestone `bd0d058` was pushed to `origin/codex/step10-product-workflow` on 2026-09-08.
 
-VoxCPM2 design and implementation results: `docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.md` and `.zh.md`. The first slice is complete: optional VoxCPM2 generation → candidate comparison → explicit adopt/undo → 48 kHz-compatible remix/export. Next is the selected long-text mode. Do not confuse technical acceptance with user listening acceptance or completion of Audio Quality V1.
+VoxCPM2 design and implementation results: `docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.md` and `.zh.md`. The first slice is complete: optional VoxCPM2 generation → candidate comparison → explicit adopt/undo → 48 kHz-compatible remix/export. The second slice implements the selected long-text mode, safe extraction, adaptive joins and individual group rerolls. Do not confuse technical acceptance with user listening acceptance or completion of Audio Quality V1.
 
 Planner implementation is accepted for this iteration; real external DeepSeek generation, section rewrite and project adoption have passed browser acceptance. Local Ollama acceptance remains pending memory recovery as a non-blocking follow-up. The studio has planning/editing views, separate locally saved creative drafts, local Ollama and configured external JSON-mode API options, single-section rewrite/cancel/undo, script download, and safe adoption into a new project. Draft metadata stays outside Project JSON. Do not represent unavailable sound suggestions as generated assets.
 
@@ -110,7 +110,7 @@ Current user-facing capabilities:
 
 Current product status: all fixed roadmap Steps 1-10 are implemented. Voice clips offer local GPT-SoVITS (default) or VoxCPM2 with normal/soft references and two reference modes. VoxCPM2 produces previewable candidates; explicit adoption persists the selected stable `asset://clip/...` reference into Project JSON. Breath, SFX, and ambience still use the procedural WAV renderer. Full-project mixes write stable `asset://mix/...` references into `exports[type="wav"]`, now at 48 kHz stereo by default with mixed-rate input support. Timeline DSL remains unchanged; candidate provenance/options/undo live outside exported Project JSON.
 
-The user approved **人声导演与真实 ASMR 音效质量 V1** on 2026-07-13 and prioritized Planner V1 on 2026-09-07. Audio Quality V1 remains an approved unfinished named stage. Base VoxCPM2 is now in the app; semantic grouping, adaptive pauses and improved spatial recipes remain independent experiments.
+The user approved **人声导演与真实 ASMR 音效质量 V1** on 2026-07-13 and prioritized Planner V1 on 2026-09-07. Audio Quality V1 remains an approved unfinished named stage. Base VoxCPM2, semantic grouping and adaptive group pauses are now in the app; improved spatial recipes remain independent experiments.
 
 ## VoxCPM2 Product Slice (2026-09-08)
 
@@ -123,7 +123,23 @@ The user approved **人声导演与真实 ASMR 音效质量 V1** on 2026-07-13 a
 - Verification: 46 Vitest files / 340 tests, full ESLint and Webpack production build (including TypeScript) passed. Existing Windows native SWC warnings remain; WASM fallback builds successfully. Real CLI tests exposed an oversized executable hash limit, now fixed with streaming SHA256; Windows candidate-lock sharing races have deterministic regressions.
 - Real acceptance: two local TTS candidates (Combined 5.6 s, Reference-only 6.4 s) were generated, previewed through browser audio, explicitly adopted and restored after refresh. Timeline growth, 8.6 s / 48 kHz stereo voice+procedural-breath remix and actual WAV download passed. Final isolated browser run has `errors: []`; desktop/390px layouts checked. A separate real request abort confirmed child exit, lock removal and unchanged candidate count. No external Planner model call was needed; the user's browser storage was not modified.
 - Evidence: `D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08\browser-result.json`, `real-cancel-result.json`, `browser-acceptance.cjs`, `real-cancel.cjs`, `accepted-mix.wav`, `downloaded-mix.wav`, `desktop-voice-panel.png`, `mobile.png`. Final browser pass reused the two previously generated real candidates to avoid extra TTS; timestamps/provenance are in the evidence. Browser harness supports `--resume`.
-- Remaining: user listening quality acceptance of this product slice, the selected long-text recipe, V2/HRTF spatial product actions, and real SFX expansion. The dirty `.worktrees/audio-quality-v1-round1` was left untouched; only selected ideas/code were adapted.
+- Remaining at that historical checkpoint: user listening quality acceptance, the selected long-text recipe, V2/HRTF spatial product actions, and real SFX expansion. Long-text technical integration subsequently passed on 2026-09-09 as recorded below. The dirty `.worktrees/audio-quality-v1-round1` was left untouched; only selected ideas/code were adapted.
+
+## VoxCPM2 Long-text Product Slice (2026-09-09)
+
+- Entry: select a voice clip in `工程编辑`, choose `VoxCPM2` → `生成方式：长文分组`. Reference and text-analysis choices persist. Local analysis is the default; explicit external analysis reuses the configured Planner API. Candidates expose full preview/adopt and folded group previews/regeneration. Internal metadata stays folded.
+- Recipe: preserve the target group plus all remaining original text and required fixed neutral continuation; retain only the target opening after local ASR and safe extraction. The last group is generated alone with a natural ending and no padding. Internal speech and pauses are unchanged; only joins use the accepted class-local rule. Limits are 500 source characters and 12 groups, not the historical sample's 16-clause length.
+- Implementation: `voice-longtext-plan.ts`, `voice-longtext-planner.ts`, `voice-longtext-generation.ts`, `voice-longtext-result.ts`, `voice-group-analysis.ts`, `scripts/analyze-voice-group.py`, `voxcpm2-runtime-session.ts`, bounded NDJSON progress, existing candidate store and workbench. Rerolls reuse the stored plan and other group WAVs; first-group seed/parameters track the actual new take. Existing candidate warnings are conservatively inherited because some original audio is reused.
+- Runtime: ASR is offline CPU/int8 faster-whisper large-v3, using `engines/gpt-sovits/env-comfyui-clone/python.exe` and the existing GPT-SoVITS ASR model under the external runtime. The spatial `.venv` lacks faster-whisper/OpenCC; readiness probes fall back to the working environment. Optional overrides are `ASMR_VOICE_ANALYSIS_PYTHON` and `ASMR_VOICE_ANALYSIS_MODEL`. Do not start a new ASR server or download weights at request time.
+- Safety: one reservation covers planning, serial TTS and ASR; each group has at most three total attempts. Resource/configuration faults do not trigger extra TTS. Canceled requests check again while waiting for the candidate manifest lock and immediately before atomic publication. Late process exit releases only its own runtime lock. ASR checks both sides of uncertain boundaries and the final crop; bounded noise-floor adaptation retains the 80 ms guards and counts verified retained tail silence before assembly.
+- Real model diagnosis: DeepSeek's default thinking consumed the structural request's 2048-token budget with no JSON content. Only official `api.deepseek.com` structural analysis now disables thinking; the actual retry returned five valid groups in 2.204 s with `deepseek-v4-pro`. Creative Planner behavior is unchanged. Local Ollama generation success remains unverified; initial failed external analysis exercised the disclosed rules fallback.
+- Automated verification: **53 Vitest files / 465 tests**, **23 Python tests**, full ESLint and Webpack production build including TypeScript passed. Existing Windows native SWC warnings remain; WASM fallback builds successfully. Final logs are in the evidence directory below.
+- Real full run `abf9b33d-b5f8-48b1-87e2-fc5b4b686788`: five groups, all ASR coverage 1, attempts `3/2/2/1/1`, assembled duration **20.352 s** (stored window **20.36 s**), joins `390/390/390/390 ms`. These new-script pauses do not replace the historical accepted sample's five pause values.
+- Real reroll `7f500a66-0ec3-4a2c-99f2-a6736d2a1e2d`: first group regenerated successfully on one take, new complete candidate **20.57 s**, the other four group asset IDs unchanged. Final adapted helper also passed both previously rejected source takes with full coverage; the other original groups retain the strict verification path. Later metadata/warning fixes were regression-tested without rerunning audio or rewriting historical manifests.
+- UI acceptance: actual full and individual-group playback, explicit adopt, timeline growth from 3 to 20.36 s, refresh-safe undo, readoption, **23.36 s / 48 kHz stereo PCM16** remix, WAV and project-JSON download passed. Download SHA256 equals the source mix. Final refresh preserves both candidates, the original adopted voice, undo and fresh mix. Desktop/390px layouts have no horizontal overflow; final error/warn logs are empty. Separate UI cancellation confirmed lock removal, zero published candidates and unchanged source.
+- User-facing test project: **长文分组接入验收**, project ID `voxcpm2_longtext_acceptance_20260909`. Candidate `vox_4547649c0f954a2090f2b7de04462b2b` is adopted; newer `vox_fad988bc018d4688a58adac974a0d17d` is available to compare. The newer candidate is not automatically selected as a listening winner. Existing user bookstore projects/draft and the old dirty worktree remain intact.
+- Evidence root: `D:\CodexWorkplace\asmr_director_runtime\voxcpm2-longtext-verification\2026-09-09`. Start with `browser-result.json`, `reroll-result.json`, `cancel-result.json`, `mix-verification.json`, `candidate-1.json`, `candidate-2-reroll.json`, `accepted-project.json`, `downloaded-mix.wav`, and `final-*.log`. Raw runs live under `runtimeRoot/voxcpm2-product/long-text/<run-id>`. Screenshots were reviewed in CUA output; no screenshot files are claimed.
+- Boundary: this completes the selected long-text workbench integration's technical verification. ASR checks do not certify arbitrary script quality or stable softness/identity. Collect listening feedback on the new product samples, then continue the already approved spatial and real-SFX work; do not reopen fixed padding or the completed default-pause comparison.
 
 ## Audio Quality V1 Experiment Handoff (2026-09-07)
 
@@ -131,7 +147,7 @@ The user approved **人声导演与真实 ASMR 音效质量 V1** on 2026-07-13 a
 
 - The experiment assets, scripts, manifests, and listening records live outside Git under `I:\AI\voxcpm2-evaluation`.
 - At the 2026-09-07 experiment handoff the product used GPT-SoVITS and procedural non-voice. Base optional VoxCPM2 was integrated on 2026-09-08; see the product-slice section above.
-- The stage remains `in progress`: long-text automation, improved spatial integration and real SFX expansion are not complete.
+- The stage remains `in progress`: long-text automation passed real-workbench technical verification on 2026-09-09; improved spatial integration and real SFX expansion are not complete.
 
 ### User-approved direction and constraints
 
@@ -197,7 +213,7 @@ The following comparison previously lacked recorded listening feedback. On 2026-
 - This is the current best result for one soft Chinese reference, one text, and manually selected takes. It is not a universal best setting.
 - Long-text generation still varies in inhalation, pace, pitch, timbre, and noise. Candidate generation plus automatic and human quality checks remain necessary.
 - DeepSeek may incur external cost. Product behavior must keep a free local semantic splitter and fixed pause defaults as fallbacks.
-- VoxCPM2 clip generation is registered in the Generation Bridge; selected long-text generation is not. Keep private provider parameters out of the Timeline DSL.
+- VoxCPM2 clip and selected long-text generation are registered in the Generation Bridge. Keep private provider parameters out of the Timeline DSL.
 - Spatial recipes remain experiment scripts rather than product actions. Real SFX coverage remains limited.
 - Ignore the rejected `longtext-local-tempo-pause` packages, including `longtext-local-tempo-pause-rejected-gain-measurement-20260904`; one archived READY file still says `ready` and points at the old package root, but the method was rejected because it incorrectly used speed/milliseconds-per-character logic that the user did not request.
 
@@ -541,13 +557,13 @@ Recent preview/workspace commits:
 
 ## Recommended Next Work
 
-Planner is accepted for this iteration. **Audio Quality V1** has resumed and the base VoxCPM2 product slice is technically verified. Local Planner recovery and broader script-quality evaluation remain follow-ups and must not prevent this priority switch. Do not ask the user to re-approve the already approved audio direction.
+Planner is accepted for this iteration. **Audio Quality V1** has resumed; base VoxCPM2 and the selected long-text product slice are technically verified. Local Planner recovery and broader script-quality evaluation remain follow-ups and must not prevent this priority switch. Do not ask the user to re-approve the already approved audio direction.
 
 Proceed within Audio Quality V1 in this order:
 
 1. Retain the accepted class-local semantic-group recipe as the implementation reference. Feedback on `longtext-clause16-opening-default-pauses-20260904` was received on 2026-09-08: the user had previously listened and noticed no clear difference. This selects no replacement winner and is no longer a pending listening task.
 2. The bilingual `2026-09-08-voxcpm2-product-integration-design` first slice is implemented. Collect user listening feedback on the product's candidate workflow; keep the current restrained UI and do not repeat the completed base integration.
-3. Implement the selected soft-Chinese long-text route as an experimental option with multiple candidates, semantic grouping, safe extraction, adaptive/fallback pauses, and clear mode/reference controls. Keep GPT-SoVITS as a working fallback.
+3. Long-text real-workbench verification is complete, including grouping, safe extraction, adaptive/fallback pauses, individual group rerolls and candidate-to-export behavior. Collect user listening feedback on the new product samples; keep GPT-SoVITS available and do not repeat completed integration, the accepted padding decision or pause comparison.
 4. Productize the already accepted spatial recipes without implying that direction comes from dry-voice prompts.
 5. Continue the unresolved real ASMR SFX library/local-generation work; retain procedural audio only as a labelled fallback.
 
@@ -561,7 +577,7 @@ Do not treat this file as a competing roadmap. Current summary only:
 
 - Completed: roadmap steps 1-10.
 - Accepted for this iteration: `AI 创意策划 / LLM Planner V1`; external DeepSeek workflow and UI cleanup accepted by the user on 2026-09-08. Local recovery remains a follow-up.
-- Current priority: `人声导演与真实 ASMR 音效质量 V1`; base VoxCPM2 clip generation is implemented, followed by the selected long-text route, spatial and real SFX work within the same approved stage.
+- Current priority: `人声导演与真实 ASMR 音效质量 V1`; base VoxCPM2 and the selected long-text route are technically verified, with new product-sample listening, spatial and real SFX work still remaining within the same approved stage.
 - No numbered Step 11 has been created. Any different new top-level direction still requires user approval.
 
 When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.

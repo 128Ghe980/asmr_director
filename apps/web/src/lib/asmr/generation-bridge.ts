@@ -1,6 +1,6 @@
 import type { AsmrProject } from "./schema";
 import type { AudioCandidate } from "./audio-candidate";
-import type { VoiceGenerationOptions } from "./voice-generation-options";
+import type { VoiceGenerationOptions, LongTextRetry } from "./voice-generation-options";
 
 export type GenerateClipReason = "generate" | "regenerate" | "retry";
 export type GenerateProjectMixReason = "mix" | "remix" | "retry";
@@ -15,6 +15,7 @@ export type GenerateClipRequest = {
   clipId: string;
   reason: GenerateClipReason;
   voiceOptions?: VoiceGenerationOptions;
+  longTextRetry?: LongTextRetry;
 };
 
 export type GenerateProjectMixRequest = {

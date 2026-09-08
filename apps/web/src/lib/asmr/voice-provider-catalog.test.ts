@@ -20,7 +20,7 @@ describe("voice provider catalog", () => {
     const ref = { id: "soft", displayName: "温柔", audioPath: "reference.wav", promptTextPath: "transcript.txt", licenseStatus: "user_confirmed", consentConfirmedAt: "2026-07-01T00:00:00Z" };
     await writeFile(profilePath, JSON.stringify({ version: 1, provider: "voxcpm2", cliPath: "private-cli.exe", baseModelPath: "base.gguf", acousticModelPath: "acoustic.gguf", defaultReferenceId: "soft", references: [ref, { ...ref, id: "normal", displayName: "普通", promptTextPath: null }] }));
     const catalog = await getVoiceProviderCatalog(getLocalRuntimeConfig({ ASMR_DIRECTOR_RUNTIME_ROOT: root, ASMR_VOXCPM2_PROFILE_PATH: profilePath }));
-    expect(catalog.providers[1]).toEqual({ id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft", references: [{ id: "soft", label: "温柔", referenceModes: ["reference_only", "with_reference_text"] }, { id: "normal", label: "普通", referenceModes: ["reference_only"] }] });
+    expect(catalog.providers[1]).toMatchObject({ id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft", longText: { available: false }, references: [{ id: "soft", label: "温柔", referenceModes: ["reference_only", "with_reference_text"] }, { id: "normal", label: "普通", referenceModes: ["reference_only"] }] });
     expect(JSON.stringify(catalog)).not.toContain(root);
     expect(JSON.stringify(catalog)).not.toContain("private-cli");
     expect(JSON.stringify(catalog)).not.toContain("你好");

@@ -15,7 +15,8 @@ import { flattenClips } from "./view-model";
 import { loadVoicePack } from "./voice-pack";
 import { generateLocalVoiceCandidate } from "./local-voice-candidate-generation";
 import type { AudioCandidate } from "./audio-candidate";
-import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions } from "./voice-generation-options";
+import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "./voice-generation-options";
+import type { VoiceGenerationProgress } from "./voice-longtext-generation";
 
 export type GenerateLocalClipInput = {
   project: AsmrProject;
@@ -24,7 +25,9 @@ export type GenerateLocalClipInput = {
   fetchImpl?: typeof fetch;
   now?: Date;
   voiceOptions?: VoiceGenerationOptions;
+  longTextRetry?: LongTextRetry;
   signal?: AbortSignal;
+  onProgress?: (progress: VoiceGenerationProgress) => void;
 };
 
 export function generateLocalClip(input: GenerateLocalClipInput & { voiceOptions?: undefined }): Promise<GeneratedAssetResult>;
@@ -36,7 +39,9 @@ export async function generateLocalClip({
   fetchImpl,
   now,
   voiceOptions,
+  longTextRetry,
   signal,
+  onProgress,
 }: GenerateLocalClipInput): Promise<GeneratedAssetResult | { candidate: AudioCandidate }> {
   signal?.throwIfAborted();
   const clip = flattenClips(project).find((candidate) => candidate.id === clipId);
@@ -49,7 +54,7 @@ export async function generateLocalClip({
     voiceOptions = VoiceGenerationOptionsSchema.parse(voiceOptions);
     if (clip.type !== "voice") throw new Error("Voice options require a voice clip");
     if (voiceOptions.provider === "voxcpm2") {
-      return generateLocalVoiceCandidate({ project, clip, config, voiceOptions, signal, now });
+      return generateLocalVoiceCandidate({ project, clip, config, voiceOptions, signal, now, onProgress, longTextRetry });
     }
   }
 

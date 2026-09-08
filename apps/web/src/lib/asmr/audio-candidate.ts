@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { TimelineClip } from "./schema";
-import { VoiceGenerationOptionsSchema, VoiceReferenceModeSchema, type VoiceGenerationOptions } from "./voice-generation-options";
+import { VoiceGenerationOptionsSchema, VoiceReferenceModeSchema, type VoiceGenerationOptions, type LongTextRetry } from "./voice-generation-options";
+import { VoiceLongTextResultSchema } from "./voice-longtext-result";
 
 const SafeIdSchema = z.string().min(1).max(240).regex(/^[A-Za-z0-9_-]+$/);
 const ScalarSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
@@ -12,12 +13,17 @@ export const AudioCandidateProvenanceSchema = z.object({
   temperature: z.number().min(0).max(2),
   voicePackId: VoiceGenerationOptionsSchema.shape.voicePackId,
   referenceMode: VoiceReferenceModeSchema,
-  generationMode: z.literal("clip"),
+  generationMode: z.enum(["clip", "long_text"]),
   parameters: z.record(z.string(), ScalarSchema),
   runtimeVersion: z.string().min(1).optional(),
   modelIdentity: z.string().min(1).optional(),
   referenceIdentity: z.string().min(1).optional(),
-}).strict();
+  longText: VoiceLongTextResultSchema.optional(),
+}).strict().superRefine((provenance, context) => {
+  if ((provenance.generationMode === "long_text") !== (provenance.longText !== undefined)) {
+    context.addIssue({ code: "custom", path: ["longText"], message: "Long-text provenance is required only for long-text generation" });
+  }
+});
 
 export const AudioCandidateSchema = z.object({
   version: z.literal(1),
@@ -42,7 +48,11 @@ export const AudioCandidateSchema = z.object({
   qualityWarnings: z.array(z.string().min(1)),
   createdAt: z.string().datetime(),
   status: z.enum(["ready", "discarded"]),
-}).strict();
+}).strict().superRefine((candidate, context) => {
+  if (candidate.provenance.longText?.baseCandidateId === candidate.candidateId) {
+    context.addIssue({ code: "custom", path: ["provenance", "longText", "baseCandidateId"], message: "A rerolled candidate must refer to a different source candidate" });
+  }
+});
 
 // The format discriminator intentionally excludes the old prototype manifest.
 export const AudioCandidateManifestSchema = z.object({
@@ -63,11 +73,12 @@ export function getVoiceCandidateSourceFingerprint(clip: TimelineClip): string {
   return JSON.stringify({ text: clip.text, emotion: clip.emotion, style: clip.style, pace: clip.pace });
 }
 
-export function getVoiceCandidateRequestFingerprint(clip: TimelineClip, options: VoiceGenerationOptions): string {
+export function getVoiceCandidateRequestFingerprint(clip: TimelineClip, options: VoiceGenerationOptions, longTextRetry?: LongTextRetry): string {
   return JSON.stringify({
     source: getVoiceCandidateSourceFingerprint(clip),
     options: VoiceGenerationOptionsSchema.parse(options),
     requestedSeed: clip.generation.seed,
     requestedTemperature: clip.generation.temperature,
+    ...(longTextRetry ? { longTextRetry } : {}),
   });
 }

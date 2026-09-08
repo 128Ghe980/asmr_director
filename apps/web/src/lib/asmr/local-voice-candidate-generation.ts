@@ -1,22 +1,35 @@
 import { randomUUID } from "node:crypto";
 import { AudioCandidateSchema, getVoiceCandidateSourceFingerprint, getVoiceCandidateRequestFingerprint } from "./audio-candidate";
-import { ensureAudioCandidateCapacity, saveAudioCandidate } from "./local-candidate-store";
+import { ensureAudioCandidateCapacity, getAudioCandidate, saveAudioCandidate } from "./local-candidate-store";
 import { saveClipAsset } from "./local-asset-store";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { decodePcmWav } from "./project-mix-renderer";
 import type { AsmrProject, TimelineClip } from "./schema";
-import type { VoiceGenerationOptions } from "./voice-generation-options";
-import { generateVoxCpm2 } from "./voxcpm2-provider";
+import type { VoiceGenerationOptions, LongTextRetry } from "./voice-generation-options";
+import { generateVoxCpm2, VoxCpm2Error } from "./voxcpm2-provider";
+import { generateVoiceLongText, type VoiceGenerationProgress } from "./voice-longtext-generation";
 
-export async function generateLocalVoiceCandidate({ project, clip, config, voiceOptions, signal, now = new Date() }: {
+export async function generateLocalVoiceCandidate({ project, clip, config, voiceOptions, signal, onProgress, longTextRetry, now = new Date() }: {
   project: AsmrProject; clip: Extract<TimelineClip, { type: "voice" }>; config: LocalRuntimeConfig;
   voiceOptions: VoiceGenerationOptions; signal?: AbortSignal; now?: Date;
+  onProgress?: (progress: VoiceGenerationProgress) => void;
+  longTextRetry?: LongTextRetry;
 }) {
   signal?.throwIfAborted();
   const ownership = { config, projectId: project.project_id, clipId: clip.id, adoptedAssetId: clip.asset.asset_id ?? undefined };
   await ensureAudioCandidateCapacity(ownership);
-  const result = await generateVoxCpm2({ text: clip.text, voicePackId: voiceOptions.voicePackId,
-    referenceMode: voiceOptions.referenceMode, config, signal, now });
+  const retryCandidate = longTextRetry ? await getAudioCandidate({ config, candidateId: longTextRetry.candidateId }) : undefined;
+  if (longTextRetry && (!retryCandidate || retryCandidate.status !== "ready" || retryCandidate.projectId !== project.project_id || retryCandidate.clipId !== clip.id ||
+      retryCandidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(clip) || voiceOptions.generationMode !== "long_text" ||
+      retryCandidate.provenance.generationMode !== "long_text" || !retryCandidate.provenance.longText?.plan ||
+      !retryCandidate.provenance.longText.groups[longTextRetry.groupIndex] || retryCandidate.provenance.voicePackId !== voiceOptions.voicePackId ||
+      retryCandidate.provenance.referenceMode !== voiceOptions.referenceMode)) throw new VoxCpm2Error("原候选与当前文案或声音设置不匹配，请重新生成。", 400);
+  const result = voiceOptions.generationMode === "long_text"
+    ? await generateVoiceLongText({ text: clip.text, clipId: clip.id, voicePackId: voiceOptions.voicePackId,
+      referenceMode: voiceOptions.referenceMode, analysisProvider: voiceOptions.analysisProvider ?? "local", config, signal, onProgress,
+      retryCandidate: retryCandidate ?? undefined, retryGroupIndex: longTextRetry?.groupIndex })
+    : await generateVoxCpm2({ text: clip.text, voicePackId: voiceOptions.voicePackId,
+      referenceMode: voiceOptions.referenceMode, config, signal, now });
   signal?.throwIfAborted();
   const wav = decodePcmWav(result.wav);
   const duration = wav.samples.length / wav.channels / wav.sampleRate;
@@ -29,11 +42,11 @@ export async function generateLocalVoiceCandidate({ project, clip, config, voice
     version: 1, candidateId: `vox_${randomUUID().replaceAll("-", "")}`,
     projectId: project.project_id, clipId: clip.id,
     sourceFingerprint: getVoiceCandidateSourceFingerprint(clip),
-    requestFingerprint: getVoiceCandidateRequestFingerprint(clip, voiceOptions),
+    requestFingerprint: getVoiceCandidateRequestFingerprint(clip, voiceOptions, longTextRetry),
     asset, wav: { sampleRate: wav.sampleRate, channels: wav.channels, bitsPerSample: 16 },
     provenance: result.provenance, qualityWarnings: result.qualityWarnings,
     createdAt: now.toISOString(), status: "ready",
   });
-  await saveAudioCandidate({ config, candidate, adoptedAssetId: ownership.adoptedAssetId });
+  await saveAudioCandidate({ config, candidate, adoptedAssetId: ownership.adoptedAssetId, signal });
   return { candidate };
 }

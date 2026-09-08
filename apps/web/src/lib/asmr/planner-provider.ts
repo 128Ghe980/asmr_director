@@ -170,7 +170,8 @@ export async function readPlannerRequest(request: Request): Promise<PlannerReque
   }
 }
 
-type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+export type PlannerChatMessage = { role: "system" | "user" | "assistant"; content: string };
+type ChatMessage = PlannerChatMessage;
 
 function prompts(request: PlannerRequest, jsonSchema: unknown): ChatMessage[] {
   const wordTarget = Math.round(request.brief.durationSeconds * 2.2);
@@ -232,6 +233,7 @@ async function completion(
   jsonSchema: unknown,
   fetchImpl: typeof fetch,
   signal: AbortSignal,
+  settings?: { maxTokens: number; temperature: number; localCpuOnly: boolean; disableDeepSeekThinking?: boolean },
 ): Promise<string> {
   let response: Response;
   try {
@@ -247,10 +249,16 @@ async function completion(
       signal,
       body: JSON.stringify(provider.id === "ollama" ? {
         model: provider.model, messages, stream: false, think: false, format: jsonSchema,
-        options: { temperature: 0.65, num_predict: 8192, num_ctx: provider.context, num_gpu: provider.gpuLayers },
+        ...(settings?.localCpuOnly ? { keep_alive: 0 } : {}),
+        options: { temperature: settings?.temperature ?? 0.65, num_predict: settings?.maxTokens ?? 8192, num_ctx: provider.context, num_gpu: settings?.localCpuOnly ? 0 : provider.gpuLayers },
       } : {
-        model: provider.model, messages, stream: false, temperature: 0.65,
-        max_tokens: 8192, response_format: { type: "json_object" },
+        model: provider.model, messages, stream: false, temperature: settings?.temperature ?? 0.65,
+        max_tokens: settings?.maxTokens ?? 8192, response_format: { type: "json_object" },
+        // Short structural analysis needs its output budget for the JSON. The
+        // provider-specific toggle is not sent to other compatible APIs or the
+        // existing creative Planner, whose reasoning behavior stays unchanged.
+        ...(settings?.disableDeepSeekThinking && new URL(provider.url!).hostname === "api.deepseek.com"
+          ? { thinking: { type: "disabled" } } : {}),
       }),
     }), signal);
   } catch {
@@ -277,6 +285,38 @@ async function completion(
   if (typeof content !== "string" || !content.trim()) throw new InvalidPlannerOutput("模型没有返回可用的 JSON 文案。");
   if (content.length > MAX_CONTENT_LENGTH) throw new PlannerError(502, "模型回复过长，请缩短目标时长后重试。");
   return content;
+}
+
+// Server-side text analysis reuses the configured endpoints without returning
+// credentials. Local analysis is CPU-only and unloads before native TTS starts.
+export async function completePlannerJson(
+  input: { provider: PlannerProviderId; messages: PlannerChatMessage[]; jsonSchema: unknown },
+  options: { env?: PlannerEnvironment; fetchImpl?: typeof fetch; signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<{ value: unknown; provider: PlannerProviderId; model: string }> {
+  if (options.signal?.aborted) throw new PlannerError(499, "文本分析已取消。");
+  if (input.messages.length > 8 || input.messages.some((message) => message.content.length > 24_000)) {
+    throw new PlannerError(400, "文本分析请求过长。");
+  }
+  const provider = configuration(options.env ?? process.env).providers.find((item) => item.id === input.provider);
+  if (!provider?.configured) throw new PlannerError(503, "文本分析服务尚未配置完整。");
+  const controller = new AbortController();
+  const onCancel = () => controller.abort(new PlannerError(499, "文本分析已取消。"));
+  options.signal?.addEventListener("abort", onCancel, { once: true });
+  if (options.signal?.aborted) onCancel();
+  const timeout = Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(60_000, options.timeoutMs!)) : 60_000;
+  const timer = setTimeout(() => controller.abort(new PlannerError(504, "文本分析超时。")), timeout);
+  try {
+    const content = await completion(provider, input.messages, input.jsonSchema, options.fetchImpl ?? fetch, controller.signal,
+      { maxTokens: 2048, temperature: 0.2, localCpuOnly: true, disableDeepSeekThinking: true });
+    if (controller.signal.aborted) throw abortError(controller.signal);
+    const trimmed = content.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, "$1").trim();
+    let value: unknown;
+    try { value = JSON.parse(trimmed); } catch { throw new PlannerError(502, "文本分析回复格式不正确。"); }
+    return { value, provider: provider.id, model: provider.model };
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onCancel);
+  }
 }
 
 export async function runPlanner(

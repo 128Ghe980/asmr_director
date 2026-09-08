@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { demoProject } from "./mock-project";
 import {
   AudioCandidateSchema,
+  AudioCandidateManifestSchema,
   getVoiceCandidateRequestFingerprint,
   getVoiceCandidateSourceFingerprint,
 } from "./audio-candidate";
 import { VoiceGenerationOptionsSchema } from "./voice-generation-options";
+import { makeVoiceCandidateFixture, makeVoiceLongTextResultFixture } from "./voice-candidate-fixture";
 
 const voice = demoProject.timeline.tracks.find((track) => track.track_type === "voice")!.clips[0];
 const options = { provider: "voxcpm2", voicePackId: "soft_zh", referenceMode: "reference_only", generationMode: "clip" } as const;
@@ -15,7 +17,8 @@ describe("voice candidate contracts", () => {
     expect(VoiceGenerationOptionsSchema.safeParse(options).success).toBe(true);
     expect(VoiceGenerationOptionsSchema.safeParse({ ...options, voicePackId: "../secret" }).success).toBe(false);
     expect(VoiceGenerationOptionsSchema.safeParse({ ...options, executablePath: "C:/cli.exe" }).success).toBe(false);
-    expect(VoiceGenerationOptionsSchema.safeParse({ ...options, generationMode: "long_text" }).success).toBe(false);
+    expect(VoiceGenerationOptionsSchema.safeParse({ ...options, generationMode: "long_text", analysisProvider: "local" }).success).toBe(true);
+    expect(VoiceGenerationOptionsSchema.safeParse({ ...options, generationMode: "unknown" }).success).toBe(false);
   });
 
   it("keeps alternatives compatible after adoption or timeline shifts but rejects changed content", () => {
@@ -40,5 +43,27 @@ describe("voice candidate contracts", () => {
     expect(AudioCandidateSchema.safeParse({ ...candidate, asset: { ...candidate.asset, uri: "asset://candidate/voice_1" } }).success).toBe(false);
     expect(AudioCandidateSchema.safeParse({ ...candidate, asset: { ...candidate.asset, assetId: "another" } }).success).toBe(false);
     expect(AudioCandidateSchema.safeParse({ ...candidate, version: 0 }).success).toBe(false);
+  });
+
+  it("keeps previous clip manifests compatible and requires mode-specific long-text provenance", () => {
+    const clip = makeVoiceCandidateFixture();
+    const manifest = { format: "voxcpm2-product-candidates", version: 1, candidates: [clip] };
+    expect(AudioCandidateManifestSchema.parse(manifest)).toEqual(manifest);
+    const longText = makeVoiceLongTextResultFixture();
+    const candidate = { ...clip, provenance: { ...clip.provenance, generationMode: "long_text", longText } };
+    expect(AudioCandidateSchema.safeParse(candidate).success).toBe(true);
+    expect(AudioCandidateSchema.safeParse({ ...clip, provenance: { ...clip.provenance, generationMode: "long_text" } }).success).toBe(false);
+    expect(AudioCandidateSchema.safeParse({ ...clip, provenance: { ...clip.provenance, longText } }).success).toBe(false);
+    const corrupt = structuredClone(candidate);
+    corrupt.provenance.longText.groups[0].asset.uri = "asset://clip/another";
+    expect(AudioCandidateManifestSchema.safeParse({ ...manifest, candidates: [clip, { ...corrupt, candidateId: "corrupt_long" }] }).success).toBe(false);
+  });
+
+  it("requires a rerolled candidate to retain a different source candidate id", () => {
+    const clip = makeVoiceCandidateFixture();
+    const longText = { ...makeVoiceLongTextResultFixture(), baseCandidateId: clip.candidateId, rerolledGroup: 0 };
+    const candidate = { ...clip, provenance: { ...clip.provenance, generationMode: "long_text", longText } };
+    expect(AudioCandidateSchema.safeParse(candidate).success).toBe(false);
+    expect(AudioCandidateSchema.safeParse({ ...candidate, candidateId: "new_reroll_candidate" }).success).toBe(true);
   });
 });

@@ -82,6 +82,16 @@ function makeRuntimeJob(
 }
 
 describe("generation view", () => {
+  it("shows real group progress and replaces it while cancelling", () => {
+    const viewFor = (status: GenerationJobSnapshot["status"]) => getGenerationView({
+      project: demoProject, selectedClip: findClip(demoProject, "voice_001"),
+      runtimeState: upsertGenerationJob(emptyGenerationRuntimeState, makeRuntimeJob(status, { message: "正在核对第 2/5 组台词" })),
+      selectedClipHasValidationIssues: false,
+    });
+    expect(viewFor("generating").selectedClipControl.statusLabel).toBe("正在核对第 2/5 组台词");
+    expect(viewFor("canceling").selectedClipControl.statusLabel).toBe("取消中");
+  });
+
   it("shows a no-op control when no clip is selected", () => {
     const view = getGenerationView({
       project: demoProject,

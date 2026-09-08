@@ -48,6 +48,16 @@ afterEach(() => {
 });
 
 describe("Planner provider", () => {
+  it("preserves the creative Planner's existing thinking behavior and output budget on DeepSeek", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(draft) }, finish_reason: "stop" }] }));
+    const result = await runPlanner({ action: "generate", provider: "api", brief }, { env: {
+      ASMR_PLANNER_API_URL: "https://api.deepseek.com", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "deepseek-v4-pro",
+    }, fetchImpl });
+    expect(result).toMatchObject({ draft, provider: "api" });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    expect(body.max_tokens).toBe(8192);
+    expect(body).not.toHaveProperty("thinking");
+  });
   it("lists local defaults and never exposes secrets or endpoint URLs", () => {
     const catalog = getPlannerProviderCatalog({
       ASMR_PLANNER_API_URL: "https://provider.example/v1",

@@ -45,7 +45,7 @@ import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
 import { AudioCandidateSchema, type AudioCandidate } from "@/lib/asmr/audio-candidate";
 import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
-import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
+import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
 import {
@@ -873,14 +873,32 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleGenerateSelectedClip() {
+    startSelectedClipGeneration();
+  }
+
+  function handleRegenerateVoiceGroup(candidate: AudioCandidate, groupIndex: number) {
+    if (voiceBusy || candidate.clipId !== selectedClip?.id || candidate.projectId !== editableProject.project_id) return;
+    const options: VoiceGenerationOptions = { provider: "voxcpm2", generationMode: "long_text",
+      voicePackId: candidate.provenance.voicePackId, referenceMode: candidate.provenance.referenceMode,
+      analysisProvider: voiceOptions.analysisProvider ?? "local" };
+    handleVoiceOptionsChange(options);
+    startSelectedClipGeneration(options, { candidateId: candidate.candidateId, groupIndex });
+  }
+
+  function startSelectedClipGeneration(optionsOverride?: VoiceGenerationOptions, longTextRetry?: LongTextRetry) {
     if (!selectedClip || generationView.selectedClipControl.disabled) {
       return;
     }
-    const options = selectedClip.type === "voice" ? voiceOptions : undefined;
+    const options = selectedClip.type === "voice" ? optionsOverride ?? voiceOptions : undefined;
     if (options?.provider === "voxcpm2" && voiceBusy) return;
     if (options?.provider === "voxcpm2" && !voiceCatalog?.providers.find((item) => item.id === "voxcpm2")?.available) {
       setVoiceError("VoxCPM2 尚未就绪，请检查本机配置。");
       return;
+    }
+    if (options?.provider === "voxcpm2" && options.generationMode === "long_text") {
+      const capability = voiceCatalog?.providers.find((item) => item.id === "voxcpm2")?.longText;
+      if (!capability?.available) { setVoiceError(capability?.reason || "长文语音分析尚未就绪。"); return; }
+      if (!longTextRetry && options.analysisProvider === "api" && !capability.apiConfigured) { setVoiceError("请先配置外部文本分析 API，或选择本地分析。"); return; }
     }
     setVoiceError(undefined);
 
@@ -904,6 +922,7 @@ export function StudioApp({ project }: StudioAppProps) {
           clipId: selectedClip.id,
           reason,
           voiceOptions: options,
+          ...(longTextRetry ? { longTextRetry } : {}),
         },
         (update) => {
           if (generationSession !== generationSessionRef.current) {
@@ -1307,6 +1326,7 @@ export function StudioApp({ project }: StudioAppProps) {
                 catalog={voiceCatalog} catalogError={voiceCatalogError} busy={voiceBusy}
                 selectedClip={selectedClip} candidates={visibleVoiceCandidates}
                 onAdopt={handleAdoptVoiceCandidate} onDiscard={handleDiscardVoiceCandidate}
+                onRegenerateGroup={handleRegenerateVoiceGroup}
                 onUndo={handleUndoVoiceCandidate}
                 canUndo={canUndoLastAudioCandidate({ ...projectLibrary, projects: projectLibrary.projects.map((entry) =>
                   entry.projectId === editableProject.project_id ? { ...entry, project: editableProject } : entry,

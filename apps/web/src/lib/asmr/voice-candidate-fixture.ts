@@ -1,6 +1,31 @@
 import { getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "./audio-candidate";
 import { demoProject } from "./mock-project";
 import { flattenClips } from "./view-model";
+import { buildLongTextInputs, type VoiceLongTextPlan } from "./voice-longtext-plan";
+import type { VoiceLongTextResult } from "./voice-longtext-result";
+
+export function makeVoiceLongTextResultFixture(): VoiceLongTextResult {
+  const clauses = ["放松肩膀，", "慢慢呼吸。", "夜已经深了，", "安心休息。"];
+  const plan: VoiceLongTextPlan = {
+    clauses,
+    groups: [{ start: 0, end: 1, text: clauses.slice(0, 2).join(""), pauseAfter: "medium" },
+      { start: 2, end: 3, text: clauses.slice(2).join(""), pauseAfter: "long" }],
+    clausePauseClasses: ["short", "medium", "short"], provider: "rules", warnings: [],
+  };
+  const inputs = buildLongTextInputs(plan);
+  return {
+    version: 1, analysisProvider: "rules", plan, loudnessGainDb: 0, asrModel: "fixture-asr",
+    groups: inputs.map((input, index) => ({
+      index, text: input.expectedText, inputText: input.text, paddingClauses: input.paddingClauses,
+      isFinal: input.isFinal, pauseAfter: plan.groups[index].pauseAfter,
+      seed: 100 + index, parameters: {},
+      asset: { assetId: `fixture_group_${index}`, uri: `asset://clip/fixture_group_${index}`, duration: 2 },
+      internalPausesMs: [180], internalPauseClasses: ["short"], leadingQuietMs: 10, trailingQuietMs: 10,
+      transcript: input.expectedText, coverage: 1, cutStartSeconds: 0, cutEndSeconds: 2, attempts: 1,
+    })),
+    joins: [{ durationMs: 350, actualDurationMs: 350, source: "default", category: "medium" }],
+  };
+}
 
 // Shared deterministic input for bridge and workspace interaction tests.
 export function makeVoiceCandidateFixture(overrides: Partial<AudioCandidate> = {}): AudioCandidate {

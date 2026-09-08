@@ -132,7 +132,7 @@ function getRuntimeControl(
     label: "取消",
     disabled: isCanceling,
     disabledReason: isCanceling ? "正在取消" : undefined,
-    statusLabel: isCanceling ? "取消中" : "生成中",
+    statusLabel: isCanceling ? "取消中" : job.message || "生成中",
     tone: "accent",
     progress: job.progress,
     jobId: job.jobId,

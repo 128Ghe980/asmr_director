@@ -16,7 +16,7 @@ import { StudioApp } from "./studio-app";
 const voiceOptions = { provider: "voxcpm2", voicePackId: "soft_zh", referenceMode: "with_reference_text", generationMode: "clip" } as const;
 const catalog = { providers: [
   { id: "gpt-sovits", label: "GPT-SoVITS", available: true, defaultReferenceId: "default", references: [{ id: "default", label: "原有声音", referenceModes: ["with_reference_text"] }] },
-  { id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft_zh", references: [{ id: "soft_zh", label: "温柔参考", referenceModes: ["reference_only", "with_reference_text"] }] },
+  { id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft_zh", longText: { available: true, apiConfigured: true }, references: [{ id: "soft_zh", label: "温柔参考", referenceModes: ["reference_only", "with_reference_text"] }] },
 ] };
 const draft: PlannerDraft = {
   title: "候选测试书店", scene: "安静书店", character: { role: "店员", personality: ["温暖"], speechStyle: ["轻声"] },
@@ -122,6 +122,27 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("StudioApp voice candidate workflow with simulated HTTP", () => {
+  it.each(["local", "api"] as const)("sends and restores the user's long-text %s analysis choice", async (analysisProvider) => {
+    const initial = seedLibrary();
+    const project = initial.projects[0].project;
+    const api = mockApi();
+    api.respond(Response.json({ error: "测试生成失败。" }, { status: 503 }));
+    let view = await mount(project);
+    fireEvent.change(screen.getByRole("combobox", { name: "生成方式" }), { target: { value: "long_text" } });
+    expect((screen.getByRole("combobox", { name: "文本分析" }) as HTMLSelectElement).value).toBe("local");
+    if (analysisProvider === "api") fireEvent.change(screen.getByRole("combobox", { name: "文本分析" }), { target: { value: "api" } });
+    fireEvent.click(screen.getByRole("button", { name: "重生成" }));
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    expect(api.posts[0].request.voiceOptions).toEqual({ ...voiceOptions, generationMode: "long_text", analysisProvider });
+    expect(currentProject()).toEqual(project);
+    view.unmount();
+    view = await mount(project);
+    expect((screen.getByRole("combobox", { name: "生成方式" }) as HTMLSelectElement).value).toBe("long_text");
+    expect((screen.getByRole("combobox", { name: "文本分析" }) as HTMLSelectElement).value).toBe(analysisProvider);
+    expect(api.posts).toHaveLength(1);
+    view.unmount();
+  });
+
   it("keeps generated audio as a candidate and persists adoption/Planner timing/undo across remount", async () => {
     const initial = seedLibrary();
     const project = initial.projects[0].project;

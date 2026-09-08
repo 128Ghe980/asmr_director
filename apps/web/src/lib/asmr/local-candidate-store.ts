@@ -57,13 +57,14 @@ async function readManifest(config: CandidateStoreConfig): Promise<AudioCandidat
   }
 }
 
-async function writeManifest(config: CandidateStoreConfig, manifest: AudioCandidateManifest): Promise<void> {
+async function writeManifest(config: CandidateStoreConfig, manifest: AudioCandidateManifest, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   const parsed = AudioCandidateManifestSchema.parse(manifest);
   const target = resolveCandidateManifestPath(config);
   const temporary = path.join(path.dirname(target), `.manifest-${randomUUID()}.tmp`);
   try {
     await writeFile(temporary, JSON.stringify(parsed, null, 2), { encoding: "utf8", flag: "wx" });
-    await retryFilesystemAccess(() => rename(temporary, target));
+    await retryFilesystemAccess(() => { signal?.throwIfAborted(); return rename(temporary, target); });
   } finally {
     await retryFilesystemAccess(() => unlink(temporary)).catch((error) => { if (!hasCode(error, "ENOENT")) throw error; });
   }
@@ -107,7 +108,8 @@ async function removeAbandonedLock(lockPath: string): Promise<void> {
   }
 }
 
-async function withManifestLock<T>(config: CandidateStoreConfig, action: () => Promise<T>): Promise<T> {
+async function withManifestLock<T>(config: CandidateStoreConfig, action: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
   const manifest = resolveCandidateManifestPath(config);
   const lockPath = path.join(path.dirname(manifest), ".manifest.lock");
   await mkdir(path.dirname(manifest), { recursive: true });
@@ -120,6 +122,7 @@ async function withManifestLock<T>(config: CandidateStoreConfig, action: () => P
   let acquired = false;
   try {
     while (!acquired) {
+      signal?.throwIfAborted();
       try {
         // Publish the directory and its owner together; an active lock is never
         // temporarily ownerless during acquisition, even across worker processes.
@@ -132,6 +135,7 @@ async function withManifestLock<T>(config: CandidateStoreConfig, action: () => P
         await delay(20);
       }
     }
+    signal?.throwIfAborted();
     return await action();
   } finally {
     const directory = acquired ? lockPath : preparedPath;
@@ -161,10 +165,11 @@ export async function ensureAudioCandidateCapacity(input: CandidateOwnerInput): 
   assertCapacity(await readManifest(input.config), input);
 }
 
-export async function saveAudioCandidate({ config, candidate: inputCandidate, adoptedAssetId }: {
+export async function saveAudioCandidate({ config, candidate: inputCandidate, adoptedAssetId, signal }: {
   config: CandidateStoreConfig;
   candidate: AudioCandidate;
   adoptedAssetId?: string;
+  signal?: AbortSignal;
 }): Promise<AudioCandidate> {
   const candidate = AudioCandidateSchema.parse(inputCandidate);
   return withManifestLock(config, async () => {
@@ -175,9 +180,9 @@ export async function saveAudioCandidate({ config, candidate: inputCandidate, ad
       throw new Error("此候选编号已存在，无法覆盖。");
     }
     if (candidate.status === "ready") assertCapacity(manifest, { projectId: candidate.projectId, clipId: candidate.clipId, adoptedAssetId });
-    await writeManifest(config, { ...manifest, candidates: [...manifest.candidates, candidate] });
+    await writeManifest(config, { ...manifest, candidates: [...manifest.candidates, candidate] }, signal);
     return candidate;
-  });
+  }, signal);
 }
 
 export async function listAudioCandidates({ config, projectId, clipId, includeDiscarded = false }: {

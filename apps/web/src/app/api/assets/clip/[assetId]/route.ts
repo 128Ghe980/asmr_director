@@ -26,6 +26,7 @@ export async function GET(_request: Request, context: RouteContext) {
     return new Response(file, {
       headers: {
         "content-type": "audio/wav",
+        "content-length": String(file.byteLength),
         "cache-control": "no-store",
       },
     });
