@@ -8,11 +8,11 @@ import {
 import { updateClipInProject } from "./edit-project";
 import type { AsmrProject, TimelineClip } from "./schema";
 
-function getClip(project: AsmrProject, clipId: string): TimelineClip {
+function getClip(project: AsmrProject, clipId: string): Extract<TimelineClip, { type: "voice" }> {
   for (const track of project.timeline.tracks) {
     const clip = track.clips.find((candidate) => candidate.id === clipId);
 
-    if (clip) {
+    if (clip?.type === "voice") {
       return clip;
     }
   }

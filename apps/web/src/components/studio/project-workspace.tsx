@@ -26,6 +26,7 @@ const PROJECT_WORKSPACE_IMPORT_ID = "project-workspace-import";
 
 type ProjectWorkspaceProps = {
   children: ReactNode;
+  planning?: boolean;
   importError: string | undefined;
   currentProjectId: string;
   projects: ProjectLibrarySummary[];
@@ -56,6 +57,7 @@ type ProjectWorkspaceProps = {
 
 export function ProjectWorkspace({
   children,
+  planning = false,
   importError,
   currentProjectId,
   projects,
@@ -83,14 +85,14 @@ export function ProjectWorkspace({
   onResetDemo,
   onSelectProject,
 }: ProjectWorkspaceProps) {
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(true);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const workspaceColumns = useMemo(
     () =>
-      `${leftCollapsed ? "3.5rem" : "13rem"} minmax(0, 1fr) ${
-        rightCollapsed ? "3.5rem" : "18rem"
+      `${leftCollapsed ? "3.5rem" : "13rem"} minmax(0, 1fr)${
+        planning ? "" : ` ${rightCollapsed ? "3.5rem" : "18rem"}`
       }`,
-    [leftCollapsed, rightCollapsed],
+    [leftCollapsed, rightCollapsed, planning],
   );
   const style = {
     "--workspace-columns": workspaceColumns,
@@ -127,6 +129,7 @@ export function ProjectWorkspace({
 
       <div className="min-w-0">
         <ProjectWorkspaceHeader
+          planning={planning}
           importError={importError}
           importPanelId={PROJECT_WORKSPACE_IMPORT_ID}
           leftCollapsed={leftCollapsed}
@@ -145,7 +148,7 @@ export function ProjectWorkspace({
         <main className="min-w-0 px-4 py-4 md:px-5">{children}</main>
       </div>
 
-      <ProjectDetailsDock
+      {!planning && <ProjectDetailsDock
         collapsed={rightCollapsed}
         panelId={PROJECT_WORKSPACE_DETAILS_ID}
         summary={summary}
@@ -165,7 +168,7 @@ export function ProjectWorkspace({
         onCreateRevision={onCreateRevision}
         onRestoreRevision={onRestoreRevision}
         onToggle={() => setRightCollapsed((current) => !current)}
-      />
+      />}
     </div>
   );
 }

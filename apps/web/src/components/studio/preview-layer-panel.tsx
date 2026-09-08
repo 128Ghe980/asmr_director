@@ -10,10 +10,7 @@ import {
   X,
 } from "lucide-react";
 
-import type {
-  GenerationSlotTone,
-  ProjectPreviewSummary,
-} from "@/lib/asmr/generation-summary";
+import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
 import type {
   ProjectMixControl,
   SelectedClipPreview,
@@ -21,10 +18,7 @@ import type {
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
 import type { AudioAnalysisStatus } from "@/lib/asmr/product-quality";
 
-import {
-  GenerationSlotList,
-  getGenerationSlotToneClassName,
-} from "./generation-slot-list";
+import { GenerationSlotList } from "./generation-slot-list";
 import { PreviewWaveform } from "./preview-waveform-placeholder";
 
 type PreviewLayerPanelProps = {
@@ -40,12 +34,6 @@ type PreviewLayerPanelProps = {
   onPlayProjectMix: () => void;
   onPlaySelectedClip: () => void;
 };
-
-const playbackUnavailableLabel = "无法播放预览：真实音频尚未生成";
-
-function getPreviewStatusClassName(tone: GenerationSlotTone) {
-  return getGenerationSlotToneClassName(tone, "shrink-0");
-}
 
 function ProjectMixControls({
   control,
@@ -88,19 +76,17 @@ function ProjectMixControls({
           )}
           <span className="truncate">{control.label}</span>
         </button>
-        <button
+        {control.canPlay && <button
           type="button"
-          disabled={!control.canPlay}
           onClick={onPlay}
           aria-label={control.playLabel}
           title={control.playLabel}
           className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-white/[0.04] text-studio-text transition hover:border-sky-300/28 hover:bg-sky-300/12 disabled:cursor-not-allowed disabled:text-studio-muted disabled:opacity-50"
         >
           <Play className="h-3.5 w-3.5" aria-hidden="true" />
-        </button>
-        <button
+        </button>}
+        {control.canDownload && <button
           type="button"
-          disabled={!control.canDownload}
           onClick={onDownload}
           aria-label={control.downloadLabel}
           title={control.downloadLabel}
@@ -108,12 +94,13 @@ function ProjectMixControls({
         >
           <Download className="h-3.5 w-3.5" aria-hidden="true" />
           <span>{control.downloadLabel}</span>
-        </button>
+        </button>}
       </div>
       {control.progress !== undefined ? (
         <div
           className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"
           role="progressbar"
+          aria-label="整段生成进度"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.max(0, Math.min(100, control.progress))}
@@ -141,65 +128,54 @@ export function PreviewLayerPanel({
   onPlayProjectMix,
   onPlaySelectedClip,
 }: PreviewLayerPanelProps) {
-  const selectedClipPlaybackLabel = selectedClipPreview.canPlay
-    ? selectedClipPreview.label
-    : playbackUnavailableLabel;
-  const stats = [
-    { label: "片段", value: preview.totalClipCount },
-    { label: "真实音频", value: preview.realAudioCount },
-    { label: "待生成", value: preview.pendingClipCount },
-    { label: "可预览", value: preview.generatedClipCount },
-  ];
-  const waveformBars =
-    audioAnalysisStatus === "ready" && audioAnalysis
-      ? audioAnalysis.bars
-      : preview.waveformBars;
-  const waveformLabel =
-    audioAnalysisStatus === "ready"
-      ? audioAnalysisSourceLabel
-      : audioAnalysisStatus === "loading"
-        ? "正在分析真实 WAV"
-        : audioAnalysisStatus === "error"
-          ? "真实波形不可用"
-          : preview.realAudioCount > 0
-            ? "选择可试听音频"
-            : "音频尚未生成";
+  const trackSlots = preview.slots.filter(
+    (slot) => slot.id !== "project_mix" && slot.clipCount > 0,
+  );
+  const progressLabel = projectMixControl.action === "cancel"
+    ? projectMixControl.statusLabel
+    : projectMixControl.tone === "warn"
+      ? projectMixControl.statusLabel
+      : preview.generatingClipCount > 0
+        ? `正在生成 ${preview.generatingClipCount} 个片段`
+        : preview.generatedClipCount > 0
+          ? `已生成 ${preview.generatedClipCount} / ${preview.totalClipCount} 个片段`
+          : "选择片段并生成音频后，即可试听。";
 
   return (
     <aside
-      aria-label="预览层"
-      className="min-w-0 rounded-lg border border-amber-300/18 bg-amber-300/[0.055] p-3"
+      aria-label="试听与导出"
+      className="min-w-0 rounded-lg border border-studio-line bg-white/[0.025] p-3"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-amber-100">
+          <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-studio-text">
             <RadioTower className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <h2 className="truncate">{preview.previewTitle}</h2>
+            <h2 className="truncate">试听与导出</h2>
           </div>
-          <p className="mt-1 text-xs text-studio-muted">{waveformLabel}</p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <span className={getPreviewStatusClassName(preview.statusTone)}>
-            {preview.statusLabel}
-          </span>
+        {selectedClipPreview.canPlay && <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            disabled={!selectedClipPreview.canPlay}
             onClick={onPlaySelectedClip}
-            aria-label={selectedClipPlaybackLabel}
-            title={selectedClipPlaybackLabel}
-            className={[
-              "inline-flex h-8 w-8 items-center justify-center rounded-md border transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/35",
-              selectedClipPreview.canPlay
-                ? "border-sky-300/24 bg-sky-300/12 text-sky-50 hover:bg-sky-300/18"
-                : "border-studio-line bg-white/[0.035] text-studio-muted opacity-55 disabled:cursor-not-allowed",
-            ].join(" ")}
+            aria-label={selectedClipPreview.label}
+            title={selectedClipPreview.label}
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-sky-300/24 bg-sky-300/12 px-2 text-xs text-sky-50 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/35"
           >
             <Play className="h-4 w-4" aria-hidden="true" />
+            片段
           </button>
-        </div>
+        </div>}
       </div>
+
+      <p role="status" className={`mt-2 text-xs leading-5 ${projectMixControl.tone === "warn" ? "text-amber-100" : "text-studio-muted"}`}>
+        {progressLabel}
+      </p>
+      {preview.failedClipCount > 0 && (
+        <p role="alert" className="mt-2 text-xs leading-5 text-amber-100">
+          {preview.failedClipCount} 个片段生成失败，请选择片段重试。
+        </p>
+      )}
 
       <ProjectMixControls
         control={projectMixControl}
@@ -209,34 +185,22 @@ export function PreviewLayerPanel({
         onPlay={onPlayProjectMix}
       />
 
-      <div className="mt-3">
+      {audioAnalysisStatus === "ready" && audioAnalysis && <div className="mt-3">
         <PreviewWaveform
-          bars={waveformBars}
+          bars={audioAnalysis.bars}
           tone={preview.statusTone}
-          label={waveformLabel}
-          loading={audioAnalysisStatus === "loading"}
+          label={audioAnalysisSourceLabel}
         />
-      </div>
+      </div>}
+      {audioAnalysisStatus === "loading" && <p className="mt-2 text-xs text-studio-muted">正在读取波形…</p>}
+      {audioAnalysisStatus === "error" && <p role="status" className="mt-2 text-xs text-amber-100">波形暂时无法读取。</p>}
 
-      <dl className="mt-3 grid grid-cols-2 gap-2">
-        {stats.map((stat) => (
-          <div
-            key={stat.label}
-            className="rounded-md border border-white/[0.06] bg-black/15 px-2.5 py-2"
-          >
-            <dt className="truncate text-[11px] text-studio-muted">
-              {stat.label}
-            </dt>
-            <dd className="mt-1 text-sm font-semibold text-studio-text">
-              {stat.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-
-      <div className="mt-3">
-        <GenerationSlotList title="生成槽" slots={preview.slots} compact />
-      </div>
+      {trackSlots.length > 0 && <details className="mt-3 border-t border-white/[0.06] pt-3">
+        <summary className="cursor-pointer text-xs text-studio-muted focus:outline-none focus:ring-2 focus:ring-sky-300/35">各轨进度</summary>
+        <div className="mt-3">
+          <GenerationSlotList title="音频生成" slots={trackSlots} compact />
+        </div>
+      </details>}
     </aside>
   );
 }

@@ -140,6 +140,57 @@ describe("generation fingerprint", () => {
     ).toBe(true);
   });
 
+  it("accepts a concurrently generated planner voice after an earlier take shifts its start", () => {
+    const options = { ignoreVoiceStart: true };
+    const second = findClip(demoProject, "voice_002");
+    const startedFingerprint = getClipGenerationFingerprint(second, options);
+    const strictFingerprint = getClipGenerationFingerprint(second);
+    const firstFinished = commitGenerationSuccess(demoProject, "voice_001", {
+      assetId: "first_take", uri: "asset://clip/first_take", duration: 12,
+    }, { fitVoiceTiming: true });
+
+    expect(findClip(firstFinished, second.id).start).toBe(62.5);
+    expect(isCurrentClipGenerationFingerprint(firstFinished, second.id, strictFingerprint)).toBe(false);
+    expect(isCurrentClipGenerationFingerprint(firstFinished, second.id, startedFingerprint, options)).toBe(true);
+
+    const secondFinished = isCurrentClipGenerationFingerprint(firstFinished, second.id, startedFingerprint, options)
+      ? commitGenerationSuccess(firstFinished, second.id, {
+        assetId: "second_take", uri: "asset://clip/second_take", duration: 10.5,
+      }, { fitVoiceTiming: true })
+      : firstFinished;
+    expect(findClip(secondFinished, second.id).asset.uri).toBe("asset://clip/second_take");
+    expect(findClip(secondFinished, second.id).duration).toBe(10.5);
+    expect(findClip(secondFinished, second.id).start).toBe(62.5);
+  });
+
+  it.each(["text", "duration", "position", "emotion"])(
+    "still rejects a planner voice result after %s changes alongside an automatic shift",
+    (field) => {
+      const options = { ignoreVoiceStart: true };
+      const startedFingerprint = getClipGenerationFingerprint(findClip(demoProject, "voice_002"), options);
+      const shifted = commitGenerationSuccess(demoProject, "voice_001", {
+        assetId: "first_take", uri: "asset://clip/first_take", duration: 12,
+      }, { fitVoiceTiming: true });
+      const edited = updateClip(shifted, "voice_002", (clip) => {
+        if (clip.type !== "voice") throw new Error("Expected voice");
+        if (field === "text") clip.text += "新台词。";
+        if (field === "duration") clip.duration += 1;
+        if (field === "position") clip.position.pan = -0.5;
+        if (field === "emotion") clip.emotion = "更轻柔";
+      });
+
+      expect(isCurrentClipGenerationFingerprint(edited, "voice_002", startedFingerprint, options)).toBe(false);
+    },
+  );
+
+  it("keeps start checks for non-voice clips even when planner voice timing is enabled", () => {
+    const options = { ignoreVoiceStart: true };
+    const startedFingerprint = getClipGenerationFingerprint(findClip(demoProject, "breath_001"), options);
+    const moved = updateClip(demoProject, "breath_001", (clip) => { clip.start += 1; });
+
+    expect(isCurrentClipGenerationFingerprint(moved, "breath_001", startedFingerprint, options)).toBe(false);
+  });
+
   it("changes project mix fingerprint when clip timing, mixing, or asset uri changes", () => {
     const generated = generateAllClips();
     const originalFingerprint = getProjectMixFingerprint(generated);

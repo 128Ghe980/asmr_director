@@ -7,6 +7,7 @@ import {
   renderProceduralClipWav,
 } from "./procedural-audio";
 import { saveClipAsset } from "./local-asset-store";
+import { decodePcmWav } from "./project-mix-renderer";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import type { GeneratedAssetResult } from "./generation-bridge";
 import type { AsmrProject } from "./schema";
@@ -53,12 +54,22 @@ export async function generateLocalClip({
     request,
     fetchImpl,
   });
+  const decoded = decodePcmWav(new Uint8Array(wav));
+  const duration = decoded.samples.length / decoded.channels / decoded.sampleRate;
+
+  if (
+    !Number.isFinite(duration) ||
+    duration <= 0 ||
+    decoded.samples.length % decoded.channels !== 0
+  ) {
+    throw new Error("Invalid voice WAV duration or sample frames");
+  }
 
   return saveClipAsset({
     config,
     clipId,
     wav,
-    duration: clip.duration,
+    duration,
     now,
   });
 }

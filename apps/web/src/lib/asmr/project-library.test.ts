@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { demoProject } from "./mock-project";
+import { PlannerBriefSchema, type PlannerDraft } from "./planner";
 import {
   MAX_PROJECT_REVISIONS,
   PROJECT_LIBRARY_STORAGE_KEY,
+  adoptPlannerDraft,
   createInitialProjectLibrary,
   createLibraryProject,
   createProjectRevision,
@@ -14,9 +16,11 @@ import {
   restoreProjectRevision,
   selectLibraryProject,
   setLibraryProjectMixFingerprint,
+  saveProjectLibrary,
   updateLibraryProject,
 } from "./project-library";
 import { PROJECT_STORAGE_KEY, serializeProject } from "./project-persistence";
+import type { TimelineClip } from "./schema";
 
 function createStorage(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));
@@ -36,6 +40,88 @@ function createStorage(initial: Record<string, string> = {}) {
 
 const firstTime = new Date("2026-07-12T01:02:03.000Z");
 const secondTime = new Date("2026-07-12T02:03:04.000Z");
+
+function plannerFixture(): PlannerDraft {
+  return {
+    title: "深夜书店", scene: "安静的小书店",
+    character: { role: "店员", personality: ["自然"], speechStyle: ["轻声"] },
+    sections: ["迎接客人", "安静收尾"].map((title, index) => ({
+      id: `section_${index}`, title, text: "来坐一会儿吧。", emotion: "温暖",
+      style: "柔和", pace: "缓慢", direction: "在此轻轻翻书", soundSuggestions: "书页声",
+      pauseAfter: "medium", position: { pan: 0, distance: "near", movement: "static" },
+    })),
+  };
+}
+
+describe("adopting planner drafts", () => {
+  it("protects the current project, creates a new project and retains the planning source", () => {
+    const initial = createInitialProjectLibrary(demoProject, firstTime);
+    const before = structuredClone(initial);
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    const draft = plannerFixture();
+    const adopted = adoptPlannerDraft(initial, brief, draft, secondTime);
+
+    expect(initial).toEqual(before);
+    expect(adopted.projects).toHaveLength(2);
+    expect(adopted.currentProjectId).not.toBe(initial.currentProjectId);
+    expect(adopted.projects[0].project).toEqual(demoProject);
+    expect(adopted.projects[0].revisions.at(-1)).toMatchObject({ label: "采用策划前", project: demoProject });
+    expect(adopted.projects[1].plannerSource).toEqual({ brief, draft });
+    expect(adopted.projects[1].plannerSource?.draft).not.toBe(draft);
+    expect(adopted.projects[1].project.title).toBe("深夜书店");
+    expect(serializeProject(adopted.projects[1].project)).not.toContain("plannerSource");
+    expect(serializeProject(adopted.projects[1].project)).not.toContain("在此轻轻翻书");
+  });
+
+  it("allocates collision-safe ids when adopting repeatedly at the same instant", () => {
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    let library = createInitialProjectLibrary(demoProject, firstTime);
+    library = adoptPlannerDraft(library, brief, plannerFixture(), secondTime);
+    library = adoptPlannerDraft(library, brief, plannerFixture(), secondTime);
+    expect(library.projects).toHaveLength(3);
+    expect(new Set(library.projects.map((entry) => entry.projectId)).size).toBe(3);
+    const clipIds = library.projects.slice(1).flatMap((entry) => entry.project.timeline.tracks.flatMap((track) => track.clips.map((clip) => clip.id)));
+    expect(new Set(clipIds).size).toBe(clipIds.length);
+  });
+
+  it("fails adoption atomically if the edited draft is invalid", () => {
+    const initial = createInitialProjectLibrary(demoProject, firstTime);
+    const before = structuredClone(initial);
+    const draft = plannerFixture();
+    draft.sections[0].text = " ";
+    expect(() => adoptPlannerDraft(initial, PlannerBriefSchema.parse({ theme: "书店" }), draft, secondTime)).toThrow();
+    expect(initial).toEqual(before);
+  });
+
+  it("preserves the source on autosave, duplication and storage reload", () => {
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    const draft = plannerFixture();
+    let library = adoptPlannerDraft(createInitialProjectLibrary(demoProject, firstTime), brief, draft, secondTime);
+    const adoptedProject = library.projects[1].project;
+    library = updateLibraryProject(library, { ...adoptedProject, title: "改过的工程" }, secondTime);
+    library = duplicateLibraryProject(library, adoptedProject.project_id, secondTime);
+    const storage = createStorage();
+    saveProjectLibrary(storage, library);
+    const restored = loadProjectLibrary(storage, demoProject, secondTime);
+    expect(restored.projects[1].plannerSource).toEqual({ brief, draft });
+    expect(restored.projects[2].plannerSource).toEqual({ brief, draft });
+    expect(restored.projects[1].project.title).toBe("改过的工程");
+  });
+
+  it("drops invalid planner metadata while preserving a valid project", () => {
+    const library = createInitialProjectLibrary(demoProject, firstTime);
+    const storage = createStorage({
+      [PROJECT_LIBRARY_STORAGE_KEY]: JSON.stringify({
+        ...library,
+        projects: [{ ...library.projects[0], plannerSource: { brief: { theme: "" }, draft: { secret: "invalid" } } }],
+      }),
+    });
+    const restored = loadProjectLibrary(storage, demoProject, secondTime);
+    expect(restored.projects[0].project).toEqual(demoProject);
+    expect(restored.projects[0].plannerSource).toBeUndefined();
+    expect(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).not.toContain("secret");
+  });
+});
 
 describe("project library", () => {
   it("creates a versioned library and migrates the legacy single project", () => {
@@ -167,7 +253,7 @@ describe("project library", () => {
     expect(project.project_id).toBe("asmr_20260712_020304");
     expect(project.title).toBe("未命名项目");
     expect(project.status).toBe("draft");
-    expect(project.timeline.tracks.flatMap((track) => track.clips)).toEqual(
+    expect(project.timeline.tracks.flatMap<TimelineClip>((track) => track.clips)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           generation: expect.objectContaining({
@@ -252,6 +338,82 @@ describe("project library", () => {
 });
 
 describe("project revisions", () => {
+  it.each(["重置前", "导入前"])("clears the active planning source on replacement (%s) and keeps it in the safety revision", (label) => {
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    const draft = plannerFixture();
+    const adopted = adoptPlannerDraft(createInitialProjectLibrary(demoProject, firstTime), brief, draft, firstTime);
+    const original = adopted.projects[1];
+    const replacement = { ...demoProject, project_id: original.projectId, title: label === "重置前" ? demoProject.title : "导入项目" };
+
+    const replaced = replaceLibraryProject(adopted, replacement, secondTime, label);
+    const entry = replaced.projects[1];
+    expect(entry.plannerSource).toBeUndefined();
+    expect(entry.project).toEqual(replacement);
+    expect(entry.revisions.at(-1)).toMatchObject({ label, project: original.project, plannerSource: { brief, draft } });
+    expect(adopted.projects[1].plannerSource).toEqual({ brief, draft });
+    expect(serializeProject(entry.project)).not.toContain("plannerSource");
+  });
+
+  it("restores complete planning sources after storage reload, including source-free revisions", () => {
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    const draft = plannerFixture();
+    const adopted = adoptPlannerDraft(createInitialProjectLibrary(demoProject, firstTime), brief, draft, firstTime);
+    const original = adopted.projects[1];
+    const replacement = { ...demoProject, project_id: original.projectId };
+    const replaced = replaceLibraryProject(adopted, replacement, secondTime);
+    const sourceRevisionId = replaced.projects[1].revisions[0].revisionId;
+    const storage = createStorage();
+    saveProjectLibrary(storage, replaced);
+    const loaded = loadProjectLibrary(storage, demoProject, secondTime);
+    const restored = restoreProjectRevision(loaded, original.projectId, sourceRevisionId, secondTime);
+    const restoredEntry = restored.projects[1];
+
+    expect(restoredEntry.project).toEqual(original.project);
+    expect(restoredEntry.plannerSource).toEqual({ brief, draft });
+    expect(restoredEntry.plannerSource).not.toBe(restoredEntry.revisions[0].plannerSource);
+    expect(restoredEntry.revisions.at(-1)).toMatchObject({ label: "恢复前", project: replacement });
+    expect(restoredEntry.revisions.at(-1)?.plannerSource).toBeUndefined();
+    expect(serializeProject(restoredEntry.project)).not.toContain("plannerSource");
+    expect(serializeProject(restoredEntry.project)).not.toContain("在此轻轻翻书");
+
+    const sourceFreeRevisionId = restoredEntry.revisions.at(-1)!.revisionId;
+    const restoredWithoutSource = restoreProjectRevision(restored, original.projectId, sourceFreeRevisionId, secondTime);
+    expect(restoredWithoutSource.projects[1].plannerSource).toBeUndefined();
+    expect(restoredWithoutSource.projects[1].project).toEqual(replacement);
+  });
+
+  it("deduplicates revisions only when both the project and source match", () => {
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    let library = adoptPlannerDraft(createInitialProjectLibrary(demoProject, firstTime), brief, plannerFixture(), firstTime);
+    const project = library.projects[1].project;
+    library = createProjectRevision(library, project.project_id, firstTime);
+    expect(createProjectRevision(library, project.project_id, secondTime)).toBe(library);
+    library = replaceLibraryProject(library, project, secondTime);
+    library = createProjectRevision(library, project.project_id, secondTime);
+    expect(library.projects[1].revisions).toHaveLength(2);
+    expect(library.projects[1].revisions[0].plannerSource).toBeDefined();
+    expect(library.projects[1].revisions[1].plannerSource).toBeUndefined();
+    expect(createProjectRevision(library, project.project_id, secondTime)).toBe(library);
+  });
+
+  it("ignores malformed source metadata in stored revisions without discarding the project snapshot", () => {
+    const library = createProjectRevision(createInitialProjectLibrary(demoProject, firstTime), demoProject.project_id, firstTime);
+    const storage = createStorage({
+      [PROJECT_LIBRARY_STORAGE_KEY]: JSON.stringify({
+        ...library,
+        projects: [{
+          ...library.projects[0],
+          revisions: [{ ...library.projects[0].revisions[0], plannerSource: { secret: "invalid" } }],
+        }],
+      }),
+    });
+    const loaded = loadProjectLibrary(storage, demoProject, secondTime);
+    expect(loaded.projects[0].revisions).toHaveLength(1);
+    expect(loaded.projects[0].revisions[0].project).toEqual(demoProject);
+    expect(loaded.projects[0].revisions[0].plannerSource).toBeUndefined();
+    expect(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).not.toContain("secret");
+  });
+
   it("deduplicates equal revisions and retains the newest limit", () => {
     let library = createInitialProjectLibrary(demoProject, firstTime);
 

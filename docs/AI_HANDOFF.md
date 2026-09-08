@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -23,6 +23,42 @@ This project is an **AI ASMR director console**, not a generic AI ASMR generator
 
 The user should receive an editable sound project: structured timeline, storyboard, emotional beats, binaural positioning, generation metadata, validation, import/export, and eventually local regeneration. The durable product moat is the director layer and Timeline DSL, not a specific TTS or SFX model.
 
+## Current Priority (2026-09-08)
+
+The user accepted **AI 创意策划 / LLM Planner V1** for this iteration on 2026-09-08 ("暂时算是过了") and asked to record/push the milestone, then prepare VoxCPM2 integration into real product generation. Immediate priority returns to **人声导演与真实 ASMR 音效质量 V1**. Its experimental conclusions remain valid; product integration is not yet implemented. There is no numbered Step 11.
+
+Design: `docs/superpowers/specs/2026-09-07-llm-planner-v1-design.md` and `.zh.md`.
+
+Planner implementation is accepted for this iteration; real external DeepSeek generation, section rewrite and project adoption have passed browser acceptance. Local Ollama acceptance remains pending memory recovery as a non-blocking follow-up. The studio has planning/editing views, separate locally saved creative drafts, local Ollama and configured external JSON-mode API options, single-section rewrite/cancel/undo, script download, and safe adoption into a new project. Draft metadata stays outside Project JSON. Do not represent unavailable sound suggestions as generated assets.
+
+New implementation entry points:
+
+- `apps/web/src/components/studio/planner-panel.tsx`: editable planner workflow, local save, request identity/cancellation, in-session undo, script download.
+- `apps/web/src/lib/asmr/planner.ts` and `planner-persistence.ts`: creative contracts, deterministic voice-project compilation, independent working draft with original brief.
+- `apps/web/src/lib/asmr/planner-provider.ts` and `apps/web/src/app/api/planner/route.ts`: local Ollama / configured JSON-mode API, bounded requests, one structural repair, safe errors and cancellation.
+- `project-library.ts`: safe adoption plus validated entry/revision `plannerSource`; replacements clear source and revision restores recover it.
+- Voice WAVs now record actual duration; `commitGenerationSuccess(..., { fitVoiceTiming: true })` extends underestimated Planner voice clips and shifts following timing. Only Planner voice generation ignores start-time changes in stale-result fingerprints; other edits remain protected.
+
+Runtime configuration is documented in `apps/web/README.md` and `.env.example`. Default local model is the already installed `qwen3:1.7b`; default context is 8192, GPU layers -1 (automatic), explicit 0 enables CPU. The user has now configured and authorized their external DeepSeek V4 API.
+
+Configuration follow-up: the user filled the key locally in Git-ignored `apps/web/.env.local`, using the official base URL, `deepseek-v4-pro`, and default provider `api`. GET `/api/planner` reports external configuration complete. Next dev automatically loaded the change; browser refresh updated the catalog without a service restart. There is currently no frontend credentials form. Saved drafts preserve their selected provider. Do not log or echo the key.
+
+Initial Planner implementation verification (2026-09-07, before the UI cleanup below): 34 Vitest files / 260 tests passed, including 9 React StrictMode planner interaction tests with mocked provider HTTP responses. Full ESLint, TypeScript, production webpack build, and `git diff --check` passed. The existing Windows native SWC warning falls back to WASM; the build exits successfully. Browser checks covered form editing, unconfigured-provider and real-provider failure states, cancellation, reload persistence, and 1280px / 390px layouts without horizontal overflow.
+
+Real DeepSeek browser acceptance (2026-09-07, about 22:20–22:25 HKT): the user's deep-night bookstore theme and 180-second target generated 《深夜书店的翻书声》, 6 sections / 380 readable characters. A real section-4 rewrite changed only its spoken text and direction; all other text fields were unchanged. Undo restored every original text field, then manual editing retained the revised text and direction (367 total characters). Adoption created `asmr_planner_20260907_142342`, 6 pending voice clips, estimated 02:55, valid project JSON, with the previous demo preserved and given a safety revision. Reload restored the project, draft and external provider; loading the project source matched every saved text field. The 390px long-draft layout had no horizontal overflow; console error/warn was empty. Two browser Planner POST actions were used; internal repair count and exact upstream token cost were not captured. Export was triggered, but the downloaded JSON contents were not inspected in this browser run; export boundaries remain covered by automated tests. No new audio was generated.
+
+Remaining local verification boundary (2026-09-07): real Ollama generation failed on both GPU and a minimal CPU probe due to memory allocation. Evidence is under `D:\CodexWorkplace\asmr_director_runtime\planner-verification`, especially `real-generation-failure.json` and `cpu-probe-after-build.json`. Earlier automatic approval rejected restarting the task-started Ollama service and starting a separately configured fixture app, reporting only `blocked by policy`; no bypass was attempted. These historical failures do not block the verified external API path. The user's 2026-09-08 acceptance defers local-model acceptance without pretending it succeeded; the bilingual spec records that iteration boundary. One real external sample does not establish general artistic quality. Fixture responses / unit tests are not real LLM evidence.
+
+## UI Information Policy and Current Cleanup (2026-09-07)
+
+The user said the functionality was mostly usable, but the frontend was filled with unnecessary information and notes intended for the development team. Treat this as an explicit product correction inside the current Planner stage, not a new roadmap stage. Default surfaces should contain the current task's actions and creative content. Keep technical data behind optional disclosure controls. Do not reintroduce implementation explanations, marketing copy, workflow step banners or duplicate status messages into the main flow.
+
+Planning now uses a task-focused header and a theme/settings column beside the script on wide screens, stacked on narrow screens. The project details dock and engineering import/export/reset controls belong to project editing only. Scene/character settings, per-section director/sound/performance fields and project-source loading are expandable. The script remains directly editable; rewrite, undo, download and adoption remain available. Required error, save-state and external-transmission/cost messages remain visible when relevant.
+
+The project rail starts collapsed and no longer repeats the current project's header card. On mobile, the collapsed rail is hidden and the header's project button opens it. Editing and preview surfaces remove repeated IDs, status badges, statistics, placeholder waveforms and implementation notes. History, metadata, technical generation fields, non-empty track progress and quality details are expandable; actual generation/mix/analysis failures and actionable validation or audio problems remain visible.
+
+This cleanup changes presentation, not domain/provider/generation behavior. Preserve the user's current 5-section / 203-character draft and existing projects; do not replace it with earlier verification samples or trigger a model call merely to check layout. Cleanup verification: all 260 tests passed; after final markup adjustments, all 9 Planner component cases, full ESLint, TypeScript and the production webpack build passed. Browser checks confirmed draft fields unchanged across reload, planning without the engineering dock, expandable director/rewrite inputs, and editing/preview controls retained at 1280px. At 390px, page width was 380px without horizontal overflow. Final refresh and interactions after 14:56 UTC produced no new error/warn logs; transient 14:47 JSX errors during editing were fixed before final checks. No model generation was triggered for these layout checks.
+
 ## Current State
 
 The app is a Next.js frontend prototype at `apps/web`.
@@ -30,7 +66,7 @@ The app is a Next.js frontend prototype at `apps/web`.
 Current user-facing capabilities:
 
 - Renders the "雨夜睡前陪伴" demo project from a validated ASMR Project JSON / Timeline DSL.
-- Shows the C+ Project Shell: collapsible left project rail, top workspace status/action bar, center editor, and right project details dock.
+- Shows task-specific planning/editing views with a collapsible project rail; the right project details dock is rendered only for editing.
 - Lets the left project rail and right project details dock collapse independently.
 - `专注编辑` collapses both side regions together; when both sides are collapsed, clicking it again expands both sides.
 - Keeps project-level operations `导出`, `载入`, and `重置` in the workspace header.
@@ -38,7 +74,7 @@ Current user-facing capabilities:
 - Allows selecting clips from Storyboard or Timeline.
 - Shows lightweight generation-status dots on Timeline clips.
 - Allows editing selected clip fields in Inspector.
-- Shows the selected clip asset slot in Inspector.
+- Exposes the selected clip asset details in the Inspector's expandable technical section.
 - Syncs edits across Storyboard, Timeline, Inspector, Validation Panel, Project Details Dock, workspace summaries, Preview Layer, and Export JSON.
 - Validates current project live via Zod schema.
 - Highlights selected Clip Inspector fields when their schema validation issues map to editable inputs.
@@ -66,13 +102,13 @@ Current user-facing capabilities:
 - Lets users create, switch, duplicate, and delete local projects from the real left-rail project list.
 - Keeps at most 12 recovery revisions per project, with manual `留版本` and safety revisions before replacement, reset, restore, and project switching.
 - Analyzes real local clip/mix WAV assets through `GET /api/assets/analysis` and renders true 64-bar peak waveforms in Preview Layer.
-- Shows a right-dock quality report for schema validity, clip readiness, mix freshness, WAV analysis, channels, and peak headroom.
+- Offers expandable right-dock checks for schema validity, clip readiness, mix freshness, WAV analysis, channels, and peak headroom, while keeping actionable failures visible.
 - Persists successful mix fingerprints in project-library metadata so stale or unverified mixes remain marked `需重混` after switching or reload.
 - Surfaces `本地保存不可用` when browser persistence fails instead of claiming the project is saved.
 
 Current product status: all fixed roadmap Steps 1-10 are implemented. Voice clips still use local GPT-SoVITS; breath, SFX, and ambience clips still use the local procedural WAV renderer. All generated clips write stable `asset://clip/...` references into Project JSON and are served through the local clip asset playback API. Full-project mixes write stable `asset://mix/...` references into `exports[type="wav"]` and are served through the local mix asset playback API. Step 10 adds the local product-management layer without changing the Timeline DSL schema.
 
-The user approved the current post-roadmap stage, **人声导演与真实 ASMR 音效质量 V1**, on 2026-07-13. It is an approved named stage, not a numbered Step 11. Independent audio experiments have progressed substantially, but none of the new VoxCPM2, semantic grouping, adaptive pause, or improved spatial recipes are wired into the checked-in app yet.
+The user approved **人声导演与真实 ASMR 音效质量 V1** on 2026-07-13 and prioritized Planner V1 on 2026-09-07. Audio Quality V1 remains an approved unfinished named stage. Independent audio experiments have progressed substantially, but none of the new VoxCPM2, semantic grouping, adaptive pause, or improved spatial recipes are wired into the checked-in app yet.
 
 ## Audio Quality V1 Experiment Handoff (2026-09-07)
 
@@ -149,7 +185,7 @@ The following comparison is technically ready but has **not** received user list
 - Spatial recipes remain experiment scripts rather than product actions. Real SFX coverage remains limited.
 - Ignore the rejected `longtext-local-tempo-pause` packages, including `longtext-local-tempo-pause-rejected-gain-measurement-20260904`; one archived READY file still says `ready` and points at the old package root, but the method was rejected because it incorrectly used speed/milliseconds-per-character logic that the user did not request.
 
-Next session should first record the pending 01/02 listening result if the user provides it. Then it should turn the selected VoxCPM2 recipe into a focused product-integration design under the already approved Audio Quality V1 stage: optional Provider/mode controls, multi-candidate generation, semantic grouping, safe extraction, pause assembly, validation, accept/undo/remix, and local fallbacks. The checked-in app does **not** yet have a multi-candidate store/panel or explicit accept/undo flow; implement those approved boundaries while reusing the existing Generation Bridge, durable assets, playback/preview, project revisions, and remix infrastructure. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
+When resuming Audio Quality V1, first record the pending 01/02 listening result if the user provides it. Then turn the selected VoxCPM2 recipe into a focused product-integration design under that already approved stage: optional Provider/mode controls, multi-candidate generation, semantic grouping, safe extraction, pause assembly, validation, accept/undo/remix, and local fallbacks. The checked-in app does **not** yet have a multi-candidate store/panel or explicit accept/undo flow; implement those approved boundaries while reusing the existing Generation Bridge, durable assets, playback/preview, project revisions, and remix infrastructure. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
 
 ## Real Generation Runtime Notes
 
@@ -263,14 +299,14 @@ Core app:
 - `apps/web/src/app/api/generation/mix/route.ts` runs local full-project mix rendering from generated clip assets and returns stable mix asset metadata.
 - `apps/web/src/app/api/assets/mix/[assetId]/route.ts` serves local generated mix WAV bytes for playback and download.
 - `apps/web/src/components/studio/studio-app.tsx` owns editable project state, runtime generation state, bridge callbacks, export, import, autosave, reset, validation, selected clip state, playback, director presets, and timing nudges. It uses the local real bridge by default and the mock bridge only when `NEXT_PUBLIC_ASMR_GENERATION_MODE=mock`.
-- `apps/web/src/components/studio/project-workspace.tsx` composes the C+ workspace shell around the editor panels.
-- `apps/web/src/components/studio/project-workspace-header.tsx` shows workspace status, project summary, focus controls, and project-level `导出` / `载入` / `重置` actions.
+- `apps/web/src/components/studio/project-workspace.tsx` composes planning/editing shells; planning hides the engineering details dock and returns its width to the creative content.
+- `apps/web/src/components/studio/project-workspace-header.tsx` shows a planning header or compact editing identity/save state; focus and project-level `导出` / `载入` / `重置` actions are editing-only.
 - `apps/web/src/components/studio/project-rail.tsx` renders the collapsible real local project library and project actions.
 - `apps/web/src/components/studio/project-details-dock.tsx` renders the collapsible right dock and hosts Preview Layer, quality, version, and metadata surfaces.
 - `apps/web/src/components/studio/project-workspace-badge.tsx` provides compact workspace badge display helpers.
-- `apps/web/src/components/studio/preview-layer-panel.tsx` renders the lightweight Preview Layer and selected clip mock playback control.
-- `apps/web/src/components/studio/preview-waveform-placeholder.tsx` renders both pending placeholder bars and real analyzed waveform bars.
-- `apps/web/src/components/studio/project-quality-panel.tsx` renders the six product quality checks.
+- `apps/web/src/components/studio/preview-layer-panel.tsx` renders generation/playback/WAV controls, real analyzed waveforms and expandable non-empty track progress; no default count grid or placeholder waveform.
+- `apps/web/src/components/studio/preview-waveform-placeholder.tsx` is the waveform renderer; the preview now passes real analyzed bars only.
+- `apps/web/src/components/studio/project-quality-panel.tsx` keeps actionable issues visible and places the full six checks behind a disclosure control.
 - `apps/web/src/components/studio/project-version-panel.tsx` renders recent revisions and recovery actions.
 - `apps/web/src/components/studio/generation-slot-list.tsx` renders project/track/clip asset slot summaries.
 - `apps/web/src/components/studio/storyboard-panel.tsx` renders chronological clip cards.
@@ -405,7 +441,7 @@ npm.cmd run lint --prefix apps/web
 npm.cmd run build --prefix apps/web -- --webpack
 ```
 
-Latest verified state before this handoff:
+Pre-Planner baseline verification (historical):
 
 - `npm.cmd run test --prefix apps/web`: 29 test files passed, 184 tests passed.
 - `npm.cmd run lint --prefix apps/web`: passed with 0 warnings.
@@ -476,17 +512,17 @@ Recent preview/workspace commits:
 
 ## Recommended Next Work
 
-The approved current stage is **人声导演与真实 ASMR 音效质量 V1**. Do not ask the user to choose a new direction again.
+Planner is accepted for this iteration. The user has resumed **Audio Quality V1**, starting with preparation for VoxCPM2 integration into the real generation workflow. Local Planner recovery and broader script-quality evaluation remain follow-ups and must not prevent this priority switch. Do not ask the user to re-approve the already approved audio direction.
 
-Immediate order:
+Proceed within Audio Quality V1 in this order:
 
-1. If the user has listened to `longtext-clause16-opening-default-pauses-20260904`, record the 01/02 result without overriding the already accepted semantic-group recipe.
+1. Retain the accepted semantic-group recipe as the implementation reference. If the user has listened to `longtext-clause16-opening-default-pauses-20260904`, record the 01/02 result separately; this optional comparison is not a prerequisite for the base integration.
 2. Inspect the current Generation Bridge/provider code and write a focused bilingual integration design for optional VoxCPM2 generation. Implement the approved candidate/accept/undo boundaries; reuse the asset, playback/preview, project-revision, and remix infrastructure that actually exists today.
 3. Implement the selected soft-Chinese long-text route as an experimental option with multiple candidates, semantic grouping, safe extraction, adaptive/fallback pauses, and clear mode/reference controls. Keep GPT-SoVITS as a working fallback.
 4. Productize the already accepted spatial recipes without implying that direction comes from dry-voice prompts.
 5. Continue the unresolved real ASMR SFX library/local-generation work; retain procedural audio only as a labelled fallback.
 
-The fixed roadmap still has no numbered Step 11. This work belongs to the approved named Audio Quality V1 stage. Before implementation, compare the experiment assumptions with current code reality and keep the checked-in docs synchronized.
+The fixed roadmap still has no numbered Step 11. The audio work above belongs to Audio Quality V1; Planner V1 is separately approved. Before audio integration, compare experiment assumptions with current code and keep the docs synchronized.
 
 ## Initial Product Path
 
@@ -495,8 +531,8 @@ The canonical roadmap is `docs/ROADMAP.md`.
 Do not treat this file as a competing roadmap. Current summary only:
 
 - Completed: roadmap steps 1-10.
-- Current: approved `人声导演与真实 ASMR 音效质量 V1`, status `in progress`.
-- Next checkpoint: productize the selected experimental voice/long-text route, then continue the still-unresolved SFX main line.
+- Accepted for this iteration: `AI 创意策划 / LLM Planner V1`; external DeepSeek workflow and UI cleanup accepted by the user on 2026-09-08. Local recovery remains a follow-up.
+- Current priority: `人声导演与真实 ASMR 音效质量 V1`; prepare VoxCPM2 voice/long-text product integration, followed by spatial and real SFX work within the same approved stage.
 - No numbered Step 11 has been created. Any different new top-level direction still requires user approval.
 
 When the user asks “what next?”, first read `docs/ROADMAP.md`, then compare it with current project status before answering.

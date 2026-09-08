@@ -3,7 +3,6 @@
 import {
   Clock3,
   Copy,
-  FolderKanban,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -12,8 +11,6 @@ import {
 
 import type { ProjectLibrarySummary } from "@/lib/asmr/project-library";
 import type { ProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
-
-import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
 
 type ProjectRailProps = {
   collapsed: boolean;
@@ -48,7 +45,6 @@ export function ProjectRail({
   currentProjectId,
   panelId,
   projects,
-  summary,
   onCreate,
   onDelete,
   onDuplicate,
@@ -61,7 +57,7 @@ export function ProjectRail({
     <aside
       id={panelId}
       aria-label="项目导航"
-      className="min-w-0 border-b border-studio-line bg-studio-bg/72 p-3 lg:border-b-0 lg:border-r"
+      className={`${collapsed ? "hidden lg:block" : ""} min-w-0 border-b border-studio-line bg-studio-bg/72 p-3 lg:border-b-0 lg:border-r`}
     >
       <div className="flex items-center justify-between gap-2">
         {collapsed ? null : (
@@ -88,31 +84,6 @@ export function ProjectRail({
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          <section className="rounded-lg border border-sky-300/20 bg-sky-300/10 p-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-studio-text">
-              <FolderKanban
-                className="h-4 w-4 shrink-0 text-sky-100"
-                aria-hidden="true"
-              />
-              <span className="truncate">{summary.identity.title}</span>
-            </div>
-            <p className="mt-2 truncate text-xs text-studio-muted">
-              {summary.identity.sceneName} · {summary.identity.duration}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span
-                className={getProjectWorkspaceBadgeClassName(
-                  summary.localState.tone,
-                )}
-              >
-                {summary.localState.label}
-              </span>
-              <span className={getProjectWorkspaceBadgeClassName("neutral")}>
-                {summary.identity.status}
-              </span>
-            </div>
-          </section>
-
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -133,10 +104,6 @@ export function ProjectRail({
           </div>
 
           <section aria-label="本地项目列表">
-            <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold text-studio-muted">
-              <span>本地项目</span>
-              <span>{projects.length}</span>
-            </div>
             <ul className="space-y-1.5">
               {projects.map((entry) => {
                 const selected = entry.projectId === currentProjectId;
@@ -165,7 +132,6 @@ export function ProjectRail({
                         <span className="truncate">
                           {formatUpdatedAt(entry.updatedAt)}
                         </span>
-                        <span className="shrink-0">· {entry.revisionCount} 版</span>
                       </span>
                     </button>
                     <button

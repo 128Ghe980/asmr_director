@@ -45,6 +45,7 @@ import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
 import {
+  adoptPlannerDraft,
   createInitialProjectLibrary,
   createLibraryProject,
   createProjectRevision,
@@ -74,10 +75,12 @@ import {
 } from "@/lib/asmr/product-quality";
 import { getProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 import type { AsmrProject } from "@/lib/asmr/schema";
+import type { PlannerBrief, PlannerDraft } from "@/lib/asmr/planner";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 
 import { ClipInspector } from "./clip-inspector";
+import { PlannerPanel } from "./planner-panel";
 import { ProjectWorkspace } from "./project-workspace";
 import { StoryboardPanel } from "./storyboard-panel";
 import { TimelinePanel } from "./timeline-panel";
@@ -142,9 +145,10 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
 }
 
 export function StudioApp({ project }: StudioAppProps) {
+  const [workspaceView, setWorkspaceView] = useState<"editor" | "planner">("editor");
   const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
   const [projectLibrary, setProjectLibrary] = useState(() =>
-    createInitialProjectLibrary(project),
+    createInitialProjectLibrary(project, new Date(0)),
   );
   const projectLibraryRef = useRef(projectLibrary);
   const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
@@ -605,11 +609,21 @@ export function StudioApp({ project }: StudioAppProps) {
           currentProject,
           update.job.clipId,
           fingerprint,
+          {
+            ignoreVoiceStart: Boolean(projectLibraryRef.current.projects.find(
+              (entry) => entry.projectId === currentProject.project_id,
+            )?.plannerSource),
+          },
         )
           ? commitGenerationSuccess(
               currentProject,
               update.job.clipId,
               update.asset,
+              {
+                fitVoiceTiming: Boolean(projectLibraryRef.current.projects.find(
+                  (entry) => entry.projectId === currentProject.project_id,
+                )?.plannerSource),
+              },
             )
           : currentProject,
       );
@@ -661,6 +675,11 @@ export function StudioApp({ project }: StudioAppProps) {
           currentProject,
           update.job.clipId,
           fingerprint,
+          {
+            ignoreVoiceStart: Boolean(projectLibraryRef.current.projects.find(
+              (entry) => entry.projectId === currentProject.project_id,
+            )?.plannerSource),
+          },
         )
           ? commitGenerationFailure(currentProject, update.job.clipId, {
               reason,
@@ -705,7 +724,9 @@ export function StudioApp({ project }: StudioAppProps) {
           : "generate";
     let didFinishBeforeStart = false;
     const generationSession = generationSessionRef.current;
-    const fingerprint = getClipGenerationFingerprint(selectedClip);
+    const fingerprint = getClipGenerationFingerprint(selectedClip, {
+      ignoreVoiceStart: Boolean(currentLibraryEntry?.plannerSource),
+    });
 
     void getGenerationBridge()
       .generateClip(
@@ -950,6 +971,12 @@ export function StudioApp({ project }: StudioAppProps) {
     activateLibraryProject(createLibraryProject(protectedLibrary, project));
   }
 
+  function handleAdoptPlanner(brief: PlannerBrief, draft: PlannerDraft) {
+    const nextLibrary = adoptPlannerDraft(getLibraryWithCurrentProject(), brief, draft);
+    activateLibraryProject(nextLibrary);
+    setWorkspaceView("editor");
+  }
+
   function handleDuplicateProject() {
     const baseLibrary = getLibraryWithCurrentProject();
     activateLibraryProject(
@@ -1040,9 +1067,10 @@ export function StudioApp({ project }: StudioAppProps) {
 
   return (
     <ProjectWorkspace
+      planning={workspaceView === "planner"}
       importError={importError}
       currentProjectId={projectLibrary.currentProjectId}
-      projects={projectSummaries}
+      projects={hasLoadedStorage ? projectSummaries : []}
       summary={workspaceSummary}
       preview={previewSummary}
       audioAnalysis={audioAnalysis}
@@ -1067,6 +1095,16 @@ export function StudioApp({ project }: StudioAppProps) {
       onResetDemo={handleResetDemo}
       onSelectProject={handleSelectProject}
     >
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg border border-studio-line bg-studio-panel p-1" aria-label="工作区视图">
+          <button type="button" aria-pressed={workspaceView === "planner"} aria-controls="planner-workspace" onClick={() => setWorkspaceView("planner")} className={`min-h-10 rounded-md px-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-sky-300 ${workspaceView === "planner" ? "bg-sky-300/12 text-sky-100" : "text-studio-muted hover:text-studio-text"}`}>AI 创意策划</button>
+          <button type="button" aria-pressed={workspaceView === "editor"} aria-controls="editor-workspace" onClick={() => setWorkspaceView("editor")} className={`min-h-10 rounded-md px-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-sky-300 ${workspaceView === "editor" ? "bg-sky-300/12 text-sky-100" : "text-studio-muted hover:text-studio-text"}`}>工程编辑</button>
+        </div>
+      </div>
+      <div id="planner-workspace" hidden={workspaceView !== "planner"}>
+        <PlannerPanel source={currentLibraryEntry?.plannerSource} onAdopt={handleAdoptPlanner} />
+      </div>
+      <div id="editor-workspace" hidden={workspaceView !== "editor"}>
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(220px,0.86fr)_minmax(0,1.26fr)_minmax(220px,0.86fr)]">
         <div className="min-h-[520px] xl:h-[calc(100vh-152px)]">
           <StoryboardPanel
@@ -1099,6 +1137,7 @@ export function StudioApp({ project }: StudioAppProps) {
             onUpdateClip={handleUpdateClip}
           />
         </div>
+      </div>
       </div>
     </ProjectWorkspace>
   );

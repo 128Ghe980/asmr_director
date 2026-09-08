@@ -1,5 +1,12 @@
 import type { AsmrProject } from "./schema";
 import {
+  PlannerSourceSchema,
+  compilePlannerDraft,
+  type PlannerBrief,
+  type PlannerDraft,
+  type PlannerSource,
+} from "./planner";
+import {
   PROJECT_STORAGE_KEY,
   type StorageLike,
   parseImportedProject,
@@ -16,6 +23,7 @@ export type ProjectRevision = {
   createdAt: string;
   label: string;
   project: AsmrProject;
+  plannerSource?: PlannerSource;
 };
 
 export type ProjectLibraryEntry = {
@@ -25,6 +33,7 @@ export type ProjectLibraryEntry = {
   project: AsmrProject;
   revisions: ProjectRevision[];
   mixFingerprint?: string;
+  plannerSource?: PlannerSource;
 };
 
 export type ProjectLibrary = {
@@ -77,6 +86,7 @@ function makeEntry(
   now: Date,
   revisions: ProjectRevision[] = [],
   mixFingerprint?: string,
+  plannerSource?: PlannerSource,
 ): ProjectLibraryEntry {
   const cloned = cloneProject(project);
 
@@ -87,6 +97,7 @@ function makeEntry(
     project: cloned,
     revisions,
     mixFingerprint,
+    plannerSource: plannerSource ? PlannerSourceSchema.parse(plannerSource) : undefined,
   };
 }
 
@@ -127,6 +138,7 @@ function parseRevision(
     createdAt: candidate.createdAt,
     label: candidate.label,
     project: project.data,
+    plannerSource: PlannerSourceSchema.safeParse(candidate.plannerSource).data,
   };
 }
 
@@ -187,6 +199,7 @@ function parseStoredLibrary(
       typeof entry.mixFingerprint === "string"
         ? entry.mixFingerprint
         : undefined,
+      PlannerSourceSchema.safeParse(entry.plannerSource).data,
     );
 
     if (Number.isNaN(new Date(parsedEntry.updatedAt).getTime())) {
@@ -287,6 +300,7 @@ export function updateLibraryProject(
     now,
     existing?.revisions ?? [],
     existing?.mixFingerprint,
+    existing?.plannerSource,
   );
   const projects = existing
     ? library.projects.map((entry) =>
@@ -350,11 +364,14 @@ export function replaceLibraryProject(
     : library;
   const updated = updateLibraryProject(protectedLibrary, project, now);
 
-  return setLibraryProjectMixFingerprint(
-    updated,
-    project.project_id,
-    undefined,
-  );
+  return {
+    ...updated,
+    projects: updated.projects.map((entry) =>
+      entry.projectId === project.project_id
+        ? { ...entry, mixFingerprint: undefined, plannerSource: undefined }
+        : entry,
+    ),
+  };
 }
 
 function cleanTemplateProject(
@@ -405,6 +422,33 @@ export function createLibraryProject(
   );
 }
 
+export function adoptPlannerDraft(
+  library: ProjectLibrary,
+  brief: PlannerBrief,
+  draft: PlannerDraft,
+  now: Date = new Date(),
+): ProjectLibrary {
+  const source = PlannerSourceSchema.parse({ brief, draft });
+  const usedIds = new Set(library.projects.map((entry) => entry.projectId));
+  const projectId = makeUniqueId(`asmr_planner_${compactTimestamp(now)}`, usedIds);
+  // Compile and validate everything before creating the safety revision. Failures
+  // leave the caller's project and planning workspace untouched.
+  const project = compilePlannerDraft(source.brief, source.draft, projectId);
+  const protectedLibrary = createProjectRevision(
+    library,
+    library.currentProjectId,
+    now,
+    "采用策划前",
+  );
+  const adopted = updateLibraryProject(protectedLibrary, project, now);
+  return {
+    ...adopted,
+    projects: adopted.projects.map((entry) =>
+      entry.projectId === projectId ? { ...entry, plannerSource: source } : entry,
+    ),
+  };
+}
+
 export function duplicateLibraryProject(
   library: ProjectLibrary,
   projectId: string,
@@ -427,7 +471,15 @@ export function duplicateLibraryProject(
     title: `${source.project.title} 副本`,
   });
 
-  return updateLibraryProject(library, duplicate, now);
+  const duplicated = updateLibraryProject(library, duplicate, now);
+  return {
+    ...duplicated,
+    projects: duplicated.projects.map((entry) =>
+      entry.projectId === duplicateId && source.plannerSource
+        ? { ...entry, plannerSource: PlannerSourceSchema.parse(source.plannerSource) }
+        : entry,
+    ),
+  };
 }
 
 export function deleteLibraryProject(
@@ -469,8 +521,15 @@ export function createProjectRevision(
 
   const fingerprint = serializeProject(entry.project);
   const latest = entry.revisions.at(-1);
+  const plannerSource = entry.plannerSource
+    ? PlannerSourceSchema.parse(entry.plannerSource)
+    : undefined;
 
-  if (latest && serializeProject(latest.project) === fingerprint) {
+  if (
+    latest &&
+    serializeProject(latest.project) === fingerprint &&
+    JSON.stringify(latest.plannerSource) === JSON.stringify(plannerSource)
+  ) {
     return library;
   }
 
@@ -486,6 +545,7 @@ export function createProjectRevision(
       createdAt: now.toISOString(),
       label,
       project: cloneProject(entry.project),
+      plannerSource,
     },
   ].slice(-MAX_PROJECT_REVISIONS);
 
@@ -534,6 +594,9 @@ export function restoreProjectRevision(
           updatedAt: now.toISOString(),
           project: restoredProject,
           mixFingerprint: undefined,
+          plannerSource: revision.plannerSource
+            ? PlannerSourceSchema.parse(revision.plannerSource)
+            : undefined,
           }
         : item,
     ),

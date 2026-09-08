@@ -32,11 +32,6 @@ import {
   getDistanceLabel,
   getMovementLabel,
 } from "@/lib/asmr/ui-copy";
-import {
-  formatTimeRange,
-  getLocalizedPositionLabel,
-} from "@/lib/asmr/view-model";
-
 import { GenerationSlotList } from "./generation-slot-list";
 import { StatusBadge } from "./status-badge";
 
@@ -436,7 +431,6 @@ export function ClipInspector({
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-studio-text">片段检查</h2>
-          <p className="truncate text-xs text-studio-muted">{selectedClip.id}</p>
         </div>
         <StatusBadge status={selectedClip.generation.status} />
       </div>
@@ -453,12 +447,6 @@ export function ClipInspector({
           onCancel={onCancelSelectedGeneration}
           onGenerate={onGenerateSelectedClip}
         />
-
-        {selectedClipSlot ? (
-          <div className="border-b border-white/[0.06] py-3">
-            <GenerationSlotList title="素材槽" slots={[selectedClipSlot]} compact />
-          </div>
-        ) : null}
 
         {selectedClip.type === "voice" ? (
           <>
@@ -727,19 +715,20 @@ export function ClipInspector({
           />
         </InspectorField>
 
-        <ReadOnlyRow
-          label="时间"
-          value={formatTimeRange(selectedClip.start, selectedClip.duration)}
-        />
-        <ReadOnlyRow
-          label="位置"
-          value={getLocalizedPositionLabel(selectedClip.position)}
-        />
-        <ReadOnlyRow label="模型" value={getClipModelDetails(selectedClip)} />
-        <ReadOnlyRow
-          label="状态"
-          value={<StatusBadge status={selectedClip.generation.status} />}
-        />
+        <details className="border-t border-white/[0.06] py-3">
+          <summary className="cursor-pointer text-xs text-studio-muted">
+            生成详情
+          </summary>
+          <dl className="mt-1 break-words">
+            <ReadOnlyRow label="片段 ID" value={selectedClip.id} />
+            <ReadOnlyRow label="模型" value={getClipModelDetails(selectedClip)} />
+          </dl>
+          {selectedClipSlot ? (
+            <div className="mt-3">
+              <GenerationSlotList title="音频素材" slots={[selectedClipSlot]} compact />
+            </div>
+          ) : null}
+        </details>
       </div>
     </section>
   );

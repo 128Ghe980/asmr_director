@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  CheckCircle2,
+  History,
   Info,
   PanelRightClose,
   PanelRightOpen,
@@ -22,7 +22,6 @@ import type { ProjectRevision } from "@/lib/asmr/project-library";
 
 import { PreviewLayerPanel } from "./preview-layer-panel";
 import { ProjectQualityPanel } from "./project-quality-panel";
-import { getProjectWorkspaceBadgeClassName } from "./project-workspace-badge";
 import { ProjectVersionPanel } from "./project-version-panel";
 
 type ProjectDetailsDockProps = {
@@ -56,7 +55,7 @@ function MetadataRows({ rows }: { rows: ProjectWorkspaceMetadataRow[] }) {
           className="flex items-center justify-between gap-3 border-b border-white/[0.06] pb-2 last:border-b-0 last:pb-0"
         >
           <dt className="text-xs text-studio-muted">{row.label}</dt>
-          <dd className="truncate text-right text-xs font-semibold text-studio-text">
+          <dd className="min-w-0 break-all text-right text-xs font-semibold text-studio-text">
             {row.value}
           </dd>
         </div>
@@ -137,44 +136,31 @@ export function ProjectDetailsDock({
             onPlaySelectedClip={onPlaySelectedClip}
           />
 
+          <details className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-studio-muted focus:outline-none focus:ring-2 focus:ring-sky-300/35">
+              <History className="mr-2 inline h-4 w-4" aria-hidden="true" />
+              历史版本
+            </summary>
+            <div className="mt-3">
+              <ProjectVersionPanel
+                revisions={revisions}
+                onCreate={onCreateRevision}
+                onRestore={onRestoreRevision}
+              />
+            </div>
+          </details>
+
+          <details className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-studio-muted focus:outline-none focus:ring-2 focus:ring-sky-300/35">
+              <Info className="mr-2 inline h-4 w-4" aria-hidden="true" />
+              工程信息
+            </summary>
+            <div className="mt-3">
+              <MetadataRows rows={summary.metadataRows} />
+            </div>
+          </details>
+
           <ProjectQualityPanel report={qualityReport} />
-
-          <ProjectVersionPanel
-            revisions={revisions}
-            onCreate={onCreateRevision}
-            onRestore={onRestoreRevision}
-          />
-
-          <section className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
-            <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-studio-muted">
-              <Info className="h-4 w-4" aria-hidden="true" />
-              项目元数据
-            </div>
-            <MetadataRows rows={summary.metadataRows} />
-          </section>
-
-          <section className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
-            <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-studio-muted">
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              保存 / 校验
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <span
-                className={getProjectWorkspaceBadgeClassName(
-                  summary.saveState.tone,
-                )}
-              >
-                {summary.saveState.label}
-              </span>
-              <span
-                className={getProjectWorkspaceBadgeClassName(
-                  summary.validation.tone,
-                )}
-              >
-                {summary.validation.label}
-              </span>
-            </div>
-          </section>
         </div>
       )}
     </aside>

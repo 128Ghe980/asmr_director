@@ -18,6 +18,7 @@ import type { ProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 import { WorkspaceBadge } from "./project-workspace-badge";
 
 type ProjectWorkspaceHeaderProps = {
+  planning?: boolean;
   importError: string | undefined;
   importPanelId: string;
   leftCollapsed: boolean;
@@ -34,6 +35,7 @@ type ProjectWorkspaceHeaderProps = {
 };
 
 export function ProjectWorkspaceHeader({
+  planning = false,
   importError,
   importPanelId,
   leftCollapsed,
@@ -57,52 +59,23 @@ export function ProjectWorkspaceHeader({
   const importToggleLabel = isImportOpen ? "收起导入 JSON" : "展开导入 JSON";
   const leftToggleLabel = leftCollapsed ? "展开项目栏" : "收起项目栏";
   const rightToggleLabel = rightCollapsed ? "展开项目详情" : "收起项目详情";
-  const statusBadge = {
-    label: `状态 ${summary.identity.status}`,
-    tone: "neutral" as const,
-  };
 
   return (
     <header className="min-w-0 border-b border-studio-line bg-studio-panel/92 px-4 py-4 md:px-5">
-      <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-semibold text-studio-muted">当前项目</p>
-            <WorkspaceBadge badge={summary.localState} />
-            <WorkspaceBadge badge={summary.validation} />
-            <WorkspaceBadge badge={summary.saveState} />
-            <WorkspaceBadge badge={statusBadge} />
-          </div>
-
-          <h1 className="mt-2 truncate text-2xl font-semibold tracking-normal text-studio-text">
-            {summary.identity.title}
+          <h1 className="truncate text-xl font-semibold tracking-normal text-studio-text">
+            {planning ? "创作工作台" : summary.identity.title}
           </h1>
-          <dl className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-studio-muted">
-            <div className="flex min-w-0 gap-1">
-              <dt className="shrink-0">场景</dt>
-              <dd className="truncate text-studio-text/88">
-                {summary.identity.sceneName}
-              </dd>
+          {!planning && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-studio-muted">
+              <span>{summary.identity.duration}</span>
+              <WorkspaceBadge badge={summary.saveState} />
+              {summary.validation.issueCount > 0 && (
+                <WorkspaceBadge badge={summary.validation} />
+              )}
             </div>
-            <div className="flex gap-1">
-              <dt>时长</dt>
-              <dd className="text-studio-text/88">
-                {summary.identity.duration}
-              </dd>
-            </div>
-            <div className="flex gap-1">
-              <dt>语言</dt>
-              <dd className="text-studio-text/88">
-                {summary.identity.language}
-              </dd>
-            </div>
-            <div className="flex min-w-0 gap-1">
-              <dt className="shrink-0">项目 ID</dt>
-              <dd className="truncate font-mono text-xs text-studio-text/88">
-                {summary.identity.projectId}
-              </dd>
-            </div>
-          </dl>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2 xl:justify-end">
@@ -113,6 +86,7 @@ export function ProjectWorkspaceHeader({
             aria-controls={leftPanelId}
             aria-expanded={!leftCollapsed}
             aria-label={leftToggleLabel}
+            title={leftToggleLabel}
           >
             {leftCollapsed ? (
               <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
@@ -121,6 +95,7 @@ export function ProjectWorkspaceHeader({
             )}
             项目
           </button>
+          {!planning && <>
           <button
             type="button"
             onClick={onToggleRight}
@@ -128,6 +103,7 @@ export function ProjectWorkspaceHeader({
             aria-controls={rightPanelId}
             aria-expanded={!rightCollapsed}
             aria-label={rightToggleLabel}
+            title={rightToggleLabel}
           >
             {rightCollapsed ? (
               <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
@@ -142,9 +118,10 @@ export function ProjectWorkspaceHeader({
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
             aria-label={focusLabel}
             aria-pressed={isFocusActive}
+            title={focusLabel}
           >
             <Focus className="h-4 w-4" aria-hidden="true" />
-            专注编辑
+            <span className="sr-only">专注编辑</span>
           </button>
           <button
             type="button"
@@ -176,12 +153,13 @@ export function ProjectWorkspaceHeader({
             <RotateCcw className="h-4 w-4" aria-hidden="true" />
             重置
           </button>
+          </>}
         </div>
       </div>
 
       <div
         id={importPanelId}
-        hidden={!isImportOpen}
+        hidden={planning || !isImportOpen}
         className="mt-4 rounded-lg border border-studio-line bg-black/16 p-3"
       >
         <label className="block">
@@ -205,7 +183,7 @@ export function ProjectWorkspaceHeader({
             确认载入
           </button>
         </div>
-        {isImportOpen && importError ? (
+        {!planning && isImportOpen && importError ? (
           <div
             role="alert"
             className="mt-3 whitespace-pre-wrap rounded-md border border-amber-300/16 bg-amber-300/[0.055] px-3 py-2 text-sm leading-6 text-amber-100"

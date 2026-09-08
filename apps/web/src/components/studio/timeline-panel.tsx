@@ -76,10 +76,7 @@ export function TimelinePanel({
   return (
     <section className="rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
-        <div>
-          <h2 className="text-sm font-semibold text-studio-text">时间线</h2>
-          <p className="text-xs text-studio-muted">固定轨道</p>
-        </div>
+        <h2 className="text-sm font-semibold text-studio-text">时间线</h2>
         <div className="text-xs tabular-nums text-studio-muted">
           {formatTimeRange(0, project.duration)}
         </div>

@@ -5,7 +5,7 @@ type ClipGenerationFingerprintInput = {
   id: string;
   track: TimelineClip["track"];
   type: TimelineClip["type"];
-  start: number;
+  start: number | undefined;
   duration: number;
   volume_db: number;
   fade_in: number;
@@ -68,12 +68,21 @@ function getTypedFingerprintInput(
   }
 }
 
-export function getClipGenerationFingerprint(clip: TimelineClip): string {
+type ClipGenerationFingerprintOptions = {
+  ignoreVoiceStart?: boolean;
+};
+
+export function getClipGenerationFingerprint(
+  clip: TimelineClip,
+  options: ClipGenerationFingerprintOptions = {},
+): string {
   const input: ClipGenerationFingerprintInput = {
     id: clip.id,
     track: clip.track,
     type: clip.type,
-    start: clip.start,
+    // Planner fitting can move a concurrently generating voice without changing
+    // its audio. User timing edits still cancel the job in the workspace.
+    start: options.ignoreVoiceStart && clip.type === "voice" ? undefined : clip.start,
     duration: clip.duration,
     volume_db: clip.volume_db,
     fade_in: clip.fade_in,
@@ -89,10 +98,11 @@ export function isCurrentClipGenerationFingerprint(
   project: AsmrProject,
   clipId: string,
   fingerprint: string,
+  options: ClipGenerationFingerprintOptions = {},
 ): boolean {
   const clip = flattenClips(project).find((candidate) => candidate.id === clipId);
 
-  return clip ? getClipGenerationFingerprint(clip) === fingerprint : false;
+  return clip ? getClipGenerationFingerprint(clip, options) === fingerprint : false;
 }
 
 function getProjectMixClipFingerprintInput(

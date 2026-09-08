@@ -29,28 +29,34 @@ export function ProjectQualityPanel({
 }: {
   report: ProductQualityReport;
 }) {
-  const summary =
-    report.blockerCount > 0
-      ? `${report.blockerCount} 项阻塞`
-      : report.warningCount > 0
-        ? `${report.warningCount} 项注意`
-        : "可以导出";
+  const visibleIssues = report.checks.filter((check) => {
+    if (check.tone === "pass") return false;
+    if (check.id === "schema") return true;
+    if (check.id === "analysis") return check.detail.includes("无法");
+    if (check.id === "mix") return check.detail.includes("需重混");
+    if (check.id === "channels" || check.id === "headroom") {
+      return !check.detail.startsWith("等待");
+    }
+    return false;
+  });
 
   return (
-    <section className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-studio-muted">
-          <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <h3 className="truncate">质量检查</h3>
-        </div>
-        <span
-          className={`rounded-md border px-2 py-1 text-[11px] font-semibold ${toneClasses[report.overallTone]}`}
+    <section aria-label="音频检查" className="space-y-2">
+      {visibleIssues.map((check) => (
+        <p
+          key={check.id}
+          role={check.tone === "block" ? "alert" : "status"}
+          className={`rounded-md border px-3 py-2 text-xs leading-5 ${toneClasses[check.tone]}`}
         >
-          {summary}
-        </span>
-      </div>
-
-      <ul className="mt-3 space-y-1.5">
+          {check.label}：{check.detail}
+        </p>
+      ))}
+      <details className="rounded-lg border border-studio-line bg-white/[0.025] p-3">
+        <summary className="cursor-pointer text-xs font-semibold text-studio-muted focus:outline-none focus:ring-2 focus:ring-sky-300/35">
+          <ListChecks className="mr-2 inline h-4 w-4" aria-hidden="true" />
+          音频检查详情
+        </summary>
+        <ul className="mt-3 space-y-1.5">
         {report.checks.map((check) => (
           <li
             key={check.id}
@@ -69,7 +75,8 @@ export function ProjectQualityPanel({
             </div>
           </li>
         ))}
-      </ul>
+        </ul>
+      </details>
     </section>
   );
 }

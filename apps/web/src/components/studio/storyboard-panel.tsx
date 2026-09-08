@@ -7,7 +7,6 @@ import { getTrackLabel, getValueLabel } from "@/lib/asmr/ui-copy";
 import {
   flattenClips,
   formatTimeRange,
-  getLocalizedPositionLabel,
 } from "@/lib/asmr/view-model";
 
 import { StatusBadge } from "./status-badge";
@@ -32,18 +31,10 @@ function getClipTitle(clip: TimelineClip): string {
 }
 
 function getClipMetadata(clip: TimelineClip): string {
-  const details = [
+  return [
     getTrackLabel(clip.track),
     formatTimeRange(clip.start, clip.duration),
-    getLocalizedPositionLabel(clip.position),
-    `${clip.volume_db} dB`,
-  ];
-
-  if (clip.type === "voice") {
-    details.splice(1, 0, getValueLabel(clip.emotion));
-  }
-
-  return details.join(" · ");
+  ].join(" · ");
 }
 
 export function StoryboardPanel({
