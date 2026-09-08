@@ -12,6 +12,7 @@ describe("local runtime config", () => {
       "D:\\CodexWorkplace\\asmr_director_runtime",
     );
     expect(config.gptSovitsBaseUrl).toBe("http://127.0.0.1:9880");
+    expect(config.voxcpm2ProfilePath).toBe(path.join(config.runtimeRoot, "audio-quality-v1", "voxcpm2", "profile.json"));
     expect(config.voicePackPath).toBe(
       path.join(
         "D:\\CodexWorkplace\\asmr_director_runtime",
@@ -45,6 +46,7 @@ describe("local runtime config", () => {
       ASMR_VOICE_PACK_PATH: "E:\\voices\\voice-pack.json",
       ASMR_CLIP_ASSET_ROOT: "E:\\assets\\clips",
       ASMR_MIX_ASSET_ROOT: "E:\\assets\\mixes",
+      ASMR_VOXCPM2_PROFILE_PATH: "E:\\voices\\voxcpm2.json",
     });
 
     expect(config).toEqual({
@@ -53,6 +55,7 @@ describe("local runtime config", () => {
       voicePackPath: "E:\\voices\\voice-pack.json",
       clipAssetRoot: "E:\\assets\\clips",
       mixAssetRoot: "E:\\assets\\mixes",
+      voxcpm2ProfilePath: "E:\\voices\\voxcpm2.json",
     });
   });
 });

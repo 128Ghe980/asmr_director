@@ -62,9 +62,44 @@ ASMR_PLANNER_API_MODEL=deepseek-v4-pro
 
 ## 音频与保存
 
-人声仍使用本地 GPT-SoVITS，其他声音仍是程序合成。VoxCPM2 与高质量真实音效接入尚未完成。音频运行时位置及启动命令见 `docs/AI_HANDOFF.md`。
+人声可选择本地 GPT-SoVITS 或 VoxCPM2；其他声音目前仍是程序合成。VoxCPM2 为当前人声生成独立候选，试听后采用，之后重混导出；生成候选本身不会替换工程原声。已选长文分组/停顿方案和高质量真实音效仍是后续工作，实际验收进度见 `docs/AI_HANDOFF.md`。
 
-人声资产读取实际 PCM WAV 时长；Planner 工程会延长过短片段并顺延时间线，较短音频保留计划留白。普通旧工程保留既有时间编辑行为。
+使用入口：工程编辑 → 选中人声片段 → 人声引擎选择 `VoxCPM2` → 选择参考与模式 → 生成。候选可试听、采用或丢弃；最近一次采用可跨刷新撤回，采用后继续编辑则通过项目安全版本恢复。
+
+人声资产读取实际 PCM WAV 时长；VoxCPM2 候选采用和 Planner 人声生成会延长过短片段并顺延时间线，较短音频保留计划留白。混音兼容现有 32 kHz、44.1 kHz 和 VoxCPM2 的 48 kHz 音频。
+
+### VoxCPM2 本机配置
+
+不需要额外启动 Python TTS 服务。服务器直接调用本机原生 `voxcpm2-cli.exe`，默认 profile 位于 `D:\CodexWorkplace\asmr_director_runtime\audio-quality-v1\voxcpm2\profile.json`。其他安装位置可用服务器环境变量 `ASMR_VOXCPM2_PROFILE_PATH` 指定；浏览器只选择已配置的声音 ID，不接收任意文件路径。
+
+profile 采用以下结构；相对路径以 profile 所在目录解析，CLI 需支持 `--low-vram` 和 Combined 克隆模式：
+
+```json
+{
+  "version": 1,
+  "provider": "voxcpm2",
+  "cliPath": "bin/voxcpm2-cli.exe",
+  "baseModelPath": "models/VoxCPM2-BaseLM-Q8_0.gguf",
+  "acousticModelPath": "models/VoxCPM2-Acoustic-F16.gguf",
+  "defaultReferenceId": "soft_zh",
+  "references": [{
+    "id": "soft_zh",
+    "displayName": "温柔中文参考",
+    "audioPath": "references/soft-16k-s16.wav",
+    "promptTextPath": "references/soft.txt",
+    "licenseStatus": "user_confirmed",
+    "consentConfirmedAt": "2026-07-14T16:20:23.000+08:00"
+  }]
+}
+```
+
+参考音频使用 mono / 16 kHz / PCM16 WAV。普通、温柔等声音各自登记准确转录和真实授权信息；上例日期仅展示格式。没有转录时省略 `promptTextPath`，该声音仍可使用“仅参考音频”。“参考音频＋文本”会同时传参考音频与 prompt；适配器把转录标点转为空格并保留一个末尾 ASCII 空格。
+
+本轮生成当前片段，台词上限 500 字，每次一个候选。服务器固定 CFG 2、timesteps 10、temperature 1、GPU layers 0 并启用 low-VRAM；这个组合仍使用 GPU。步数按文案长度设为 120–600，默认超时 5 分钟。达到步数上限的音频返回错误，需要拆短台词；通过格式检查不代表发音或台词完整度已通过主观试听。候选来源记录实际 seed/参数、CLI SHA256、模型文件名/大小/修改时间和参考内容 SHA256。
+
+产品临时文件使用外部 runtime 下 `voxcpm2-product/runs`，跨服务进程的排他锁为 `locks/voxcpm2-generation.lock`。取消/超时会终止 CLI，确认进程退出后释放锁。如果服务崩溃或进程终止无法确认，保留锁防止叠加 GPU 任务；维护时先核实锁中的服务 PID 和 CLI PID 都已退出，再移除这个具体锁文件。不要在仍有 CLI 运行时删除锁。旧试听实验目录不自动迁移或修改。
+
+候选清单在 runtime 下 `assets/candidates/voxcpm2-v1/manifest.json`，每个片段最多保留 12 个未采用候选；丢弃不会删除 WAV。采用/撤回信息随浏览器项目库保存，声音选项单独保存在 `ai-asmr-studio:v1:voice-options`，不进入工程 JSON。
 
 项目库和版本保存在 `ai-asmr-studio:v1:project-library`，工作草稿保存在 `ai-asmr-studio:v1:planner-draft`。重置/导入替换清除旧策划来源，安全版本恢复同时恢复对应来源。保存失败会明确提示，请及时下载文案或工程 JSON。
 

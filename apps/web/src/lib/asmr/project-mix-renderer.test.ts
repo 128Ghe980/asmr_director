@@ -6,6 +6,7 @@ import {
   writePcm16StereoWav,
 } from "./project-mix-renderer";
 import { demoProject } from "./mock-project";
+import { writePcm16MonoWav } from "./procedural-audio";
 import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
 
@@ -276,7 +277,7 @@ describe("project mix renderer", () => {
     expect(peak(firstTenth)).toBeLessThan(peak(lateTenth) * 0.4);
   });
 
-  it("applies equal-power pan to stereo output", async () => {
+  it("applies equal-power pan to mono sources", async () => {
     const sampleRate = 1000;
     const project = makeSingleClipProject((clip) => ({
       ...clip,
@@ -296,11 +297,7 @@ describe("project mix renderer", () => {
         duration: 1,
       },
     }));
-    const source = makeConstantStereoWav({
-      duration: 1,
-      sampleRate,
-      amplitude: 0.8,
-    });
+    const source = writePcm16MonoWav(new Float32Array(sampleRate).fill(0.8), sampleRate);
     const decoded = decodePcmWav(
       await renderProjectMixWav({
         project,
@@ -429,5 +426,134 @@ describe("project mix renderer", () => {
     );
 
     expect(peak(decoded.samples)).toBeLessThanOrEqual(1);
+  });
+
+  it("mixes 32, 44.1 and 48 kHz sources at 48 kHz without changing placement or duration", async () => {
+    const rates = [32000, 44100, 48000];
+    const starts = [0.125, 0.625, 1.125];
+    const template = findClip(demoProject, "voice_001");
+    if (template.type !== "voice") throw new Error("Expected voice clip");
+    const clips = rates.map((rate, index) => ({
+      ...structuredClone(template),
+      id: `voice_${rate}`,
+      start: starts[index],
+      duration: 0.4,
+      volume_db: 0,
+      fade_in: 0,
+      fade_out: 0,
+      position: { pan: 0, distance: "close" as const, movement: "static" as const },
+      generation: { ...template.generation, status: "asset_generated" as const },
+      asset: { asset_id: `asset_${rate}`, uri: `asset://clip/asset_${rate}`, duration: 0.25 },
+    }));
+    const project = makeSingleClipProject(() => clips[0]);
+    project.timeline.tracks[0] = { track_type: "voice", clips };
+    project.timeline.mixing.target_lufs = -60;
+    const sources = new Map(rates.map((rate) => [
+      `voice_${rate}`,
+      writePcm16MonoWav(new Float32Array(rate / 4).fill(0.5), rate),
+    ]));
+    const decoded = decodePcmWav(await renderProjectMixWav({
+      project,
+      loadClipAsset: async (clip) => sources.get(clip.id)!,
+    }));
+
+    expect(decoded.sampleRate).toBe(48000);
+    expect(decoded.samples.length / decoded.channels / decoded.sampleRate).toBe(2);
+    for (const start of starts) {
+      const startFrame = Math.round(start * 48000);
+      const endFrame = startFrame + 12000;
+      expect(decoded.samples[(startFrame - 1) * 2]).toBe(0);
+      expect(decoded.samples[startFrame * 2]).toBeCloseTo(0.5 / Math.sqrt(2), 4);
+      expect(decoded.samples[(endFrame - 1) * 2]).toBeGreaterThan(0.3);
+      expect(peak(decoded.samples.subarray(endFrame * 2, (endFrame + 6000) * 2))).toBe(0);
+    }
+  });
+
+  it.each(["static", "left_to_right", "approach"] as const)(
+    "preserves stereo phase and channel levels without applying %s spatialization again",
+    async (movement) => {
+      const project = makeSingleClipProject((clip) => ({
+        ...clip,
+        start: 0,
+        duration: 1,
+        volume_db: -6,
+        fade_in: 0,
+        fade_out: 0,
+        position: { pan: -1, distance: "far", movement },
+        generation: { ...clip.generation, status: "asset_generated" },
+        asset: { asset_id: "stereo", uri: "asset://clip/stereo", duration: 1 },
+      }));
+      project.timeline.mixing.target_lufs = -60;
+      const samples = new Float32Array(44100 * 2);
+      for (let frame = 0; frame < 44100; frame++) {
+        samples[frame * 2] = 0.6;
+        samples[frame * 2 + 1] = -0.3;
+      }
+      const decoded = decodePcmWav(await renderProjectMixWav({
+        project,
+        loadClipAsset: async () => writePcm16StereoWav(samples, 44100),
+      }));
+
+      const gain = Math.pow(10, -6 / 20);
+      for (const frame of [0, 12000, 47999]) {
+        expect(decoded.samples[frame * 2]).toBeCloseTo(0.6 * gain, 4);
+        expect(decoded.samples[frame * 2 + 1]).toBeCloseTo(-0.3 * gain, 4);
+      }
+      expect(peak(decoded.samples.subarray(48000 * 2))).toBe(0);
+    },
+  );
+
+  it("keeps mono pan motion and distance gain after resampling", async () => {
+    const project = makeSingleClipProject((clip) => ({
+      ...clip,
+      start: 0,
+      duration: 1,
+      volume_db: 0,
+      fade_in: 0,
+      fade_out: 0,
+      position: { pan: 0, distance: "far", movement: "left_to_right" },
+      generation: { ...clip.generation, status: "asset_generated" },
+      asset: { asset_id: "mono", uri: "asset://clip/mono", duration: 1 },
+    }));
+    project.timeline.mixing.target_lufs = -60;
+    const decoded = decodePcmWav(await renderProjectMixWav({
+      project,
+      loadClipAsset: async () => writePcm16MonoWav(new Float32Array(32000).fill(0.5), 32000),
+    }));
+
+    expect(decoded.samples[0]).toBeCloseTo(0.5 * 0.35, 4);
+    expect(decoded.samples[1]).toBe(0);
+    expect(decoded.samples[47999 * 2]).toBe(0);
+    expect(decoded.samples[47999 * 2 + 1]).toBeCloseTo(0.5 * 0.35, 4);
+    expect(decoded.samples[24000 * 2]).toBeCloseTo(0.5 * 0.35 / Math.sqrt(2), 4);
+  });
+
+  it("loops a resampled ambience source for the planned duration", async () => {
+    const project = makeSingleClipProject((clip) => {
+      if (clip.type !== "ambience") throw new Error("Expected ambience");
+      return {
+        ...clip,
+        start: 0.5,
+        duration: 1,
+        loop: true,
+        volume_db: 0,
+        fade_in: 0,
+        fade_out: 0,
+        position: { pan: 0, distance: "close", movement: "static" },
+        generation: { ...clip.generation, status: "asset_generated" },
+        asset: { asset_id: "rain", uri: "asset://clip/rain", duration: 0.25 },
+      };
+    }, "ambience_rain_001");
+    project.timeline.mixing.target_lufs = -60;
+    const decoded = decodePcmWav(await renderProjectMixWav({
+      project,
+      loadClipAsset: async () => writePcm16MonoWav(new Float32Array(11025).fill(0.5), 44100),
+    }));
+
+    expect(decoded.samples[(24000 - 1) * 2]).toBe(0);
+    for (const frame of [24000, 36000, 48000, 60000, 71999]) {
+      expect(decoded.samples[frame * 2]).toBeCloseTo(0.5 / Math.sqrt(2), 4);
+    }
+    expect(peak(decoded.samples.subarray(72000 * 2))).toBe(0);
   });
 });

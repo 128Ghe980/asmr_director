@@ -26,6 +26,16 @@ export type ProjectRevision = {
   plannerSource?: PlannerSource;
 };
 
+export type AudioCandidateAcceptance = {
+  version: 1;
+  candidateId: string;
+  clipId: string;
+  adoptedAt: string;
+  beforeProject: AsmrProject;
+  beforePlannerSource?: PlannerSource;
+  afterFingerprint: string;
+};
+
 export type ProjectLibraryEntry = {
   projectId: string;
   title: string;
@@ -34,6 +44,7 @@ export type ProjectLibraryEntry = {
   revisions: ProjectRevision[];
   mixFingerprint?: string;
   plannerSource?: PlannerSource;
+  candidateAcceptance?: AudioCandidateAcceptance;
 };
 
 export type ProjectLibrary = {
@@ -87,6 +98,7 @@ function makeEntry(
   revisions: ProjectRevision[] = [],
   mixFingerprint?: string,
   plannerSource?: PlannerSource,
+  candidateAcceptance?: AudioCandidateAcceptance,
 ): ProjectLibraryEntry {
   const cloned = cloneProject(project);
 
@@ -98,6 +110,28 @@ function makeEntry(
     revisions,
     mixFingerprint,
     plannerSource: plannerSource ? PlannerSourceSchema.parse(plannerSource) : undefined,
+    candidateAcceptance,
+  };
+}
+
+function parseCandidateAcceptance(input: unknown, projectId: string): AudioCandidateAcceptance | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const candidate = input as Partial<AudioCandidateAcceptance>;
+  const project = safeParseAsmrProject(candidate.beforeProject);
+  if (
+    candidate.version !== 1 || !project.success || project.data.project_id !== projectId ||
+    typeof candidate.candidateId !== "string" || !/^[A-Za-z0-9_-]+$/.test(candidate.candidateId) ||
+    typeof candidate.clipId !== "string" || !candidate.clipId ||
+    typeof candidate.adoptedAt !== "string" || Number.isNaN(Date.parse(candidate.adoptedAt)) ||
+    typeof candidate.afterFingerprint !== "string" || !candidate.afterFingerprint ||
+    !project.data.timeline.tracks.some((track) => track.track_type === "voice" && track.clips.some((clip) => clip.id === candidate.clipId))
+  ) return undefined;
+  const source = PlannerSourceSchema.safeParse(candidate.beforePlannerSource);
+  if (candidate.beforePlannerSource !== undefined && !source.success) return undefined;
+  return {
+    version: 1, candidateId: candidate.candidateId, clipId: candidate.clipId,
+    adoptedAt: candidate.adoptedAt, beforeProject: project.data,
+    beforePlannerSource: source.data, afterFingerprint: candidate.afterFingerprint,
   };
 }
 
@@ -200,6 +234,7 @@ function parseStoredLibrary(
         ? entry.mixFingerprint
         : undefined,
       PlannerSourceSchema.safeParse(entry.plannerSource).data,
+      parseCandidateAcceptance(entry.candidateAcceptance, parsedProject.data.project_id),
     );
 
     if (Number.isNaN(new Date(parsedEntry.updatedAt).getTime())) {
@@ -301,6 +336,7 @@ export function updateLibraryProject(
     existing?.revisions ?? [],
     existing?.mixFingerprint,
     existing?.plannerSource,
+    existing?.candidateAcceptance,
   );
   const projects = existing
     ? library.projects.map((entry) =>
@@ -368,7 +404,7 @@ export function replaceLibraryProject(
     ...updated,
     projects: updated.projects.map((entry) =>
       entry.projectId === project.project_id
-        ? { ...entry, mixFingerprint: undefined, plannerSource: undefined }
+        ? { ...entry, mixFingerprint: undefined, plannerSource: undefined, candidateAcceptance: undefined }
         : entry,
     ),
   };
@@ -594,6 +630,7 @@ export function restoreProjectRevision(
           updatedAt: now.toISOString(),
           project: restoredProject,
           mixFingerprint: undefined,
+          candidateAcceptance: undefined,
           plannerSource: revision.plannerSource
             ? PlannerSourceSchema.parse(revision.plannerSource)
             : undefined,

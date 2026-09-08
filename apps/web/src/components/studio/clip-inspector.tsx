@@ -36,6 +36,7 @@ import { GenerationSlotList } from "./generation-slot-list";
 import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
+  voiceGenerationPanel?: (generationControl: React.ReactNode) => React.ReactNode;
   fieldValidationIssues: ClipFieldValidationIssues;
   selectedClip: TimelineClip | undefined;
   selectedClipGeneration: SelectedClipGenerationControl;
@@ -362,6 +363,7 @@ function parseNumericInput(value: string): number {
 }
 
 export function ClipInspector({
+  voiceGenerationPanel,
   fieldValidationIssues,
   selectedClip,
   selectedClipGeneration,
@@ -442,11 +444,9 @@ export function ClipInspector({
 
         <TimingActionStrip onNudge={nudgeTiming} />
 
-        <GenerationActionPanel
-          control={selectedClipGeneration}
-          onCancel={onCancelSelectedGeneration}
-          onGenerate={onGenerateSelectedClip}
-        />
+        {selectedClip.type === "voice" && voiceGenerationPanel ? voiceGenerationPanel(
+          <GenerationActionPanel control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />,
+        ) : <GenerationActionPanel control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />}
 
         {selectedClip.type === "voice" ? (
           <>

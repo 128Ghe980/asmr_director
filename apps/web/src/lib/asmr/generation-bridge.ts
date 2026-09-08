@@ -1,4 +1,6 @@
 import type { AsmrProject } from "./schema";
+import type { AudioCandidate } from "./audio-candidate";
+import type { VoiceGenerationOptions } from "./voice-generation-options";
 
 export type GenerateClipReason = "generate" | "regenerate" | "retry";
 export type GenerateProjectMixReason = "mix" | "remix" | "retry";
@@ -12,6 +14,7 @@ export type GenerateClipRequest = {
   project: AsmrProject;
   clipId: string;
   reason: GenerateClipReason;
+  voiceOptions?: VoiceGenerationOptions;
 };
 
 export type GenerateProjectMixRequest = {
@@ -48,6 +51,7 @@ export type GenerationJobSnapshot = {
 
 export type GenerationJobUpdate =
   | { type: "snapshot"; job: GenerationJobSnapshot }
+  | { type: "candidate"; job: GenerationJobSnapshot; candidate: AudioCandidate }
   | {
       type: "succeeded";
       job: GenerationJobSnapshot;

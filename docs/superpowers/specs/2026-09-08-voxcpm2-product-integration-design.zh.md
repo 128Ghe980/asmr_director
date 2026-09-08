@@ -1,6 +1,6 @@
 # VoxCPM2 正式生成接入设计
 
-日期：2026-09-08。状态：接入准备完成，尚未实施或验收当前主线的 VoxCPM2 生成。
+日期：2026-09-08。状态：首个单 clip 产品切片已实施并完成技术验收。本轮样片的用户听感仍待验收；长文分组/自适应停顿、V2/HRTF 和真实 SFX 扩展尚未接入当前主线。
 
 英文版：`2026-09-08-voxcpm2-product-integration-design.md`。
 
@@ -12,9 +12,9 @@
 
 保留 GPT-SoVITS 和现有非语音生成。VoxCPM2 作为可选引擎，不静默替换默认，也不在失败时偷偷切换模型。首个切片先覆盖当前片段的真实生成与安全采用；已选长文方案随后作为同一 Provider 的生成模式接入。
 
-## 当前事实与可复用资产
+## 实施前基线与可复用资产（2026-09-08）
 
-本轮 Planner 里程碑为 `bd0d058`，已推送到 `origin/codex/step10-product-workflow`。当前主工作区的人声仍直接调用 GPT-SoVITS；没有正式候选库或采用/撤回闭环。混音当前默认 32 kHz，并拒绝不同采样率的素材；其 stereo 输入会被合成 mono。这些是 VoxCPM2 原生 48 kHz 音频正式进入工程时必须处理的兼容边界。
+本轮 Planner 里程碑为 `bd0d058`，已推送到 `origin/codex/step10-product-workflow`。接入前，主工作区的人声直接调用 GPT-SoVITS，没有正式候选库或采用/撤回闭环；混音默认 32 kHz，拒绝不同采样率的素材，并把 stereo 输入合成 mono。这些是下述单 clip 实施已处理的兼容缺口，不代表当前产品状态。
 
 旧工作树 `D:\CodexWorkplace\asmr_director\.worktrees\audio-quality-v1-round1` 位于 `codex/audio-quality-v1-round1`，核查时 HEAD 为 `46d26d7`。其中候选、空间与 48 kHz 基础已有实现，但存在大量未提交改动，VoxCPM2 provider/profile 及测试还是未跟踪文件。后续须先重新检查状态，再选择性移植；不要整树合并、重置或覆盖它。
 
@@ -31,7 +31,7 @@
 
 ## 本机运行配置
 
-2026-09-08 只读核查确认以下材料存在；本次没有启动服务或生成音频：
+2026-09-08 实施前的只读核查确认以下材料存在，当时未启动服务或生成音频；后续真实产品验证见文末：
 
 - CLI：`I:\AI\voxcpm2-evaluation\src\build-cuda-vs2017\bin\Release\voxcpm2-cli.exe`，SHA256 `ECB34B72A15D489BA333718082C784F9F8B0CC05161BB6525F15451D4F821C44`，与接受样本记录一致。
 - 模型：实验根目录下 `models\VoxCPM2-BaseLM-Q8_0.gguf` 与 `models\VoxCPM2-Acoustic-F16.gguf`。
@@ -65,7 +65,7 @@
 
 ## 混音与界面
 
-内部混音统一到 48 kHz，兼容旧 32 kHz、44.1 kHz 和 Vox 48 kHz 输入，避免重采样后时长或时间线偏移。保留 stereo 两声道；单声道人声可交给现有空间层，已经空间化的 stereo 不再被平均成 mono 或重复空间化。保留原始干声，空间处理和缓存发生在重混阶段。
+内部混音统一到 48 kHz，兼容旧 32 kHz、44.1 kHz 和 Vox 48 kHz 输入，避免重采样后时长或时间线偏移。保留 stereo 两声道；单声道人声可交给现有空间层，已经空间化的 stereo 不再被平均成 mono 或重复空间化。保留原始干声。当前切片沿用原有单声道 pan/distance/movement；重混阶段的 V2/HRTF 空间处理与缓存仍属于后续接入工作。
 
 默认界面只显示引擎、参考、参考模式、生成/取消及已出现候选的试听/采用操作。候选列表显示必要时长与状态，技术参数和来源按需展开。采用前原声仍可试听，采用后提供撤回；真实错误、保存失败和需重混继续可见。不得恢复本轮刚删除的开发提醒、长说明或重复统计。
 
@@ -81,11 +81,22 @@
 
 以下是音质 V1 内部实施顺序，不是新的路线关卡：
 
-1. 对照旧工作树选择性移植 provider/profile 与候选 schema/store，补参考模式、真实参数、取消、串行排他和 WAV 校验。
-2. 接入现有 Generation Bridge、候选试听及显式采用/撤回；保护 Planner 元数据、刷新恢复和实际时长。
-3. 完成 48 kHz 混音兼容与精简 UI，跑真实 Vox 候选到重混导出的闭环。
-4. 在此基础上产品化已选长文模式、安全提取和停顿；再继续已批准空间动作与真实 SFX 扩展。
+1. 已实施：对照旧工作树选择性移植 provider/profile 与候选 schema/store，补参考模式、真实参数、取消、串行排他和 WAV 校验。
+2. 已实施：接入现有 Generation Bridge、候选试听及显式采用/撤回；保护 Planner 元数据、刷新恢复和实际时长。
+3. 已实施并完成技术验收：48 kHz 混音兼容、精简 UI 与真实 Vox 候选到重混导出的闭环。
+4. 待实施：在此基础上产品化已选长文模式、安全提取和停顿；再继续已批准空间动作与真实 SFX 扩展。
 
 基础接入的自动验证至少覆盖：GPT/非语音回归，两种参考模式，空/损坏 WAV，32/44.1/48 kHz 混音与 stereo 保留，长音频采用和撤回，取消/失败/晚到响应，生成中改文案或切工程，候选与撤回刷新恢复，采用后需重混及可播放导出。行为修改遵循现有 TDD 规则，完成全量测试、lint、TypeScript/生产构建。
 
-浏览器以独立验收项目测试真实 Vox 生成，至少两个候选的试听/比较/采用/撤回，再重混下载；检查桌面和 390px 界面。保存真实运行配置、WAV 元数据及动作结果，保护用户已有草稿和工程。主观声音质量仍由用户耳机试听确认。实施时同步 `apps/web/README.md`、`.env.example`、`docs/THIRD_PARTY_RUNTIMES.md` 和路线/交接/留档；本设计没有宣称这些验证已完成。
+浏览器以独立验收项目测试真实 Vox 生成，至少两个候选的试听/比较/采用/撤回，再重混下载；检查桌面和 390px 界面。保存真实运行配置、WAV 元数据及动作结果，保护用户已有草稿和工程。主观声音质量仍由用户耳机试听确认。`apps/web/README.md`、`.env.example`、`docs/THIRD_PARTY_RUNTIMES.md` 和路线/交接/留档须随实施证据同步。
+
+## 单 clip 实施与验证结果（2026-09-08）
+
+当前产品已支持可选 VoxCPM2、普通/温柔参考及两种参考模式。候选独立于 Project JSON 持久保存，支持试听、显式采用、放弃和刷新后撤回；采用时延长规划不足的人声时间线并标记需重混。原生进程取消、48 kHz 混音和 stereo 保留已接入现有工作流。
+
+- 自动验证：全量 46 个测试文件 / 340 项测试、ESLint、webpack 生产构建通过。原有原生 SWC 绑定警告仍在，构建使用 WASM 回退完成。
+- 真实浏览器验证：两种参考模式均生成真实候选（5.6 秒、6.4 秒）；实际试听播放、采用后时间线延长、刷新后撤回通过，重混并下载得到 8.6 秒 / 48 kHz / stereo WAV。桌面与 390px 检查记录为 `errors: []`。
+- 真实 CLI 取消：子进程退出、生成锁释放，候选数量保持不变。
+- 证据：`D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08\browser-result.json`、`D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08\real-cancel-result.json`。
+
+以上证明单 clip 技术链路通过，不代表 ASR 已验证台词完整性、通用“更柔”已稳定实现，或本轮样片已经获得用户听感验收。长文分组/自适应停顿、V2/HRTF 与真实 SFX 扩展仍未接入当前主线，音质 V1 阶段仍未完成。

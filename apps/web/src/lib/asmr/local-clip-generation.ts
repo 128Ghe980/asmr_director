@@ -13,6 +13,9 @@ import type { GeneratedAssetResult } from "./generation-bridge";
 import type { AsmrProject } from "./schema";
 import { flattenClips } from "./view-model";
 import { loadVoicePack } from "./voice-pack";
+import { generateLocalVoiceCandidate } from "./local-voice-candidate-generation";
+import type { AudioCandidate } from "./audio-candidate";
+import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions } from "./voice-generation-options";
 
 export type GenerateLocalClipInput = {
   project: AsmrProject;
@@ -20,19 +23,34 @@ export type GenerateLocalClipInput = {
   config: LocalRuntimeConfig;
   fetchImpl?: typeof fetch;
   now?: Date;
+  voiceOptions?: VoiceGenerationOptions;
+  signal?: AbortSignal;
 };
 
+export function generateLocalClip(input: GenerateLocalClipInput & { voiceOptions?: undefined }): Promise<GeneratedAssetResult>;
+export function generateLocalClip(input: GenerateLocalClipInput): Promise<GeneratedAssetResult | { candidate: AudioCandidate }>;
 export async function generateLocalClip({
   project,
   clipId,
   config,
   fetchImpl,
   now,
-}: GenerateLocalClipInput): Promise<GeneratedAssetResult> {
+  voiceOptions,
+  signal,
+}: GenerateLocalClipInput): Promise<GeneratedAssetResult | { candidate: AudioCandidate }> {
+  signal?.throwIfAborted();
   const clip = flattenClips(project).find((candidate) => candidate.id === clipId);
 
   if (!clip) {
     throw new Error("Clip not found");
+  }
+
+  if (voiceOptions) {
+    voiceOptions = VoiceGenerationOptionsSchema.parse(voiceOptions);
+    if (clip.type !== "voice") throw new Error("Voice options require a voice clip");
+    if (voiceOptions.provider === "voxcpm2") {
+      return generateLocalVoiceCandidate({ project, clip, config, voiceOptions, signal, now });
+    }
   }
 
   if (canRenderProceduralClip(clip)) {
@@ -75,7 +93,7 @@ export async function generateLocalClip({
 }
 
 export async function generateLocalVoiceClip(
-  input: GenerateLocalClipInput,
+  input: GenerateLocalClipInput & { voiceOptions?: undefined },
 ): Promise<GeneratedAssetResult> {
   return generateLocalClip(input);
 }

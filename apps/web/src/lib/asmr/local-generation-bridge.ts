@@ -6,6 +6,8 @@ import type {
   GenerationJobSnapshot,
   GenerationJobUpdate,
 } from "./generation-bridge";
+import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint } from "./audio-candidate";
+import { flattenClips } from "./view-model";
 
 export type LocalGenerationBridgeOptions = {
   endpoint?: string;
@@ -13,6 +15,7 @@ export type LocalGenerationBridgeOptions = {
   fetchImpl?: typeof fetch;
   jobIdPrefix?: string;
   now?: () => Date;
+  timeoutMs?: number;
 };
 
 type LocalGenerationRequest = GenerateClipRequest | GenerateProjectMixRequest;
@@ -22,6 +25,7 @@ type InFlightLocalJob = {
   createdAt: string;
   onUpdate: (update: GenerationJobUpdate) => void;
   canceled: boolean;
+  controller: AbortController;
 };
 
 function getErrorMessage(payload: unknown, fallback: string): string {
@@ -81,6 +85,7 @@ export function createLocalGenerationBridge({
   fetchImpl = fetch,
   jobIdPrefix = "local_job",
   now = () => new Date(),
+  timeoutMs = 15 * 60 * 1000,
 }: LocalGenerationBridgeOptions = {}): GenerationBridge {
   let nextJobNumber = 1;
   const inFlightJobs = new Map<string, InFlightLocalJob>();
@@ -141,6 +146,7 @@ export function createLocalGenerationBridge({
         createdAt,
         onUpdate,
         canceled: false,
+        controller: new AbortController(),
       };
 
       inFlightJobs.set(jobId, job);
@@ -160,11 +166,13 @@ export function createLocalGenerationBridge({
         ),
       });
 
+      const timer = setTimeout(() => job.controller.abort(), timeoutMs);
       try {
         const response = await fetchImpl(endpoint, {
           method: "POST",
           headers: { "content-type": "application/json; charset=utf-8" },
           body: JSON.stringify(request),
+          signal: job.controller.signal,
         });
         const payload = (await response.json()) as unknown;
 
@@ -172,6 +180,26 @@ export function createLocalGenerationBridge({
           throw new Error(getErrorMessage(payload, "Generation failed"));
         }
 
+        if (typeof payload === "object" && payload !== null && "candidate" in payload) {
+          const candidate = AudioCandidateSchema.parse(payload.candidate);
+          const voice = flattenClips(request.project).find((item) => item.id === request.clipId);
+          if (candidate.projectId !== request.project.project_id || candidate.clipId !== request.clipId ||
+              request.voiceOptions?.provider !== "voxcpm2" || candidate.status !== "ready" ||
+              voice?.type !== "voice" || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(voice) ||
+              candidate.requestFingerprint !== getVoiceCandidateRequestFingerprint(voice, request.voiceOptions) ||
+              candidate.provenance.voicePackId !== request.voiceOptions.voicePackId ||
+              candidate.provenance.referenceMode !== request.voiceOptions.referenceMode) {
+            throw new Error("候选与本次生成请求不匹配，请重试。");
+          }
+          emit(job, {
+            type: "candidate", candidate,
+            job: makeSnapshot(request, jobId, createdAt, 100, "succeeded", "候选已生成"),
+          });
+          return { jobId };
+        }
+        if (request.voiceOptions?.provider === "voxcpm2") {
+          throw new Error("未收到音频候选，请重试。");
+        }
         const asset = getAsset(payload);
         emit(job, {
           type: "succeeded",
@@ -196,9 +224,10 @@ export function createLocalGenerationBridge({
             "failed",
             "生成失败",
           ),
-          error: error instanceof Error ? error.message : "Generation failed",
+          error: job.controller.signal.aborted ? "生成超时，请重试。" : error instanceof Error ? error.message : "Generation failed",
         });
       } finally {
+        clearTimeout(timer);
         inFlightJobs.delete(jobId);
       }
 
@@ -213,6 +242,7 @@ export function createLocalGenerationBridge({
       }
 
       job.canceled = true;
+      job.controller.abort();
       job.onUpdate({
         type: "canceled",
         job: makeSnapshot(
@@ -235,6 +265,7 @@ export function createLocalGenerationBridge({
         createdAt,
         onUpdate,
         canceled: false,
+        controller: new AbortController(),
       };
 
       inFlightJobs.set(jobId, job);

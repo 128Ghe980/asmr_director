@@ -12,7 +12,7 @@ import {
 import { generateLocalProjectMix } from "./local-project-mix-generation";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { demoProject } from "./mock-project";
-import { writePcm16StereoWav } from "./project-mix-renderer";
+import { decodePcmWav, writePcm16StereoWav } from "./project-mix-renderer";
 import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
 
@@ -114,8 +114,8 @@ function makeSingleClipProject({
     : project;
 }
 
-async function writeClipAsset(config: LocalRuntimeConfig, assetId: string) {
-  const source = writePcm16StereoWav(new Float32Array(32000 * 2).fill(0.25), 32000);
+async function writeClipAsset(config: LocalRuntimeConfig, assetId: string, sampleRate: number) {
+  const source = writePcm16StereoWav(new Float32Array(sampleRate * 2).fill(0.25), sampleRate);
   const assetPath = resolveClipAssetPath(assetId, config);
 
   await mkdir(path.dirname(assetPath), { recursive: true });
@@ -134,11 +134,11 @@ describe("local project mix generation", () => {
     ).rejects.toThrow("voice_001");
   });
 
-  it("reads local clip WAV files and stores a durable project mix asset", async () => {
+  it.each([32000, 44100, 48000])("reads a local %i Hz WAV and stores a durable 48 kHz mix", async (sampleRate) => {
     const config = await makeRuntimeConfig();
     const project = makeSingleClipProject({ generated: true });
 
-    await writeClipAsset(config, "voice_001_asset");
+    await writeClipAsset(config, "voice_001_asset", sampleRate);
 
     const asset = await generateLocalProjectMix({
       project,
@@ -150,5 +150,9 @@ describe("local project mix generation", () => {
     expect(asset.uri).toMatch(/^asset:\/\/mix\/asmr_demo_001_wav_/);
     expect(asset.duration).toBe(project.duration);
     expect(saved.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    const decoded = decodePcmWav(saved);
+    expect(decoded.sampleRate).toBe(48000);
+    expect(decoded.channels).toBe(2);
+    expect(decoded.samples.length / 2 / decoded.sampleRate).toBe(project.duration);
   });
 });

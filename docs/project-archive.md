@@ -12,6 +12,26 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
 如果是新的 AI agent 接手，或者当前会话发生上下文压缩，应先读 `docs/AI_HANDOFF.md`。那份文件更短、更稳定，专门服务“快速恢复当前状态和下一步”。
 
+## 2026-09-08 - VoxCPM2 单片段正式生成接入
+
+用户在接入设计完成后明确批准“好，开始实施”。本轮在 `codex/voxcpm2-product-generation`（基于准备提交 `a7ba13f`）完成音质 V1 的首个产品切片，没有新增顶层阶段；旧 `.worktrees/audio-quality-v1-round1` 的未提交内容保持原状。
+
+已实现可选 VoxCPM2 原生生成、普通/温柔参考和 Reference-only/Combined 模式；候选独立生成、试听、采用、丢弃，刷新后可撤回最近一次采用。采用前检查内容、归属及真实素材，并先完成本地保存；安全版本保留原工程与 Planner 来源。采用实际人声时长会延长过短片段并顺延后续时间线。修复了无效中间输入引起的工程克隆崩溃，使编辑期间继续保留最后有效存档。
+
+服务端记录实际 seed/参数、CLI/参考身份，限制文本和生成步数，跨进程串行运行；取消等待原生子进程退出再释放锁。候选清单独立保存到运行目录 `assets/candidates/voxcpm2-v1/manifest.json`，不迁移旧原型候选。新增目录锁、原子写入与 Windows 文件占用重试。混音默认 48 kHz，兼容既有 32/44.1 kHz 与原生 48 kHz，并保留 stereo 声道；这不是 V2/HRTF 空间升级。窄侧栏按单列显示引擎/参考/生成和候选操作，技术来源折叠。
+
+验证与修复证据：
+
+- 全量 46 个 Vitest 文件 / 340 项测试、全量 ESLint 和 Webpack 生产构建（含 TypeScript）通过。原有 Windows native SWC 加载警告保留，WASM 回退构建成功。
+- 真实 CLI 首次验收暴露 198 MB 可执行文件超过旧 hash 读取上限，已改为流式 SHA256 并补大文件回归。全量测试暴露 Windows 锁文件临时 `EPERM`，已补有界重试和确定性用例；最终全量通过。
+- 两种参考模式实际生成同一句中文，Combined 候选 5.6 秒、Reference-only 候选 6.4 秒。独立浏览器检查音频实际播放、生成不自动采用、显式采用后 3 秒规划片段延长、刷新和撤回还原整个时间线。
+- 采用 5.6 秒候选并与程序化呼吸混音，得到 8.6 秒 / 48 kHz stereo WAV；浏览器实际下载文件并验证 WAV 格式。桌面和 390px 检查通过，最终浏览器 `errors: []`。最终浏览器复验复用了前面真实生成的候选，没有重复合成。
+- 单独实际发起请求并观察原生进程后取消，确认子进程退出、生成锁释放、候选数量维持 2。取消和失败没有替换工程音频。
+
+证据位于 `D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08`：`browser-result.json`、`real-cancel-result.json`、两份可重跑脚本、`accepted-mix.wav`、`downloaded-mix.wav`、桌面与手机截图。验收使用独立浏览器上下文，未改用户浏览器工程/草稿；本轮未调用外部 Planner API，未读取密钥。开发服务保留在 `http://127.0.0.1:3000`。
+
+首切片技术链路完成，不等于用户耳机听感验收或普遍更柔能力完成。尚未接入：语义长文分组、安全截取、自适应组间停顿、V2/HRTF 空间动作与真实 SFX 扩展；格式检查也不代表自动 ASR 完整度验证。下一切片继续既定长文方案。已同步 `docs/ROADMAP.md`、`docs/AI_HANDOFF.md`、双语接入设计、Web README 与运行依赖说明。
+
 ## 2026-09-08 - Planner 本轮验收与版本交接
 
 里程碑已提交并推送：`bd0d058 feat: add ASMR planner and simplify creative workspace`，分支 `origin/codex/step10-product-workflow`。此次推送包含该分支此前尚未推送的本地音质设计/实验交接提交；密钥文件 `.env.local` 保持 Git 忽略，未进入提交。提交前暂存内容格式检查与凭据特征检查通过。

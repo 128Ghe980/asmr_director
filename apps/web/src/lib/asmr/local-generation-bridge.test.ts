@@ -35,6 +35,7 @@ describe("local generation bridge", () => {
     expect(started.jobId).toBe("local_job_1");
     expect(fetchImpl).toHaveBeenCalledWith("/api/generation/clip", {
       method: "POST",
+      signal: expect.any(AbortSignal),
       headers: { "content-type": "application/json; charset=utf-8" },
       body: JSON.stringify({
         project: demoProject,

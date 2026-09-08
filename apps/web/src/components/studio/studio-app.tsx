@@ -43,6 +43,10 @@ import { getGenerationView } from "@/lib/asmr/generation-view";
 import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
+import { AudioCandidateSchema, type AudioCandidate } from "@/lib/asmr/audio-candidate";
+import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
+import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
+import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
 import {
   adoptPlannerDraft,
@@ -80,6 +84,7 @@ import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 
 import { ClipInspector } from "./clip-inspector";
+import { VoiceGenerationPanel } from "./voice-generation-panel";
 import { PlannerPanel } from "./planner-panel";
 import { ProjectWorkspace } from "./project-workspace";
 import { StoryboardPanel } from "./storyboard-panel";
@@ -147,6 +152,19 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
 export function StudioApp({ project }: StudioAppProps) {
   const [workspaceView, setWorkspaceView] = useState<"editor" | "planner">("editor");
   const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
+  const editableProjectRef = useRef(editableProject);
+  const editRevisionRef = useRef(0);
+  const [voiceOptions, setVoiceOptions] = useState<VoiceGenerationOptions>({
+    provider: "gpt-sovits", voicePackId: "default", referenceMode: "with_reference_text", generationMode: "clip",
+  });
+  const [voiceCatalog, setVoiceCatalog] = useState<VoiceProviderCatalog | null>(null);
+  const [voiceCatalogError, setVoiceCatalogError] = useState<string>();
+  const [voiceError, setVoiceError] = useState<string>();
+  const [voiceCandidates, setVoiceCandidates] = useState<AudioCandidate[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidateActionBusy, setCandidateActionBusy] = useState(false);
+  const [candidateRefresh, setCandidateRefresh] = useState(0);
+  const candidateJobIdsRef = useRef(new Set<string>());
   const [projectLibrary, setProjectLibrary] = useState(() =>
     createInitialProjectLibrary(project, new Date(0)),
   );
@@ -196,6 +214,10 @@ export function StudioApp({ project }: StudioAppProps) {
     Object.keys(selectedClipValidationIssues).length > 0;
   const currentLibraryEntry = projectLibrary.projects.find(
     (entry) => entry.projectId === editableProject.project_id,
+  );
+  const voiceBusy = candidateActionBusy || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const visibleVoiceCandidates = voiceCandidates.filter((candidate) =>
+    candidate.projectId === editableProject.project_id && candidate.clipId === activeClipId,
   );
   const isDirty = useMemo(
     () =>
@@ -281,6 +303,127 @@ export function StudioApp({ project }: StudioAppProps) {
     [projectLibrary],
   );
 
+  useEffect(() => { editableProjectRef.current = editableProject; }, [editableProject]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/generation/clip", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("无法读取人声配置。");
+        const catalog = await response.json() as VoiceProviderCatalog;
+        if (!Array.isArray(catalog.providers)) throw new Error("无法读取人声配置。");
+        if (controller.signal.aborted) return;
+        setVoiceCatalog(catalog);
+        let stored: VoiceGenerationOptions | undefined;
+        try {
+          const parsed = VoiceGenerationOptionsSchema.safeParse(JSON.parse(window.localStorage.getItem("ai-asmr-studio:v1:voice-options") || "null"));
+          if (parsed.success) stored = parsed.data;
+        } catch { /* Project persistence separately reports storage availability. */ }
+        setVoiceOptions((current) => {
+          const preferred = stored ?? current;
+          const provider = catalog.providers.find((item) => item.id === preferred.provider);
+          const reference = provider?.references.find((item) => item.id === preferred.voicePackId) ?? provider?.references.find((item) => item.id === provider.defaultReferenceId);
+          return reference ? { ...preferred, voicePackId: reference.id,
+            referenceMode: reference.referenceModes.includes(preferred.referenceMode) ? preferred.referenceMode : reference.referenceModes[0] } : preferred;
+        });
+      })
+      .catch(() => { if (!controller.signal.aborted) setVoiceCatalogError("无法读取人声配置，请刷新重试。"); });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const projectId = editableProject.project_id;
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) {
+        setVoiceError(undefined);
+        setVoiceCandidates([]);
+        setCandidatesLoading(Boolean(hasLoadedStorage && activeClipId));
+      }
+    });
+    if (hasLoadedStorage && activeClipId) {
+      const query = new URLSearchParams({ projectId, clipId: activeClipId });
+      void fetch(`/api/audio-candidates?${query}`, { signal: controller.signal })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("候选列表读取失败，请刷新重试。");
+          const payload = await response.json() as { candidates: unknown };
+          const candidates = AudioCandidateSchema.array().parse(payload.candidates);
+          if (!controller.signal.aborted) setVoiceCandidates(candidates);
+        })
+        .catch(() => { if (!controller.signal.aborted) setVoiceError("候选列表读取失败，请刷新重试。"); })
+        .finally(() => { if (!controller.signal.aborted) setCandidatesLoading(false); });
+    }
+    return () => controller.abort();
+  }, [editableProject.project_id, activeClipId, candidateRefresh, hasLoadedStorage]);
+
+  function handleVoiceOptionsChange(next: VoiceGenerationOptions) {
+    setVoiceOptions(next);
+    setVoiceError(undefined);
+    try { window.localStorage.setItem("ai-asmr-studio:v1:voice-options", JSON.stringify(next)); }
+    catch { setVoiceError("声音设置未能保存，刷新后需要重新选择。"); }
+  }
+
+  function commitCandidateLibrary(next: typeof projectLibrary) {
+    // Persist first: storage failure must leave the original audible project intact.
+    saveProjectLibrary(window.localStorage, next);
+    clearGenerationSession();
+    projectLibraryRef.current = next;
+    setProjectLibrary(next);
+    const entry = getCurrentLibraryEntry(next);
+    editableProjectRef.current = entry.project;
+    setEditableProject(entry.project);
+    setProjectMixFingerprint(entry.mixFingerprint);
+    setStorageAvailable(true);
+    setVoiceError(undefined);
+  }
+
+  async function handleAdoptVoiceCandidate(candidate: AudioCandidate) {
+    if (voiceBusy) return;
+    if (validationIssues.length > 0) { setVoiceError("请先修正片段内容，再采用候选。"); return; }
+    const session = generationSessionRef.current;
+    const editRevision = editRevisionRef.current;
+    setCandidateActionBusy(true);
+    setVoiceError(undefined);
+    try {
+      const query = new URLSearchParams({ projectId: candidate.projectId, clipId: candidate.clipId });
+      const response = await fetch(`/api/audio-candidates/${encodeURIComponent(candidate.candidateId)}?${query}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "候选已不可用，请重新生成。");
+      if (session !== generationSessionRef.current) return;
+      if (editRevision !== editRevisionRef.current) throw new Error("工程刚刚有修改，请检查后重新采用。");
+      const fresh = AudioCandidateSchema.parse(payload.candidate);
+      const latestLibrary = updateLibraryProject(projectLibraryRef.current, editableProjectRef.current);
+      const next = adoptAudioCandidate(latestLibrary, fresh);
+      try { commitCandidateLibrary(next); }
+      catch { setStorageAvailable(false); throw new Error("采用未保存，原声已保留。请检查本地存储后重试。"); }
+    } catch (error) {
+      if (session === generationSessionRef.current) setVoiceError(error instanceof Error ? error.message : "未能采用候选。");
+    } finally { setCandidateActionBusy(false); }
+  }
+
+  async function handleDiscardVoiceCandidate(candidate: AudioCandidate) {
+    if (voiceBusy || selectedClip?.asset.asset_id === candidate.asset.assetId) return;
+    const session = generationSessionRef.current;
+    setCandidateActionBusy(true);
+    try {
+      const query = new URLSearchParams({ projectId: candidate.projectId, clipId: candidate.clipId });
+      const response = await fetch(`/api/audio-candidates/${encodeURIComponent(candidate.candidateId)}?${query}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("未能放弃候选，请重试。");
+      if (session === generationSessionRef.current) setCandidateRefresh((value) => value + 1);
+    } catch { if (session === generationSessionRef.current) setVoiceError("未能放弃候选，请重试。"); }
+    finally { setCandidateActionBusy(false); }
+  }
+
+  function handleUndoVoiceCandidate() {
+    if (voiceBusy) return;
+    try {
+      const current = updateLibraryProject(projectLibraryRef.current, editableProject);
+      const next = undoLastAudioCandidate(current);
+      try { commitCandidateLibrary(next); }
+      catch { setStorageAvailable(false); throw new Error("撤回未保存，请检查本地存储后重试。"); }
+    } catch (error) { setVoiceError(error instanceof Error ? error.message : "未能撤回采用。"); }
+  }
+
   function getGenerationBridge() {
     if (bridgeRef.current === null) {
       bridgeRef.current =
@@ -339,7 +482,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }, [project]);
 
   useEffect(() => {
-    if (!hasLoadedStorage) {
+    if (!hasLoadedStorage || validationIssues.length > 0) {
       return;
     }
 
@@ -369,7 +512,7 @@ export function StudioApp({ project }: StudioAppProps) {
     return () => {
       isCancelled = true;
     };
-  }, [editableProject, hasLoadedStorage]);
+  }, [editableProject, hasLoadedStorage, validationIssues.length]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -453,6 +596,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }, []);
 
   function clearGenerationSession() {
+    candidateJobIdsRef.current.clear();
     generationSessionRef.current += 1;
     const jobIds = new Set([
       ...Object.keys(generationReasonsRef.current),
@@ -566,6 +710,24 @@ export function StudioApp({ project }: StudioAppProps) {
 
         return next;
       });
+      return;
+    }
+
+    if (update.type === "candidate") {
+      setRuntimeState(clearGenerationJob(generationRuntimeStateRef.current, update.job.jobId));
+      candidateJobIdsRef.current.delete(update.job.jobId);
+      delete generationReasonsRef.current[update.job.jobId];
+      delete generationFingerprintsRef.current[update.job.jobId];
+      setCandidateRefresh((value) => value + 1);
+      return;
+    }
+
+    if (candidateJobIdsRef.current.has(update.job.jobId)) {
+      candidateJobIdsRef.current.delete(update.job.jobId);
+      setRuntimeState(clearGenerationJob(generationRuntimeStateRef.current, update.job.jobId));
+      delete generationReasonsRef.current[update.job.jobId];
+      delete generationFingerprintsRef.current[update.job.jobId];
+      if (update.type === "failed") setVoiceError(update.error);
       return;
     }
 
@@ -714,6 +876,13 @@ export function StudioApp({ project }: StudioAppProps) {
     if (!selectedClip || generationView.selectedClipControl.disabled) {
       return;
     }
+    const options = selectedClip.type === "voice" ? voiceOptions : undefined;
+    if (options?.provider === "voxcpm2" && voiceBusy) return;
+    if (options?.provider === "voxcpm2" && !voiceCatalog?.providers.find((item) => item.id === "voxcpm2")?.available) {
+      setVoiceError("VoxCPM2 尚未就绪，请检查本机配置。");
+      return;
+    }
+    setVoiceError(undefined);
 
     const action = generationView.selectedClipControl.action;
     const reason: GenerateClipReason =
@@ -734,6 +903,7 @@ export function StudioApp({ project }: StudioAppProps) {
           project: editableProject,
           clipId: selectedClip.id,
           reason,
+          voiceOptions: options,
         },
         (update) => {
           if (generationSession !== generationSessionRef.current) {
@@ -741,6 +911,7 @@ export function StudioApp({ project }: StudioAppProps) {
           }
 
           generationReasonsRef.current[update.job.jobId] = reason;
+          if (options?.provider === "voxcpm2") candidateJobIdsRef.current.add(update.job.jobId);
           generationFingerprintsRef.current[update.job.jobId] = fingerprint;
           handleGenerationUpdate(update, generationSession);
 
@@ -917,6 +1088,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
+    editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
     setEditableProject((currentProject) =>
@@ -926,6 +1098,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleApplyDirectorPreset(clipId: string, preset: DirectorPreset) {
+    editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
     setEditableProject((currentProject) =>
@@ -935,6 +1108,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleNudgeClipTiming(clipId: string, nudge: ClipTimingNudge) {
+    editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
     setEditableProject((currentProject) =>
@@ -1126,6 +1300,21 @@ export function StudioApp({ project }: StudioAppProps) {
 
         <div className="min-w-0">
           <ClipInspector
+            voiceGenerationPanel={selectedClip?.type === "voice" ? (generationControl) => (
+              <VoiceGenerationPanel
+                generationControl={generationControl}
+                options={voiceOptions} onOptionsChange={handleVoiceOptionsChange}
+                catalog={voiceCatalog} catalogError={voiceCatalogError} busy={voiceBusy}
+                selectedClip={selectedClip} candidates={visibleVoiceCandidates}
+                onAdopt={handleAdoptVoiceCandidate} onDiscard={handleDiscardVoiceCandidate}
+                onUndo={handleUndoVoiceCandidate}
+                canUndo={canUndoLastAudioCandidate({ ...projectLibrary, projects: projectLibrary.projects.map((entry) =>
+                  entry.projectId === editableProject.project_id ? { ...entry, project: editableProject } : entry,
+                ) })}
+                hasUndo={Boolean(currentLibraryEntry?.candidateAcceptance)}
+                error={voiceError} loading={candidatesLoading}
+              />
+            ) : undefined}
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={displaySelectedClip}
             selectedClipGeneration={generationView.selectedClipControl}

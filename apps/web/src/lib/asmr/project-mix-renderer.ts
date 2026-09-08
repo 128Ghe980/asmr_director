@@ -2,11 +2,16 @@ import { getMissingProjectMixClipIds } from "./project-mix-state";
 import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
 
-export type DecodedPcmAudio = {
-  sampleRate: number;
-  channels: 1 | 2;
-  samples: Float32Array;
-};
+import {
+  INTERNAL_SAMPLE_RATE,
+  decodePcmWav,
+  normalizePcmAudio,
+  writePcm16StereoWav,
+  type DecodedPcmAudio,
+} from "./pcm-audio";
+
+export { decodePcmWav, writePcm16StereoWav } from "./pcm-audio";
+export type { DecodedPcmAudio } from "./pcm-audio";
 
 export type RenderProjectMixWavInput = {
   project: AsmrProject;
@@ -14,160 +19,11 @@ export type RenderProjectMixWavInput = {
   sampleRate?: number;
 };
 
-const DEFAULT_SAMPLE_RATE = 32000;
+const DEFAULT_SAMPLE_RATE = INTERNAL_SAMPLE_RATE;
 const MAX_NORMALIZATION_GAIN = Math.pow(10, 18 / 20);
-
-function readAscii(view: DataView, offset: number, length: number): string {
-  let value = "";
-
-  for (let index = 0; index < length; index += 1) {
-    value += String.fromCharCode(view.getUint8(offset + index));
-  }
-
-  return value;
-}
-
-function writeAscii(view: DataView, offset: number, value: string) {
-  for (let index = 0; index < value.length; index += 1) {
-    view.setUint8(offset + index, value.charCodeAt(index));
-  }
-}
 
 function clampSample(value: number): number {
   return Math.max(-1, Math.min(1, value));
-}
-
-function makeDataView(bytes: Uint8Array | Buffer): DataView {
-  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-}
-
-function assertAvailable(
-  view: DataView,
-  offset: number,
-  byteLength: number,
-  message: string,
-) {
-  if (offset + byteLength > view.byteLength) {
-    throw new Error(message);
-  }
-}
-
-export function writePcm16StereoWav(
-  samples: Float32Array,
-  sampleRate: number,
-): Uint8Array {
-  if (samples.length % 2 !== 0) {
-    throw new Error("Stereo samples must be interleaved pairs");
-  }
-
-  const channels = 2;
-  const bytesPerSample = 2;
-  const blockAlign = channels * bytesPerSample;
-  const dataSize = samples.length * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  writeAscii(view, 0, "RIFF");
-  view.setUint32(4, 36 + dataSize, true);
-  writeAscii(view, 8, "WAVE");
-  writeAscii(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);
-  writeAscii(view, 36, "data");
-  view.setUint32(40, dataSize, true);
-
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = clampSample(samples[index]);
-    const scale = sample < 0 ? 32768 : 32767;
-
-    view.setInt16(44 + index * bytesPerSample, Math.round(sample * scale), true);
-  }
-
-  return new Uint8Array(buffer);
-}
-
-export function decodePcmWav(bytes: Uint8Array | Buffer): DecodedPcmAudio {
-  const view = makeDataView(bytes);
-
-  if (
-    view.byteLength < 44 ||
-    readAscii(view, 0, 4) !== "RIFF" ||
-    readAscii(view, 8, 4) !== "WAVE"
-  ) {
-    throw new Error("Invalid WAV");
-  }
-
-  let audioFormat: number | null = null;
-  let channels: 1 | 2 | null = null;
-  let sampleRate: number | null = null;
-  let bitsPerSample: number | null = null;
-  let dataOffset: number | null = null;
-  let dataSize: number | null = null;
-  let offset = 12;
-
-  while (offset + 8 <= view.byteLength) {
-    const chunkId = readAscii(view, offset, 4);
-    const chunkSize = view.getUint32(offset + 4, true);
-    const chunkDataOffset = offset + 8;
-
-    assertAvailable(view, chunkDataOffset, chunkSize, "Invalid WAV");
-
-    if (chunkId === "fmt ") {
-      assertAvailable(view, chunkDataOffset, 16, "Invalid WAV fmt chunk");
-      audioFormat = view.getUint16(chunkDataOffset, true);
-      const channelCount = view.getUint16(chunkDataOffset + 2, true);
-
-      if (channelCount !== 1 && channelCount !== 2) {
-        throw new Error("Unsupported WAV channel count");
-      }
-
-      channels = channelCount;
-      sampleRate = view.getUint32(chunkDataOffset + 4, true);
-      bitsPerSample = view.getUint16(chunkDataOffset + 14, true);
-    }
-
-    if (chunkId === "data") {
-      dataOffset = chunkDataOffset;
-      dataSize = chunkSize;
-    }
-
-    offset = chunkDataOffset + chunkSize + (chunkSize % 2);
-  }
-
-  if (
-    audioFormat !== 1 ||
-    bitsPerSample !== 16 ||
-    channels === null ||
-    sampleRate === null ||
-    dataOffset === null ||
-    dataSize === null
-  ) {
-    throw new Error("Unsupported WAV format");
-  }
-
-  if (dataSize % 2 !== 0) {
-    throw new Error("Invalid WAV data chunk");
-  }
-
-  const samples = new Float32Array(dataSize / 2);
-
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = view.getInt16(dataOffset + index * 2, true);
-    const scale = sample < 0 ? 32768 : 32767;
-
-    samples[index] = sample / scale;
-  }
-
-  return {
-    sampleRate,
-    channels,
-    samples,
-  };
 }
 
 function getDecodedFrameSample(
@@ -272,11 +128,7 @@ async function mixClipIntoOutput(
   loadClipAsset: RenderProjectMixWavInput["loadClipAsset"],
 ) {
   const bytes = await loadClipAsset(clip);
-  const source = decodePcmWav(bytes);
-
-  if (source.sampleRate !== sampleRate) {
-    throw new Error("Project mix source sample rate mismatch");
-  }
+  const source = normalizePcmAudio(decodePcmWav(bytes), sampleRate);
 
   const outputFrameCount = Math.ceil(project.duration * sampleRate);
   const sourceFrameCount = Math.floor(source.samples.length / source.channels);
@@ -293,15 +145,21 @@ async function mixClipIntoOutput(
     const progress = frameCount <= 1 ? 1 : frame / (frameCount - 1);
     const left = getDecodedFrameSample(source, sourceFrame, 0);
     const right = getDecodedFrameSample(source, sourceFrame, 1);
-    const mono = (left + right) / 2;
     const gain =
       gainFromDb(clip.volume_db) *
-      getFadeGain(frame, clipFrameCount, clip, sampleRate) *
-      getMovementDistanceGain(clip, progress);
-    const panGains = getPanGains(getMovementPan(clip, progress));
+      getFadeGain(frame, clipFrameCount, clip, sampleRate);
 
-    output[outputIndex] += mono * gain * panGains.left;
-    output[outputIndex + 1] += mono * gain * panGains.right;
+    if (source.channels === 2) {
+      // Stereo may already carry binaural cues: preserve both channels and
+      // apply only the clip envelope, without repeating pan or distance.
+      output[outputIndex] += left * gain;
+      output[outputIndex + 1] += right * gain;
+    } else {
+      const panGains = getPanGains(getMovementPan(clip, progress));
+      const positionedGain = gain * getMovementDistanceGain(clip, progress);
+      output[outputIndex] += left * positionedGain * panGains.left;
+      output[outputIndex + 1] += left * positionedGain * panGains.right;
+    }
   }
 }
 
@@ -353,6 +211,10 @@ export async function renderProjectMixWav({
   loadClipAsset,
   sampleRate = DEFAULT_SAMPLE_RATE,
 }: RenderProjectMixWavInput): Promise<Uint8Array> {
+  if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
+    throw new Error("PCM sample rate must be a positive integer");
+  }
+
   const missingClipIds = getMissingProjectMixClipIds(project);
 
   if (missingClipIds.length > 0) {

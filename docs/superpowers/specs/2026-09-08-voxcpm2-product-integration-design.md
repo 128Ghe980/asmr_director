@@ -1,6 +1,6 @@
 # VoxCPM2 Product Generation Integration
 
-Date: 2026-09-08. Status: preparation complete; integration and acceptance on the current product branch have not started.
+Date: 2026-09-08. Status: the first single-clip product slice is implemented and technically verified. User listening acceptance for this iteration's samples remains pending; long-text grouping/adaptive pauses, V2/HRTF and real SFX expansion are not implemented on the current product branch.
 
 Chinese companion: `2026-09-08-voxcpm2-product-integration-design.zh.md`.
 
@@ -12,9 +12,9 @@ The first accepted product slice must let a user select VoxCPM2, a normal/soft r
 
 Retain GPT-SoVITS and existing non-voice generation. VoxCPM2 is optional; do not silently change defaults or switch models after failure. Start with real selected-clip generation and safe adoption, then add the selected long-text approach as a mode of the same provider.
 
-## Current state and reusable work
+## Pre-implementation baseline and reusable work (2026-09-08)
 
-Planner milestone `bd0d058` was pushed to `origin/codex/step10-product-workflow`. The primary workspace still calls GPT-SoVITS directly for voice, without a product candidate store or adopt/undo flow. Its mixer defaults to 32 kHz, rejects mismatched sample rates, and downmixes stereo inputs to mono. VoxCPM2's native 48 kHz output makes these required compatibility changes.
+Planner milestone `bd0d058` was pushed to `origin/codex/step10-product-workflow`. Before this integration, the primary workspace called GPT-SoVITS directly for voice, without a product candidate store or adopt/undo flow. Its mixer defaulted to 32 kHz, rejected mismatched sample rates, and downmixed stereo inputs to mono. These were the compatibility gaps addressed by the single-clip implementation below, not the current product state.
 
 The old worktree at `D:\CodexWorkplace\asmr_director\.worktrees\audio-quality-v1-round1` is on `codex/audio-quality-v1-round1`, HEAD `46d26d7` when inspected. It contains candidate, spatial and 48 kHz infrastructure, but also many uncommitted changes; VoxCPM2 provider/profile files and tests are untracked. Recheck its status before selectively porting code. Do not merge the entire tree, reset it or overwrite its work.
 
@@ -31,7 +31,7 @@ The old worktree at `D:\CodexWorkplace\asmr_director\.worktrees\audio-quality-v1
 
 ## Local runtime configuration
 
-Read-only inspection on 2026-09-08 confirmed the following material. No service or audio generation was started:
+The initial read-only inspection on 2026-09-08 confirmed the following material without starting services or generating audio. Subsequent real product verification is recorded at the end of this document:
 
 - CLI: `I:\AI\voxcpm2-evaluation\src\build-cuda-vs2017\bin\Release\voxcpm2-cli.exe`; SHA256 `ECB34B72A15D489BA333718082C784F9F8B0CC05161BB6525F15451D4F821C44`, matching the accepted sample's recorded executable.
 - Models under the experiment root: `models\VoxCPM2-BaseLM-Q8_0.gguf` and `models\VoxCPM2-Acoustic-F16.gguf`.
@@ -65,7 +65,7 @@ Cancellation, failure, stale requests, text edits during generation and project 
 
 ## Mixing and UI
 
-Normalize internal mixing to 48 kHz, accepting legacy 32 kHz, 44.1 kHz and Vox 48 kHz inputs without duration/timeline drift. Preserve stereo channels. Mono dry voice may enter spatial processing; already spatialized stereo must neither be averaged to mono nor spatialized twice. Retain dry originals, applying spatial processing and caching during remix.
+Normalize internal mixing to 48 kHz, accepting legacy 32 kHz, 44.1 kHz and Vox 48 kHz inputs without duration/timeline drift. Preserve stereo channels. Mono dry voice may enter spatial processing; already spatialized stereo must neither be averaged to mono nor spatialized twice. Retain dry originals. The current slice keeps existing mono pan/distance/movement; V2/HRTF processing and caching during remix remain subsequent integration work.
 
 Default UI shows engine, reference, reference mode, generate/cancel and preview/adopt controls for existing candidates. Show necessary duration/state information; technical parameters and provenance stay expandable. Keep original preview before adoption and undo afterward. Real errors, save failures and stale-mix status remain visible. Do not restore development reminders, long explanations or duplicate counters removed in the accepted UI cleanup.
 
@@ -81,11 +81,22 @@ Recheck Python/ASR dependencies for long-text tooling. The spatial environment `
 
 These are internal Audio Quality V1 implementation slices, not new roadmap gates:
 
-1. Selectively port provider/profile and candidate schema/store. Correct reference modes, actual parameters, cancellation, serialization and WAV validation.
-2. Integrate the Generation Bridge, candidate preview and explicit adopt/undo. Preserve Planner metadata, reload recovery and actual durations.
-3. Finish 48 kHz mixing compatibility and restrained UI; verify the real candidate-to-remix/export workflow.
-4. Productize selected long-text generation, safe extraction and pauses, then continue approved spatial actions and real SFX expansion.
+1. Implemented: selectively port provider/profile and candidate schema/store. Correct reference modes, actual parameters, cancellation, serialization and WAV validation.
+2. Implemented: integrate the Generation Bridge, candidate preview and explicit adopt/undo. Preserve Planner metadata, reload recovery and actual durations.
+3. Implemented and technically verified: 48 kHz mixing compatibility, restrained UI and the real candidate-to-remix/export workflow.
+4. Pending: productize selected long-text generation, safe extraction and pauses, then continue approved spatial actions and real SFX expansion.
 
 Automated acceptance covers GPT/non-voice regression, both reference modes, empty/malformed WAVs, mixed 32/44.1/48 kHz inputs and stereo preservation, long-audio adopt/undo, cancel/failure/late responses, edits/project changes during generation, candidate/undo reload recovery, stale mixes after adoption and playable exports. Follow existing TDD rules for behavior changes, then complete full tests, lint and TypeScript/production build.
 
-Use a separate browser acceptance project for real Vox generation, at least two candidates, preview/compare/adopt/undo, and remix/download. Check desktop and 390px layouts. Record actual runtime settings, WAV metadata and action results while preserving existing user drafts/projects. The user still confirms subjective quality by headphone listening. During implementation update `apps/web/README.md`, `.env.example`, `docs/THIRD_PARTY_RUNTIMES.md`, roadmap, handoff and archive. This preparation document does not claim those checks have passed.
+Use a separate browser acceptance project for real Vox generation, at least two candidates, preview/compare/adopt/undo, and remix/download. Check desktop and 390px layouts. Record actual runtime settings, WAV metadata and action results while preserving existing user drafts/projects. The user still confirms subjective quality by headphone listening. Keep `apps/web/README.md`, `.env.example`, `docs/THIRD_PARTY_RUNTIMES.md`, roadmap, handoff and archive synchronized with implementation evidence.
+
+## Single-clip implementation and verification (2026-09-08)
+
+The current product supports optional VoxCPM2 generation with normal/soft references and both reference modes. Candidates persist outside Project JSON and support preview, explicit adoption, discard and reload-safe undo. Adoption extends underestimated voice timing and marks the mix stale. Native process cancellation, 48 kHz mixing and stereo preservation are wired into the existing workflow.
+
+- Automated verification: all 46 test files / 340 tests, ESLint and the webpack production build passed. The existing native SWC binding warning remains; the build completed through the WASM fallback.
+- Real browser verification: both reference modes produced real candidates (5.6 and 6.4 seconds). Playback actually started; adoption extended the timeline, undo remained available after refresh, and remix/download produced an 8.6-second 48 kHz stereo WAV. Desktop and 390px checks recorded `errors: []`.
+- Real CLI cancellation: the child process exited, the generation lock was released and the candidate count stayed unchanged.
+- Evidence: `D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08\browser-result.json` and `D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08\real-cancel-result.json`.
+
+This establishes the technical single-clip workflow. It does not establish ASR-verified text completeness, generally reliable softness control, or user listening acceptance for these samples. Long-text grouping/adaptive pauses, V2/HRTF and real SFX expansion remain unimplemented on the current product branch, and Audio Quality V1 remains unfinished.

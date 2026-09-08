@@ -6,7 +6,7 @@ Last updated: 2026-09-08
 
 ## 当前优先级
 
-当前固定 10 步 roadmap 已全部完成。用户于 2026-09-08 确认 Planner“暂时算是过了”，要求记录推送后准备把 VoxCPM2 接入正式生成。Planner 本轮按已验证的 DeepSeek 路径和精简界面验收通过；优先级转回已批准的“人声导演与真实 ASMR 音效质量 V1”，当前工作是 VoxCPM2 产品接入准备。既有听感结论和真实音质验收要求不变。
+当前固定 10 步 roadmap 已全部完成。用户于 2026-09-08 确认 Planner“暂时算是过了”，随后批准实施 VoxCPM2 正式生成接入。Planner 本轮按已验证的 DeepSeek 路径和精简界面验收通过；优先级已转回“人声导演与真实 ASMR 音效质量 V1”。VoxCPM2 单片段生成、候选试听/采用/撤回及 48 kHz 重混导出已实施并通过技术验收，下一切片是已选长文分组/停顿方案。既有听感结论和真实音质验收要求不变。
 
 ## 本轮已通过：AI 创意策划 / LLM Planner V1
 
@@ -23,10 +23,10 @@ Last updated: 2026-09-08
 
 ## 当前阶段：人声导演与真实 ASMR 音效质量 V1
 
-- Status: In progress; independent listening experiments have selected a current voice/long-text recipe, but product integration and the real SFX expansion are not complete.
+- Status: In progress; base VoxCPM2 clip generation and candidate adoption/remix are implemented and technically verified. Selected long-text, improved spatial recipes and real SFX expansion remain unfinished; this slice's listening quality still needs user evaluation.
 - Design: `docs/superpowers/specs/2026-07-13-audio-director-and-sfx-quality-v1-design.zh.md`
 - Round 1 plan: `docs/superpowers/plans/2026-07-13-audio-quality-v1-round1-implementation-plan.md`
-- VoxCPM2 接入设计：`docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.zh.md`（附英文版）。本机运行材料与旧工作树复用范围已核查；当前主线尚未实施接入。
+- VoxCPM2 接入设计与首切片实施记录：`docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.zh.md`（附英文版）。基础接入已完成，长文和新空间处理尚未接入。
 - 主线 1：让“更柔”、近/远、左右、水平环绕与垂直环绕成为真实可听的导演动作，而不是只改文字字段、音量或普通声像。
 - 主线 2：以免费授权素材、免费本地 AI 和明确标注的基础合成扩大 ASMR 音效质量与种类；付费方案暂缓，不要求用户录音。
 - 第一轮固定样片：一句人声、衣物摩擦、指尖轻敲、雨声；完成更柔、近/远、完整水平环绕、左—上—右—下垂直环绕、三种来源比较、采用、撤回与重混。
@@ -43,7 +43,14 @@ Last updated: 2026-09-08
 
 2026-09-08 已恢复音质 V1，先把已选的人声方案整理成现有 Generation Bridge 下的可选 Provider 和可配置生成模式。产品接入必须保留候选重生成、试听、采用、撤回和重混，不把单次好 seed 当成稳定能力。尚待试听的全短句默认停顿对照继续单列，不能阻塞基础接入，也不能视为已采用。真实 SFX 扩展仍是同一阶段的未完成主线。
 
-接入准备已完成：原生 CLI、双模型、普通/温柔参考和本地 profile 均存在；旧 `audio-quality-v1-round1` 工作树已有候选与 48 kHz/空间基础，但包含未提交及未跟踪实现，后续选择性移植并适配当前 Planner。首个实现切片为可选 VoxCPM2 → 当前人声候选 → 试听/采用/撤回 → 48 kHz 兼容重混导出；之后继续已选长文分组/停顿、空间动作和真实 SFX。本次只核查和编写设计，没有触发音频生成。
+### 2026-09-08 产品接入首切片
+
+- 已通过原生 CLI 接入可选 VoxCPM2，支持普通/温柔参考、Reference-only/Combined 两模式，保留 GPT-SoVITS；生成独立候选，试听后显式采用或丢弃。
+- 候选与来源信息持久保存，采用前校验内容与素材，刷新后可撤回最近一次采用；保留安全版本、Planner 来源和实际人声时长，后续时间线自动顺延。取消会终止原生进程，失败/迟到结果不替换原声。
+- 混音默认 48 kHz，兼容 32/44.1/48 kHz，保留 stereo 声道；界面只默认显示引擎/参考/生成/试听采用操作，技术来源折叠。旧工作树保持原状。
+- 本轮全量 46 个测试文件 / 340 项测试、ESLint、TypeScript（生产构建内）及 Webpack 生产构建通过。原有 Windows native SWC 加载警告仍存在，WASM 回退构建成功。
+- 真实本地 TTS 两模式产出 5.6 / 6.4 秒候选；独立浏览器上下文通过播放、显式采用、时间线延长、刷新撤回、8.6 秒 48 kHz stereo 重混和实际 WAV 下载。桌面/390px 界面无横溢，最终浏览器错误为空。另一次真实取消验证进程退出、锁释放、候选数不变。
+- 证据目录：`D:\CodexWorkplace\asmr_director_runtime\voxcpm2-product-verification\2026-09-08`。自动检查不等同于用户耳机听感验收；长文分组/安全截取/自适应停顿、V2/HRTF 空间和真实 SFX 扩展继续属于本阶段未完成项。
 
 第 7 步已经完成本地 voice clip 真实生成接入，第 8 步已经完成 breath / SFX / ambience 的本地半真实 clip 生成接入，第 9 步已经完成真实项目混音与 WAV 导出接入。后续不能再把 adapter、API route、provider wrapper、bridge cleanup、mock work 重新包装成新的顶层 roadmap 步骤；它们只能作为后续步骤的内部实现细节存在。
 

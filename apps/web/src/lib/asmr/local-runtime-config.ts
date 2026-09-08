@@ -6,6 +6,7 @@ export type LocalRuntimeConfig = {
   voicePackPath: string;
   clipAssetRoot: string;
   mixAssetRoot: string;
+  voxcpm2ProfilePath?: string;
 };
 
 const defaultRuntimeRoot = "D:\\CodexWorkplace\\asmr_director_runtime";
@@ -16,7 +17,8 @@ type RuntimeEnv = Partial<
     | "ASMR_GPT_SOVITS_URL"
     | "ASMR_VOICE_PACK_PATH"
     | "ASMR_CLIP_ASSET_ROOT"
-    | "ASMR_MIX_ASSET_ROOT",
+    | "ASMR_MIX_ASSET_ROOT"
+    | "ASMR_VOXCPM2_PROFILE_PATH",
     string
   >
 >;
@@ -38,5 +40,8 @@ export function getLocalRuntimeConfig(
     mixAssetRoot:
       env.ASMR_MIX_ASSET_ROOT ??
       path.join(runtimeRoot, "assets", "mixes", "app"),
+    voxcpm2ProfilePath:
+      env.ASMR_VOXCPM2_PROFILE_PATH ||
+      path.join(runtimeRoot, "audio-quality-v1", "voxcpm2", "profile.json"),
   };
 }
