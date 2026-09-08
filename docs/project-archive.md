@@ -12,6 +12,12 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
 如果是新的 AI agent 接手，或者当前会话发生上下文压缩，应先读 `docs/AI_HANDOFF.md`。那份文件更短、更稳定，专门服务“快速恢复当前状态和下一步”。
 
+## 2026-09-08 - 补录全短句默认停顿对照反馈
+
+反馈收到日期为 2026-09-08；用户表示此前已听过 `longtext-clause16-opening-default-pauses-20260904` 的“原停顿 vs 全部改成类别默认停顿”，感觉无明显差异，只是忘记反馈。实际试听日期未知，本次未重新试听或运行实验。
+
+该对照不再列为待听，用户未选出新优胜版，不改变 `03_deepseek_class_local_rule.wav` 的当前首选地位。此反馈不能扩写成首尾无截音确认或两版完全等价。仅同步路线、交接、双语接入设计与试听文字记录，未改 READY 或技术原始证据。
+
 ## 2026-09-08 - VoxCPM2 单片段正式生成接入
 
 用户在接入设计完成后明确批准“好，开始实施”。本轮在 `codex/voxcpm2-product-generation`（基于准备提交 `a7ba13f`）完成音质 V1 的首个产品切片，没有新增顶层阶段；旧 `.worktrees/audio-quality-v1-round1` 的未提交内容保持原状。
@@ -40,7 +46,7 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
 本版包含 Planner 领域约束、Ollama/外部 API、独立草稿保存、单段改写与撤回、安全采用和策划来源版本恢复；人声实际 WAV 时长与 Planner 时间线顺延；以及策划/工程视图去杂。此前验证记录为 34 文件 / 260 测试通过，最终布局调整后 9 项 Planner 组件用例、全量 ESLint、TypeScript 和生产构建通过；DeepSeek 与桌面/手机验收见下方记录。2026-09-08 的留档整理未新增模型调用或生成人声。
 
-优先级按用户指令转回 Audio Quality V1，准备把本机 VoxCPM2 作为现有 Generation Bridge 的可选人声引擎，保留 GPT-SoVITS、普通/温柔参考、参考音频/参考文本模式与候选试听、采用、撤回、重混。未试听确认的全短句停顿对照不作为基础接入前置，也不冒充已采用方案。尚未接入的 VoxCPM2、空间实验与真实 SFX 仍保持未完成。
+优先级按用户指令转回 Audio Quality V1，准备把本机 VoxCPM2 作为现有 Generation Bridge 的可选人声引擎，保留 GPT-SoVITS、普通/温柔参考、参考音频/参考文本模式与候选试听、采用、撤回、重混。当时尚未收到反馈的全短句停顿对照不作为基础接入前置，也不冒充已采用方案；2026-09-08 后续已补录“无明显差异、无新优胜版”的反馈，见上文。尚未接入的 VoxCPM2、空间实验与真实 SFX 仍保持未完成。
 
 ### VoxCPM2 接入准备结果
 
@@ -134,13 +140,13 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 - 主要记录：`I:\AI\voxcpm2-evaluation\evidence\LISTENING_RESULTS.zh.md`、`longtext-deepseek-v4-pause-classes.json`、`longtext-deepseek-class-local-pause-measurement.json`、`longtext-clause16-long-openings-generation.json`、`longtext-api-semantic-hybrid-final-generation.json`。
 - 中英文评估报告已同步：`docs/superpowers/specs/2026-07-26-voxcpm2-evaluation-design.md` 与 `.zh.md`。
 
-尚待用户试听：
+当时尚未收到试听反馈（2026-09-08 已补录，见上文）：
 
 `I:\AI\voxcpm2-evaluation\listening\longtext-clause16-opening-default-pauses-20260904`
 
 - 01 是旧 `03_long_generation_first_clause_only.wav` 原样对照；02 是 15 个短句边界采用类型默认值的安全重定时版。
 - 02 没有重新 TTS 或改增益；它安全裁除 1525 ms 已验证低能边缘、补入 700 ms 全零静音，并在保护区内做 10 ms 淡变。
-- 自动检查覆盖 16/16、无削波、正文 PCM 不变，但用户尚未判断停顿自然度和首尾听感，不能写成已采用。
+- 自动检查覆盖 16/16、无削波、正文 PCM 不变；当时尚未收到用户反馈。2026-09-08 用户补充此前已听、感觉无明显差异，未选新优胜版，也未单独确认首尾无截音。
 
 未完成与风险：
 
@@ -151,7 +157,7 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 - 空间实验仍是独立脚本，真实 SFX 扩展尚未完成。
 - `longtext-local-tempo-pause` 及其 rejected 归档使用了用户未要求的语速/每字毫秒逻辑，已作废；其中一个归档 READY 仍写 `ready`，后续必须忽略，不能误当候选。
 
-下一会话入口：先记录上述 01/02 的用户试听结果；随后为当前 VoxCPM2 方案写产品接入设计并实现实验选项。当前产品尚无多候选存储/面板和显式采用/撤回流程，需要落实已批准设计中的这些边界，并复用现有 Generation Bridge、稳定资产、播放预览、项目版本和重混基础设施。无需再次询问是否批准音频质量方向，也不得把整个阶段写成完成。
+当时的下一会话计划是先记录上述 01/02 的用户试听结果，再为当前 VoxCPM2 方案写产品接入设计并实现实验选项；该反馈已于 2026-09-08 补录，不再作为后续问题。当时产品尚无多候选存储/面板和显式采用/撤回流程，需要落实已批准设计中的这些边界，并复用现有 Generation Bridge、稳定资产、播放预览、项目版本和重混基础设施。无需再次询问是否批准音频质量方向，也不得把整个阶段写成完成。
 
 ## 2026-07-12 - Roadmap Step 10 产品工作流硬化完成
 

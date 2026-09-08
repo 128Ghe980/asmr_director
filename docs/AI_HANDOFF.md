@@ -179,17 +179,18 @@ Primary records:
 - Pause measurement: `I:\AI\voxcpm2-evaluation\evidence\longtext-deepseek-class-local-pause-measurement.json`.
 - Source-generation provenance: `I:\AI\voxcpm2-evaluation\evidence\longtext-clause16-long-openings-generation.json` and `longtext-api-semantic-hybrid-final-generation.json`.
 
-### One pending listening check
+### Full-clause pause comparison — feedback received 2026-09-08
 
-The following comparison is technically ready but has **not** received user listening feedback:
+The following comparison previously lacked recorded listening feedback. On 2026-09-08 the user clarified that they had already listened and had forgotten to report back; the actual listening date is unknown:
 
 `I:\AI\voxcpm2-evaluation\listening\longtext-clause16-opening-default-pauses-20260904`
 
 - `01_original_long_generation_first_clause_only.wav` is the old 03 control.
 - `02_deepseek_default_pauses_safe_retime.wav` changes only the 15 clause-boundary timings to the DeepSeek class defaults. It does not run TTS or change gain.
 - It is a safe edge retime, not a simple silence insertion: 1525 ms of verified low-energy edges were removed and 700 ms of all-zero silence was inserted. A cropped side keeps at least an 80 ms word-edge guard and receives a 10 ms fade inside that guard; an edge with no safely removable leading quiet is left untrimmed. Spoken-body PCM is sample-exact.
-- READY, source hashes, 16/16 ASR coverage, no clipping, and boundary checks pass. Whole-file ASR wrote the last “困意” as “昆依”, while the source and retimed spoken-body PCM are identical; treat this as an ASR variation and still ask the user to verify the first/last sounds by ear.
-- Next-session listening question: which of 01/02 has more natural pauses; whether 02 clips any first or last sound; and which boundary is still too long or short.
+- READY, source hashes, 16/16 ASR coverage, no clipping, and boundary checks pass. Whole-file ASR wrote the last “困意” as “昆依”, while the source and retimed spoken-body PCM are identical; this remains technical evidence, not a user confirmation of intact first/last sounds.
+- User feedback received 2026-09-08: no noticeable difference between the original pauses and applying class defaults to all clause boundaries. No new winner was selected. Keep the accepted class-local semantic-group recipe as the current preference.
+- This comparison is no longer pending and does not require a repeat listening request. The feedback does not establish complete equivalence or confirm that no word edges are clipped.
 
 ### Remaining risks and next-session entry
 
@@ -200,7 +201,7 @@ The following comparison is technically ready but has **not** received user list
 - Spatial recipes remain experiment scripts rather than product actions. Real SFX coverage remains limited.
 - Ignore the rejected `longtext-local-tempo-pause` packages, including `longtext-local-tempo-pause-rejected-gain-measurement-20260904`; one archived READY file still says `ready` and points at the old package root, but the method was rejected because it incorrectly used speed/milliseconds-per-character logic that the user did not request.
 
-When resuming Audio Quality V1, record the pending 01/02 listening result if the user provides it; it does not block product work. Follow the bilingual 2026-09-08 integration design and extend the now-implemented candidate store/panel, explicit adoption/undo and real remix infrastructure. Preserve actual voice timing and Planner source metadata. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
+The 01/02 listening feedback is recorded above and requires no follow-up comparison. Follow the bilingual 2026-09-08 integration design and extend the now-implemented candidate store/panel, explicit adoption/undo and real remix infrastructure. Preserve actual voice timing and Planner source metadata. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
 
 ### Pre-implementation readiness findings (2026-09-08, historical baseline)
 
@@ -544,7 +545,7 @@ Planner is accepted for this iteration. **Audio Quality V1** has resumed and the
 
 Proceed within Audio Quality V1 in this order:
 
-1. Retain the accepted semantic-group recipe as the implementation reference. If the user has listened to `longtext-clause16-opening-default-pauses-20260904`, record the 01/02 result separately; this optional comparison is not a prerequisite for the base integration.
+1. Retain the accepted class-local semantic-group recipe as the implementation reference. Feedback on `longtext-clause16-opening-default-pauses-20260904` was received on 2026-09-08: the user had previously listened and noticed no clear difference. This selects no replacement winner and is no longer a pending listening task.
 2. The bilingual `2026-09-08-voxcpm2-product-integration-design` first slice is implemented. Collect user listening feedback on the product's candidate workflow; keep the current restrained UI and do not repeat the completed base integration.
 3. Implement the selected soft-Chinese long-text route as an experimental option with multiple candidates, semantic grouping, safe extraction, adaptive/fallback pauses, and clear mode/reference controls. Keep GPT-SoVITS as a working fallback.
 4. Productize the already accepted spatial recipes without implying that direction comes from dry-voice prompts.
