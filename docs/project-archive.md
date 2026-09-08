@@ -14,11 +14,21 @@ AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
 ## 2026-09-08 - Planner 本轮验收与版本交接
 
+里程碑已提交并推送：`bd0d058 feat: add ASMR planner and simplify creative workspace`，分支 `origin/codex/step10-product-workflow`。此次推送包含该分支此前尚未推送的本地音质设计/实验交接提交；密钥文件 `.env.local` 保持 Git 忽略，未进入提交。提交前暂存内容格式检查与凭据特征检查通过。
+
 用户明确确认 Planner“暂时算是过了”，要求记录推送，再准备把 VoxCPM2 接入正式生成。当前代码、DeepSeek 真实生成/单段改写/采用链路与前端信息精简作为本轮验收成果；这不代表本地 Ollama 内存问题或通用文案艺术质量已经解决。相应事项转为后续跟进，不再阻挡音质主线。
 
 本版包含 Planner 领域约束、Ollama/外部 API、独立草稿保存、单段改写与撤回、安全采用和策划来源版本恢复；人声实际 WAV 时长与 Planner 时间线顺延；以及策划/工程视图去杂。此前验证记录为 34 文件 / 260 测试通过，最终布局调整后 9 项 Planner 组件用例、全量 ESLint、TypeScript 和生产构建通过；DeepSeek 与桌面/手机验收见下方记录。2026-09-08 的留档整理未新增模型调用或生成人声。
 
 优先级按用户指令转回 Audio Quality V1，准备把本机 VoxCPM2 作为现有 Generation Bridge 的可选人声引擎，保留 GPT-SoVITS、普通/温柔参考、参考音频/参考文本模式与候选试听、采用、撤回、重混。未试听确认的全短句停顿对照不作为基础接入前置，也不冒充已采用方案。尚未接入的 VoxCPM2、空间实验与真实 SFX 仍保持未完成。
+
+### VoxCPM2 接入准备结果
+
+已新增双语 `docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.md` / `.zh.md`，并同步路线和交接。首个产品切片明确为可选引擎/参考模式、单个人声候选生成与比较、显式采用/持久化撤回、真实时长保护、48 kHz 兼容混音与导出；后续接已选长文方案和既有空间/真实音效主线。接入设计不构成新顶层阶段，也不宣称声音质量已经通用稳定。
+
+两路只读核查覆盖主线接入点与本地运行材料。确认 VoxCPM2 原生 CLI、双 GGUF、普通/温柔参考及 profile 存在；CLI hash 与接受样本记录一致。旧 `codex/audio-quality-v1-round1` 工作树（HEAD `46d26d7`）已有候选与 48 kHz/空间基础，但包含大量未提交改动和未跟踪的 Vox provider/profile，后续须选择性移植。旧 2026-07-29 integration-result 是原型证据，不能当作当前主线接入成功。
+
+准备中识别的必要适配：Combined 同时传参考与 prompt、转录尾空格、low-VRAM/步数上限、取消和串行排他；当前 Planner 的实际时长/来源保护；候选采用指纹和跨刷新撤回；32/48 kHz 兼容和 stereo 保留。长文固定实验仍含人工替换/裁切，辅助 ASR 环境的旧 Scripts/python 路径已失效；这些边界已写入设计。本次没有改动旧工作树、读取密钥、调用模型或启动音频服务。文档变更按文件存在、关键路径/引用、双语范围与 diff 格式检查验证；没有把此前测试当成本次新运行的结果。
 
 ## 2026-09-07 - 前端信息精简
 

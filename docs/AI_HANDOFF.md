@@ -27,7 +27,9 @@ The user should receive an editable sound project: structured timeline, storyboa
 
 The user accepted **AI 创意策划 / LLM Planner V1** for this iteration on 2026-09-08 ("暂时算是过了") and asked to record/push the milestone, then prepare VoxCPM2 integration into real product generation. Immediate priority returns to **人声导演与真实 ASMR 音效质量 V1**. Its experimental conclusions remain valid; product integration is not yet implemented. There is no numbered Step 11.
 
-Design: `docs/superpowers/specs/2026-09-07-llm-planner-v1-design.md` and `.zh.md`.
+Planner design: `docs/superpowers/specs/2026-09-07-llm-planner-v1-design.md` and `.zh.md`. Accepted milestone `bd0d058` was pushed to `origin/codex/step10-product-workflow` on 2026-09-08.
+
+VoxCPM2 integration preparation is complete: `docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.md` and `.zh.md`. The next implementation slice is optional VoxCPM2 generation → candidate comparison → explicit adopt/undo → 48 kHz-compatible remix/export, followed by the selected long-text mode. This is a design and readiness result, not a completed product integration.
 
 Planner implementation is accepted for this iteration; real external DeepSeek generation, section rewrite and project adoption have passed browser acceptance. Local Ollama acceptance remains pending memory recovery as a non-blocking follow-up. The studio has planning/editing views, separate locally saved creative drafts, local Ollama and configured external JSON-mode API options, single-section rewrite/cancel/undo, script download, and safe adoption into a new project. Draft metadata stays outside Project JSON. Do not represent unavailable sound suggestions as generated assets.
 
@@ -185,7 +187,16 @@ The following comparison is technically ready but has **not** received user list
 - Spatial recipes remain experiment scripts rather than product actions. Real SFX coverage remains limited.
 - Ignore the rejected `longtext-local-tempo-pause` packages, including `longtext-local-tempo-pause-rejected-gain-measurement-20260904`; one archived READY file still says `ready` and points at the old package root, but the method was rejected because it incorrectly used speed/milliseconds-per-character logic that the user did not request.
 
-When resuming Audio Quality V1, first record the pending 01/02 listening result if the user provides it. Then turn the selected VoxCPM2 recipe into a focused product-integration design under that already approved stage: optional Provider/mode controls, multi-candidate generation, semantic grouping, safe extraction, pause assembly, validation, accept/undo/remix, and local fallbacks. The checked-in app does **not** yet have a multi-candidate store/panel or explicit accept/undo flow; implement those approved boundaries while reusing the existing Generation Bridge, durable assets, playback/preview, project revisions, and remix infrastructure. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
+When resuming Audio Quality V1, record the pending 01/02 listening result if the user provides it; it does not block base integration. Follow the bilingual 2026-09-08 integration design. The checked-in app does **not** yet have a multi-candidate store/panel or explicit accept/undo flow; implement those boundaries through the existing Generation Bridge, durable assets, playback, project revisions and remix infrastructure. Preserve actual voice timing and Planner source metadata. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
+
+### VoxCPM2 integration readiness (2026-09-08)
+
+- Native CLI: `I:\AI\voxcpm2-evaluation\src\build-cuda-vs2017\bin\Release\voxcpm2-cli.exe`; both GGUF models and normal/soft reference WAVs exist. The external runtime profile is `D:\CodexWorkplace\asmr_director_runtime\audio-quality-v1\voxcpm2\profile.json`. CLI integration does not require a new Python server.
+- Reuse source: `.worktrees/audio-quality-v1-round1`, branch `codex/audio-quality-v1-round1`, inspected HEAD `46d26d7`. It has candidate/accept/preview, 48 kHz and spatial foundations, but many dirty files and untracked Vox provider/profile modules. Recheck status and selectively port; never reset or merge the whole worktree merely to recover these modules.
+- Correct old runtime integration: transcript mode must use Combined (`-r` plus prompt audio/text); preserve the transcript's trailing ASCII space; add low-VRAM, appropriate step limits, cancellation and resource exclusion. `gpu_layers=0` still uses GPU. Old in-memory undo and rejection of voice longer than its clip need replacement/adaptation.
+- Current main mixer is 32 kHz and rejects mismatched rates; finish 48 kHz normalization and stereo preservation before claiming usable remix/export. Candidate adoption must be persistent, content-checked and safe across Planner timing shifts, refresh and later edits.
+- Old `integration-result.json` is a 2026-07-29 prototype success, not current-branch acceptance. Long-text experiment scripts contain manual replacements/cuts; port algorithms, not fixed-text packages. The old ASR helper's `env-comfyui-clone\Scripts\python.exe` path is missing; recheck the auxiliary environment before long-text implementation.
+- This readiness pass was read-only outside documentation: no service startup, audio generation or model API requests.
 
 ## Real Generation Runtime Notes
 
@@ -468,6 +479,10 @@ http://localhost:3000/
 
 ## Recent Commit Trail
 
+Planner milestone:
+
+- `bd0d058 feat: add ASMR planner and simplify creative workspace` — recorded and pushed 2026-09-08.
+
 Step 10 branch commits:
 
 - `39f896b fix: preserve local workflow integrity`
@@ -517,7 +532,7 @@ Planner is accepted for this iteration. The user has resumed **Audio Quality V1*
 Proceed within Audio Quality V1 in this order:
 
 1. Retain the accepted semantic-group recipe as the implementation reference. If the user has listened to `longtext-clause16-opening-default-pauses-20260904`, record the 01/02 result separately; this optional comparison is not a prerequisite for the base integration.
-2. Inspect the current Generation Bridge/provider code and write a focused bilingual integration design for optional VoxCPM2 generation. Implement the approved candidate/accept/undo boundaries; reuse the asset, playback/preview, project-revision, and remix infrastructure that actually exists today.
+2. Implement the completed bilingual `2026-09-08-voxcpm2-product-integration-design` through the existing Generation Bridge. Selectively adapt the old candidate/provider/48 kHz code, preserving the current Planner and restrained UI; finish explicit candidate/accept/undo and real remix/export acceptance.
 3. Implement the selected soft-Chinese long-text route as an experimental option with multiple candidates, semantic grouping, safe extraction, adaptive/fallback pauses, and clear mode/reference controls. Keep GPT-SoVITS as a working fallback.
 4. Productize the already accepted spatial recipes without implying that direction comes from dry-voice prompts.
 5. Continue the unresolved real ASMR SFX library/local-generation work; retain procedural audio only as a labelled fallback.
