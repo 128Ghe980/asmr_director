@@ -1,6 +1,6 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-09-09
+Last updated: 2026-09-13
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
@@ -23,13 +23,15 @@ This project is an **AI ASMR director console**, not a generic AI ASMR generator
 
 The user should receive an editable sound project: structured timeline, storyboard, emotional beats, binaural positioning, generation metadata, validation, import/export, and eventually local regeneration. The durable product moat is the director layer and Timeline DSL, not a specific TTS or SFX model.
 
-## Current Priority (2026-09-09)
+## Current Priority (2026-09-13)
 
 The user accepted **AI 创意策划 / LLM Planner V1** for this iteration on 2026-09-08 ("暂时算是过了"), asked to record/push, and subsequently authorized VoxCPM2 implementation ("好，开始实施"). Immediate priority is **人声导演与真实 ASMR 音效质量 V1**. Base VoxCPM2 clip generation/candidate adoption/remix is technically verified. On 2026-09-09 the selected long-text route also passed real-workbench technical verification, including single-group regeneration and the candidate-to-export workflow. New product samples still need user listening judgment; improved spatial recipes and real SFX remain unfinished. There is no numbered Step 11.
 
 Planner design: `docs/superpowers/specs/2026-09-07-llm-planner-v1-design.md` and `.zh.md`. Accepted milestone `bd0d058` was pushed to `origin/codex/step10-product-workflow` on 2026-09-08.
 
 VoxCPM2 design and implementation results: `docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.md` and `.zh.md`. The first slice is complete: optional VoxCPM2 generation → candidate comparison → explicit adopt/undo → 48 kHz-compatible remix/export. The second slice implements the selected long-text mode, safe extraction, adaptive joins and individual group rerolls. Do not confuse technical acceptance with user listening acceptance or completion of Audio Quality V1.
+
+Closeout checked on 2026-09-13: implementation commit `4d5f8ab` is present on `origin/codex/voxcpm2-product-generation`; a fresh fetch confirmed local and remote heads matched and the main workspace was clean. The user requested recording/pushing the completed integration before further work. This closeout updates documentation only and retains the 2026-09-09 verification evidence below; no new TTS, API generation or listening acceptance is claimed. Resume later with new product-sample feedback and the approved spatial/real-SFX work, not another base or long-text integration pass.
 
 Planner implementation is accepted for this iteration; real external DeepSeek generation, section rewrite and project adoption have passed browser acceptance. Local Ollama acceptance remains pending memory recovery as a non-blocking follow-up. The studio has planning/editing views, separate locally saved creative drafts, local Ollama and configured external JSON-mode API options, single-section rewrite/cancel/undo, script download, and safe adoption into a new project. Draft metadata stays outside Project JSON. Do not represent unavailable sound suggestions as generated assets.
 
