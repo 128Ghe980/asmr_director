@@ -15,6 +15,8 @@ npm.cmd run dev --prefix apps/web -- --port 3000 --hostname 127.0.0.1 --webpack
 
 打开 [本地工作台](http://127.0.0.1:3000)。端口被其他项目使用时请换端口。Windows 本环境使用 Webpack；已有 SWC 原生绑定警告可由 WASM 回退处理，以命令退出状态为准。
 
+构建目录默认是本项目内的 `.next`；可设置 `ASMR_NEXT_DIST_DIR=.next-spatial` 使用另一个项目内目录。编译产物应留在 `apps/web` 内能解析 `node_modules` 的位置，不要把整个构建目录直接指向无关的外盘路径。磁盘紧张时可将下文的空间音频缓存放到外盘；Next 构建目录如需迁移缓存，只迁移其 `cache` 子目录，保留项目内的 server／static／类型产物。
+
 ## AI 创意策划
 
 1. 点击中央“AI 创意策划”，输入今日主题，选择目标时长，可补充角色、说话风格和避免的内容。
@@ -62,7 +64,7 @@ ASMR_PLANNER_API_MODEL=deepseek-v4-pro
 
 ## 音频与保存
 
-人声可选择本地 GPT-SoVITS 或 VoxCPM2；其他声音目前仍是程序合成。VoxCPM2 为当前人声生成独立候选，试听后采用，之后重混导出；生成候选本身不会替换工程原声。已选长文分组/停顿方案已于 2026-09-09 完成工作台接入及真实技术验收；高质量真实音效和改进空间处理仍待继续，实际验收进度见 `docs/AI_HANDOFF.md`。
+人声可选择本地 GPT-SoVITS 或 VoxCPM2；其他声音目前仍是程序合成。VoxCPM2 为当前人声生成独立候选，试听后采用，之后重混导出；生成候选本身不会替换工程原声。已选长文分组/停顿方案已于 2026-09-09 完成工作台接入及真实技术验收。2026-09-14 用户采用的原 D 双耳空间已接入人声试听和整段混音，支持距离、左右、水平定距环绕与环绕靠近；真实高质量音效、垂直环绕及音质 V1 其余工作仍待继续，最终验收进度见 `docs/AI_HANDOFF.md`。
 
 使用入口：工程编辑 → 选中人声片段 → 人声引擎选择 `VoxCPM2` → 选择参考与模式 → 生成。候选可试听、采用或丢弃；最近一次采用可跨刷新撤回，采用后继续编辑则通过项目安全版本恢复。
 
@@ -73,6 +75,37 @@ ASMR_PLANNER_API_MODEL=deepseek-v4-pro
 组内停顿保持原音频。组间使用已选的短/中/长分类和实际 ASR 词间隙：0 ms 也是有效测量；先取相邻组内部停顿均值的等权平均，在对应类别范围内才使用，否则找同类有效样本，最后使用 180/350/600 ms 默认值。连接只补足扣除首尾已有安静时长后的差额，不为强求目标时长裁切人声；成品仅做一次整体响度调整。每组最多尝试 3 次（首次加最多 2 次自动重试），无法确认完整台词或安全截点就停止并保留工程原声。
 
 人声资产读取实际 PCM WAV 时长；VoxCPM2 候选采用和 Planner 人声生成会延长过短片段并顺延时间线，较短音频保留计划留白。混音兼容现有 32 kHz、44.1 kHz 和 VoxCPM2 的 48 kHz 音频。
+
+### 原 D 双耳空间
+
+在“试听与导出”开启“双耳空间”，选中人声片段，在“移动”选择“定距环绕”或“环绕靠近”，然后试听完整候选／当前人声，采用后生成整段。建议戴耳机判断方向与距离。定距环绕可选择“贴耳／中／远”，对应距头中心 0.18／0.8／1.75 米；环绕靠近固定从 1.75 米到 0.18 米。路线从左侧经过后方、右侧、前方回到左侧，首尾有平滑停留；左右、静止、靠近和远离也继续可用。
+
+TTS 原声音频始终保留，更改距离或运动不需要重新合成已经生成的人声。首次空间试听按当前设置生成本地缓存，重复试听复用缓存；修改空间设置后只重算对应空间音频。完整候选按实际原声时长试听，长文详情中的单组试听保留干声。关闭“双耳空间”后候选／当前片段播放原声，整段恢复普通立体声处理；已有双声道素材保留左右声道，不重复做 D。已有旧双耳混音会显示“需重混”，原导出仍可播放和下载。
+
+D 使用原 HRTF＋近场 DVF＋房间反射方案。单声道人声在 48 kHz 处理，原声首尾准备与整体 −27 LUFS 增益、用户淡入淡出都在房间卷积前施加，派生结果是 48 kHz 双声道 PCM24，并完整保留额外 0.65 秒房间尾声。尾声不改变 TTS 资产时长，但可与后续片段重叠，或使整段导出比工程时间线稍长。最终混音通常是 48 kHz 双声道 PCM16，clip 音量只施加一次。
+
+包含 D 的混音不再使用旧 `target_lufs` 向上归一，保留原配方的天然近远响度差。主限幅开启时，仅对超过 −2.1 dBFS 采样峰值的整段施加双耳共同衰减；不单独抬升远处声音，也不重复 pan、距离增益和淡化。非 D 混音沿用旧行为。
+
+无需另起空间 HTTP 服务；Next 调用本地 Python。默认路径相对 `ASMR_DIRECTOR_RUNTIME_ROOT`（本机默认 `D:/CodexWorkplace/asmr_director_runtime`）：
+
+| 配置 | 默认位置 |
+| --- | --- |
+| `ASMR_SPATIAL_PYTHON` | `audio-quality-v1/.venv/Scripts/python.exe` |
+| `ASMR_SPATIAL_HRTF` | `audio-quality-v1/hrtf/viking/subj_A.sofa` |
+| `ASMR_SPATIAL_CACHE_ROOT` | `assets/spatial` |
+
+Python 需要 `numpy`、`scipy`、`soundfile`、`h5py`、`pyloudnorm`。本机既有空间环境和 Viking A 文件可直接复用。SOFA、Python 环境和派生 WAV 保留在仓库外。磁盘紧张时，例如在 `apps/web/.env.local` 设置以下路径后重启服务：
+
+```dotenv
+ASMR_SPATIAL_CACHE_ROOT=I:/AI/asmr-director-runtime/assets/spatial
+# 若复用默认 Python/HRTF，无需填写这两项。
+# ASMR_SPATIAL_PYTHON=D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/.venv/Scripts/python.exe
+# ASMR_SPATIAL_HRTF=D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/hrtf/viking/subj_A.sofa
+```
+
+空间请求最长 10 分钟，每个 Node 进程同时渲染一个任务、最多排队八个。缺少环境或 HRTF 会报错，可补齐后重试；空间试听失败也可关闭双耳空间检查原声。取消请求或混音任务会终止对应渲染进程，确认退出后才释放槽位；失败半成品不进入缓存。暂停播放本身不保证中止网络请求。缓存键包含原声、代码、HRTF 和处理参数，修改模型文件或参数不会误用旧空间 WAV。
+
+HRTF 来自 Spagnol、Miccini、Unnthorsson（2020）的 [Viking HRTF Dataset v2](https://doi.org/10.5281/zenodo.4160401)，许可为 CC BY 4.0；再分发数据或改编时保留署名和许可说明。A 耳型只在 1 米实测，更近距离由模型近似，房间为合成响应。本次采用原 D，不加入 E/F/G，也不代表个人耳型或垂直环绕已完成。处理合同与本轮证据见 `docs/superpowers/specs/2026-09-14-spatial-d-product-integration.zh.md`，独立 CLI 用法见 `apps/web/scripts/spatial_d/README.md`。
 
 ### VoxCPM2 本机配置
 
@@ -134,4 +167,6 @@ npm.cmd run build --prefix apps/web -- --webpack
 
 长文 Python 安全测试可在已配置环境运行 `apps/web/scripts/test-analyze-voice-group.py`，不调用模型或合成音频。2026-09-09 长文接入通过 **53 个 Vitest 文件 / 465 项测试、23 项 Python 测试、全量 ESLint 和包含 TypeScript 的 Webpack 生产构建**。真实工作台完成五组生成、单组重生成、试听/采用/刷新撤回、取消、23.36 秒 / 48 kHz stereo 重混与 WAV/工程 JSON 下载；桌面/390px 无横向溢出，最终浏览器 error/warn 为空。原有 Windows native SWC 警告仍存在，WASM 回退构建成功。
 
-证据位于 `D:\CodexWorkplace\asmr_director_runtime\voxcpm2-longtext-verification\2026-09-09`，详见 `browser-result.json`、`reroll-result.json`、`cancel-result.json`、`mix-verification.json` 与 `final-*.log`。工作台保留“长文分组接入验收”项目及两个真实候选，声音质量仍由用户试听判断。空间动作与真实 SFX 扩展未由本轮完成。
+证据位于 `D:\CodexWorkplace\asmr_director_runtime\voxcpm2-longtext-verification\2026-09-09`，详见 `browser-result.json`、`reroll-result.json`、`cancel-result.json`、`mix-verification.json` 与 `final-*.log`。工作台保留“长文分组接入验收”项目及两个真实候选。这段 2026-09-09 的历史验收没有包含空间接入或真实 SFX 扩展。
+
+2026-09-20 原 D 接入收尾：26 项空间 Python 测试通过，四条获采用的自然 WAV 与 8770 逐字节一致；最终 57 文件／520 项 Vitest（含真实 TypeScript→Python 联调）、全量 ESLint、TypeScript 和生产构建通过。真实工作台生成、试听、采用／撤回、编辑空间设置后重混及下载闭环已验证，并完成生产构建的桌面／手机复核。可用 `ASMR_SPATIAL_REAL_TEST=1` 显式启用真实适配器测试，以 `ASMR_SPATIAL_TEST_ROOT` 指定仓库外临时目录；普通测试默认跳过它。完整证据和取消检查边界见本轮双语 spec 与 `docs/AI_HANDOFF.md`。

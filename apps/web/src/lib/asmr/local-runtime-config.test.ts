@@ -13,6 +13,9 @@ describe("local runtime config", () => {
     );
     expect(config.gptSovitsBaseUrl).toBe("http://127.0.0.1:9880");
     expect(config.voxcpm2ProfilePath).toBe(path.join(config.runtimeRoot, "audio-quality-v1", "voxcpm2", "profile.json"));
+    expect(config.spatialCacheRoot).toBe(path.join(config.runtimeRoot, "assets", "spatial"));
+    expect(config.spatialPythonPath).toBe(path.join(config.runtimeRoot, "audio-quality-v1", ".venv", "Scripts", "python.exe"));
+    expect(config.spatialHrtfPath).toBe(path.join(config.runtimeRoot, "audio-quality-v1", "hrtf", "viking", "subj_A.sofa"));
     expect(config.voicePackPath).toBe(
       path.join(
         "D:\\CodexWorkplace\\asmr_director_runtime",
@@ -47,6 +50,9 @@ describe("local runtime config", () => {
       ASMR_CLIP_ASSET_ROOT: "E:\\assets\\clips",
       ASMR_MIX_ASSET_ROOT: "E:\\assets\\mixes",
       ASMR_VOXCPM2_PROFILE_PATH: "E:\\voices\\voxcpm2.json",
+      ASMR_SPATIAL_CACHE_ROOT: "I:\\spatial",
+      ASMR_SPATIAL_PYTHON: "E:\\python.exe",
+      ASMR_SPATIAL_HRTF: "E:\\subject.sofa",
     });
 
     expect(config).toEqual({
@@ -56,6 +62,9 @@ describe("local runtime config", () => {
       clipAssetRoot: "E:\\assets\\clips",
       mixAssetRoot: "E:\\assets\\mixes",
       voxcpm2ProfilePath: "E:\\voices\\voxcpm2.json",
+      spatialCacheRoot: "I:\\spatial",
+      spatialPythonPath: "E:\\python.exe",
+      spatialHrtfPath: "E:\\subject.sofa",
     });
   });
 });

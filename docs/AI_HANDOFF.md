@@ -1,10 +1,14 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-09-13
+Last updated: 2026-09-20
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
 ## Workspace Location
+
+Closeout on 2026-09-20: D product integration is complete and verified. Retained final logs show 57 Vitest files / 520 tests (including the real Python adapter), 26 spatial Python tests, and production Webpack/TypeScript success. Full ESLint now passes after excluding the two custom generated Next directories. A production-build browser recheck passed playback/seek, adopt/undo, edits without new TTS, remix/download/reload and desktop/mobile layouts with no errors. Latest evidence is `I:/AI/asmr-director-spatial-integration/2026-09-20`; previous real new TTS and bit-exact D evidence remains under September 14. The user requests new storage needs preferentially use `I:/AI` because C:/D: are nearly full. Runtime spatial cache and Python scratch files already use I:. No new model generation was needed on September 20. The local production workbench is at port 3001; the four historical listening pages are separate artifacts.
+
+Latest delivery (2026-09-14): the user accepted the new colloquial original-D sample at port 8770 and requested production integration, recording and push. D now powers full voice previews and mix export, with fixed-distance orbit and orbit-approach controls. Dry assets/provenance remain unchanged; editing distance or motion reuses completed TTS. D mixes skip upward target normalization and only attenuate the whole stereo mix when the enabled limiter requires it. Four accepted D WAVs are byte-identical to product rendering; natural near/far RMS difference survives export (7.367683 → 7.367684 dB). See the paired `docs/superpowers/specs/2026-09-14-spatial-d-product-integration` specs for final verification, environment limitations and handoff instructions. Historical “spatial integration not changed/pending” entries below describe earlier experiments, not the current implementation. Audio Quality V1 as a whole remains in progress, including real SFX, vertical movement and general softer expression.
 
 Primary Codex desktop workspace path:
 
@@ -23,9 +27,11 @@ This project is an **AI ASMR director console**, not a generic AI ASMR generator
 
 The user should receive an editable sound project: structured timeline, storyboard, emotional beats, binaural positioning, generation metadata, validation, import/export, and eventually local regeneration. The durable product moat is the director layer and Timeline DSL, not a specific TTS or SFX model.
 
-## Current Priority (2026-09-13)
+## Current Priority (2026-09-14)
 
-The user accepted **AI 创意策划 / LLM Planner V1** for this iteration on 2026-09-08 ("暂时算是过了"), asked to record/push, and subsequently authorized VoxCPM2 implementation ("好，开始实施"). Immediate priority is **人声导演与真实 ASMR 音效质量 V1**. Base VoxCPM2 clip generation/candidate adoption/remix is technically verified. On 2026-09-09 the selected long-text route also passed real-workbench technical verification, including single-group regeneration and the candidate-to-export workflow. New product samples still need user listening judgment; improved spatial recipes and real SFX remain unfinished. There is no numbered Step 11.
+The user accepted **AI 创意策划 / LLM Planner V1** for this iteration on 2026-09-08 ("暂时算是过了"), asked to record/push, and subsequently authorized VoxCPM2 implementation ("好，开始实施"). Immediate priority is **人声导演与真实 ASMR 音效质量 V1**. Base VoxCPM2 clip generation/candidate adoption/remix is technically verified. On 2026-09-09 the selected long-text route also passed real-workbench technical verification, including single-group regeneration and the candidate-to-export workflow. The user accepted the original-D colloquial motion sample and authorized its product integration on 2026-09-14. D is now integrated; real SFX and the remaining Audio Quality V1 controls remain unfinished. There is no numbered Step 11.
+
+Latest spatial decision (2026-09-14): the user prefers original D over E/F/G and finds E's weaker distant echo/reverberation less spacious. Keep D as the listening baseline. The continuous orbits with the accepted old 34.75-second voice remain at `http://127.0.0.1:8769/`. The user then requested new, plain conversational copy: actual local VoxCPM2 generation is complete, producing a new 34.54-second source and four D paths at `http://127.0.0.1:8770/`. Six groups pass extracted ASR; final ASR covers 22/22 clauses in order with one 露/落 transcript difference. Eight 35.19-second WAVs, 38 numerical tests, original-D endpoint checks and real desktop/mobile playback/download verification passed. Artifacts and evidence: `I:/AI/asmr-director-distance-listening/2026-09-14-colloquial-source` and `2026-09-14-d-colloquial-motion`; see paired `docs/superpowers/specs/2026-09-14-d-colloquial-motion` specs. Previous outputs are preserved. The user subsequently accepted this source/motion version and requested product integration. D now supplies full voice previews and mix export; user projects are preserved. See the spatial product integration spec for implementation and final checks.
 
 Planner design: `docs/superpowers/specs/2026-09-07-llm-planner-v1-design.md` and `.zh.md`. Accepted milestone `bd0d058` was pushed to `origin/codex/step10-product-workflow` on 2026-09-08.
 
@@ -145,11 +151,37 @@ The user approved **人声导演与真实 ASMR 音效质量 V1** on 2026-07-13 a
 
 ## Audio Quality V1 Experiment Handoff (2026-09-07)
 
+### Distance listening experiment (2026-09-13)
+
+The user authorized the proposed fixed-source distance comparison. `tools/distance-listening/` now renders 80 offline PCM24 stereo WAVs for soft voice and a real CC0 brush: pan baseline / measured HRTF / rigid-sphere DVF / added room response, across ear/front/far/approach plus tours and natural/matched loudness. Output is `D:/CodexWorkplace/asmr_director_runtime/distance-listening/2026-09-13`; local `index.html` works beside `audio/`, and `serve.py` serves it with WAV byte-range support at `http://127.0.0.1:8767/`. Thirteen numerical tests, independent audio verification and real browser playback/seeking/download/desktop/mobile checks passed. Start with the bilingual `2026-09-13-distance-listening-experiment` spec and `tools/distance-listening/README.md`.
+
+The user subsequently described the room impression as good and D as acceptable ("确实不错", "D我觉得还行"). This is positive initial feedback, not complete spatial acceptance. No product mixer, Timeline DSL, project storage, old worktree or TTS generation was changed. The HRTF is Viking A measured at 1 m; near field is a model approximation, and the room is first-order geometry plus a synthetic tail, not measured near-field HRTF/BRIR. The brush uses an attributed CC0 public MP3 preview (not original WAV), prepared with a shared 40 Hz high-pass to remove subsonic rumble. Matched static clips preserve ILD; approach still contains internal loudness changes. Do not treat technical success as a listening winner or completed product spatial integration.
+
+### Distance algorithm refinements (2026-09-14)
+
+The user's clarification asks for additional algorithm families plus improvements to room acoustics and near-ear/source orientation. Research covers BRIR, ISM/FDN/SDN, Paraspax, geometric propagation, neural binaural rendering and Ambisonics. BinauralGrad has code/checkpoint links; BinauralFlow has a public paper/demo but public code/weights were not confirmed. None was installed or run. Read the bilingual `2026-09-14-distance-algorithm-refinements` spec.
+
+`refine.py`, `refine_room.py`, `source_geometry.py` generate a new D/E/F/G matrix: unchanged D algorithm; E second-order images + per-wall filtering + eight-line FDN; F onset-aligned ear-parallax interpolation + approximate frequency-dependent voice radiation on direct/reflected paths; G combines E/F. All paths get the same 74-sample interpolation guard. The same dry hashes are required. A left-front approach and fixed-position source rotation expose the changes; brushes get no mouth model.
+
+Output: `I:/AI/asmr-director-distance-listening/2026-09-14`, served at `http://127.0.0.1:8768/`; original D output and 8767 remain intact. D: filled during initial rendering, so only the incomplete new output was moved to I: and regenerated. 27 tests and all 96 audio checks passed; max true-peak estimate -2.1000 dBTP, max loudness error 0.09761 LU, ILD difference <0.000001 dB. Cross-artifact static D and non-scalar reflection rotation checks passed. Edge playback/seek/mode/download/all metadata/file:// and 1280px/390px layout checks passed; screenshots inspected. See `verification.json`, `refinement-verification.json`, `browser-verification.json`. Subsequent feedback is now settled: D remains best for the user; E reduces the distant echo/reverberant spaciousness. E/F/G are not adopted. Do not request this comparison again as if it were still pending. Product mixer, storage, old worktree and TTS remain unchanged.
+
+### Original D with continuous long-voice motion (2026-09-14)
+
+The new user request is a longer continuous text moving around the listener at fixed distances or while approaching. Reuse `I:/AI/voxcpm2-evaluation/listening/longtext-deepseek-class-local-pause-20260904/03_deepseek_class_local_rule.wav`: accepted 34.75-second, 48 kHz mono PCM16, complete 16-clause/six-group voice, SHA256 `0311ca567eecb144c8a93558de4950135dde6833c584d0bbd4ead66de0e9e3e3`. The original ASR verifies ordered 16/16 coverage without repeated 12-grams. No fresh TTS, time stretching, repeated short lines or workbench changes were used.
+
+`long_motion.py` and `motion_convolution.py` render four synchronized original-D trajectories: `orbit_near` 0.18 m, `orbit_mid` 0.8 m, `orbit_far` 1.75 m, and `spiral` 1.75→0.18 m. Distances are from head center. SOFA azimuth 90→450° means left→back→right→front→left, with 1.5 s initial and 2.5 s final holds. Spiral radius reaches 0.18 m at 27.105 s and stays there for the final 7.645 s of source audio. Each path has 353 keyframes, at most 100 ms apart, and preserves full convolution history/tails; original `render.py`/`near_field.py` hashes are unchanged.
+
+Artifact: `I:/AI/asmr-director-distance-listening/2026-09-14-d-long-motion`, `http://127.0.0.1:8769/`, eight 35.4-second 48 kHz stereo PCM24 WAVs (four paths × natural/matched). Whole-clip matching preserves within-clip motion and interaural balance. The page keeps the same speech time when switching and exposes the transcript and preset model position in collapsed disclosures. Position is not a listening measurement. The old 8767 and 8768 outputs remain intact; continue writing large outputs to I: because D: is nearly full.
+
+Evidence: 37 numerical tests passed in this session; `verification.json` reports max true-peak estimate -5.383748 dBTP, matched error 0.029475753 LU and ILD change 1.306728e-7 dB. `motion-verification.json` confirms unchanged original D code and source text, trajectory endpoints/wall clearance and held endpoint residuals <1.2e-7 against full static D convolution. `browser-verification.json` passes real playback, eight metadata loads, method/mode time preservation, position/full transcript, download hash, file:// and 1280px/390px overflow checks with no errors. Screenshots and server logs are beside the JSON reports. Reproduction and remaining approximations: bilingual `docs/superpowers/specs/2026-09-14-d-long-motion` and `tools/distance-listening/README.md`.
+
+This new long-motion listening is pending, while D-over-E/F/G is already decided. Do not substitute E/F/G or describe this offline artifact as product spatial integration.
+
 ### Current status boundary
 
 - The experiment assets, scripts, manifests, and listening records live outside Git under `I:\AI\voxcpm2-evaluation`.
 - At the 2026-09-07 experiment handoff the product used GPT-SoVITS and procedural non-voice. Base optional VoxCPM2 was integrated on 2026-09-08; see the product-slice section above.
-- The stage remains `in progress`: long-text automation passed real-workbench technical verification on 2026-09-09; improved spatial integration and real SFX expansion are not complete.
+- The stage remains `in progress`: long-text automation passed real-workbench technical verification on 2026-09-09; original D integration is now implemented; real SFX expansion and the remaining spatial controls are not complete.
 
 ### User-approved direction and constraints
 
@@ -216,7 +248,7 @@ The following comparison previously lacked recorded listening feedback. On 2026-
 - Long-text generation still varies in inhalation, pace, pitch, timbre, and noise. Candidate generation plus automatic and human quality checks remain necessary.
 - DeepSeek may incur external cost. Product behavior must keep a free local semantic splitter and fixed pause defaults as fallbacks.
 - VoxCPM2 clip and selected long-text generation are registered in the Generation Bridge. Keep private provider parameters out of the Timeline DSL.
-- Spatial recipes remain experiment scripts rather than product actions. Real SFX coverage remains limited.
+- Original D is now a product voice action; E/F/G remain unadopted experiments. Real SFX coverage remains limited.
 - Ignore the rejected `longtext-local-tempo-pause` packages, including `longtext-local-tempo-pause-rejected-gain-measurement-20260904`; one archived READY file still says `ready` and points at the old package root, but the method was rejected because it incorrectly used speed/milliseconds-per-character logic that the user did not request.
 
 The 01/02 listening feedback is recorded above and requires no follow-up comparison. Follow the bilingual 2026-09-08 integration design and extend the now-implemented candidate store/panel, explicit adoption/undo and real remix infrastructure. Preserve actual voice timing and Planner source metadata. Do not ask the user to re-approve the already approved audio-quality direction, and do not claim the stage is complete.
@@ -566,7 +598,7 @@ Proceed within Audio Quality V1 in this order:
 1. Retain the accepted class-local semantic-group recipe as the implementation reference. Feedback on `longtext-clause16-opening-default-pauses-20260904` was received on 2026-09-08: the user had previously listened and noticed no clear difference. This selects no replacement winner and is no longer a pending listening task.
 2. The bilingual `2026-09-08-voxcpm2-product-integration-design` first slice is implemented. Collect user listening feedback on the product's candidate workflow; keep the current restrained UI and do not repeat the completed base integration.
 3. Long-text real-workbench verification is complete, including grouping, safe extraction, adaptive/fallback pauses, individual group rerolls and candidate-to-export behavior. Collect user listening feedback on the new product samples; keep GPT-SoVITS available and do not repeat completed integration, the accepted padding decision or pause comparison.
-4. Productize the already accepted spatial recipes without implying that direction comes from dry-voice prompts.
+4. Keep original D as the current listening baseline; collect feedback on the new long-motion artifact at 8769, then continue spatial integration within Audio Quality V1. Do not reopen D/E/F/G as an unanswered comparison or imply direction comes from dry-voice prompts.
 5. Continue the unresolved real ASMR SFX library/local-generation work; retain procedural audio only as a labelled fallback.
 
 The fixed roadmap still has no numbered Step 11. The audio work above belongs to Audio Quality V1; Planner V1 is separately approved. Before each remaining integration slice, compare experiment assumptions with current code and keep the docs synchronized.

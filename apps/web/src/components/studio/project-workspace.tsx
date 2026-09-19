@@ -25,6 +25,8 @@ const PROJECT_WORKSPACE_DETAILS_ID = "project-workspace-details";
 const PROJECT_WORKSPACE_IMPORT_ID = "project-workspace-import";
 
 type ProjectWorkspaceProps = {
+  binaural?: boolean;
+  onBinauralChange?: (enabled: boolean) => void;
   children: ReactNode;
   planning?: boolean;
   importError: string | undefined;
@@ -56,6 +58,7 @@ type ProjectWorkspaceProps = {
 };
 
 export function ProjectWorkspace({
+  binaural, onBinauralChange,
   children,
   planning = false,
   importError,
@@ -149,6 +152,7 @@ export function ProjectWorkspace({
       </div>
 
       {!planning && <ProjectDetailsDock
+        binaural={binaural} onBinauralChange={onBinauralChange}
         collapsed={rightCollapsed}
         panelId={PROJECT_WORKSPACE_DETAILS_ID}
         summary={summary}

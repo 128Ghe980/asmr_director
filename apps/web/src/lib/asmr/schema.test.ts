@@ -102,6 +102,28 @@ describe("AsmrProjectSchema", () => {
     expect(parsed.timeline.tracks[0].track_type).toBe("voice");
   });
 
+  it.each(["static", "approach", "recede", "left_to_right", "right_to_left"])(
+    "preserves the existing %s movement without migrating it",
+    (movement) => {
+      const project = structuredClone(validProject);
+      project.timeline.tracks[0].clips[0].position.movement = movement;
+      expect(AsmrProjectSchema.parse(project)).toEqual(project);
+    },
+  );
+
+  it.each(["orbit", "orbit_approach"])(
+    "round-trips %s with either binaural setting and preserves saved position fields",
+    (movement) => {
+      for (const binaural of [true, false]) {
+        const project = structuredClone(validProject);
+        project.timeline.mixing.binaural = binaural;
+        project.timeline.tracks[0].clips[0].position.movement = movement;
+        const parsed = AsmrProjectSchema.parse(project);
+        expect(AsmrProjectSchema.parse(JSON.parse(JSON.stringify(parsed)))).toEqual(project);
+      }
+    },
+  );
+
   it("rejects invalid pan values", () => {
     const project = structuredClone(validProject);
     project.timeline.tracks[0].clips[0].position.pan = 1.4;

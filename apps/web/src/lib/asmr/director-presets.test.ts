@@ -25,6 +25,26 @@ function apply(preset: DirectorPreset, clipId = "voice_002") {
 }
 
 describe("director presets", () => {
+  it.each(["left_to_right", "right_to_left", "orbit"] as const)(
+    "keeps %s movement when bringing a clip closer",
+    (movement) => {
+      const project = updateClipInProject(demoProject, "voice_002", { position: { movement, distance: "far" } });
+      const updated = applyDirectorPreset(project, "voice_002", "closer");
+      expect(getClip(updated, "voice_002").position).toEqual({ pan: 0.08, distance: "very_close", movement });
+      expect(getClip(updated, "voice_001")).toEqual(getClip(project, "voice_001"));
+    },
+  );
+
+  it("does not adjust an ignored distance or volume for the fixed approach route", () => {
+    const project = updateClipInProject(demoProject, "voice_002", { position: { movement: "orbit_approach", distance: "far" } });
+    expect(applyDirectorPreset(project, "voice_002", "closer")).toBe(project);
+  });
+
+  it.each(["left-ear", "right-ear"] as const)("explicitly leaves an orbit when applying %s", (preset) => {
+    const project = updateClipInProject(demoProject, "voice_002", { position: { movement: "orbit_approach" } });
+    expect(getClip(applyDirectorPreset(project, "voice_002", preset), "voice_002").position.movement).toBe("static");
+  });
+
   it("moves only the target voice clip closer", () => {
     const updated = apply("closer", "voice_002");
     const originalFirstVoice = getClip(demoProject, "voice_001");

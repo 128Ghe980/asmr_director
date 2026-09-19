@@ -22,6 +22,8 @@ import { GenerationSlotList } from "./generation-slot-list";
 import { PreviewWaveform } from "./preview-waveform-placeholder";
 
 type PreviewLayerPanelProps = {
+  binaural?: boolean;
+  onBinauralChange?: (enabled: boolean) => void;
   preview: ProjectPreviewSummary;
   audioAnalysis: AudioAnalysis | undefined;
   audioAnalysisStatus: AudioAnalysisStatus;
@@ -116,6 +118,7 @@ function ProjectMixControls({
 }
 
 export function PreviewLayerPanel({
+  binaural, onBinauralChange,
   preview,
   audioAnalysis,
   audioAnalysisStatus,
@@ -184,6 +187,14 @@ export function PreviewLayerPanel({
         onGenerate={onGenerateProjectMix}
         onPlay={onPlayProjectMix}
       />
+
+      {onBinauralChange && <div className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-studio-text">
+          <input type="checkbox" checked={Boolean(binaural)} onChange={(event) => onBinauralChange(event.target.checked)} className="accent-sky-300" />
+          双耳空间与房间感
+        </label>
+        <p className="text-xs leading-5 text-studio-muted">用于人声试听和整段导出。距离和移动方式在片段里调整。</p>
+      </div>}
 
       {audioAnalysisStatus === "ready" && audioAnalysis && <div className="mt-3">
         <PreviewWaveform

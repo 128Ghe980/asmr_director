@@ -295,6 +295,7 @@ export function createLocalGenerationBridge({
           method: "POST",
           headers: { "content-type": "application/json; charset=utf-8" },
           body: JSON.stringify(request),
+          signal: job.controller.signal,
         });
         const payload = (await response.json()) as unknown;
 

@@ -1,5 +1,6 @@
 import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
+import { SPATIAL_RENDER_VERSION } from "./spatial-settings";
 
 type ClipGenerationFingerprintInput = {
   id: string;
@@ -17,6 +18,7 @@ type ClipGenerationFingerprintInput = {
 type ProjectMixExportType = "wav";
 
 type ProjectMixFingerprintInput = {
+  spatial_renderer?: string;
   project_id: string;
   duration: number;
   exportType: ProjectMixExportType;
@@ -134,6 +136,7 @@ export function getProjectMixFingerprint(
   exportType: ProjectMixExportType = "wav",
 ): string {
   const input: ProjectMixFingerprintInput = {
+    ...(project.timeline.mixing.binaural ? { spatial_renderer: SPATIAL_RENDER_VERSION } : {}),
     project_id: project.project_id,
     duration: project.duration,
     exportType,

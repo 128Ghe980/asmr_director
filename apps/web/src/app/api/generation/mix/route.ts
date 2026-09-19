@@ -40,6 +40,7 @@ export async function POST(request: Request) {
       project,
       exportType,
       config: getLocalRuntimeConfig(),
+      signal: request.signal,
     });
 
     return Response.json({ asset });

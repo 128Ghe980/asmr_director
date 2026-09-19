@@ -37,6 +37,8 @@ export const MovementSchema = z.enum([
   "recede",
   "left_to_right",
   "right_to_left",
+  "orbit",
+  "orbit_approach",
 ]);
 
 export const PositionSchema = z.object({

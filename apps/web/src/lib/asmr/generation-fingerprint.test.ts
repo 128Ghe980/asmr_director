@@ -59,6 +59,15 @@ function generateAllClips(project = demoProject): AsmrProject {
 }
 
 describe("generation fingerprint", () => {
+  it("invalidates previously exported binaural mixes when D becomes the renderer", () => {
+    const project = structuredClone(demoProject);
+    project.timeline.mixing.binaural = true;
+    const current = getProjectMixFingerprint(project);
+    const old = JSON.parse(current);
+    delete old.spatial_renderer;
+    expect(isCurrentProjectMixFingerprint(project, JSON.stringify(old))).toBe(false);
+    expect(JSON.parse(current).spatial_renderer).toBe("d-room-v1");
+  });
   it("ignores runtime, durable generation, and asset fields", () => {
     const original = findClip(demoProject, "voice_001");
     const generatedProject = commitGenerationSuccess(demoProject, "voice_001", {

@@ -25,6 +25,8 @@ import { ProjectQualityPanel } from "./project-quality-panel";
 import { ProjectVersionPanel } from "./project-version-panel";
 
 type ProjectDetailsDockProps = {
+  binaural?: boolean;
+  onBinauralChange?: (enabled: boolean) => void;
   collapsed: boolean;
   panelId: string;
   summary: ProjectWorkspaceSummary;
@@ -65,6 +67,7 @@ function MetadataRows({ rows }: { rows: ProjectWorkspaceMetadataRow[] }) {
 }
 
 export function ProjectDetailsDock({
+  binaural, onBinauralChange,
   collapsed,
   panelId,
   summary,
@@ -123,6 +126,7 @@ export function ProjectDetailsDock({
       ) : (
         <div className="mt-4 space-y-3">
           <PreviewLayerPanel
+            binaural={binaural} onBinauralChange={onBinauralChange}
             preview={preview}
             audioAnalysis={audioAnalysis}
             audioAnalysisStatus={audioAnalysisStatus}

@@ -1,6 +1,6 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-09-13
+Last updated: 2026-09-20
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
@@ -8,7 +8,9 @@ Last updated: 2026-09-13
 
 当前固定 10 步 roadmap 已全部完成。用户于 2026-09-08 确认 Planner“暂时算是过了”，随后批准实施 VoxCPM2 正式生成接入。Planner 本轮按已验证的 DeepSeek 路径和精简界面验收通过；优先级已转回“人声导演与真实 ASMR 音效质量 V1”。VoxCPM2 单片段生成、候选试听/采用/撤回及 48 kHz 重混导出已通过技术验收。2026-09-09 已选长文分组/停顿方案也已完成工作台接入及真实技术验收，包括完整生成、单组重生成与候选到导出的闭环。既有听感结论和真实音质验收要求不变。
 
-2026-09-13 收尾核对：功能版本为 `4d5f8ab`，已确认推送至 `origin/codex/voxcpm2-product-generation`。按用户要求先记录并保存此里程碑；沿用 2026-09-09 的自动检查与真实工作台验收证据。本次没有功能变更，后续的新样片听感、V2/HRTF 空间接入与真实 SFX 扩展继续属于音质 V1。
+2026-09-14：用户试听 8770 新口语文案后认可效果，授权将原 D 接入正式生成并记录推送。D 的 HRTF、刚性球 DVF 与原房间响应现已用于人声完整候选、当前人声、片段试听和整段导出，增加定距环绕与环绕靠近；修改距离与轨迹复用已生成原声。最终实施与验证记录见双语 `2026-09-14-spatial-d-product-integration` spec。真实 SFX、垂直环绕和通用更柔仍属于音质 V1 未完成范围。
+
+2026-09-20 额度恢复后收尾：D 正式接入已完成。57 文件／520 项 Vitest（含真实 Python 适配器）、26 项空间 Python 测试、TypeScript／生产构建和最终 ESLint 通过；新 TTS 至导出闭环及恢复后的生产构建播放／跳转／采用撤回／重混下载／桌面手机复核通过。四条获认可 D 自然样片与产品渲染字节完全一致。新缓存、临时文件和验收产物优先放 `I:/AI`；交付分支保持 `codex/voxcpm2-product-generation`。
 
 ## 本轮已通过：AI 创意策划 / LLM Planner V1
 
@@ -25,14 +27,40 @@ Last updated: 2026-09-13
 
 ## 当前阶段：人声导演与真实 ASMR 音效质量 V1
 
-- Status: In progress; base VoxCPM2 and the selected long-text workflow have passed real-workbench technical verification. Spatial recipes and real SFX expansion remain unfinished. New product samples still need user listening evaluation.
+- Status: In progress; base VoxCPM2 and the selected long-text workflow are technically verified. The user accepted the original-D colloquial motion sample on 2026-09-14 and authorized its product integration. Original D now supplies voice distance, room response and continuous horizontal motion; real SFX, vertical motion and general expressive control remain unfinished.
 - Design: `docs/superpowers/specs/2026-07-13-audio-director-and-sfx-quality-v1-design.zh.md`
 - Round 1 plan: `docs/superpowers/plans/2026-07-13-audio-quality-v1-round1-implementation-plan.md`
-- VoxCPM2 接入设计与实施记录：`docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.zh.md`（附英文版）。基础接入及长文模式均已通过技术验收；新空间处理尚未接入。
+- VoxCPM2 接入设计与实施记录：`docs/superpowers/specs/2026-09-08-voxcpm2-product-integration-design.zh.md`（附英文版）。基础接入及长文模式均已通过技术验收；D 空间处理见 `docs/superpowers/specs/2026-09-14-spatial-d-product-integration.zh.md`（附英文版）。
 - 主线 1：让“更柔”、近/远、左右、水平环绕与垂直环绕成为真实可听的导演动作，而不是只改文字字段、音量或普通声像。
 - 主线 2：以免费授权素材、免费本地 AI 和明确标注的基础合成扩大 ASMR 音效质量与种类；付费方案暂缓，不要求用户录音。
 - 第一轮固定样片：一句人声、衣物摩擦、指尖轻敲、雨声；完成更柔、近/远、完整水平环绕、左—上—右—下垂直环绕、三种来源比较、采用、撤回与重混。
 - 第一轮必须通过用户耳机试听，才进入全部动作和 8 类音效扩展。
+
+### 2026-09-13 距离感试听实验
+
+2026-09-13 距离感实验：按用户授权完成固定温柔人声＋真实 CC0 画刷的离线对比，包含声像基准、HRTF、刚性球 DVF 近场补偿、房间反射四种处理，以及贴耳／面前／远处／靠近和整体响度匹配版本。80 个 WAV、13 项数值测试和浏览器播放／跳转／下载／桌面手机检查通过；复现工具在 `tools/distance-listening/`，证据在 `D:/CodexWorkplace/asmr_director_runtime/distance-listening/2026-09-13`。后续用户反馈加入房间“确实不错”、D“还行”，属于初步正面反馈，不代表全部空间方案获验收；主线混音器与工程数据没有变更。详见 `docs/superpowers/specs/2026-09-13-distance-listening-experiment.zh.md` 及英文版。
+
+### 2026-09-14 算法扩展与 D 改进对照
+
+用户澄清希望继续了解其他算法，并授权房间／贴耳几何与人声朝向改进。已完成 BRIR、ISM/FDN/SDN、Paraspax、几何传播、神经双耳和 Ambisonics 的原始资料调研，以及保留 D、房间 E、贴耳朝向 F、合并 G 的独立试听。27 项数值测试、96 个音频检查及真实浏览器播放／切换／章节／下载／桌面手机验证通过；原 D 静态片段回归通过。成品在 `I:/AI/asmr-director-distance-listening/2026-09-14`、`http://127.0.0.1:8768/`。D 盘写入中断后仅迁移本轮未完成产物到 I 盘重做，旧 8767 成品保留。随后用户明确 D 仍最好，认为 E 减少了远处的回声／混响，空间感变弱；当前保留原 D，不采用 E/F/G。这轮比较不再是待听项，未接入产品或运行神经模型。技术报告见双语 `2026-09-14-distance-algorithm-refinements` spec；最新听感决定见下条。
+
+### 2026-09-14 保留 D 的长文连续环绕
+
+按用户新要求，已完成同一段 34.75 秒、16 句已选温柔长文的四条连续轨迹：距头中心 0.18／0.8／1.75 米定距环绕，以及 1.75→0.18 米环绕靠近。全部沿用原 D 的 HRTF、DVF 和房间响应，左→后→右→前→左绕一圈；开头停留 1.5 秒、结尾停留 2.5 秒，靠近在 27.105 秒结束并保持近距 7.645 秒。输出 8 个 35.4 秒 / 48 kHz stereo PCM24 WAV，含自然与整段响度匹配版本。原声、原 ASR 和 D 代码哈希保留，没有新 TTS、变速、重复短句或工作台修改。
+
+37 项数值测试、8 文件音频验证、原 D 静态卷积端点回归和真实浏览器检查通过；最大估计真峰值 −5.383748 dBTP、匹配误差 0.029476 LU、端点残差小于 1.2×10⁻⁷。成品与 JSON 证据在 `I:/AI/asmr-director-distance-listening/2026-09-14-d-long-motion`，试听 `http://127.0.0.1:8769/`。D 是当前听感基准；这四条新长运动的听感仍由用户判断，不等于空间正式接入或音质 V1 完成。双语记录：`docs/superpowers/specs/2026-09-14-d-long-motion.md` / `.zh.md`。
+
+### 2026-09-14 新口语文案重生成
+
+用户要求换新文案、不要文绉绉。已实际重新运行本地 VoxCPM2 soft Combined 六语义组生成，保留已选长开头／独立结尾及 class-local 停顿；新原声 34.54 秒，六组截后 ASR 覆盖率均 1.0，最终 22/22 子句顺序覆盖（整段识别有一处「露／落」差异）。完整尝试、两次口语修订与技术恢复记录保留在 `I:/AI/asmr-director-distance-listening/2026-09-14-colloquial-source`。
+
+新原声沿用原 D 四条连续轨迹，产出 8 个 35.19 秒 WAV，页面 `http://127.0.0.1:8770/`，成品目录 `I:/AI/asmr-director-distance-listening/2026-09-14-d-colloquial-motion`。38 项数值测试、音频／原 D 端点回归和实际桌面手机播放／切换／下载检查通过。原 8767–8769 保留；实验当时没有修改工作台工程。用户随后反馈“还行”，授权正式接入，当前不再列为待听项。双语记录：`docs/superpowers/specs/2026-09-14-d-colloquial-motion.md` / `.zh.md`。
+
+### 2026-09-14 原 D 正式接入
+
+原声资产与候选来源保持可追溯；D 派生音频缓存独立，距离/移动编辑不要求重新生成已完成的人声。完整试听和导出沿用同一空间服务；支持 24 位 WAV 解码并保留 0.65 秒房间尾声。包含 D 的整段混音跳过旧的向上响度归一，只在开启主限制器且过载时共同衰减，以保留自然近远音量差。
+
+四条已认可 35.19 秒自然 D WAV 与产品实现逐字节及 SHA256 一致；真实混音探针近远 RMS 差保持 7.367684 dB。最终全量检查、工作台闭环及提交信息统一记录于上述产品接入 spec，避免与实验历史混淆。音质 V1 整体仍在进行。
 
 ### 2026-09-07 进度记录
 

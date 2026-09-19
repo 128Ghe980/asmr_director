@@ -136,7 +136,7 @@ export function decodePcmWav(bytes: Uint8Array | Buffer | ArrayBuffer): DecodedP
 
   if (
     audioFormat !== 1 ||
-    bitsPerSample !== 16 ||
+    (bitsPerSample !== 16 && bitsPerSample !== 24) ||
     channels === null ||
     sampleRate === null ||
     dataOffset === null ||
@@ -149,15 +149,18 @@ export function decodePcmWav(bytes: Uint8Array | Buffer | ArrayBuffer): DecodedP
     throw new Error("Invalid WAV sample rate");
   }
 
-  if (dataSize % (channels * 2) !== 0) {
+  const bytesPerSample = bitsPerSample / 8;
+  if (dataSize % (channels * bytesPerSample) !== 0) {
     throw new Error("WAV data must contain complete frames");
   }
 
-  const samples = new Float32Array(dataSize / 2);
+  const samples = new Float32Array(dataSize / bytesPerSample);
 
   for (let index = 0; index < samples.length; index += 1) {
-    const sample = view.getInt16(dataOffset + index * 2, true);
-    const scale = sample < 0 ? 32768 : 32767;
+    const offset = dataOffset + index * bytesPerSample;
+    const sample = bitsPerSample === 16 ? view.getInt16(offset, true)
+      : (view.getUint8(offset) | (view.getUint8(offset + 1) << 8) | (view.getInt8(offset + 2) << 16));
+    const scale = bitsPerSample === 24 ? 8388608 : sample < 0 ? 32768 : 32767;
 
     samples[index] = sample / scale;
   }

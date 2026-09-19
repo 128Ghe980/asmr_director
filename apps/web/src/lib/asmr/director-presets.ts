@@ -36,10 +36,10 @@ function findClip(project: AsmrProject, clipId: string): TimelineClip | undefine
   return undefined;
 }
 
-function preserveLateralMovement(
+function preserveSpatialMovement(
   movement: TimelineClip["position"]["movement"],
 ): TimelineClip["position"]["movement"] {
-  return movement === "left_to_right" || movement === "right_to_left"
+  return movement === "left_to_right" || movement === "right_to_left" || movement === "orbit" || movement === "orbit_approach"
     ? movement
     : "static";
 }
@@ -69,11 +69,12 @@ function buildPresetPatch(
         volume_db: clampVolume(clip.volume_db - 2),
       };
     case "closer":
+      if (clip.position.movement === "orbit_approach") return undefined;
       return {
         volume_db: clampVolume(clip.volume_db - 1),
         position: {
           distance: "very_close",
-          movement: preserveLateralMovement(clip.position.movement),
+          movement: preserveSpatialMovement(clip.position.movement),
         },
       };
     case "left-ear":

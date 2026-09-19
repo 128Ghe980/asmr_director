@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { demoProject } from "./mock-project";
+import { updateClipInProject } from "./edit-project";
 import {
   flattenClips,
   formatSeconds,
@@ -9,6 +10,28 @@ import {
 } from "./view-model";
 
 describe("view model helpers", () => {
+  it("shows orbit distance without implying a fixed ear position", () => {
+    const position = { pan: -0.82, distance: "mid", movement: "orbit" } as const;
+    expect(getPositionLabel(position)).toBe("定距环绕 · mid");
+    expect(getLocalizedPositionLabel(position)).toBe("定距环绕 · 中");
+  });
+
+  it("does not show saved pan or distance as the fixed approach route", () => {
+    const position = { pan: 0.82, distance: "very_close", movement: "orbit_approach" } as const;
+    expect(getPositionLabel(position)).toBe("环绕靠近 · 远到近");
+    expect(getLocalizedPositionLabel(position)).toBe("环绕靠近 · 远到近");
+  });
+
+  it.each(["orbit", "orbit_approach"] as const)("keeps %s through editing and view-model flattening", (movement) => {
+    const original = flattenClips(demoProject).find((clip) => clip.id === "voice_003")!;
+    const changed = updateClipInProject(demoProject, original.id, { position: { movement } });
+    const adjusted = updateClipInProject(changed, original.id, { position: { distance: "far" } });
+    expect(flattenClips(adjusted).find((clip) => clip.id === original.id)?.position).toEqual({
+      ...original.position, movement, distance: "far",
+    });
+    expect(flattenClips(demoProject).find((clip) => clip.id === original.id)).toBe(original);
+  });
+
   it("formats seconds as mm:ss", () => {
     expect(formatSeconds(78.5)).toBe("01:18");
   });

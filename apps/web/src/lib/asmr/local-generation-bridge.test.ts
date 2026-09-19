@@ -172,6 +172,7 @@ describe("local generation bridge", () => {
 
     expect(started.jobId).toBe("local_job_1");
     expect(fetchImpl).toHaveBeenCalledWith("/api/generation/mix", {
+      signal: expect.any(AbortSignal),
       method: "POST",
       headers: { "content-type": "application/json; charset=utf-8" },
       body: JSON.stringify({
@@ -235,12 +236,15 @@ describe("local generation bridge", () => {
   });
 
   it("emits canceled and ignores late project mix success", async () => {
+    let mixSignal: AbortSignal | null | undefined;
     let resolveFetch: (response: Response) => void = () => undefined;
     const fetchImpl = vi.fn(
-      () =>
-        new Promise<Response>((resolve) => {
+      (_url: unknown, options?: RequestInit) => {
+        mixSignal = options?.signal;
+        return new Promise<Response>((resolve) => {
           resolveFetch = resolve;
-        }),
+        });
+      },
     );
     const bridge = createLocalGenerationBridge({
       fetchImpl,
@@ -259,6 +263,7 @@ describe("local generation bridge", () => {
     );
 
     await bridge.cancelGeneration("local_job_1");
+    expect(mixSignal?.aborted).toBe(true);
     resolveFetch(
       Response.json({
         asset: {

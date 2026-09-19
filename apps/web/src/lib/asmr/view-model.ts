@@ -1,5 +1,5 @@
 import type { AsmrProject, TimelineClip } from "./schema";
-import { getDistanceLabel } from "./ui-copy";
+import { getDistanceLabel, getMovementLabel } from "./ui-copy";
 import { getAllClips } from "./validate";
 
 export function formatSeconds(seconds: number): string {
@@ -17,6 +17,9 @@ export function formatTimeRange(start: number, duration: number): string {
 }
 
 export function getPositionLabel(position: TimelineClip["position"]): string {
+  if (position.movement === "orbit_approach") return "环绕靠近 · 远到近";
+  if (position.movement === "orbit") return `${getMovementLabel(position.movement)} · ${position.distance}`;
+
   const ear =
     position.pan < -0.35
       ? "左耳"
@@ -30,6 +33,9 @@ export function getPositionLabel(position: TimelineClip["position"]): string {
 export function getLocalizedPositionLabel(
   position: TimelineClip["position"],
 ): string {
+  if (position.movement === "orbit_approach") return "环绕靠近 · 远到近";
+  if (position.movement === "orbit") return `${getMovementLabel(position.movement)} · ${getDistanceLabel(position.distance)}`;
+
   const ear =
     position.pan < -0.35 ? "左耳" : position.pan > 0.35 ? "右耳" : "中间";
 

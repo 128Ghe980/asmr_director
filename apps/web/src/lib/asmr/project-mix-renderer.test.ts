@@ -120,6 +120,105 @@ function channelPeak(samples: Float32Array, channelIndex: 0 | 1): number {
 }
 
 describe("project mix renderer", () => {
+  it("preserves natural near/far levels instead of raising each spatial mix to its own target", async () => {
+    const outputs: Float32Array[] = [];
+    for (const [distance, amplitude] of [["very_close", .16], ["far", .04]] as const) {
+      const project = makeSingleClipProject((clip) => ({
+        ...clip, start: 0, duration: 1, volume_db: 0, fade_in: 0, fade_out: 0,
+        position: { pan: -1, distance, movement: "orbit" },
+        generation: { ...clip.generation, status: "asset_generated" },
+        asset: { asset_id: "dry", uri: "asset://clip/dry", duration: 1 },
+      }));
+      project.timeline.mixing.target_lufs = -18;
+      project.timeline.mixing.master_limiter = true;
+      // Same performance and ear ratio, with the far rendition 12dB quieter.
+      // Both are below the master ceiling, so their creative levels must stay.
+      const samples = new Float32Array(1650 * 2);
+      for (let frame = 0; frame < 1650; frame++) {
+        samples[frame * 2] = amplitude;
+        samples[frame * 2 + 1] = -amplitude / 2;
+      }
+      const result = decodePcmWav(await renderProjectMixWav({ project, sampleRate: 1000,
+        loadClipAsset: async () => ({ wav: writePcm16StereoWav(samples, 1000), spatialized: true }),
+      }));
+      expect(channelPeak(result.samples, 0)).toBeCloseTo(amplitude, 4);
+      expect(channelPeak(result.samples, 1)).toBeCloseTo(amplitude / 2, 4);
+      outputs.push(result.samples);
+    }
+    const rms = (samples: Float32Array) => Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length);
+    expect(20 * Math.log10(rms(outputs[0]) / rms(outputs[1]))).toBeCloseTo(20 * Math.log10(4), 2);
+  });
+
+  it("only attenuates overloaded spatial audio with one shared master gain", async () => {
+    const project = makeSingleClipProject((clip) => ({
+      ...clip, start: 0, duration: 1, volume_db: 0, fade_in: 0, fade_out: 0,
+      generation: { ...clip.generation, status: "asset_generated" },
+      asset: { asset_id: "dry", uri: "asset://clip/dry", duration: 1 },
+    }));
+    project.timeline.mixing.master_limiter = true;
+    const samples = new Float32Array(1650 * 2);
+    for (let frame = 0; frame < 1650; frame++) {
+      samples[frame * 2] = .95;
+      samples[frame * 2 + 1] = -.475;
+    }
+    const result = decodePcmWav(await renderProjectMixWav({ project, sampleRate: 1000,
+      loadClipAsset: async () => ({ wav: writePcm16StereoWav(samples, 1000), spatialized: true }),
+    }));
+    const ceiling = Math.pow(10, -2.1 / 20);
+    expect(channelPeak(result.samples, 0)).toBeCloseTo(ceiling, 4);
+    expect(channelPeak(result.samples, 1)).toBeCloseTo(ceiling / 2, 4);
+    expect(result.samples[1649 * 2]).toBeCloseTo(ceiling, 4);
+  });
+
+  it("keeps spatial tails beyond the project and applies volume only once", async () => {
+    const project = makeSingleClipProject((clip) => ({
+      ...clip, start: 1, duration: 1, volume_db: -6, fade_in: .4, fade_out: .8,
+      position: { pan: -1, distance: "far", movement: "orbit" },
+      generation: { ...clip.generation, status: "asset_generated" },
+      asset: { asset_id: "dry", uri: "asset://clip/dry", duration: 1 },
+    }));
+    project.timeline.mixing.target_lufs = -60;
+    const samples = new Float32Array(1650 * 2);
+    for (let i = 0; i < 1650; i++) { samples[i * 2] = .6; samples[i * 2 + 1] = -.3; }
+    const result = decodePcmWav(await renderProjectMixWav({ project, sampleRate: 1000,
+      loadClipAsset: async () => ({ wav: writePcm16StereoWav(samples, 1000), spatialized: true }),
+    }));
+    expect(result.samples).toHaveLength(2650 * 2);
+    expect(peak(result.samples.subarray(0, 2000))).toBe(0);
+    const gain = Math.pow(10, -6 / 20);
+    for (const frame of [1000, 1900, 2000, 2649]) {
+      expect(result.samples[frame * 2]).toBeCloseTo(.6 * gain, 4);
+      expect(result.samples[frame * 2 + 1]).toBeCloseTo(-.3 * gain, 4);
+    }
+  });
+
+  it("does not extend ordinary stereo assets or accept mono as spatial output", async () => {
+    const project = makeSingleClipProject((clip) => ({
+      ...clip, start: 0, duration: 1, generation: { ...clip.generation, status: "asset_generated" },
+      asset: { asset_id: "source", uri: "asset://clip/source", duration: 3 },
+    }));
+    const result = decodePcmWav(await renderProjectMixWav({ project, sampleRate: 1000,
+      loadClipAsset: async () => ({ wav: makeConstantStereoWav({ duration: 3, sampleRate: 1000, amplitude: .1 }), spatialized: false }),
+    }));
+    expect(result.samples).toHaveLength(4000);
+    await expect(renderProjectMixWav({ project,
+      loadClipAsset: async () => ({ wav: writePcm16MonoWav(new Float32Array(1000), 1000), spatialized: true }),
+    })).rejects.toThrow("must be stereo");
+  });
+
+  it("stops a canceled mix before returning audio", async () => {
+    const project = makeSingleClipProject((clip) => ({ ...clip,
+      generation: { ...clip.generation, status: "asset_generated" },
+      asset: { asset_id: "source", uri: "asset://clip/source", duration: 1 },
+    }));
+    const controller = new AbortController();
+    await expect(renderProjectMixWav({ project, signal: controller.signal,
+      loadClipAsset: async () => {
+        controller.abort();
+        return makeConstantStereoWav({ duration: 1, sampleRate: 1000, amplitude: .1 });
+      },
+    })).rejects.toThrow();
+  });
   it("decodes stereo PCM samples written by the WAV encoder", () => {
     const samples = new Float32Array([
       0,

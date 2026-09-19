@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="data:,">
+  <title>ASMR 距离感试听</title>
+  <style>
+    :root { color-scheme: light; --ink: #233933; --muted: #64716a; --green: #31694f; --line: #dce1d8; --paper: #f7f8f3; --white: #fffefb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    button, select, audio { font: inherit; }
+    button, select { color: inherit; }
+    button, a, select, summary { -webkit-tap-highlight-color: transparent; }
+    button, select, summary { cursor: pointer; }
+    button:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #b87935; outline-offset: 4px; }
+    button:disabled { cursor: not-allowed; opacity: .5; }
+    a { color: var(--green); text-underline-offset: 3px; }
+    main { width: min(1080px, 100%); margin: 0 auto; padding: 40px 28px 44px; }
+    .eyebrow { margin: 0 0 9px; color: var(--green); font-size: 12px; font-weight: 700; letter-spacing: .14em; }
+    h1 { margin: 0; font-size: clamp(27px, 4vw, 40px); line-height: 1.3; letter-spacing: -.035em; }
+    .subtitle { margin: 10px 0 0; color: var(--green); font-size: 16px; }
+    .intro { margin: 12px 0 0; color: var(--muted); max-width: 670px; }
+    .reference-link { display: inline-block; margin-top: 14px; font-size: 13px; }
+    .headphones { display: inline-flex; align-items: center; gap: 7px; margin-top: 18px; color: var(--green); font-size: 13px; }
+    .headphones svg { width: 17px; height: 17px; }
+    .controls { margin-top: 28px; padding: 22px; background: var(--white); border: 1px solid var(--line); border-radius: 18px; }
+    .controls-grid { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 22px; align-items: start; }
+    fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+    legend, .field-label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .segmented { display: flex; flex-wrap: wrap; gap: 5px; }
+    .segmented button, select { min-height: 42px; border: 1px solid var(--line); border-radius: 9px; background: transparent; padding: 8px 12px; }
+    .segmented button[aria-pressed="true"] { color: #fff; border-color: var(--green); background: var(--green); }
+    select { width: 100%; background: var(--white); }
+    .mode-note { margin: 18px 0 0; padding-top: 15px; border-top: 1px solid #e9ece5; color: var(--muted); font-size: 13px; }
+    .scene-context { margin: 22px 0 20px; }
+    .scene-description { margin: 0 0 10px; font-size: 14px; }
+    .chapters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .chapters button { background: transparent; border: 1px solid transparent; padding: 5px 9px; border-radius: 7px; color: var(--muted); font-size: 12px; }
+    .chapters button[aria-current="step"] { background: #e6eddf; border-color: #d2ddc9; color: var(--green); }
+    .chapter-arrow { color: #a6b0a3; font-size: 12px; }
+    .section-line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 12px; }
+    h2 { margin: 0; font-size: 17px; font-weight: 650; }
+    .status { color: var(--muted); font-size: 12px; }
+    .method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .method-card { min-width: 0; position: relative; padding: 20px; border: 1px solid var(--line); border-radius: 15px; background: var(--white); }
+    .method-card.selected { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .card-heading { display: flex; align-items: center; gap: 12px; }
+    .method-mark { display: grid; place-items: center; flex: 0 0 33px; height: 33px; background: #eff1e9; border-radius: 10px; font-size: 14px; font-weight: 750; }
+    .selected .method-mark { color: #fff; background: var(--green); }
+    h3 { margin: 0; font-size: 16px; font-weight: 650; }
+    .select-method { margin-left: auto; flex-shrink: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; font-size: 12px; }
+    .select-method[aria-pressed="true"] { color: var(--green); background: #edf3e8; border-color: #d4dfcf; }
+    .method-caption { margin: 13px 0 15px; color: var(--muted); font-size: 13px; }
+    audio { display: block; width: 100%; height: 42px; }
+    .card-bottom { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 12px; font-size: 12px; }
+    .card-bottom details { flex: 1; min-width: 0; }
+    summary { color: var(--muted); width: fit-content; }
+    details p { margin: 10px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+    .metrics { font-size: 11px; font-variant-numeric: tabular-nums; }
+    .download { flex-shrink: 0; }
+    .download[aria-disabled="true"] { pointer-events: none; color: var(--muted); text-decoration: none; }
+    .error { margin: 9px 0 0; color: #a2392f; font-size: 12px; overflow-wrap: anywhere; }
+    .below { margin-top: 22px; color: var(--muted); font-size: 13px; }
+    .listening-prompt { margin: 0 0 18px; }
+    .disclosure { padding: 14px 0; border-top: 1px solid var(--line); }
+    .disclosure summary { font-weight: 600; }
+    .disclosure ul { padding-left: 20px; margin-bottom: 0; }
+    .disclosure li + li { margin-top: 8px; }
+    .motion-position { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+    .transcript { white-space: pre-wrap; }
+    footer { padding-top: 18px; color: #7b887b; font-size: 12px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 760px) { .controls-grid { grid-template-columns: 1fr 1fr; gap: 18px; } .mode-field { grid-column: 1/-1; } }
+    @media (max-width: 570px) {
+      main { padding: 25px 17px 32px; }
+      .controls { margin-top: 23px; padding: 17px; }
+      .controls-grid { gap: 16px; }
+      .method-grid { grid-template-columns: 1fr; gap: 12px; }
+      .method-card { padding: 17px; }
+      .segmented button { padding-inline: 10px; }
+      .section-line { align-items: flex-start; flex-direction: column; gap: 5px; }
+      .status { text-align: left; max-width: 100%; }
+      .chapters { gap: 2px; }
+      .chapters button { padding-inline: 5px; }
+      .chapter-arrow { font-size: 10px; }
+    }
+    @media (prefers-reduced-motion: no-preference) { button, .method-card { transition: background-color .12s, border-color .12s; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow" id="page-eyebrow">ASMR · LISTENING STUDY 01</p>
+    <h1 id="page-title">听见声音的远近</h1>
+    <p class="subtitle" id="page-subtitle" hidden></p>
+    <p class="intro" id="page-intro">同一段声音，四种空间处理。先感受耳旁、面前和远处，再比较声音慢慢靠近时的变化。</p>
+    <a id="reference-link" class="reference-link" hidden>返回原版试听</a>
+    <span class="headphones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 14v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/></svg>戴上耳机，使用舒适音量</span>
+  </header>
+  <p id="fatal-error" class="error" role="alert" hidden></p>
+  <section class="controls" aria-label="试听设置">
+    <div class="controls-grid">
+      <fieldset><legend>声音素材</legend><div id="source-options" class="segmented"></div></fieldset>
+      <div><label class="field-label" for="scene-select">距离与运动</label><select id="scene-select"></select></div>
+      <fieldset class="mode-field"><legend>音量对照</legend><div id="mode-options" class="segmented"></div></fieldset>
+    </div>
+    <p class="mode-note" id="mode-description"></p>
+  </section>
+  <div class="scene-context">
+    <p class="scene-description" id="scene-description"></p>
+    <nav id="chapters" class="chapters" aria-label="完整串听分段"></nav>
+  </div>
+  <div class="section-line"><h2 id="methods-heading">比较四种处理</h2><span id="playback-status" class="status" role="status" aria-live="polite">选择一条开始试听</span></div>
+  <section id="methods" class="method-grid" aria-label="音频对照"></section>
+  <div class="below">
+    <p class="listening-prompt" id="listening-prompt">切换处理会保留播放位置。可以留意：声音是否出现在头外、贴耳是否自然、远处是否只是变小声。</p>
+    <details class="disclosure" id="motion-details" hidden><summary>查看运动位置</summary><p id="motion-method"></p><p class="motion-position" id="motion-position"></p><p>这里显示的是音频使用的预设轨迹，距离以头中心为基准，不是对实际听感的测量。</p></details>
+    <details class="disclosure" id="transcript-details" hidden><summary>查看朗读全文</summary><p class="transcript" id="transcript"></p></details>
+    <details class="disclosure"><summary>当前素材与试听说明</summary><p id="source-description"></p><p>切换声音素材或场景从头开始；切换处理版本或音量对照保留位置。只有当前正在播放时，切换选择才会继续播放。每次只播放一条音频。</p></details>
+    <details class="disclosure"><summary>算法、来源与实验记录</summary><ul id="notes"></ul></details>
+  </div>
+  <footer>本地试听样片 · 听感由你判断</footer>
+</main>
+<script id="manifest" type="application/json">__MANIFEST_JSON__</script>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  let manifest;
+  try {
+    manifest = JSON.parse($('manifest').textContent);
+    for (const key of ['sources', 'methods', 'scenes', 'modes', 'clips']) {
+      if (!Array.isArray(manifest[key]) || !manifest[key].length) throw new Error('Missing ' + key);
+    }
+  } catch (error) {
+    $('fatal-error').hidden = false;
+    $('fatal-error').textContent = '试听清单未正确载入。请打开生成完成的 index.html，并将它与 audio 文件夹放在一起。';
+    return;
+  }
+  document.title = manifest.title || 'ASMR 距离感试听';
+  if (manifest.title) $('page-title').textContent = manifest.title;
+  if (manifest.subtitle) { $('page-subtitle').textContent = manifest.subtitle; $('page-subtitle').hidden = false; }
+  if (manifest.intro) $('page-intro').textContent = manifest.intro;
+  if (manifest.methods.length !== 4) $('methods-heading').textContent = '比较 ' + manifest.methods.length + ' 种处理';
+  for (const [key, id] of [['methods_heading', 'methods-heading'], ['listening_prompt', 'listening-prompt'], ['eyebrow', 'page-eyebrow']]) {
+    if (typeof manifest[key] === 'string') $(id).textContent = manifest[key];
+  }
+  if (manifest.transcript) {
+    $('transcript').textContent = String(manifest.transcript);
+    $('transcript-details').hidden = false;
+  }
+  if (manifest.reference_url) {
+    try {
+      const reference = new URL(manifest.reference_url, location.href);
+      if (['http:', 'https:', 'file:'].includes(reference.protocol)) {
+        $('reference-link').href = reference.href;
+        $('reference-link').hidden = false;
+      }
+    } catch (error) { /* Invalid optional reference links stay hidden. */ }
+  }
+  const pick = (list, preferred) => list.some((item) => item.id === preferred) ? preferred : list[0].id;
+  const state = {
+    source: pick(manifest.sources, 'voice'), scene: pick(manifest.scenes, 'tour'),
+    mode: pick(manifest.modes, 'natural'), method: pick(manifest.methods, manifest.default_method || 'room'), generation: 0,
+  };
+  const cards = new Map();
+  const shortDescriptions = {
+    baseline: '用左右声像和音量表现位置。', hrtf: '加入头部和耳廓带来的双耳线索。',
+    nearfield: '进一步模拟声源贴近耳旁时的变化。', room: '加入早期反射与短混响，感受房间的距离。',
+  };
+  const clipFor = (method, scene = state.scene) => manifest.clips.find((clip) =>
+    clip.source === state.source && clip.method === method && clip.scene === scene && clip.mode === state.mode);
+  const safeAudioPath = (path) => typeof path === 'string' && /^audio\/[a-zA-Z0-9_.-]+\.wav$/.test(path);
+  const currentCard = () => cards.get(state.method);
+  const playing = (card) => Boolean(card && !card.audio.paused && !card.audio.ended);
+  const time = (card) => card ? (card.pendingSeek ?? card.audio.currentTime ?? 0) : 0;
+  const formatTime = (seconds) => Number.isFinite(seconds) ? Math.floor(seconds / 60) + ':' + String(Math.floor(seconds % 60)).padStart(2, '0') : '—';
+  const make = (tag, text, className) => {
+    const element = document.createElement(tag);
+    if (text !== undefined) element.textContent = text;
+    if (className) element.className = className;
+    return element;
+  };
+  function showError(card, message) { card.error.textContent = message; card.error.hidden = !message; }
+  function seek(card, seconds) {
+    const limit = card.clip && Number.isFinite(card.clip.duration) ? Math.max(0, card.clip.duration - .01) : Infinity;
+    card.pendingSeek = Math.max(0, Math.min(seconds, limit));
+    if (card.audio.readyState >= 1) {
+      try { card.audio.currentTime = card.pendingSeek; card.pendingSeek = null; }
+      catch (error) { /* Apply after metadata is available. */ }
+    }
+    if (card === currentCard()) updateMotion();
+  }
+  function updateSelected() {
+    for (const [id, card] of cards) {
+      const selected = id === state.method;
+      card.element.classList.toggle('selected', selected);
+      card.select.setAttribute('aria-pressed', String(selected));
+      card.select.textContent = selected ? '已选择' : '切换比较';
+    }
+  }
+  function updateStatus() {
+    const card = currentCard();
+    if (!card) return;
+    const action = card.audio.ended ? '播放结束' : playing(card) ? '正在播放' : '已选择';
+    $('playback-status').textContent = action + ' · ' + card.method.label;
+  }
+  function play(card) {
+    if (!card.clip || !safeAudioPath(card.clip.file)) return;
+    const generation = state.generation;
+    showError(card, '');
+    const promise = card.audio.play();
+    if (promise && typeof promise.catch === 'function') promise.catch((error) => {
+      if (generation !== state.generation || card !== currentCard() || error.name === 'AbortError') return;
+      showError(card, error.name === 'NotAllowedError' ? '请点击播放器的播放按钮继续。' : '音频无法播放，请确认 audio 文件夹中的 WAV 文件完整。');
+    });
+  }
+  function selectMethod(id, nativePlay = false) {
+    const previous = currentCard();
+    const next = cards.get(id);
+    if (!next || !next.clip) return;
+    const position = time(previous);
+    const resume = playing(previous);
+    if (id !== state.method) {
+      for (const card of cards.values()) if (card !== next) card.audio.pause();
+      state.method = id;
+      seek(next, position);
+    }
+    updateSelected();
+    if (!nativePlay && resume) play(next);
+    updateStatus();
+    refreshChapters();
+    updateMotion();
+  }
+  function buildOptions(list, containerId, key) {
+    for (const item of list) {
+      const button = make('button', item.label);
+      button.type = 'button'; button.dataset.value = item.id;
+      button.setAttribute('aria-pressed', String(state[key] === item.id));
+      button.addEventListener('click', () => changeSetting(key, item.id));
+      $(containerId).append(button);
+    }
+  }
+  function changeSetting(key, value) {
+    if (state[key] === value) return;
+    const old = currentCard();
+    const resume = playing(old);
+    const position = key === 'mode' ? time(old) : 0;
+    for (const card of cards.values()) card.audio.pause();
+    state[key] = value; state.generation++;
+    refresh(position);
+    if (resume) play(currentCard());
+  }
+  function buildCards() {
+    for (const [index, method] of manifest.methods.entries()) {
+      const element = make('article', undefined, 'method-card');
+      const heading = make('div', undefined, 'card-heading');
+      const label = method.label.replace(/^[A-Z]\s*[·.、-]\s*/, '');
+      const mark = make('span', method.mark || String.fromCharCode(65 + index), 'method-mark'); mark.setAttribute('aria-hidden', 'true');
+      const title = make('h3', label); title.id = 'method-' + index;
+      element.setAttribute('aria-labelledby', title.id);
+      const select = make('button', '切换比较', 'select-method'); select.type = 'button';
+      select.setAttribute('aria-label', '选择 ' + method.label);
+      select.addEventListener('click', () => selectMethod(method.id));
+      heading.append(mark, title, select);
+      const caption = make('p', method.caption || method.short_description || shortDescriptions[method.id] || method.description, 'method-caption');
+      const audio = document.createElement('audio'); audio.controls = true; audio.preload = 'metadata';
+      audio.setAttribute('aria-label', method.label + ' 音频播放器');
+      const bottom = make('div', undefined, 'card-bottom');
+      const details = make('details'); details.append(make('summary', '处理说明'));
+      details.append(make('p', method.description || ''));
+      const measurements = make('p', '', 'metrics'); details.append(measurements);
+      const download = make('a', '下载 WAV', 'download');
+      const error = make('p', '', 'error'); error.hidden = true; error.setAttribute('role', 'alert');
+      bottom.append(details, download); element.append(heading, caption, audio, bottom, error);
+      const card = { element, method, select, audio, measurements, download, error, clip: null, pendingSeek: null, trajectory: validatedTrajectory(method.trajectory) };
+      cards.set(method.id, card);
+      audio.addEventListener('loadedmetadata', () => { if (card.pendingSeek !== null) seek(card, card.pendingSeek); });
+      audio.addEventListener('play', () => {
+        if (state.method !== method.id) selectMethod(method.id, true);
+        for (const other of cards.values()) if (other !== card) other.audio.pause();
+        showError(card, ''); updateStatus();
+      });
+      audio.addEventListener('pause', () => { if (state.method === method.id) updateStatus(); });
+      audio.addEventListener('ended', () => { if (state.method === method.id) updateStatus(); });
+      for (const event of ['timeupdate', 'seeking', 'seeked']) {
+        audio.addEventListener(event, () => { if (state.method === method.id) { updateChapters(); updateMotion(); } });
+      }
+      audio.addEventListener('error', () => { if (card.clip && audio.error) showError(card, '音频读取失败。请将 index.html 与完整的 audio 文件夹放在一起，再重新打开。'); });
+      $('methods').append(element);
+    }
+  }
+  function validatedTrajectory(trajectory) {
+    if (!trajectory) return null;
+    const { times_s: times, azimuth_unwrapped_deg: angles, distance_m: distances } = trajectory;
+    if (![times, angles, distances].every(Array.isArray) || !times.length || angles.length !== times.length || distances.length !== times.length) return null;
+    if (![times, angles, distances].every(values => values.every(Number.isFinite))) return null;
+    if (times.some((value, index) => value < 0 || (index > 0 && value <= times[index - 1])) || distances.some(value => value <= 0)) return null;
+    return trajectory;
+  }
+  function updateMotion() {
+    const card = currentCard();
+    const trajectory = card && card.trajectory;
+    $('motion-details').hidden = !trajectory;
+    if (!trajectory) return;
+    const position = time(card);
+    const { times_s: times, azimuth_unwrapped_deg: angles, distance_m: distances } = trajectory;
+    let upper = times.findIndex(value => value >= position);
+    if (upper < 0) upper = times.length - 1;
+    const lower = Math.max(0, upper - 1);
+    const fraction = upper === lower ? 0 : Math.max(0, Math.min(1, (position - times[lower]) / (times[upper] - times[lower])));
+    const azimuth = angles[lower] + fraction * (angles[upper] - angles[lower]);
+    const distance = distances[lower] + fraction * (distances[upper] - distances[lower]);
+    // SOFA convention: 0 front, 90 left, 180 back, 270 right.
+    const compass = ['前方', '左前方', '左侧', '左后方', '后方', '右后方', '右侧', '右前方'];
+    const direction = compass[Math.round(((azimuth % 360 + 360) % 360) / 45) % 8];
+    $('motion-method').textContent = card.method.label + ' · ' + formatTime(position);
+    $('motion-position').textContent = direction + ' · 距头中心 ' + distance.toFixed(2) + ' 米';
+  }
+  function chapterData() {
+    let start = 0;
+    return manifest.scenes.filter((scene) => scene.id !== 'tour').map((scene) => {
+      const clip = clipFor(state.method, scene.id);
+      const item = { ...scene, start, end: start + (clip ? clip.duration : 0) };
+      start = item.end + .6;
+      return item;
+    });
+  }
+  function updateChapters() {
+    if (state.scene !== 'tour') return;
+    const position = time(currentCard());
+    const data = chapterData();
+    const active = Math.max(0, data.findLastIndex((item) => position >= item.start));
+    $('chapters').querySelectorAll('button').forEach((button, index) => {
+      if (index === active) button.setAttribute('aria-current', 'step'); else button.removeAttribute('aria-current');
+    });
+  }
+  function refreshChapters() {
+    const nav = $('chapters'); nav.replaceChildren(); nav.hidden = state.scene !== 'tour';
+    if (nav.hidden) return;
+    for (const [index, scene] of chapterData().entries()) {
+      if (index) { const arrow = make('span', '→', 'chapter-arrow'); arrow.setAttribute('aria-hidden', 'true'); nav.append(arrow); }
+      const button = make('button', scene.label); button.type = 'button';
+      button.setAttribute('aria-label', '跳到' + scene.label + '，' + formatTime(scene.start));
+      button.addEventListener('click', () => { seek(currentCard(), scene.start); updateChapters(); });
+      nav.append(button);
+    }
+    updateChapters();
+  }
+  function refresh(position = 0) {
+    for (const [id, card] of cards) {
+      card.clip = clipFor(id); card.pendingSeek = position; showError(card, '');
+      const available = Boolean(card.clip && safeAudioPath(card.clip.file));
+      card.select.disabled = !available;
+      card.download.setAttribute('aria-disabled', String(!available));
+      if (!available) {
+        card.audio.removeAttribute('src'); card.audio.load(); card.download.removeAttribute('href');
+        showError(card, '这组样片未生成，请选择其他距离或音量对照。'); continue;
+      }
+      card.audio.src = card.clip.file; card.audio.load(); seek(card, position);
+      card.download.href = card.clip.file; card.download.download = card.clip.file.split('/').pop();
+      card.measurements.textContent = formatTime(card.clip.duration) + (Number.isFinite(card.clip.lufs) ? ' · ' + card.clip.lufs.toFixed(1) + ' LUFS' : '') + (Number.isFinite(card.clip.peak_dbfs) ? ' · 峰值 ' + card.clip.peak_dbfs.toFixed(1) + ' dBFS' : '');
+    }
+    for (const [container, key] of [['source-options', 'source'], ['mode-options', 'mode']]) {
+      $(container).querySelectorAll('button').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.value === state[key])));
+    }
+    $('scene-select').value = state.scene;
+    $('scene-description').textContent = manifest.scenes.find((item) => item.id === state.scene).description || '';
+    $('source-description').textContent = manifest.sources.find((item) => item.id === state.source).description || '';
+    const modeDescription = manifest.modes.find((item) => item.id === state.mode).description;
+    $('mode-description').textContent = modeDescription || (state.mode === 'matched'
+      ? '每个静态样片匹配整体响度，左右差保持不变。靠近段只匹配整段响度，保留运动中的音量变化；完整串听里的各个静态段也分别匹配。'
+      : '保留远近产生的音量变化。先感受整体空间效果，再切到匹配响度，比较音量之外的距离线索。');
+    updateSelected(); refreshChapters(); updateStatus(); updateMotion();
+  }
+  buildOptions(manifest.sources, 'source-options', 'source');
+  buildOptions(manifest.modes, 'mode-options', 'mode');
+  for (const scene of manifest.scenes) { const option = make('option', scene.label); option.value = scene.id; $('scene-select').append(option); }
+  $('scene-select').addEventListener('change', (event) => changeSetting('scene', event.target.value));
+  for (const note of manifest.notes || []) $('notes').append(make('li', String(note)));
+  buildCards(); refresh();
+})();
+</script>
+</body>
+</html>

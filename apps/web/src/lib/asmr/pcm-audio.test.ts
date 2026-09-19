@@ -3,6 +3,28 @@ import { describe, expect, it } from "vitest";
 import { decodePcmWav, normalizePcmAudio, writePcm16StereoWav } from "./pcm-audio";
 
 describe("PCM rate conversion", () => {
+  it("decodes signed 24-bit stereo without swapping ears or losing low bits", () => {
+    const bytes = new Uint8Array(56);
+    const view = new DataView(bytes.buffer);
+    const put = (offset: number, text: string) => bytes.set(new TextEncoder().encode(text), offset);
+    put(0, "RIFF"); put(8, "WAVEfmt "); put(36, "data");
+    view.setUint32(4, 48, true); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 2, true);
+    view.setUint32(24, 48000, true); view.setUint32(28, 288000, true);
+    view.setUint16(32, 6, true); view.setUint16(34, 24, true);
+    view.setUint32(40, 12, true);
+    [-8388608, -1, 0, 8388607].forEach((value, index) => {
+      bytes[44 + index * 3] = value & 255;
+      bytes[45 + index * 3] = (value >> 8) & 255;
+      bytes[46 + index * 3] = (value >> 16) & 255;
+    });
+    const result = decodePcmWav(bytes);
+    expect(result.channels).toBe(2);
+    expect(Array.from(result.samples)).toEqual([-1, -1 / 8388608, 0, 8388607 / 8388608]);
+    const partial = bytes.slice(0, 50);
+    new DataView(partial.buffer).setUint32(40, 3, true);
+    expect(() => decodePcmWav(partial)).toThrow("complete frames");
+  });
   it.each([32000, 44100, 48000])("preserves duration and source channels at %i Hz", (sampleRate) => {
     const audio = {
       sampleRate,

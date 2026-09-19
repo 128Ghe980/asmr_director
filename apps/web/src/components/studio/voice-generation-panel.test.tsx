@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getVoiceCandidateSourceFingerprint } from "@/lib/asmr/audio-candidate";
 import { demoProject } from "@/lib/asmr/mock-project";
@@ -61,9 +62,113 @@ function control(name: string) {
   return screen.getByRole("combobox", { name }) as HTMLSelectElement;
 }
 
-afterEach(cleanup);
+function mockMediaCall(audio: HTMLAudioElement, method: "pause" | "load") {
+  const mock = vi.fn();
+  Object.defineProperty(audio, method, { value: mock, configurable: true });
+  return mock;
+}
+
+beforeEach(() => {
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("voice generation panel", () => {
+  it("waits for user playback before announcing spatial preparation, then clears it when ready", () => {
+    render(<VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()] })} />);
+    const audio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
+    expect(audio.getAttribute("src")).toMatch(/^\/api\/assets\/spatial\//);
+    expect(audio.preload).toBe("none");
+    expect(audio.autoplay).toBe(false);
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.play(audio);
+    expect(screen.getByRole("status").textContent).toBe("正在准备空间试听…");
+    fireEvent.canPlay(audio);
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.waiting(audio);
+    expect(screen.getByRole("status")).toBeTruthy();
+    fireEvent.playing(audio);
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.waiting(audio);
+    fireEvent.pause(audio);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows a spatial failure with retry and keeps other previews paused during the retry", async () => {
+    render(<VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()],
+      selectedClip: { ...selectedClip, asset: { asset_id: "original", uri: "asset://clip/original", duration: 5 } },
+    })} />);
+    const audio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
+    const current = screen.getByLabelText("当前人声试听") as HTMLAudioElement;
+    const pauseCurrent = mockMediaCall(current, "pause");
+    const load = mockMediaCall(audio, "load");
+    const play = vi.spyOn(audio, "play").mockRejectedValueOnce(new Error("network failure"));
+    fireEvent.error(audio);
+    expect(screen.getByRole("alert").textContent).toContain("关闭双耳空间后试听原声");
+    fireEvent.click(screen.getByRole("button", { name: "重试候选 1 试听" }));
+    expect(load).toHaveBeenCalledOnce();
+    expect(play).toHaveBeenCalledOnce();
+    expect(pauseCurrent).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "重试候选 1 试听" }));
+    fireEvent.canPlay(audio);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("resets state and ignores late errors from the previous spatial source", () => {
+    const input = props({ binaural: true, candidates: [candidate()] });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    const oldAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
+    fireEvent.error(oldAudio);
+    view.rerender(<VoiceGenerationPanel {...input} selectedClip={{ ...selectedClip,
+      position: { ...selectedClip.position, movement: "orbit" },
+    }} />);
+    const newAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
+    expect(newAudio).not.toBe(oldAudio);
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.play(newAudio);
+    fireEvent.canPlay(newAudio);
+    fireEvent.error(oldAudio);
+    fireEvent.waiting(oldAudio);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(oldAudio.getAttribute("src")).toBeNull();
+  });
+
+  it("clears spatial errors when disabling the effect and leaves group previews as original audio", () => {
+    const input = props({ binaural: true, candidates: [longTextCandidate()] });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect(screen.getByLabelText("候选 1 第 2 组试听").getAttribute("src")).toBe("/api/assets/clip/group_1");
+    fireEvent.error(screen.getByLabelText("候选 1 试听"));
+    view.rerender(<VoiceGenerationPanel {...input} binaural={false} />);
+    const original = screen.getByLabelText("候选 1 试听");
+    expect(original.getAttribute("src")).toBe("/api/assets/clip/voice_fixture_1");
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.waiting(original);
+    expect(screen.getByRole("status").textContent).toBe("正在准备试听…");
+  });
+
+  it("keeps the source valid in StrictMode and releases media when unmounted", () => {
+    const view = render(<StrictMode><VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()] })} /></StrictMode>);
+    const audio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
+    expect(audio.getAttribute("src")).toMatch(/^\/api\/assets\/spatial\//);
+    const pause = mockMediaCall(audio, "pause");
+    const load = mockMediaCall(audio, "load");
+    view.unmount();
+    expect(pause).toHaveBeenCalledOnce();
+    expect(load).toHaveBeenCalledOnce();
+    expect(audio.getAttribute("src")).toBeNull();
+    fireEvent.error(audio);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("selects the provider's default reference and prefers its transcript mode", () => {
     const input = props();
     render(<VoiceGenerationPanel {...input} />);
@@ -237,7 +342,7 @@ describe("voice generation panel", () => {
     expect(groupAudio.getAttribute("src")).toBe("/api/assets/clip/group_1");
     expect(groupAudio.preload).toBe("none");
     expect(groupAudio.autoplay).toBe(false);
-    const pauses = [...screen.getByRole("region", { name: "人声生成设置" }).querySelectorAll("audio")].map((audio) => vi.spyOn(audio, "pause").mockImplementation(() => {}));
+    const pauses = [...screen.getByRole("region", { name: "人声生成设置" }).querySelectorAll("audio")].map((audio) => mockMediaCall(audio, "pause"));
     fireEvent.play(groupAudio);
     expect(wholeAudio.pause).toHaveBeenCalledOnce();
     expect(groupAudio.pause).not.toHaveBeenCalled();
@@ -339,9 +444,9 @@ describe("voice generation panel", () => {
     const original = screen.getByLabelText("当前人声试听") as HTMLAudioElement;
     const firstAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
     const secondAudio = screen.getByLabelText("候选 2 试听") as HTMLAudioElement;
-    const pauseOriginal = vi.spyOn(original, "pause").mockImplementation(() => {});
-    const pauseFirst = vi.spyOn(firstAudio, "pause").mockImplementation(() => {});
-    const pauseSecond = vi.spyOn(secondAudio, "pause").mockImplementation(() => {});
+    const pauseOriginal = mockMediaCall(original, "pause");
+    const pauseFirst = mockMediaCall(firstAudio, "pause");
+    const pauseSecond = mockMediaCall(secondAudio, "pause");
 
     fireEvent.play(firstAudio);
     expect(pauseOriginal).toHaveBeenCalledOnce();

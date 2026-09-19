@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import { StrictMode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
 import type { GenerateClipRequest } from "@/lib/asmr/generation-bridge";
+import { getProjectMixFingerprint, isCurrentProjectMixFingerprint } from "@/lib/asmr/generation-fingerprint";
 import { demoProject } from "@/lib/asmr/mock-project";
 import { PlannerBriefSchema, type PlannerDraft } from "@/lib/asmr/planner";
 import { PROJECT_LIBRARY_STORAGE_KEY, createInitialProjectLibrary, getCurrentLibraryEntry, saveProjectLibrary, type ProjectLibrary } from "@/lib/asmr/project-library";
@@ -112,16 +113,63 @@ async function mount(project = fixtureProject()) {
   return view;
 }
 function audioSource() { return screen.getByLabelText("当前人声试听").getAttribute("src"); }
-async function waitOriginal() { await waitFor(() => expect(audioSource()).toBe("/api/assets/clip/original_0")); }
+function audioAssetId() {
+  const url = new URL(audioSource() ?? "", "http://localhost");
+  const match = url.pathname.match(/^\/api\/assets\/(?:clip|spatial)\/([^/]+)$/);
+  if (!match) throw new Error(`Unexpected preview route: ${url.pathname}`);
+  return decodeURIComponent(match[1]);
+}
+async function waitOriginal() { await waitFor(() => expect(audioAssetId()).toBe("original_0")); }
 
 beforeEach(() => {
   window.localStorage.clear();
   vi.stubEnv("NEXT_PUBLIC_ASMR_GENERATION_MODE", "local");
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("StudioApp voice candidate workflow with simulated HTTP", () => {
+  it("switches spatial playback routes and edits orbit distance without replacing the dry asset", async () => {
+    const initial = seedLibrary();
+    const entry = initial.projects[0];
+    entry.mixFingerprint = getProjectMixFingerprint(entry.project);
+    saveProjectLibrary(window.localStorage, initial);
+    const dryAsset = structuredClone(firstVoice(entry.project).asset);
+    const api = mockApi();
+    await mount(entry.project);
+    const toggle = screen.getByRole("checkbox", { name: "双耳空间与房间感" }) as HTMLInputElement;
+    const preview = within(screen.getByRole("complementary", { name: "试听与导出" }));
+    expect(toggle.checked).toBe(true);
+    expect(new URL(audioSource()!, "http://localhost").pathname).toBe("/api/assets/spatial/original_0");
+    expect(preview.queryAllByText("需重混")).toHaveLength(0);
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(currentProject().timeline.mixing.binaural).toBe(false));
+    expect(audioSource()).toBe("/api/assets/clip/original_0");
+    expect(firstVoice().asset).toEqual(dryAsset);
+    expect(preview.getAllByText("需重混").length).toBeGreaterThan(0);
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(currentProject().timeline.mixing.binaural).toBe(true));
+    expect(new URL(audioSource()!, "http://localhost").pathname).toBe("/api/assets/spatial/original_0");
+    expect(preview.queryAllByText("需重混")).toHaveLength(0);
+    expect(firstVoice().asset).toEqual(dryAsset);
+
+    fireEvent.change(screen.getByRole("combobox", { name: /^距离/ }), { target: { value: "far" } });
+    fireEvent.change(screen.getByRole("combobox", { name: /^移动/ }), { target: { value: "orbit" } });
+    await waitFor(() => expect(firstVoice().position).toMatchObject({ distance: "far", movement: "orbit" }));
+    const spatialUrl = new URL(audioSource()!, "http://localhost");
+    expect(JSON.parse(spatialUrl.searchParams.get("position")!)).toMatchObject({ distance: "far", movement: "orbit" });
+    expect(audioAssetId()).toBe("original_0");
+    expect(firstVoice().asset).toEqual(dryAsset);
+    expect(firstVoice().generation.status).toBe("asset_generated");
+    expect(currentProject().exports).toEqual(entry.project.exports);
+    expect(isCurrentProjectMixFingerprint(currentProject(), entry.mixFingerprint)).toBe(false);
+    expect(preview.getAllByText("需重混").length).toBeGreaterThan(0);
+    expect(api.posts).toHaveLength(0);
+  });
+
   it.each(["local", "api"] as const)("sends and restores the user's long-text %s analysis choice", async (analysisProvider) => {
     const initial = seedLibrary();
     const project = initial.projects[0].project;
@@ -152,7 +200,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     let view = await mount(project);
     fireEvent.click(screen.getByRole("button", { name: "重生成" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "采用候选 1" })).toBeTruthy());
-    expect(audioSource()).toBe("/api/assets/clip/original_0");
+    expect(audioAssetId()).toBe("original_0");
     expect(currentProject()).toEqual(project);
     expect(getCurrentLibraryEntry(storedLibrary()).mixFingerprint).toBe("original_mix_fingerprint");
     fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
@@ -165,7 +213,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     expect(getCurrentLibraryEntry(storedLibrary()).mixFingerprint).toBeUndefined();
     view.unmount();
     view = await mount(project);
-    expect(audioSource()).toBe("/api/assets/clip/take_1");
+    expect(audioAssetId()).toBe("take_1");
     fireEvent.click(screen.getByRole("button", { name: "撤回上次采用" }));
     await waitOriginal();
     expect(currentProject()).toEqual(project);
@@ -214,7 +262,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     });
     fireEvent.click(adopt);
     await waitFor(() => expect(screen.getByText(/采用未保存，原声已保留/)).toBeTruthy());
-    expect(audioSource()).toBe("/api/assets/clip/original_0");
+    expect(audioAssetId()).toBe("original_0");
     expect(window.localStorage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).toBe(storedBefore);
   });
 
@@ -233,7 +281,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
       await late.promise;
     });
     await waitFor(() => expect(firstVoice().text).toBe("检查期间的新编辑。"));
-    expect(audioSource()).toBe("/api/assets/clip/original_0");
+    expect(audioAssetId()).toBe("original_0");
     expect(getCurrentLibraryEntry(storedLibrary()).candidateAcceptance).toBeUndefined();
   });
 
@@ -254,7 +302,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     expect(document.body.contains(input)).toBe(true);
     expect(input.value).toBe("");
     expect(currentProject()).toEqual(savedBefore);
-    expect(audioSource()).toBe("/api/assets/clip/original_0");
+    expect(audioAssetId()).toBe("original_0");
 
     fireEvent.change(input, { target: { value: replacement } });
     await waitFor(() => expect(firstVoice()[field]).toBe(replacement));

@@ -13,10 +13,13 @@ import {
 export { decodePcmWav, writePcm16StereoWav } from "./pcm-audio";
 export type { DecodedPcmAudio } from "./pcm-audio";
 
+export type LoadedMixClip = Uint8Array | Buffer | { wav: Uint8Array; spatialized: boolean };
+
 export type RenderProjectMixWavInput = {
   project: AsmrProject;
-  loadClipAsset: (clip: TimelineClip) => Promise<Uint8Array | Buffer>;
+  loadClipAsset: (clip: TimelineClip) => Promise<LoadedMixClip>;
   sampleRate?: number;
+  signal?: AbortSignal;
 };
 
 const DEFAULT_SAMPLE_RATE = INTERNAL_SAMPLE_RATE;
@@ -84,6 +87,9 @@ function getDistanceGain(distance: TimelineClip["position"]["distance"]): number
 
 function getMovementPan(clip: TimelineClip, progress: number): number {
   switch (clip.position.movement) {
+    case "orbit":
+    case "orbit_approach":
+      return -Math.cos(2 * Math.PI * progress);
     case "left_to_right":
       return interpolate(-1, 1, progress);
     case "right_to_left":
@@ -99,11 +105,14 @@ function getMovementDistanceGain(clip: TimelineClip, progress: number): number {
   const baseGain = getDistanceGain(clip.position.distance);
 
   switch (clip.position.movement) {
+    case "orbit_approach":
+      return interpolate(0.35, 1.12, progress);
     case "approach":
       return interpolate(0.35, baseGain, progress);
     case "recede":
       return interpolate(baseGain, 0.35, progress);
     case "static":
+    case "orbit":
     case "left_to_right":
     case "right_to_left":
       return baseGain;
@@ -122,19 +131,26 @@ function getPanGains(pan: number): { left: number; right: number } {
 
 async function mixClipIntoOutput(
   output: Float32Array,
-  project: AsmrProject,
   clip: TimelineClip,
   sampleRate: number,
   loadClipAsset: RenderProjectMixWavInput["loadClipAsset"],
 ) {
-  const bytes = await loadClipAsset(clip);
+  const loaded = await loadClipAsset(clip);
+  const spatialized = !(loaded instanceof Uint8Array) && loaded.spatialized;
+  const bytes = loaded instanceof Uint8Array ? loaded : loaded.wav;
   const source = normalizePcmAudio(decodePcmWav(bytes), sampleRate);
+  if (spatialized && source.channels !== 2) throw new Error("Spatial output must be stereo");
 
-  const outputFrameCount = Math.ceil(project.duration * sampleRate);
   const sourceFrameCount = Math.floor(source.samples.length / source.channels);
   const startFrame = Math.max(0, Math.round(clip.start * sampleRate));
   const clipFrameCount = Math.max(0, Math.round(clip.duration * sampleRate));
-  const frameCount = Math.min(clipFrameCount, outputFrameCount - startFrame);
+  if (spatialized && (startFrame + sourceFrameCount) * 2 > output.length) {
+    const extended = new Float32Array((startFrame + sourceFrameCount) * 2);
+    extended.set(output);
+    output = extended;
+  }
+  const outputFrameCount = output.length / 2;
+  const frameCount = Math.min(spatialized ? sourceFrameCount : clipFrameCount, outputFrameCount - startFrame);
   const shouldLoop =
     clip.type === "ambience" && clip.loop && sourceFrameCount > 0;
 
@@ -147,7 +163,7 @@ async function mixClipIntoOutput(
     const right = getDecodedFrameSample(source, sourceFrame, 1);
     const gain =
       gainFromDb(clip.volume_db) *
-      getFadeGain(frame, clipFrameCount, clip, sampleRate);
+      (spatialized ? 1 : getFadeGain(frame, clipFrameCount, clip, sampleRate));
 
     if (source.channels === 2) {
       // Stereo may already carry binaural cues: preserve both channels and
@@ -161,6 +177,7 @@ async function mixClipIntoOutput(
       output[outputIndex + 1] += left * positionedGain * panGains.right;
     }
   }
+  return { output, spatialized };
 }
 
 function getRms(samples: Float32Array): number {
@@ -210,6 +227,7 @@ export async function renderProjectMixWav({
   project,
   loadClipAsset,
   sampleRate = DEFAULT_SAMPLE_RATE,
+  signal,
 }: RenderProjectMixWavInput): Promise<Uint8Array> {
   if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
     throw new Error("PCM sample rate must be a positive integer");
@@ -223,16 +241,30 @@ export async function renderProjectMixWav({
     );
   }
 
-  const output = new Float32Array(Math.ceil(project.duration * sampleRate) * 2);
+  let output: Float32Array = new Float32Array(Math.ceil(project.duration * sampleRate) * 2);
+  let hasSpatialAudio = false;
 
   for (const clip of flattenClips(project)) {
-    await mixClipIntoOutput(output, project, clip, sampleRate, loadClipAsset);
+    signal?.throwIfAborted();
+    const result = await mixClipIntoOutput(output, clip, sampleRate, loadClipAsset);
+    output = result.output;
+    hasSpatialAudio ||= result.spatialized;
   }
+  signal?.throwIfAborted();
 
-  applyTargetNormalization(output, project.timeline.mixing.target_lufs);
+  // D already prepares the shared dry source before applying distance. Raising
+  // each rendered mix to its own target would erase (or reverse) near/far levels.
+  if (!hasSpatialAudio) applyTargetNormalization(output, project.timeline.mixing.target_lufs);
 
   if (project.timeline.mixing.master_limiter) {
-    applyLimiter(output);
+    if (hasSpatialAudio) {
+      // One common attenuation preserves binaural cues and room decay when
+      // clip volumes or overlapping clips would otherwise overload the mix.
+      let peak = 0;
+      for (const sample of output) peak = Math.max(peak, Math.abs(sample));
+      const ceiling = Math.pow(10, -2.1 / 20);
+      if (peak > ceiling) for (let i = 0; i < output.length; i++) output[i] *= ceiling / peak;
+    } else applyLimiter(output);
   }
 
   return writePcm16StereoWav(output, sampleRate);

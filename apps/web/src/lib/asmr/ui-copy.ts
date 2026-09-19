@@ -48,6 +48,8 @@ const movementLabels: Record<TimelineClip["position"]["movement"], string> = {
   recede: "远离",
   left_to_right: "左到右",
   right_to_left: "右到左",
+  orbit: "定距环绕",
+  orbit_approach: "环绕靠近",
 };
 
 const valueLabels: Record<string, string> = {

@@ -9,6 +9,9 @@ export type LocalRuntimeConfig = {
   voxcpm2ProfilePath?: string;
   voiceAnalysisPythonPath?: string;
   voiceAnalysisModelPath?: string;
+  spatialCacheRoot?: string;
+  spatialPythonPath?: string;
+  spatialHrtfPath?: string;
 };
 
 const defaultRuntimeRoot = "D:\\CodexWorkplace\\asmr_director_runtime";
@@ -22,7 +25,10 @@ type RuntimeEnv = Partial<
     | "ASMR_MIX_ASSET_ROOT"
     | "ASMR_VOXCPM2_PROFILE_PATH"
     | "ASMR_VOICE_ANALYSIS_PYTHON"
-    | "ASMR_VOICE_ANALYSIS_MODEL",
+    | "ASMR_VOICE_ANALYSIS_MODEL"
+    | "ASMR_SPATIAL_CACHE_ROOT"
+    | "ASMR_SPATIAL_PYTHON"
+    | "ASMR_SPATIAL_HRTF",
     string
   >
 >;
@@ -49,5 +55,8 @@ export function getLocalRuntimeConfig(
       path.join(runtimeRoot, "audio-quality-v1", "voxcpm2", "profile.json"),
     voiceAnalysisPythonPath: env.ASMR_VOICE_ANALYSIS_PYTHON || undefined,
     voiceAnalysisModelPath: env.ASMR_VOICE_ANALYSIS_MODEL || undefined,
+    spatialCacheRoot: env.ASMR_SPATIAL_CACHE_ROOT || path.join(runtimeRoot, "assets", "spatial"),
+    spatialPythonPath: env.ASMR_SPATIAL_PYTHON || path.join(runtimeRoot, "audio-quality-v1", ".venv", "Scripts", "python.exe"),
+    spatialHrtfPath: env.ASMR_SPATIAL_HRTF || path.join(runtimeRoot, "audio-quality-v1", "hrtf", "viking", "subj_A.sofa"),
   };
 }

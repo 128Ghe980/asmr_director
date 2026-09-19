@@ -42,7 +42,7 @@ import {
 import { getGenerationView } from "@/lib/asmr/generation-view";
 import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
-import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
+import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/playback-asset-resolver";
 import { AudioCandidateSchema, type AudioCandidate } from "@/lib/asmr/audio-candidate";
 import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
@@ -1040,9 +1040,9 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
-    const resolvedUri = resolvePlayableAssetUri(
-      generationView.selectedClipPreview.uri,
-    );
+    const resolvedUri = selectedClip
+      ? resolveClipPlaybackUri(selectedClip, editableProject.timeline.mixing.binaural)
+      : resolvePlayableAssetUri(generationView.selectedClipPreview.uri);
 
     if (!resolvedUri) {
       return;
@@ -1104,6 +1104,15 @@ export function StudioApp({ project }: StudioAppProps) {
     document.body.append(anchor);
     anchor.click();
     anchor.remove();
+  }
+
+  function handleBinauralChange(enabled: boolean) {
+    editRevisionRef.current += 1;
+    cancelProjectMixGeneration();
+    audioRef.current?.pause();
+    setEditableProject((current) => ({ ...current, timeline: {
+      ...current.timeline, mixing: { ...current.timeline.mixing, binaural: enabled },
+    } }));
   }
 
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
@@ -1260,6 +1269,8 @@ export function StudioApp({ project }: StudioAppProps) {
 
   return (
     <ProjectWorkspace
+      binaural={editableProject.timeline.mixing.binaural}
+      onBinauralChange={handleBinauralChange}
       planning={workspaceView === "planner"}
       importError={importError}
       currentProjectId={projectLibrary.currentProjectId}
@@ -1319,8 +1330,10 @@ export function StudioApp({ project }: StudioAppProps) {
 
         <div className="min-w-0">
           <ClipInspector
+            binaural={editableProject.timeline.mixing.binaural}
             voiceGenerationPanel={selectedClip?.type === "voice" ? (generationControl) => (
               <VoiceGenerationPanel
+                binaural={editableProject.timeline.mixing.binaural}
                 generationControl={generationControl}
                 options={voiceOptions} onOptionsChange={handleVoiceOptionsChange}
                 catalog={voiceCatalog} catalogError={voiceCatalogError} busy={voiceBusy}

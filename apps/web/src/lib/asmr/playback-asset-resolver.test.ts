@@ -3,9 +3,29 @@ import { describe, expect, it } from "vitest";
 import {
   isLocalMixAssetUri,
   resolvePlayableAssetUri,
+  resolveClipPlaybackUri,
 } from "./playback-asset-resolver";
+import { demoProject } from "./mock-project";
+import { flattenClips } from "./view-model";
 
 describe("playback asset resolver", () => {
+  it("uses current spatial settings for an unchanged dry asset and full candidate duration", () => {
+    const clip = structuredClone(flattenClips(demoProject).find((item) => item.type === "voice")!);
+    clip.asset = { asset_id: "dry", uri: "asset://clip/dry", duration: 30 };
+    clip.duration = 12;
+    clip.position.movement = "orbit";
+    const uri = resolveClipPlaybackUri(clip, true)!;
+    const url = new URL(uri, "http://localhost");
+    expect(url.pathname).toBe("/api/assets/spatial/dry");
+    expect(url.searchParams.get("duration")).toBe("12");
+    expect(JSON.parse(url.searchParams.get("position")!)).toEqual(clip.position);
+    clip.position.distance = "far";
+    expect(resolveClipPlaybackUri(clip, true)).not.toBe(uri);
+    expect(resolveClipPlaybackUri(clip, false)).toBe("/api/assets/clip/dry");
+    const candidate = new URL(resolveClipPlaybackUri(clip, true, { uri: "asset://clip/new", duration: 34.54 })!, "http://localhost");
+    expect(candidate.searchParams.get("duration")).toBe("34.54");
+    expect(clip.asset.asset_id).toBe("dry");
+  });
   it("maps durable local clip assets to the playback API", () => {
     expect(
       resolvePlayableAssetUri(

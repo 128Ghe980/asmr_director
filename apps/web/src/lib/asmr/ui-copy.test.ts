@@ -35,6 +35,8 @@ describe("ui copy", () => {
     expect(getDistanceLabel("far")).toBe("远");
     expect(getMovementLabel("left_to_right")).toBe("左到右");
     expect(getMovementLabel("static")).toBe("静止");
+    expect(getMovementLabel("orbit")).toBe("定距环绕");
+    expect(getMovementLabel("orbit_approach")).toBe("环绕靠近");
   });
 
   it("labels common timeline values in Chinese", () => {

@@ -1,14 +1,15 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
-import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
+import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/playback-asset-resolver";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import type { VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 
 export type VoiceGenerationPanelProps = {
+  binaural?: boolean;
   options: VoiceGenerationOptions;
   onOptionsChange: (options: VoiceGenerationOptions) => void;
   catalog: VoiceProviderCatalog | null;
@@ -44,6 +45,73 @@ function preferredMode(reference: Reference): VoiceGenerationOptions["referenceM
   return reference.referenceModes.includes("with_reference_text")
     ? "with_reference_text"
     : "reference_only";
+}
+
+function VoicePreview({ src, label, onPreviewPlay }: {
+  src: string;
+  label: string;
+  onPreviewPlay: (audio: HTMLAudioElement) => void;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const mounted = useRef(true);
+  const retrySequence = useRef(0);
+  const [status, setStatus] = useState<"idle" | "waiting" | "ready" | "error">("idle");
+  const spatial = src.startsWith("/api/assets/spatial/");
+
+  useEffect(() => {
+    mounted.current = true;
+    const audio = audioRef.current;
+    if (audio && audio.getAttribute("src") !== src) audio.src = src;
+    return () => {
+      mounted.current = false;
+      retrySequence.current += 1;
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      }
+    };
+  }, [src]);
+
+  function updateStatus(audio: HTMLAudioElement, next: typeof status) {
+    if (mounted.current && audioRef.current === audio) setStatus(next);
+  }
+
+  function retry() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const sequence = ++retrySequence.current;
+    setStatus("waiting");
+    onPreviewPlay(audio);
+    audio.load();
+    void audio.play().catch((error: unknown) => {
+      if (sequence !== retrySequence.current) return;
+      updateStatus(audio, error instanceof DOMException && error.name === "AbortError" ? "idle" : "error");
+    });
+  }
+
+  return <div className="min-w-0 space-y-2">
+    <audio ref={audioRef} aria-label={label} controls preload="none" src={src}
+      onPlay={(event) => {
+        onPreviewPlay(event.currentTarget);
+        updateStatus(event.currentTarget, event.currentTarget.readyState < 3 ? "waiting" : "ready");
+      }}
+      onWaiting={(event) => updateStatus(event.currentTarget, "waiting")}
+      onCanPlay={(event) => updateStatus(event.currentTarget, "ready")}
+      onPlaying={(event) => updateStatus(event.currentTarget, "ready")}
+      onPause={(event) => {
+        if (mounted.current && audioRef.current === event.currentTarget) {
+          setStatus((current) => current === "error" ? current : "idle");
+        }
+      }}
+      onError={(event) => updateStatus(event.currentTarget, "error")}
+      className="h-9 w-full min-w-0 max-w-full" />
+    {status === "waiting" ? <p role="status" className="text-xs leading-5 text-studio-muted">{spatial ? "正在准备空间试听…" : "正在准备试听…"}</p> : null}
+    {status === "error" ? <div className="space-y-2">
+      <p role="alert" className="break-words text-xs leading-5 text-amber-100">{spatial ? "空间试听暂不可用。可重试，或关闭双耳空间后试听原声。" : "试听暂不可用，请重试。"}</p>
+      <button type="button" aria-label={`重试${label}`} className={`${buttonClass} text-studio-muted`} onClick={retry}>重试试听</button>
+    </div> : null}
+  </div>;
 }
 
 function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenerationDisabled, onRegenerateGroup, onPreviewPlay }: {
@@ -104,6 +172,7 @@ export function VoiceGenerationPanel({
   options, onOptionsChange, catalog, catalogError, busy, candidates, selectedClip,
   onAdopt, onDiscard, onUndo, canUndo, hasUndo, error, loading = false,
   generationControl, onRegenerateGroup,
+  binaural = false,
 }: VoiceGenerationPanelProps) {
   const panelRef = useRef<HTMLElement>(null);
   if (selectedClip.type !== "voice") return null;
@@ -119,7 +188,7 @@ export function VoiceGenerationPanel({
   const settingsDisabled = busy || loading || catalog === null;
   const actionsDisabled = busy || loading;
   const sourceFingerprint = getVoiceCandidateSourceFingerprint(selectedClip);
-  const currentAudio = resolvePlayableAssetUri(selectedClip.asset.uri);
+  const currentAudio = resolveClipPlaybackUri(selectedClip, binaural);
   const visibleCandidates = candidates.filter((candidate) => candidate.clipId === selectedClip.id && candidate.status === "ready");
 
   function changeProvider(id: string) {
@@ -222,14 +291,14 @@ export function VoiceGenerationPanel({
 
     {currentAudio ? <div className="min-w-0 space-y-2">
       <p className="text-xs text-studio-muted">当前人声</p>
-      <audio aria-label="当前人声试听" controls preload="none" src={currentAudio} onPlay={(event) => pauseOtherPreviews(event.currentTarget)} className="h-9 w-full min-w-0 max-w-full" />
+      <VoicePreview key={currentAudio} src={currentAudio} label="当前人声试听" onPreviewPlay={pauseOtherPreviews} />
     </div> : null}
 
     {visibleCandidates.length > 0 ? <div className="max-h-96 min-w-0 space-y-3 overflow-y-auto">
       {visibleCandidates.map((candidate, index) => {
         const adopted = candidate.asset.assetId === selectedClip.asset.asset_id;
         const stale = candidate.sourceFingerprint !== sourceFingerprint;
-        const candidateAudio = resolvePlayableAssetUri(candidate.asset.uri);
+        const candidateAudio = resolveClipPlaybackUri(selectedClip, binaural, candidate.asset);
         const candidateReference = catalog?.providers.find((item) => item.id === candidate.provenance.provider)?.references.find((item) => item.id === candidate.provenance.voicePackId);
         return <article key={candidate.candidateId} aria-label={`候选 ${index + 1}`} className="min-w-0 space-y-2.5 rounded-lg border border-studio-line bg-black/10 p-3">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -237,7 +306,7 @@ export function VoiceGenerationPanel({
             <span className="text-studio-muted">{candidate.asset.duration.toFixed(1)} 秒</span>
             {adopted ? <span className="text-studio-green">已采用</span> : null}
           </div>
-          {candidateAudio ? <audio aria-label={`候选 ${index + 1} 试听`} controls preload="none" src={candidateAudio} onPlay={(event) => pauseOtherPreviews(event.currentTarget)} className="h-9 w-full min-w-0 max-w-full" /> : null}
+          {candidateAudio ? <VoicePreview key={candidateAudio} src={candidateAudio} label={`候选 ${index + 1} 试听`} onPreviewPlay={pauseOtherPreviews} /> : null}
           {stale && !adopted ? <p className="break-words text-xs leading-5 text-amber-100">文案已修改，请重新生成。</p> : null}
           {candidate.qualityWarnings.map((warning, warningIndex) => <p key={warningIndex} role="alert" className="break-words text-xs leading-5 text-amber-100">{warning}</p>)}
           <div className="flex flex-wrap gap-2">

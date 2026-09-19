@@ -36,6 +36,7 @@ import { GenerationSlotList } from "./generation-slot-list";
 import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
+  binaural?: boolean;
   voiceGenerationPanel?: (generationControl: React.ReactNode) => React.ReactNode;
   fieldValidationIssues: ClipFieldValidationIssues;
   selectedClip: TimelineClip | undefined;
@@ -66,6 +67,8 @@ const movementOptions: Array<TimelineClip["position"]["movement"]> = [
   "recede",
   "left_to_right",
   "right_to_left",
+  "orbit",
+  "orbit_approach",
 ];
 
 type DirectorAction = {
@@ -150,8 +153,10 @@ function ReadOnlyRow({
 
 function DirectorActionStrip({
   onApplyPreset,
+  fixedApproach = false,
 }: {
   onApplyPreset: (preset: DirectorPreset) => void;
+  fixedApproach?: boolean;
 }) {
   return (
     <div className="border-b border-white/[0.06] py-3">
@@ -163,15 +168,17 @@ function DirectorActionStrip({
       <div className="grid grid-cols-2 gap-2">
         {directorActions.map((action) => {
           const Icon = action.icon;
+          const disabled = fixedApproach && action.preset === "closer";
 
           return (
             <button
               key={action.preset}
               type="button"
+              disabled={disabled}
               onClick={() => onApplyPreset(action.preset)}
-              title={action.title}
+              title={disabled ? "环绕靠近已使用固定的远到近路线" : action.title}
               aria-label={`${action.label}: ${action.title}`}
-              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 text-xs font-semibold text-studio-text transition-colors hover:border-sky-300/30 hover:bg-sky-300/12 focus:outline-none focus:ring-2 focus:ring-sky-300/35"
+              className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 text-xs font-semibold text-studio-text transition-colors hover:border-sky-300/30 hover:bg-sky-300/12 focus:outline-none focus:ring-2 focus:ring-sky-300/35 disabled:cursor-not-allowed disabled:opacity-45"
             >
               <Icon
                 className="h-3.5 w-3.5 shrink-0 text-studio-gold"
@@ -348,7 +355,7 @@ function FieldError({
 
 function controlClassName(extra = "", hasError = false) {
   return [
-    "w-full rounded-md border px-3 py-2 text-sm text-studio-text outline-none transition",
+    "w-full rounded-md border px-3 py-2 text-sm text-studio-text outline-none transition disabled:cursor-not-allowed disabled:opacity-60",
     hasError
       ? "border-amber-300/55 bg-amber-300/[0.075] focus:border-amber-200/80 focus:ring-2 focus:ring-amber-300/20"
       : "border-white/[0.08] bg-black/20 focus:border-sky-300/45 focus:ring-2 focus:ring-sky-300/20",
@@ -363,6 +370,7 @@ function parseNumericInput(value: string): number {
 }
 
 export function ClipInspector({
+  binaural = true,
   voiceGenerationPanel,
   fieldValidationIssues,
   selectedClip,
@@ -384,6 +392,8 @@ export function ClipInspector({
   }
 
   const selectedClipId = selectedClip.id;
+  const isOrbitApproach = selectedClip.position.movement === "orbit_approach";
+  const isOrbit = selectedClip.position.movement === "orbit" || isOrbitApproach;
 
   function updateClip(patch: ClipPatch) {
     if (!selectedClip) {
@@ -439,7 +449,7 @@ export function ClipInspector({
 
       <div className="px-4">
         {selectedClip.type === "voice" ? (
-          <DirectorActionStrip onApplyPreset={applyPreset} />
+          <DirectorActionStrip onApplyPreset={applyPreset} fixedApproach={isOrbitApproach} />
         ) : null}
 
         <TimingActionStrip onNudge={nudgeTiming} />
@@ -641,7 +651,9 @@ export function ClipInspector({
               min={-1}
               max={1}
               step={0.01}
-              value={selectedClip.position.pan}
+              value={isOrbit ? "" : selectedClip.position.pan}
+              disabled={isOrbit}
+              placeholder={isOrbit ? "固定环绕路线" : undefined}
               onChange={(event) =>
                 updateClip({
                   position: { pan: parseNumericInput(event.target.value) },
@@ -659,7 +671,8 @@ export function ClipInspector({
 
         <InspectorField label="距离">
           <select
-            value={selectedClip.position.distance}
+            value={isOrbitApproach ? "trajectory" : selectedClip.position.distance}
+            disabled={isOrbitApproach}
             onChange={(event) =>
               updateClip({
                 position: {
@@ -674,7 +687,7 @@ export function ClipInspector({
             )}
             {...getFieldControlProps("position.distance")}
           >
-            {distanceOptions.map((distance) => (
+            {isOrbitApproach ? <option value="trajectory">由远到近路线决定</option> : distanceOptions.map((distance) => (
               <option key={distance} value={distance}>
                 {getDistanceLabel(distance)}
               </option>
@@ -714,6 +727,23 @@ export function ClipInspector({
             issues={getFieldIssues("position.movement")}
           />
         </InspectorField>
+
+        {isOrbit ? (
+          <div className="border-b border-white/[0.06] py-3 text-xs leading-5 text-studio-muted">
+            <p>
+              {isOrbitApproach
+                ? "从远处绕到近处，末段停留在近处。"
+                : "保持所选距离，绕行一周。"}
+            </p>
+            {!binaural ? <p className="mt-1 text-amber-100">环绕需开启双耳空间；当前使用普通立体声。</p> : null}
+            <details className="mt-2">
+              <summary className="cursor-pointer">空间说明</summary>
+              <p className="mt-2">从左侧出发，依次经过后方、右侧和前方，最后回到左侧。环绕路线固定，声像不参与起点设置。</p>
+              {isOrbitApproach ? <p className="mt-1">距离由路线决定，从远处逐渐贴近；切换其他移动方式后可继续调整距离。</p> : null}
+              <p className="mt-1">双耳空间包含房间反射，请佩戴耳机试听。关闭后保留原有的普通立体声处理。</p>
+            </details>
+          </div>
+        ) : null}
 
         <details className="border-t border-white/[0.06] py-3">
           <summary className="cursor-pointer text-xs text-studio-muted">
