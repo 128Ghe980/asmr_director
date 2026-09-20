@@ -59,7 +59,53 @@ type LongTextInput = {
 type Dependencies = {
   plan?: typeof planVoiceLongText; generate?: typeof generateVoxCpm2; analyze?: typeof analyzeVoiceGroup;
   readiness?: typeof getVoiceAnalysisReadiness; timeoutMs?: number;
+  writeTrace?: (filePath: string, data: string | Uint8Array) => Promise<void>;
 };
+
+type GroupFailureStage = "generate" | "analyze" | "save";
+
+function groupFailureMessage(index: number, text: string, attempts: number, stage: GroupFailureStage, error: unknown) {
+  const characters = Array.from(text.replace(/\s+/gu, " ").trim());
+  const excerpt = characters.slice(0, 28).join("") + (characters.length > 28 ? "…" : "");
+  const prefix = `第 ${index + 1} 段“${excerpt}”已尝试 ${attempts} 次，仍未完成。`;
+  if (stage === "generate") {
+    const reason = error instanceof VoxCpm2Error ? error.message : "请稍后重试；若仍失败，请检查本机模型运行环境。";
+    return `${prefix}模型生成失败。${reason}`;
+  }
+  if (stage === "save") return `${prefix}保存这段录音时失败。请检查运行目录的可用空间和写入权限，然后重试。`;
+  const code = error instanceof VoiceGroupAnalysisError ? error.diagnosticCode : undefined;
+  const retryAdvice = "可以重试；文案较短时，也可以在“生成方式”里选“当前片段”，生成后完整试听。";
+  switch (code) {
+    case "no_safe_quiet_cut":
+    case "no_verified_quiet_cut":
+      return `${prefix}暂时找不到能确认不截掉字音的分段位置，因此没有拼接这次结果。${retryAdvice}`;
+    case "missing_continuation_boundary":
+    case "uncertain_boundary_timestamps":
+    case "invalid_word_timestamps":
+    case "invalid_quiet_crop":
+    case "missing_internal_boundary":
+    case "uncertain_internal_pause":
+      return `${prefix}还不能确定句子的起止位置和停顿，无法截取、拼接这段录音。${retryAdvice}`;
+    case "cut_text_mismatch":
+      return `${prefix}截取后的录音与台词未能核对一致，可能是识别没听清，也可能有漏字或多读。${retryAdvice}`;
+    case "missing_speech":
+    case "incomplete_or_unrelated_speech":
+    case "missing_or_extra_speech":
+    case "repeated_speech":
+    case "uncertain_word_alignment":
+    case "unrecognized_continuation":
+      return `${prefix}录音与台词未能核对一致，可能是识别没听清，也可能有漏字或多读。${retryAdvice}`;
+    case "silent_audio":
+    case "invalid_audio":
+    case "audio_too_large":
+      return `${prefix}模型输出的录音没有通过音频检查，请重新生成。`;
+    case "invalid_target":
+    case "clauses_do_not_cover_target":
+      return `${prefix}分段信息与台词未能对应，请重新生成。`;
+    default:
+      return `${prefix}录音检查未完成，暂时无法判断台词是否完整。请重试；若仍失败，请检查本机语音分析环境。`;
+  }
+}
 
 export async function generateVoiceLongText(input: LongTextInput, deps: Dependencies = {}): Promise<{
   wav: Uint8Array; provenance: AudioCandidateProvenance; qualityWarnings: string[];
@@ -68,7 +114,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
   const abort = () => controller.abort(input.signal?.reason);
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
-  const timeout = setTimeout(() => controller.abort(new VoxCpm2Error("长文生成超时，原声已保留，请缩短文案后重试。", 504)), deps.timeoutMs ?? 30 * 60 * 1000);
+  const timeout = setTimeout(() => controller.abort(new VoxCpm2Error("长文生成超时，本次没有产生完整候选。请缩短文案后重试。", 504)), deps.timeoutMs ?? 30 * 60 * 1000);
   const signal = controller.signal;
   const check = () => { if (signal.aborted) throw signal.reason instanceof VoxCpm2Error ? signal.reason : new VoxCpm2Error("已取消生成。", 499); };
   const progress = (value: number, message: string) => { check(); input.onProgress?.({ progress: value, message }); };
@@ -83,7 +129,8 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
     return await withVoxCpm2RuntimeSession(input.config, signal, async (runtimeSession) => {
       const traceRoot = path.join(input.config.runtimeRoot, "voxcpm2-product", "long-text", randomUUID());
       await mkdir(traceRoot, { recursive: true });
-      const record = (name: string, value: unknown) => writeFile(path.join(traceRoot, name), JSON.stringify(value, null, 2), "utf8");
+      const writeTrace = deps.writeTrace ?? ((filePath, data) => writeFile(filePath, data));
+      const record = (name: string, value: unknown) => writeTrace(path.join(traceRoot, name), JSON.stringify(value, null, 2));
       try {
         progress(3, "正在分组文案");
         const prior = input.retryCandidate?.provenance.longText;
@@ -123,17 +170,21 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
             const baseProgress = 8 + index / targets.length * 84;
             progress(baseProgress, `正在生成第 ${index + 1}/${targets.length} 组${attempt > 1 ? `（重试 ${attempt - 1}）` : ""}`);
             const tracePrefix = `group-${index + 1}-take-${attempt}`;
+            let failureStage: GroupFailureStage = "generate";
             try {
               const take = await (deps.generate ?? generateVoxCpm2)({ text: target.text, voicePackId: input.voicePackId, referenceMode: input.referenceMode, config: input.config, signal }, { runtimeSession });
               check();
-              await writeFile(path.join(traceRoot, `${tracePrefix}-source.wav`), take.wav);
+              failureStage = "save";
+              await writeTrace(path.join(traceRoot, `${tracePrefix}-source.wav`), take.wav);
               await record(`${tracePrefix}-source.json`, take.provenance);
               progress(baseProgress + 35 / targets.length, `正在核对第 ${index + 1}/${targets.length} 组台词`);
+              failureStage = "analyze";
               const analysis = await (deps.analyze ?? analyzeVoiceGroup)({ wav: take.wav, expectedText: target.expectedText, followingText: target.followingText, clauses: target.clauses, config: input.config, signal }, { runtimeSession });
               check();
               const { wav, ...checks } = analysis;
-              await record(`${tracePrefix}-analysis.json`, checks);
               const decoded = decodePcmWav(wav);
+              failureStage = "save";
+              await record(`${tracePrefix}-analysis.json`, checks);
               const asset = await saveClipAsset({ config: input.config, clipId: `${input.clipId}_group_${index + 1}`, wav, duration: decoded.samples.length / decoded.sampleRate / decoded.channels });
               check();
               firstProvenance ??= take.provenance;
@@ -156,13 +207,16 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
               break;
             } catch (error) {
               check();
+              // A full/unwritable disk may also reject this diagnostic. Preserve
+              // the original failure instead of replacing it with a log error.
               await record(`${tracePrefix}-failure.json`, { message: error instanceof Error ? error.message : "Group failed",
-                code: error instanceof VoiceGroupAnalysisError ? error.diagnosticCode : undefined, at: new Date().toISOString() });
+                stage: failureStage, code: error instanceof VoiceGroupAnalysisError ? error.diagnosticCode : undefined, at: new Date().toISOString() }).catch(() => undefined);
               // Configuration/resource/cancellation faults will not improve with
               // another seed. Only failed generation/alignment takes are retried.
+              if (failureStage === "save") throw new VoxCpm2Error(groupFailureMessage(index, target.expectedText, attempt, failureStage, error), 503);
               if (error instanceof VoxCpm2Error && error.statusCode !== 502) throw error;
               if (error instanceof VoiceGroupAnalysisError && ![422, 502].includes(error.statusCode)) throw new VoxCpm2Error(error.message, error.statusCode);
-              if (attempt === 3) throw new VoxCpm2Error(`第 ${index + 1} 组未能确认完整台词和安全边界，原声已保留。请重试或调整该段文案。`);
+              if (attempt === 3) throw new VoxCpm2Error(groupFailureMessage(index, target.expectedText, attempt, failureStage, error));
             }
           }
           if (!accepted) throw new VoxCpm2Error("长文片段未完成，请重试。");
@@ -175,7 +229,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
           groups: metadata, joins: assembled.joins, loudnessGainDb: assembled.loudnessGainDb, asrModel });
         if (assembled.joins.some((join) => join.actualDurationMs > join.durationMs + 15)) warnings.push("部分连接保留了较长的自然停顿，请试听后决定是否采用。");
         await record("result.json", longText);
-        await writeFile(path.join(traceRoot, "assembled.wav"), assembled.wav);
+        await writeTrace(path.join(traceRoot, "assembled.wav"), assembled.wav);
         check();
         progress(98, "正在保存长文候选");
         return { wav: assembled.wav, provenance: { ...firstProvenance!, seed: metadata[0].seed,
@@ -184,7 +238,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
           parameters: { ...metadata[0].parameters, groupCount: metadata.length, normalization: "whole_active_rms_-27dBFS", padding: "fixed_neutral", totalTimeoutMs: deps.timeoutMs ?? 30 * 60 * 1000 } },
           qualityWarnings: [...new Set(warnings)] };
       } catch (error) {
-        await record("failure.json", { message: error instanceof Error ? error.message : "Failed", cancelled: signal.aborted, at: new Date().toISOString() });
+        await record("failure.json", { message: error instanceof Error ? error.message : "Failed", cancelled: signal.aborted, at: new Date().toISOString() }).catch(() => undefined);
         throw error;
       }
     });

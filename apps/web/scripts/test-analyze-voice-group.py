@@ -143,6 +143,25 @@ class VoiceGroupSafetyTests(unittest.TestCase):
                 helper.verified_opening_cut(None, tone(2), "慢慢放松", "安静休息", coarse, 0)
             self.assertEqual(recognize.call_count, 3)
 
+    def test_existing_quiet_with_disagreeing_asr_reports_text_mismatch(self):
+        audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(24000), tone(.4), np.zeros(9600)])
+        coarse = segment_words()
+        coarse[1]["start"] = .61
+        # A changed final character still fails the exact content guard. The
+        # failure must not imply that the verified half-second pause is absent.
+        wrong = ("慢慢放下", [{"text": "慢慢放下", "start": .2, "end": .6}])
+        with patch.object(helper, "transcribe", return_value=wrong):
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                helper.verified_opening_cut(None, audio, "慢慢放松", "安静休息", coarse, 0)
+
+    def test_no_quiet_interval_is_not_reported_as_text_mismatch(self):
+        coarse = segment_words()
+        coarse[1]["start"] = .61
+        with patch.object(helper, "transcribe") as recognize:
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+                helper.verified_opening_cut(None, tone(2), "慢慢放松", "安静休息", coarse, 0)
+            recognize.assert_not_called()
+
     def test_adapts_to_local_low_level_noise_with_absolute_and_relative_caps(self):
         levels = np.full(200, -29.0)
         levels[60:110] = -64

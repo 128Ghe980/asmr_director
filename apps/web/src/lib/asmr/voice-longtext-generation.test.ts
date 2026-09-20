@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -184,7 +184,7 @@ describe("long-text generation orchestration with injected engine and alignment"
       if (expectedText === targets[0].expectedText) return analysis(wav, expectedText);
       throw new VoiceGroupAnalysisError("unsafe word boundary", 422);
     });
-    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 502, message: expect.stringContaining("第 2 组") });
+    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 502, message: expect.stringContaining("第 2 段") });
     expect(deps.generate.mock.calls.map(([request]) => request.text)).toEqual([targets[0].text, targets[1].text, targets[1].text, targets[1].text]);
     expect(deps.analyze).toHaveBeenCalledTimes(4);
     expect(await readdir(input.config.clipAssetRoot)).toHaveLength(1);
@@ -193,6 +193,132 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(files).not.toContain("result.json");
     expect(files).not.toContain("assembled.wav");
     expect(await readdir(path.join(root, "locks"))).toEqual([]);
+  });
+
+  it.each([
+    ["uncertain_word_alignment", "录音与台词未能核对一致"],
+    ["repeated_speech", "录音与台词未能核对一致"],
+    ["cut_text_mismatch", "截取后的录音与台词未能核对一致"],
+    ["no_verified_quiet_cut", "暂时找不到能确认不截掉字音的分段位置"],
+    ["uncertain_internal_pause", "还不能确定句子的起止位置和停顿"],
+    ["silent_audio", "模型输出的录音没有通过音频检查"],
+    ["clauses_do_not_cover_target", "分段信息与台词未能对应"],
+    ["future_diagnostic", "录音检查未完成"],
+  ])("explains %s with the actual passage and attempt count without assuming an existing voice", async (code, explanation) => {
+    const { root, input, deps, targets } = await fixture();
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("unsafe word boundary", 422, code));
+    const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(VoxCpm2Error);
+    expect(failure).toMatchObject({ statusCode: 502, message: expect.stringContaining(`第 1 段“${targets[0].expectedText}”已尝试 3 次`) });
+    expect((failure as Error).message).toContain(explanation);
+    expect((failure as Error).message).not.toMatch(/原声已保留|安全边界|文案有误|unsafe word boundary|future_diagnostic/);
+    expect(deps.generate).toHaveBeenCalledTimes(3);
+    expect(deps.analyze).toHaveBeenCalledTimes(3);
+    expect(await traceFiles(root)).not.toContain("assembled.wav");
+  });
+
+  it("explains the last blocked step when different checks fail across the three takes and preserves each diagnostic", async () => {
+    const { root, input, deps } = await fixture();
+    const codes = ["uncertain_word_alignment", "uncertain_word_alignment", "no_verified_quiet_cut"];
+    for (const code of codes) deps.analyze.mockRejectedValueOnce(new VoiceGroupAnalysisError("unsafe word boundary", 422, code));
+    const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ message: expect.stringContaining("因此没有拼接这次结果") });
+    expect((failure as Error).message).toContain("在“生成方式”里选“当前片段”，生成后完整试听");
+    expect((failure as Error).message).not.toContain("模型生成失败");
+    const traceRoot = path.join(root, "voxcpm2-product", "long-text");
+    const [run] = await readdir(traceRoot);
+    for (const [index, code] of codes.entries()) {
+      const trace = JSON.parse(await readFile(path.join(traceRoot, run, `group-1-take-${index + 1}-failure.json`), "utf8"));
+      expect(trace).toMatchObject({ code, stage: "analyze" });
+    }
+  });
+
+  it("identifies model generation failure and retains its specific actionable message", async () => {
+    const { input, deps, targets } = await fixture();
+    deps.generate.mockRejectedValue(new VoxCpm2Error("片段达到生成长度上限，请拆短台词后重试。", 502));
+    const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ statusCode: 502, message: expect.stringContaining(`第 1 段“${targets[0].expectedText}”已尝试 3 次`) });
+    expect((failure as Error).message).toContain("模型生成失败。片段达到生成长度上限，请拆短台词后重试。");
+    expect((failure as Error).message).not.toMatch(/台词未能核对|分段位置|原声已保留/);
+    expect(deps.generate).toHaveBeenCalledTimes(3);
+    expect(deps.analyze).not.toHaveBeenCalled();
+  });
+
+  it("reports a full disk without rerunning TTS even when both failure logs also cannot be written", async () => {
+    const { root, input, deps, targets } = await fixture();
+    const writeTrace = vi.fn<NonNullable<Dependencies["writeTrace"]>>(async (filePath, data) => {
+      if (path.basename(filePath) === "plan.json") return writeFile(filePath, data);
+      throw Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
+    });
+    const failure = await generateVoiceLongText(input, { ...deps, writeTrace }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ statusCode: 503, message: expect.stringContaining(`第 1 段“${targets[0].expectedText}”已尝试 1 次`) });
+    expect((failure as Error).message).toContain("保存这段录音时失败。请检查运行目录的可用空间和写入权限");
+    expect((failure as Error).message).not.toMatch(/模型生成失败|录音与台词/);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.analyze).not.toHaveBeenCalled();
+    expect(writeTrace.mock.calls.map(([filePath]) => path.basename(filePath))).toEqual([
+      "plan.json", "group-1-take-1-source.wav", "group-1-take-1-failure.json", "failure.json",
+    ]);
+    expect(await traceFiles(root)).not.toContain("assembled.wav");
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+  });
+
+  it("preserves a model resource error when writing its diagnostics fails", async () => {
+    const { input, deps } = await fixture();
+    const original = new VoxCpm2Error("本机模型运行环境不可用。", 503);
+    deps.generate.mockRejectedValue(original);
+    const writeTrace = vi.fn<NonNullable<Dependencies["writeTrace"]>>(async (filePath, data) => {
+      if (path.basename(filePath) === "plan.json") return writeFile(filePath, data);
+      throw Object.assign(new Error("Permission denied"), { code: "EACCES" });
+    });
+    await expect(generateVoiceLongText(input, { ...deps, writeTrace })).rejects.toBe(original);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.analyze).not.toHaveBeenCalled();
+    expect(writeTrace.mock.calls.map(([filePath]) => path.basename(filePath))).toEqual([
+      "plan.json", "group-1-take-1-failure.json", "failure.json",
+    ]);
+  });
+
+  it("keeps all three quality-check attempts when only failure diagnostics cannot be written", async () => {
+    const { input, deps } = await fixture();
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("unsafe word boundary", 422, "cut_text_mismatch"));
+    const writeTrace = vi.fn<NonNullable<Dependencies["writeTrace"]>>(async (filePath, data) => {
+      if (path.basename(filePath).endsWith("failure.json")) throw Object.assign(new Error("Permission denied"), { code: "EACCES" });
+      await writeFile(filePath, data);
+    });
+    const failure = await generateVoiceLongText(input, { ...deps, writeTrace }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ statusCode: 502, message: expect.stringContaining("截取后的录音与台词未能核对一致") });
+    expect((failure as Error).message).toContain("已尝试 3 次");
+    expect(deps.generate).toHaveBeenCalledTimes(3);
+    expect(deps.analyze).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops after a real asset-directory write failure instead of generating another take", async () => {
+    const { root, input, deps } = await fixture();
+    const blockedAssetRoot = path.join(root, "asset-directory-is-a-file");
+    await writeFile(blockedAssetRoot, "keep this file");
+    input.config.clipAssetRoot = blockedAssetRoot;
+    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 503, message: expect.stringContaining("保存这段录音时失败") });
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.analyze).toHaveBeenCalledOnce();
+    expect(await readFile(blockedAssetRoot, "utf8")).toBe("keep this file");
+    expect(await traceFiles(root)).toEqual(expect.arrayContaining(["group-1-take-1-source.wav", "group-1-take-1-failure.json", "failure.json"]));
+    expect(await traceFiles(root)).not.toContain("assembled.wav");
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+  });
+
+  it("shows only a readable excerpt for a long failed passage without changing the text sent to the model", async () => {
+    const { input, deps, plan, waves } = await fixture();
+    plan.clauses[0] = "我们先坐下来，喝口水，休息一会儿，等身上暖和一点，再慢慢跟我说今天的事情。";
+    plan.groups[0].text = plan.clauses.slice(0, 2).join("");
+    input.text = plan.clauses.join("");
+    deps.generate.mockResolvedValue({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] });
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("unsafe word boundary", 422, "uncertain_word_alignment"));
+    const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
+    expect((failure as Error).message).toContain(`第 1 段“${Array.from(plan.groups[0].text).slice(0, 28).join("")}…”`);
+    expect((failure as Error).message).not.toContain(plan.groups[0].text);
+    expect(deps.generate.mock.calls[0][0].text).toBe(buildLongTextInputs(plan)[0].text);
+    expect(deps.analyze.mock.calls[0][0].expectedText).toBe(plan.groups[0].text);
   });
 
   it.each(["cancel", "timeout"] as const)("stops the current simulated native process on %s and never launches later groups", async (reason) => {
@@ -255,7 +381,10 @@ describe("long-text generation orchestration with injected engine and alignment"
     if (stage === "readiness") deps.readiness.mockResolvedValue({ available: false, reason: "ASR unavailable" });
     if (stage === "generation") deps.generate.mockRejectedValue(new VoxCpm2Error("Model configuration unavailable", 503));
     if (stage === "analysis") deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("ASR unavailable", 503));
-    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 503 });
+    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({
+      statusCode: 503,
+      message: stage === "generation" ? "Model configuration unavailable" : "ASR unavailable",
+    });
     expect(deps.generate).toHaveBeenCalledTimes(stage === "readiness" ? 0 : 1);
     expect(deps.analyze).toHaveBeenCalledTimes(stage === "analysis" ? 1 : 0);
     expect(deps.plan).toHaveBeenCalledTimes(stage === "readiness" ? 0 : 1);

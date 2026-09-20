@@ -12,6 +12,8 @@ Last updated: 2026-09-20
 
 2026-09-20 额度恢复后收尾：D 正式接入已完成。57 文件／520 项 Vitest（含真实 Python 适配器）、26 项空间 Python 测试、TypeScript／生产构建和最终 ESLint 通过；新 TTS 至导出闭环及恢复后的生产构建播放／跳转／采用撤回／重混下载／桌面手机复核通过。四条获认可 D 自然样片与产品渲染字节完全一致。新缓存、临时文件和验收产物优先放 `I:/AI`；交付分支保持 `codex/voxcpm2-product-generation`。
 
+2026-09-20 长文失败提示修正：用户报告首组生成失败且“完整台词和安全边界”难以理解。真实第三条候选存在 370 ms 静音，但整段 ASR 的“回来啦”在截取后识别为“回来了”；现保留 `cut_text_mismatch` 诊断，界面按台词摘录、实际次数和失败阶段说明原因。分组保存失败立即停止重试，诊断日志写入失败不再覆盖原错误。既有台词和截音检查未放宽；这条素材仍未通过检查，不宣称长文生成成功。证据及验收见同日 `docs/project-archive.md`，本阶段优先级不变。
+
 ## 本轮已通过：AI 创意策划 / LLM Planner V1
 
 - Status: Accepted for this iteration by the user on 2026-09-08. Real external DeepSeek workflow and UI cleanup are accepted. Local Ollama memory recovery and broader script-quality evaluation remain non-blocking follow-ups, not claims of completed verification.

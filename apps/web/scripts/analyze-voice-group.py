@@ -189,6 +189,7 @@ def verified_opening_cut(model, audio: np.ndarray, expected: str, following: str
     # At least 80 ms of measured deep quiet on EACH side of the cut, not merely
     # an 80 ms interval whose midpoint has only 40 ms protection.
     candidates = quiet_cut_candidates(levels, threshold, start, end, boundary)
+    text_mismatch = False
     for candidate in candidates:
         cut = candidate["cut"]
         cut_sample = round(cut * RATE)
@@ -211,8 +212,18 @@ def verified_opening_cut(model, audio: np.ndarray, expected: str, following: str
             content_score(anchor, right_actual[:len(anchor)])
             validation = {key: candidate[key] for key in ("method", "thresholdDbfs", "quietStartSeconds", "quietEndSeconds")}
             return cut, left_words[-1], validation
-        except UnsafeGroup:
+        except UnsafeGroup as error:
+            # A real quiet interval can still fail independent recognition.
+            # Preserve that distinction instead of reporting every rejection
+            # as though no usable pause existed.
+            text_mismatch |= str(error) in {
+                "missing_speech", "incomplete_or_unrelated_speech",
+                "missing_or_extra_speech", "repeated_speech",
+                "uncertain_word_alignment",
+            }
             continue
+    if text_mismatch:
+        raise UnsafeGroup("cut_text_mismatch")
     raise UnsafeGroup("no_verified_quiet_cut")
 
 
