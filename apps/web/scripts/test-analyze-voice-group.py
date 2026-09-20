@@ -1,5 +1,7 @@
 """Deterministic safety tests; no model download or synthesis."""
 import importlib.util
+import io
+import json
 from pathlib import Path
 import unittest
 import sys
@@ -220,6 +222,40 @@ class VoiceGroupSafetyTests(unittest.TestCase):
         # Join calculation can now subtract this retained quiet instead of adding
         # the entire requested 350 ms on top of an unreported 250 ms tail.
         self.assertAlmostEqual(max(0, 350 - result["trailingQuietMs"]), 100)
+
+
+class PersistentWorkerTests(unittest.TestCase):
+    def test_three_requests_load_one_model_and_preserve_request_identity(self):
+        incoming = io.StringIO("".join(json.dumps({"requestPath": name}) + "\n"
+                                    for name in ("first.json", "second.json", "third.json")))
+        outgoing = io.StringIO()
+        model = object()
+        seen = []
+
+        def process_request(request_path, model_provider):
+            seen.append((request_path, model_provider("model")))
+            return 0
+
+        with patch.object(helper, "load_model", return_value=model) as load, \
+                patch.object(helper, "process_request", side_effect=process_request):
+            self.assertEqual(helper.worker("model", incoming, outgoing), 0)
+        load.assert_called_once()
+        self.assertEqual(seen, [(name, model) for name in ("first.json", "second.json", "third.json")])
+        self.assertEqual([json.loads(line) for line in outgoing.getvalue().splitlines()],
+                         [{"requestPath": name, "code": 0} for name in ("first.json", "second.json", "third.json")])
+
+    def test_model_mismatch_does_not_load_a_second_model(self):
+        incoming = io.StringIO(json.dumps({"requestPath": "first.json"}) + "\n")
+        outgoing = io.StringIO()
+
+        def process_request(_request_path, model_provider):
+            model_provider("different-model")
+
+        with patch.object(helper, "load_model") as load, \
+                patch.object(helper, "process_request", side_effect=process_request):
+            self.assertEqual(helper.worker("model", incoming, outgoing), 0)
+        load.assert_not_called()
+        self.assertEqual(json.loads(outgoing.getvalue()), {"requestPath": "first.json", "code": 2})
 
 
 if __name__ == "__main__":

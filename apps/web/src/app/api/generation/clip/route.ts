@@ -48,7 +48,7 @@ export async function POST(request: Request) {
             onProgress: (progress) => send({ type: "progress", ...progress }) });
           send({ type: "result", result });
         } catch (error) {
-          send({ type: "error", error: error instanceof VoxCpm2Error || error instanceof CandidateCapacityError ? error.message : "长文生成失败，原声已保留，请重试。" });
+          send({ type: "error", error: error instanceof VoxCpm2Error || error instanceof CandidateCapacityError ? error.message : "生成未完成。已保存的完整原音仍可试听、下载。" });
         } finally {
           clearInterval(heartbeat);
           request.signal.removeEventListener("abort", abort);

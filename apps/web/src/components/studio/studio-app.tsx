@@ -1333,6 +1333,7 @@ export function StudioApp({ project }: StudioAppProps) {
             binaural={editableProject.timeline.mixing.binaural}
             voiceGenerationPanel={selectedClip?.type === "voice" ? (generationControl) => (
               <VoiceGenerationPanel
+                projectId={editableProject.project_id}
                 binaural={editableProject.timeline.mixing.binaural}
                 generationControl={generationControl}
                 options={voiceOptions} onOptionsChange={handleVoiceOptionsChange}

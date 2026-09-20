@@ -74,7 +74,7 @@ describe("long-text streaming generation API", () => {
   it.each([
     [new VoxCpm2Error("第 2 组未通过检查。"), "第 2 组未通过检查。"],
     [new CandidateCapacityError(), "此片段已有 12 个候选"],
-    [new Error("private runtime path and diagnostic"), "长文生成失败，原声已保留"],
+    [new Error("private runtime path and diagnostic"), "生成未完成。已保存的完整原音仍可试听、下载。"],
   ])("emits safe generation failures in the response stream", async (error, expected) => {
     vi.mocked(generateLocalClip).mockRejectedValue(error);
     const response = await POST(longRequest());

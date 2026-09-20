@@ -52,6 +52,7 @@ async function fixture() {
   const input: GenerationInput = { text: plan.clauses.join(""), clipId: "voice_test", voicePackId: "soft_zh",
     referenceMode: "with_reference_text", analysisProvider: "local", config };
   const deps = {
+    pipeline: "serial" as const,
     readiness: vi.fn<NonNullable<Dependencies["readiness"]>>().mockResolvedValue({ available: true }),
     plan: vi.fn<NonNullable<Dependencies["plan"]>>().mockResolvedValue(plan),
     generate: vi.fn<NonNullable<Dependencies["generate"]>>(async ({ text }) => {
@@ -141,6 +142,14 @@ describe("long-text PCM assembly", () => {
     assertScaledCopy(output.samples, source[0].samples, 0, gain);
     assertScaledCopy(output.samples, source[1].samples, source[0].samples.length, gain);
   });
+
+  it("delivers an entirely silent recording unchanged for the user to inspect", () => {
+    const source = writePcm16Wav(new Float32Array(4800), sampleRate);
+    const result = assembleVoiceGroups([{ wav: source, leadingQuietMs: 0, trailingQuietMs: 0 }], []);
+    expect(result.wav).toEqual(source);
+    expect(result.loudnessGainDb).toBe(0);
+    expect(result.joins).toEqual([]);
+  });
 });
 
 describe("long-text generation orchestration with injected engine and alignment", () => {
@@ -161,6 +170,7 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(deps.analyze).toHaveBeenCalledTimes(3);
     expect(metadata.joins.map((join) => join.actualDurationMs)).toEqual([330, 380]);
     expect(metadata.groups.map((group) => group.attempts)).toEqual([1, 1, 1]);
+    expect(metadata.groups.map((group) => group.checkStatus)).toEqual(["passed", "passed", "passed"]);
     expect(metadata.groups[0].paddingClauses.length).toBeGreaterThan(0);
     expect(metadata.groups[2].paddingClauses).toEqual([]);
     for (let index = 0; index < waves.length; index++) {
@@ -178,87 +188,132 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(await traceFiles(root)).toEqual(expect.arrayContaining(["result.json", "assembled.wav", "groups.json"]));
   });
 
-  it("bounds an unsafe group to three takes, preserves prior groups, and produces no final candidate audio", async () => {
-    const { root, input, deps, targets } = await fixture();
+  it("keeps the full source independently when a verified group uses its normal extracted audio", async () => {
+    const { root, input, deps, waves, targets } = await fixture();
+    waves[0] = groupWave({ leadingMs: 150, trailingMs: 180 });
+    const full = decodePcmWav(waves[0]);
+    const cropped = writePcm16Wav(full.samples.slice(120 * 48, full.samples.length - 150 * 48), sampleRate);
+    deps.analyze.mockImplementation(async ({ wav, expectedText }) => expectedText === targets[0].expectedText
+      ? { ...analysis(cropped, expectedText, 300, 30, 30), cutStartSeconds: .12, cutEndSeconds: full.samples.length / sampleRate - .15 }
+      : analysis(wav, expectedText));
+    const result = await generateVoiceLongText(input, deps);
+    const group = result.provenance.longText!.groups[0];
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    expect(new Uint8Array(await readFile(path.join(root, "voxcpm2-product", "long-text", run, "group-1-take-1-source.wav")))).toEqual(waves[0]);
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(group.asset.assetId, input.config)))).toEqual(cropped);
+    expect(group.checkStatus).toBe("passed");
+    expect(group.asset.duration).toBeLessThan(full.samples.length / sampleRate);
+  });
+
+  it("delivers the complete uncut source for a rejected check and continues assembling later groups", async () => {
+    const { root, input, deps, targets, waves, plan } = await fixture();
     deps.analyze.mockImplementation(async ({ wav, expectedText }) => {
-      if (expectedText === targets[0].expectedText) return analysis(wav, expectedText);
-      throw new VoiceGroupAnalysisError("unsafe word boundary", 422);
+      if (expectedText !== targets[1].expectedText) return analysis(wav, expectedText);
+      throw new VoiceGroupAnalysisError("unsafe word boundary", 422, "cut_text_mismatch");
     });
-    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 502, message: expect.stringContaining("第 2 段") });
-    expect(deps.generate.mock.calls.map(([request]) => request.text)).toEqual([targets[0].text, targets[1].text, targets[1].text, targets[1].text]);
-    expect(deps.analyze).toHaveBeenCalledTimes(4);
-    expect(await readdir(input.config.clipAssetRoot)).toHaveLength(1);
+    const result = await generateVoiceLongText(input, deps);
+    const metadata = result.provenance.longText!;
+    const group = metadata.groups[1];
+    const fullSourceDuration = decodePcmWav(waves[1]).samples.length / sampleRate;
+    expect(deps.generate.mock.calls.map(([request]) => request.text)).toEqual(targets.map((target) => target.text));
+    expect(deps.analyze).toHaveBeenCalledTimes(3);
+    expect(metadata.groups.map((item) => item.checkStatus)).toEqual(["passed", "review", "passed"]);
+    expect(group).toMatchObject({
+      attempts: 1, diagnosticCode: "cut_text_mismatch", transcript: "", coverage: 0,
+      internalPausesMs: [], internalPauseClasses: plan.clausePauseClasses.slice(plan.groups[1].start, plan.groups[1].end),
+      leadingQuietMs: 0, trailingQuietMs: 0, cutStartSeconds: 0, cutEndSeconds: fullSourceDuration,
+      asset: { duration: fullSourceDuration },
+    });
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(group.asset.assetId, input.config)))).toEqual(waves[1]);
+    const output = decodePcmWav(result.wav);
+    const firstLength = decodePcmWav(waves[0]).samples.length;
+    const secondOffset = firstLength + Math.round((metadata.joins[0].actualDurationMs - metadata.groups[0].trailingQuietMs) * 48);
+    assertScaledCopy(output.samples, decodePcmWav(waves[1]).samples, secondOffset, 10 ** (metadata.loudnessGainDb / 20));
+    expect(result.qualityWarnings.join(" ")).toMatch(/第 2 段/);
+    expect(result.qualityWarnings.join(" ")).toMatch(/完整原音|完整录音/);
+    expect(result.qualityWarnings.join(" ")).toMatch(/重复|后续|补句/);
     const files = await traceFiles(root);
-    expect(files).toContain("failure.json");
-    expect(files).not.toContain("result.json");
-    expect(files).not.toContain("assembled.wav");
+    expect(files).toEqual(expect.arrayContaining(["group-2-take-1-source.wav", "result.json", "assembled.wav"]));
+    expect(files).not.toContain("group-2-take-2-source.wav");
     expect(await readdir(path.join(root, "locks"))).toEqual([]);
   });
 
   it.each([
-    ["uncertain_word_alignment", "录音与台词未能核对一致"],
-    ["repeated_speech", "录音与台词未能核对一致"],
-    ["cut_text_mismatch", "截取后的录音与台词未能核对一致"],
-    ["no_verified_quiet_cut", "暂时找不到能确认不截掉字音的分段位置"],
-    ["uncertain_internal_pause", "还不能确定句子的起止位置和停顿"],
-    ["silent_audio", "模型输出的录音没有通过音频检查"],
-    ["clauses_do_not_cover_target", "分段信息与台词未能对应"],
-    ["future_diagnostic", "录音检查未完成"],
-  ])("explains %s with the actual passage and attempt count without assuming an existing voice", async (code, explanation) => {
-    const { root, input, deps, targets } = await fixture();
+    "uncertain_word_alignment", "repeated_speech", "cut_text_mismatch", "no_verified_quiet_cut",
+    "uncertain_internal_pause", "silent_audio", "clauses_do_not_cover_target", "future_diagnostic",
+  ])("turns %s into a review warning while delivering every full source without automatic rerolls", async (code) => {
+    const { root, input, deps, targets, waves } = await fixture();
     deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("unsafe word boundary", 422, code));
-    const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
-    expect(failure).toBeInstanceOf(VoxCpm2Error);
-    expect(failure).toMatchObject({ statusCode: 502, message: expect.stringContaining(`第 1 段“${targets[0].expectedText}”已尝试 3 次`) });
-    expect((failure as Error).message).toContain(explanation);
-    expect((failure as Error).message).not.toMatch(/原声已保留|安全边界|文案有误|unsafe word boundary|future_diagnostic/);
+    const result = await generateVoiceLongText(input, deps);
+    const metadata = result.provenance.longText!;
+    expect(metadata.groups.map((group) => group.diagnosticCode)).toEqual([code, code, code]);
+    expect(metadata.groups.map((group) => group.checkStatus)).toEqual(["review", "review", "review"]);
+    expect(metadata.groups.map((group) => group.attempts)).toEqual([1, 1, 1]);
+    expect(result.qualityWarnings.join(" ")).toContain(targets[0].expectedText);
+    expect(result.qualityWarnings.join(" ")).not.toMatch(/安全边界|文案有误|unsafe word boundary|future_diagnostic/);
     expect(deps.generate).toHaveBeenCalledTimes(3);
     expect(deps.analyze).toHaveBeenCalledTimes(3);
-    expect(await traceFiles(root)).not.toContain("assembled.wav");
+    for (const group of metadata.groups) {
+      expect(new Uint8Array(await readFile(resolveClipAssetPath(group.asset.assetId, input.config)))).toEqual(waves[group.index]);
+      expect(group.internalPausesMs).toEqual([]);
+      expect(group.internalPauseClasses).toEqual(["medium"]);
+    }
+    expect(await traceFiles(root)).toContain("assembled.wav");
   });
 
-  it("explains the last blocked step when different checks fail across the three takes and preserves each diagnostic", async () => {
+  it("preserves each group's different diagnostic without regenerating any source", async () => {
     const { root, input, deps } = await fixture();
-    const codes = ["uncertain_word_alignment", "uncertain_word_alignment", "no_verified_quiet_cut"];
+    const codes = ["uncertain_word_alignment", "cut_text_mismatch", "no_verified_quiet_cut"];
     for (const code of codes) deps.analyze.mockRejectedValueOnce(new VoiceGroupAnalysisError("unsafe word boundary", 422, code));
-    const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ message: expect.stringContaining("因此没有拼接这次结果") });
-    expect((failure as Error).message).toContain("在“生成方式”里选“当前片段”，生成后完整试听");
-    expect((failure as Error).message).not.toContain("模型生成失败");
+    const result = await generateVoiceLongText(input, deps);
+    expect(result.provenance.longText!.groups.map((group) => group.diagnosticCode)).toEqual(codes);
+    expect(deps.generate).toHaveBeenCalledTimes(3);
     const traceRoot = path.join(root, "voxcpm2-product", "long-text");
     const [run] = await readdir(traceRoot);
     for (const [index, code] of codes.entries()) {
-      const trace = JSON.parse(await readFile(path.join(traceRoot, run, `group-1-take-${index + 1}-failure.json`), "utf8"));
+      const trace = JSON.parse(await readFile(path.join(traceRoot, run, `group-${index + 1}-take-1-failure.json`), "utf8"));
       expect(trace).toMatchObject({ code, stage: "analyze" });
     }
   });
 
   it("identifies model generation failure and retains its specific actionable message", async () => {
-    const { input, deps, targets } = await fixture();
+    const { input, deps } = await fixture();
     deps.generate.mockRejectedValue(new VoxCpm2Error("片段达到生成长度上限，请拆短台词后重试。", 502));
     const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ statusCode: 502, message: expect.stringContaining(`第 1 段“${targets[0].expectedText}”已尝试 3 次`) });
-    expect((failure as Error).message).toContain("模型生成失败。片段达到生成长度上限，请拆短台词后重试。");
+    expect(failure).toMatchObject({ statusCode: 502, message: "片段达到生成长度上限，请拆短台词后重试。" });
     expect((failure as Error).message).not.toMatch(/台词未能核对|分段位置|原声已保留/);
-    expect(deps.generate).toHaveBeenCalledTimes(3);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.analyze).not.toHaveBeenCalled();
+  });
+
+  it("retains a published raw recording even if the provider then reports an incomplete generation", async () => {
+    const { root, input, deps, waves } = await fixture();
+    deps.generate.mockImplementation(async ({ onRawOutput }) => {
+      await onRawOutput!(waves[0]);
+      throw new VoxCpm2Error("本次录音达到生成长度上限。", 502);
+    });
+    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 502 });
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    expect(new Uint8Array(await readFile(path.join(root, "voxcpm2-product", "long-text", run, "group-1-take-1-source.wav")))).toEqual(waves[0]);
+    expect(deps.generate).toHaveBeenCalledOnce();
     expect(deps.analyze).not.toHaveBeenCalled();
   });
 
   it("reports a full disk without rerunning TTS even when both failure logs also cannot be written", async () => {
-    const { root, input, deps, targets } = await fixture();
+    const { root, input, deps } = await fixture();
     const writeTrace = vi.fn<NonNullable<Dependencies["writeTrace"]>>(async (filePath, data) => {
       if (path.basename(filePath) === "plan.json") return writeFile(filePath, data);
       throw Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
     });
     const failure = await generateVoiceLongText(input, { ...deps, writeTrace }).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ statusCode: 503, message: expect.stringContaining(`第 1 段“${targets[0].expectedText}”已尝试 1 次`) });
-    expect((failure as Error).message).toContain("保存这段录音时失败。请检查运行目录的可用空间和写入权限");
+    expect(failure).toMatchObject({ statusCode: 503, message: expect.stringContaining("第 1 段保存录音时失败") });
+    expect((failure as Error).message).toContain("请检查运行目录的可用空间和写入权限");
     expect((failure as Error).message).not.toMatch(/模型生成失败|录音与台词/);
     expect(deps.generate).toHaveBeenCalledOnce();
     expect(deps.analyze).not.toHaveBeenCalled();
-    expect(writeTrace.mock.calls.map(([filePath]) => path.basename(filePath))).toEqual([
-      "plan.json", "group-1-take-1-source.wav", "group-1-take-1-failure.json", "failure.json",
-    ]);
+    const writes = writeTrace.mock.calls.map(([filePath]) => path.basename(filePath));
+    expect(writes).toEqual(expect.arrayContaining(["plan.json", "group-1-take-1-failure.json", "failure.json"]));
+    expect(writes.filter((name) => name.startsWith("group-1-take-1-source.wav"))).toHaveLength(1);
     expect(await traceFiles(root)).not.toContain("assembled.wav");
     expect(await readdir(path.join(root, "locks"))).toEqual([]);
   });
@@ -279,16 +334,15 @@ describe("long-text generation orchestration with injected engine and alignment"
     ]);
   });
 
-  it("keeps all three quality-check attempts when only failure diagnostics cannot be written", async () => {
+  it("still delivers all complete sources when only failure diagnostics cannot be written", async () => {
     const { input, deps } = await fixture();
     deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("unsafe word boundary", 422, "cut_text_mismatch"));
     const writeTrace = vi.fn<NonNullable<Dependencies["writeTrace"]>>(async (filePath, data) => {
       if (path.basename(filePath).endsWith("failure.json")) throw Object.assign(new Error("Permission denied"), { code: "EACCES" });
       await writeFile(filePath, data);
     });
-    const failure = await generateVoiceLongText(input, { ...deps, writeTrace }).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ statusCode: 502, message: expect.stringContaining("截取后的录音与台词未能核对一致") });
-    expect((failure as Error).message).toContain("已尝试 3 次");
+    const result = await generateVoiceLongText(input, { ...deps, writeTrace });
+    expect(result.provenance.longText!.groups.map((group) => group.checkStatus)).toEqual(["review", "review", "review"]);
     expect(deps.generate).toHaveBeenCalledTimes(3);
     expect(deps.analyze).toHaveBeenCalledTimes(3);
   });
@@ -298,8 +352,8 @@ describe("long-text generation orchestration with injected engine and alignment"
     const blockedAssetRoot = path.join(root, "asset-directory-is-a-file");
     await writeFile(blockedAssetRoot, "keep this file");
     input.config.clipAssetRoot = blockedAssetRoot;
-    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 503, message: expect.stringContaining("保存这段录音时失败") });
-    expect(deps.generate).toHaveBeenCalledOnce();
+    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 503, message: expect.stringContaining("保存录音时失败") });
+    expect(deps.generate.mock.calls.length).toBeLessThanOrEqual(2);
     expect(deps.analyze).toHaveBeenCalledOnce();
     expect(await readFile(blockedAssetRoot, "utf8")).toBe("keep this file");
     expect(await traceFiles(root)).toEqual(expect.arrayContaining(["group-1-take-1-source.wav", "group-1-take-1-failure.json", "failure.json"]));
@@ -314,9 +368,9 @@ describe("long-text generation orchestration with injected engine and alignment"
     input.text = plan.clauses.join("");
     deps.generate.mockResolvedValue({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] });
     deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("unsafe word boundary", 422, "uncertain_word_alignment"));
-    const failure = await generateVoiceLongText(input, deps).catch((error: unknown) => error);
-    expect((failure as Error).message).toContain(`第 1 段“${Array.from(plan.groups[0].text).slice(0, 28).join("")}…”`);
-    expect((failure as Error).message).not.toContain(plan.groups[0].text);
+    const result = await generateVoiceLongText(input, deps);
+    expect(result.qualityWarnings.join(" ")).toContain(`第 1 段“${Array.from(plan.groups[0].text).slice(0, 28).join("")}…”`);
+    expect(result.qualityWarnings.join(" ")).not.toContain(plan.groups[0].text);
     expect(deps.generate.mock.calls[0][0].text).toBe(buildLongTextInputs(plan)[0].text);
     expect(deps.analyze.mock.calls[0][0].expectedText).toBe(plan.groups[0].text);
   });
@@ -332,7 +386,7 @@ describe("long-text generation orchestration with injected engine and alignment"
       return new Promise((_, reject) => {
         signal!.addEventListener("abort", () => {
           terminated();
-          dependency?.runtimeSession?.processExited();
+          dependency?.runtimeSession?.processExited(123456);
           reject(new VoxCpm2Error("Cancelled fixture", 499));
         }, { once: true });
       });
@@ -347,6 +401,51 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(deps.analyze).not.toHaveBeenCalled();
     expect(await readdir(path.join(root, "locks"))).toEqual([]);
     expect(await traceFiles(root)).not.toContain("assembled.wav");
+  });
+
+  it("cancels both overlapping native stages and retains already completed full source audio", async () => {
+    const { root, input, deps, waves, targets } = await fixture();
+    const controller = new AbortController();
+    const asrStarted = deferred<void>();
+    const nextTtsStarted = deferred<void>();
+    const terminated: string[] = [];
+    deps.generate.mockImplementation(async ({ text, signal }, dependency) => {
+      if (text === targets[0].text) return {
+        wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [],
+      };
+      dependency?.runtimeSession?.processStarted(123456);
+      nextTtsStarted.resolve();
+      return new Promise((_, reject) => {
+        signal!.addEventListener("abort", () => {
+          terminated.push("tts");
+          dependency?.runtimeSession?.processExited(123456);
+          reject(new VoxCpm2Error("Cancelled fixture TTS", 499));
+        }, { once: true });
+      });
+    });
+    deps.analyze.mockImplementation(async ({ signal }, dependency) => {
+      dependency?.runtimeSession?.processStarted(123457);
+      asrStarted.resolve();
+      return new Promise((_, reject) => {
+        signal!.addEventListener("abort", () => {
+          terminated.push("asr");
+          dependency?.runtimeSession?.processExited(123457);
+          reject(new VoiceGroupAnalysisError("Cancelled fixture ASR", 499));
+        }, { once: true });
+      });
+    });
+    const pending = generateVoiceLongText({ ...input, signal: controller.signal }, { ...deps, pipeline: "overlap" });
+    const rejected = expect(pending).rejects.toMatchObject({ statusCode: 499 });
+    await Promise.all([asrStarted.promise, nextTtsStarted.promise]);
+    controller.abort();
+    await rejected;
+    expect(terminated.sort()).toEqual(["asr", "tts"]);
+    expect(deps.generate).toHaveBeenCalledTimes(2);
+    expect(deps.analyze).toHaveBeenCalledOnce();
+    const traceRoot = path.join(root, "voxcpm2-product", "long-text");
+    const [run] = await readdir(traceRoot);
+    expect(new Uint8Array(await readFile(path.join(traceRoot, run, "group-1-take-1-source.wav")))).toEqual(waves[0]);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
   });
 
   it("reserves the native runtime between groups so a second request cannot start another engine call", async () => {
@@ -376,18 +475,107 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(await readdir(path.join(root, "locks"))).toEqual([]);
   });
 
-  it.each(["readiness", "generation", "analysis"] as const)("does not reroll a configuration or resource failure at %s", async (stage) => {
+  it("continues generation when local ASR readiness is unavailable", async () => {
     const { input, deps } = await fixture();
-    if (stage === "readiness") deps.readiness.mockResolvedValue({ available: false, reason: "ASR unavailable" });
-    if (stage === "generation") deps.generate.mockRejectedValue(new VoxCpm2Error("Model configuration unavailable", 503));
-    if (stage === "analysis") deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("ASR unavailable", 503));
-    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({
-      statusCode: 503,
-      message: stage === "generation" ? "Model configuration unavailable" : "ASR unavailable",
+    deps.readiness.mockResolvedValue({ available: false, reason: "ASR unavailable" });
+    const result = await generateVoiceLongText(input, deps);
+    expect(deps.plan).toHaveBeenCalledOnce();
+    expect(deps.generate).toHaveBeenCalledTimes(3);
+    expect(deps.analyze).not.toHaveBeenCalled();
+    expect(result.provenance.longText!.groups.every((group) => group.checkStatus === "review")).toBe(true);
+    expect(result.qualityWarnings.join(" ")).toMatch(/完整原音|完整录音/);
+  });
+
+  it.each([
+    new VoiceGroupAnalysisError("ASR unavailable", 503),
+    new VoiceGroupAnalysisError("ASR analysis timed out", 504),
+    new Error("Unknown analysis exception"),
+  ])("delivers original audio when the analyzer fails with %s", async (error) => {
+    const { input, deps, waves } = await fixture();
+    deps.analyze.mockRejectedValue(error);
+    const result = await generateVoiceLongText(input, deps);
+    expect(deps.generate).toHaveBeenCalledTimes(3);
+    expect(deps.analyze).toHaveBeenCalledTimes(error instanceof VoiceGroupAnalysisError && [503, 504].includes(error.statusCode) ? 1 : 3);
+    for (const group of result.provenance.longText!.groups) {
+      expect(group.checkStatus).toBe("review");
+      expect(group.diagnosticCode).toMatch(/^[a-z0-9_]+$/);
+      expect(group.transcript).toBe("");
+      expect(group.coverage).toBe(0);
+      expect(new Uint8Array(await readFile(resolveClipAssetPath(group.asset.assetId, input.config)))).toEqual(waves[group.index]);
+    }
+    expect(result.qualityWarnings.join(" ")).not.toMatch(/ASR unavailable|Unknown analysis exception/);
+  });
+
+  it("does not reroll a model configuration failure", async () => {
+    const { input, deps } = await fixture();
+    deps.generate.mockRejectedValue(new VoxCpm2Error("Model configuration unavailable", 503));
+    await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ statusCode: 503, message: "Model configuration unavailable" });
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.analyze).not.toHaveBeenCalled();
+  });
+
+  it("starts independent text planning and ASR readiness together", async () => {
+    const { input, deps, plan } = await fixture();
+    const planning = deferred<void>();
+    const checking = deferred<void>();
+    const finishPlan = deferred<VoiceLongTextPlan>();
+    const finishReadiness = deferred<{ available: boolean }>();
+    deps.plan.mockImplementation(async () => { planning.resolve(); return finishPlan.promise; });
+    deps.readiness.mockImplementation(async () => { checking.resolve(); return finishReadiness.promise; });
+    const pending = generateVoiceLongText(input, { ...deps, pipeline: "overlap" });
+    try {
+      await Promise.all([planning.promise, checking.promise]);
+      expect(deps.generate).not.toHaveBeenCalled();
+    } finally {
+      finishPlan.resolve(plan);
+      finishReadiness.resolve({ available: true });
+      await pending;
+    }
+  });
+
+  it("overlaps one next TTS with the current ASR while bounding generation ahead and keeping ASR serial", async () => {
+    const { input, deps, targets } = await fixture();
+    const analysisStarted = [deferred<void>(), deferred<void>()];
+    const analysisRelease = [deferred<void>(), deferred<void>()];
+    const generated = [deferred<void>(), deferred<void>(), deferred<void>()];
+    const originalGenerate = deps.generate.getMockImplementation()!;
+    let activeAnalyzers = 0;
+    let maximumAnalyzers = 0;
+    deps.generate.mockImplementation(async (...args) => {
+      const value = await originalGenerate(...args);
+      const index = targets.findIndex((target) => target.text === args[0].text);
+      generated[index].resolve();
+      return value;
     });
-    expect(deps.generate).toHaveBeenCalledTimes(stage === "readiness" ? 0 : 1);
-    expect(deps.analyze).toHaveBeenCalledTimes(stage === "analysis" ? 1 : 0);
-    expect(deps.plan).toHaveBeenCalledTimes(stage === "readiness" ? 0 : 1);
+    deps.analyze.mockImplementation(async ({ wav, expectedText }) => {
+      const index = targets.findIndex((target) => target.expectedText === expectedText);
+      activeAnalyzers++;
+      maximumAnalyzers = Math.max(maximumAnalyzers, activeAnalyzers);
+      try {
+        if (index < 2) {
+          analysisStarted[index].resolve();
+          await analysisRelease[index].promise;
+        }
+        return analysis(wav, expectedText);
+      } finally { activeAnalyzers--; }
+    });
+    const pending = generateVoiceLongText(input, { ...deps, pipeline: "overlap" });
+    try {
+      await Promise.all([analysisStarted[0].promise, generated[1].promise]);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(deps.generate).toHaveBeenCalledTimes(2);
+      expect(deps.analyze).toHaveBeenCalledOnce();
+      analysisRelease[0].resolve();
+      await Promise.all([analysisStarted[1].promise, generated[2].promise]);
+      expect(deps.generate).toHaveBeenCalledTimes(3);
+      expect(deps.analyze).toHaveBeenCalledTimes(2);
+    } finally {
+      analysisRelease[0].resolve();
+      analysisRelease[1].resolve();
+      await pending;
+    }
+    expect(maximumAnalyzers).toBe(1);
+    expect(deps.analyze).toHaveBeenCalledTimes(3);
   });
 
   it.each([0, 1])("rerolls group %i, updates first-group provenance, and reuses other assets without clearing prior warnings", async (retryGroupIndex) => {

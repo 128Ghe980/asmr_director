@@ -2,10 +2,12 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { PassThrough } from "node:stream";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLocalRuntimeConfig } from "./local-runtime-config";
 import { writePcm16MonoWav } from "./procedural-audio";
-import { analyzeVoiceGroup, getVoiceAnalysisReadiness, type VoiceAnalysisSpawn } from "./voice-group-analysis";
+import { analyzeVoiceGroup, getVoiceAnalysisReadiness, shouldReuseVoiceAnalysis, VoiceGroupAnalysisError, type VoiceAnalysisSpawn } from "./voice-group-analysis";
+import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 
 async function fixture() {
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "voice-analysis-"));
@@ -47,7 +49,79 @@ function successfulSpawn(wav: Uint8Array, response: unknown = validResult): Voic
   });
 }
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("local voice-group verification", () => {
+  it("shares the initial readiness probe with analysis after the global cache lifetime and registers cleanup once", async () => {
+    const { input, readinessImpl } = await fixture();
+    const readiness = vi.fn(readinessImpl);
+    await withVoxCpm2RuntimeSession(input.config, undefined, async (session) => {
+      const onClose = vi.fn(session.onClose!);
+      const runtimeSession = { ...session, onClose };
+      const dependencies = { runtimeSession, readinessImpl: readiness };
+      await expect(getVoiceAnalysisReadiness(input.config, dependencies)).resolves.toEqual({ available: true });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+      try {
+        await expect(analyzeVoiceGroup(input, { ...dependencies, spawnImpl: successfulSpawn(input.wav) })).resolves.toHaveProperty("wav");
+        await expect(getVoiceAnalysisReadiness(input.config, dependencies)).resolves.toEqual({ available: true });
+        expect(readiness).toHaveBeenCalledOnce();
+        expect(onClose).toHaveBeenCalledOnce();
+      } finally { clock.mockRestore(); }
+    });
+    await withVoxCpm2RuntimeSession(input.config, undefined, async (runtimeSession) => {
+      await expect(getVoiceAnalysisReadiness(input.config, { runtimeSession, readinessImpl: readiness })).resolves.toEqual({ available: true });
+    });
+    expect(readiness).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains an unavailable probe within its session without repeatedly importing a broken environment", async () => {
+    const { input } = await fixture();
+    const readiness = vi.fn().mockRejectedValue(new VoiceGroupAnalysisError("Unavailable fixture environment", 503));
+    const spawnImpl = vi.fn();
+    await withVoxCpm2RuntimeSession(input.config, undefined, async (runtimeSession) => {
+      const dependencies = { runtimeSession, readinessImpl: readiness };
+      await expect(getVoiceAnalysisReadiness(input.config, dependencies)).resolves.toMatchObject({ available: false });
+      await expect(analyzeVoiceGroup(input, { ...dependencies, spawnImpl })).rejects.toMatchObject({ statusCode: 503 });
+      expect(readiness).toHaveBeenCalledOnce();
+      expect(spawnImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps one worker and readiness check across groups, including a rejected transcript", async () => {
+    vi.stubEnv("ASMR_VOICE_ASR_REUSE", "always");
+    const { input, runtimeRoot, readinessImpl } = await fixture();
+    const readiness = vi.fn(readinessImpl);
+    let requests = 0;
+    const process = Object.assign(child(), { stdin: new PassThrough(), stdout: new PassThrough() });
+    process.stdin.on("end", () => process.emit("close", 0));
+    process.stdin.on("data", async (chunk: Buffer) => {
+      const { requestPath } = JSON.parse(chunk.toString());
+      const request = JSON.parse(await readFile(requestPath, "utf8"));
+      requests++;
+      await writeFile(request.outputWav, input.wav);
+      await writeFile(request.outputJson, JSON.stringify(requests === 1
+        ? { version: 1, success: false, code: "cut_text_mismatch" } : validResult));
+      process.stdout.write(JSON.stringify({ requestPath, code: 0 }) + "\n");
+    });
+    const workerSpawnImpl = vi.fn(() => process);
+    await withVoxCpm2RuntimeSession(input.config, undefined, async (runtimeSession) => {
+      const dependencies = { runtimeSession, readinessImpl: readiness, workerSpawnImpl };
+      await expect(analyzeVoiceGroup(input, dependencies)).rejects.toMatchObject({ diagnosticCode: "cut_text_mismatch" });
+      await expect(analyzeVoiceGroup(input, dependencies)).resolves.toMatchObject({ wav: input.wav });
+      expect(workerSpawnImpl).toHaveBeenCalledOnce();
+      expect(readiness).toHaveBeenCalledOnce();
+      expect(process.kill).not.toHaveBeenCalled();
+    });
+    expect(requests).toBe(2);
+    expect(await readdir(path.join(runtimeRoot, "voxcpm2-product", "analysis-runs"))).toEqual([]);
+    expect(await readdir(path.join(runtimeRoot, "locks"))).toEqual([]);
+  });
+  it("reuses a resident model automatically only with enough spare physical memory", () => {
+    expect(shouldReuseVoiceAnalysis(5 * 1024 ** 3, "auto")).toBe(false);
+    expect(shouldReuseVoiceAnalysis(8 * 1024 ** 3, "auto")).toBe(true);
+    expect(shouldReuseVoiceAnalysis(32 * 1024 ** 3, "off")).toBe(false);
+    expect(shouldReuseVoiceAnalysis(2 * 1024 ** 3, "always")).toBe(true);
+  });
   it("uses an offline hidden process and validates/copies the result before removing the temporary directory", async () => {
     const { input, runtimeRoot, readinessImpl } = await fixture();
     const result = await analyzeVoiceGroup(input, { readinessImpl, spawnImpl: successfulSpawn(input.wav) });
@@ -137,6 +211,23 @@ describe("local voice-group verification", () => {
     await assertion;
     expect(runtimeSession.processExited).toHaveBeenCalledOnce();
     expect(await readdir(path.join(runtimeRoot, "voxcpm2-product", "analysis-runs"))).toEqual([]);
+  });
+
+  it("retires a failed spawn without a PID only once while another TTS remains registered", async () => {
+    const { input, runtimeRoot, readinessImpl } = await fixture();
+    const process = Object.assign(new EventEmitter(), { pid: undefined, kill: vi.fn() });
+    await withVoxCpm2RuntimeSession(input.config, undefined, async (runtimeSession) => {
+      runtimeSession.processStarted(22);
+      try {
+        await expect(analyzeVoiceGroup(input, { runtimeSession, readinessImpl, spawnImpl: () => {
+          setImmediate(() => { process.emit("error", new Error("spawn unavailable")); process.emit("close", -2); });
+          return process;
+        } })).rejects.toMatchObject({ statusCode: 503 });
+        const lock = JSON.parse(await readFile(path.join(runtimeRoot, "locks", "voxcpm2-generation.lock"), "utf8"));
+        expect(lock.childPids).toEqual([22]);
+      } finally { await runtimeSession.processExited(22); }
+    });
+    expect(await readdir(path.join(runtimeRoot, "locks"))).toEqual([]);
   });
 
   it("a timeout kills the child and returns a safe error", async () => {

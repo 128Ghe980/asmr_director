@@ -77,9 +77,77 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("voice generation panel", () => {
+  it("exposes failed historical originals for playback and download while generation remains busy", async () => {
+    const audioUrl = "/api/voice-generation-recordings/legacy_11111111-2222-4333-8444-555555555555_1_3";
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ recordings: [{
+      recordingId: "legacy_11111111-2222-4333-8444-555555555555_1_3", runId: "11111111-2222-4333-8444-555555555555",
+      group: 1, take: 3, createdAt: "2026-09-20T08:27:03.201Z", expectedText: "回来啦？", inputText: "回来啦？补充文案。",
+      duration: 22.72, audioUrl, status: "needs_review", warning: "台词核对有疑问，请试听。", historicalMatch: true,
+    }], truncated: false }) });
+    vi.stubGlobal("fetch", fetcher);
+    render(<VoiceGenerationPanel {...props({ projectId: "project", busy: true, error: "台词未能核对一致。",
+      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" } })} />);
+    const audio = await screen.findByLabelText("完整原音 1 试听");
+    expect(audio.getAttribute("src")).toBe(audioUrl);
+    expect(audio.hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("link", { name: "下载完整原音" }).getAttribute("href")).toBe(`${audioUrl}?download=1`);
+    expect(screen.getByText("历史同文案")).toBeTruthy();
+    expect(screen.getByText("台词未能核对一致。")).toBeTruthy();
+    expect(String(fetcher.mock.calls[0][0])).toContain("projectId=project");
+    fireEvent.click(screen.getByRole("button", { name: "刷新录音" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  });
+
+  it("polls originals during generation and stops polling after completion", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ recordings: [], truncated: false }) });
+    vi.stubGlobal("fetch", fetcher);
+    const input = props({ projectId: "project", busy: true, options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" } });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    view.rerender(<VoiceGenerationPanel {...input} busy={false} />);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("loads older originals and preserves them when the latest page refreshes", async () => {
+    const recording = (take: number) => ({
+      recordingId: `current_11111111-2222-4333-8444-555555555555_1_${take}`, runId: "11111111-2222-4333-8444-555555555555",
+      group: 1, take, createdAt: "2026-09-20T08:27:03.201Z", expectedText: "回来啦？", inputText: "回来啦？",
+      duration: 1, audioUrl: `/api/voice-generation-recordings/current_11111111-2222-4333-8444-555555555555_1_${take}`,
+      status: "not_checked", warning: "当前片段原音（未做分组检查）。", historicalMatch: false,
+    });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ recordings: [recording(2)], truncated: true, nextCursor: "olderCursor" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ recordings: [recording(1)], truncated: false, nextCursor: null }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ recordings: [recording(3), recording(2)], truncated: true, nextCursor: "refreshedCursor" }) });
+    vi.stubGlobal("fetch", fetcher);
+    render(<VoiceGenerationPanel {...props({ projectId: "project", options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" } })} />);
+    fireEvent.click(await screen.findByRole("button", { name: "加载更多录音" }));
+    await screen.findByLabelText("完整原音 2 试听");
+    expect(String(fetcher.mock.calls[1][0])).toContain("cursor=olderCursor");
+    fireEvent.click(screen.getByRole("button", { name: "刷新录音" }));
+    await screen.findByLabelText("完整原音 3 试听");
+    expect(screen.getByLabelText("完整原音 3 试听").getAttribute("src")).toContain("_1_1");
+    expect(screen.queryByRole("button", { name: "加载更多录音" })).toBeNull();
+  });
+
+  it("labels review groups as complete originals awaiting listening confirmation", () => {
+    const take = longTextCandidate();
+    take.provenance.longText.groups[0].checkStatus = "review";
+    render(<VoiceGenerationPanel {...props({ candidates: [take] })} />);
+    expect(screen.getByText("完整原音 · 待试听确认")).toBeTruthy();
+    expect(screen.getByLabelText("候选 1 第 1 组试听")).toBeTruthy();
+  });
+
   it("waits for user playback before announcing spatial preparation, then clears it when ready", () => {
     render(<VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()] })} />);
     const audio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;

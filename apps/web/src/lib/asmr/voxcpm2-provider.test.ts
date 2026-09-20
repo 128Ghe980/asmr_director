@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { writePcm16MonoWav } from "./procedural-audio";
 import { getLocalRuntimeConfig } from "./local-runtime-config";
 import { generateVoxCpm2, type VoxCpm2Spawn } from "./voxcpm2-provider";
+import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "voxcpm-run-"));
@@ -94,6 +95,22 @@ describe("VoxCPM2 native provider", () => {
     expect(spawnImpl).not.toHaveBeenCalled();
     expect(await readFile(path.join(root, "locks", "voxcpm2-generation.lock"), "utf8")).toContain("123");
   });
+  it("retires a failed spawn without a PID only once and preserves an overlapping ASR reservation", async () => {
+    const { input, root } = await fixture();
+    const process = Object.assign(new EventEmitter(), { pid: undefined, stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
+    await withVoxCpm2RuntimeSession(input.config, undefined, async (runtimeSession) => {
+      runtimeSession.processStarted(22);
+      try {
+        await expect(generateVoxCpm2(input, { runtimeSession, spawnImpl: () => {
+          setImmediate(() => { process.emit("error", new Error("spawn unavailable")); process.emit("close", -2, null); });
+          return process;
+        } })).rejects.toMatchObject({ statusCode: 503 });
+        const lock = JSON.parse(await readFile(path.join(root, "locks", "voxcpm2-generation.lock"), "utf8"));
+        expect(lock.childPids).toEqual([22]);
+      } finally { await runtimeSession.processExited(22); }
+    });
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+  });
   it("holds the lock until cancellation actually stops the child and then allows another candidate", async () => {
     const { input, output, root } = await fixture();
     const controller = new AbortController();
@@ -126,6 +143,62 @@ describe("VoxCPM2 native provider", () => {
     await expect(generateVoxCpm2(input, { timeoutMs: 5, exitWaitMs: 5, spawnImpl: () => process })).rejects.toMatchObject({ statusCode: 503 });
     expect(await readdir(path.join(root, "locks"))).toHaveLength(1);
   });
+  it("publishes final native bytes once after a late close without reading a live partial file", async () => {
+    const { input, root, output } = await fixture();
+    const process = child();
+    process.kill.mockImplementation(() => false);
+    let outputPath = "";
+    let launched!: () => void;
+    const started = new Promise<void>((resolve) => { launched = resolve; });
+    let published!: () => void;
+    const publication = new Promise<void>((resolve) => { published = resolve; });
+    const onRawOutput = vi.fn(async () => { published(); });
+    const pending = generateVoxCpm2({ ...input, onRawOutput }, {
+      timeoutMs: 30, exitWaitMs: 5,
+      spawnImpl: (_command, args) => {
+        outputPath = args[args.indexOf("-o") + 1];
+        launched();
+        return process;
+      },
+    });
+    const rejected = expect(pending).rejects.toMatchObject({ statusCode: 503 });
+    await started;
+    await writeFile(outputPath, output.slice(0, 100));
+    await rejected;
+    expect(onRawOutput).not.toHaveBeenCalled();
+    expect(await readdir(path.join(root, "locks"))).toHaveLength(1);
+    expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toHaveLength(1);
+    await writeFile(outputPath, output);
+    expect(onRawOutput).not.toHaveBeenCalled();
+    process.emit("close", 0, null);
+    await publication;
+    expect(onRawOutput).toHaveBeenCalledExactlyOnceWith(output);
+    await vi.waitFor(async () => {
+      expect(await readdir(path.join(root, "locks"))).toEqual([]);
+      expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
+    });
+    process.emit("close", 0, null);
+    expect(onRawOutput).toHaveBeenCalledOnce();
+    await expect(generateVoxCpm2(input, { spawnImpl: successfulSpawn(output) })).resolves.toHaveProperty("wav");
+  });
+  it("retains late output and releases the stopped process lock if publishing fails", async () => {
+    const { input, root, output } = await fixture();
+    const process = child();
+    process.kill.mockImplementation(() => false);
+    let outputPath = "";
+    const onRawOutput = vi.fn().mockRejectedValue(new Error("Disk unavailable"));
+    await expect(generateVoxCpm2({ ...input, onRawOutput }, {
+      timeoutMs: 5, exitWaitMs: 5, spawnImpl: (_command, args) => {
+        outputPath = args[args.indexOf("-o") + 1];
+        return process;
+      },
+    })).rejects.toMatchObject({ statusCode: 503 });
+    await writeFile(outputPath, output);
+    process.emit("close", 0, null);
+    await vi.waitFor(async () => { expect(await readdir(path.join(root, "locks"))).toEqual([]); });
+    expect(onRawOutput).toHaveBeenCalledExactlyOnceWith(output);
+    expect(new Uint8Array(await readFile(outputPath))).toEqual(output);
+  });
   it("does not expose raw CLI errors or server paths", async () => {
     const { input } = await fixture();
     await expect(generateVoxCpm2(input, { spawnImpl: () => {
@@ -134,11 +207,34 @@ describe("VoxCPM2 native provider", () => {
       return process;
     } })).rejects.toThrow("VoxCPM2 生成失败，请稍后重试。");
   });
-  it("rejects missing, malformed, silent, mismatched-format and step-limited WAVs", async () => {
+  it("rejects missing, malformed and mismatched-format WAVs without hiding bytes from the raw publisher", async () => {
     const { input } = await fixture();
-    for (const wav of [new Uint8Array(), Buffer.from("not a WAV"), writePcm16MonoWav(new Float32Array(7680), 48000), writePcm16MonoWav(new Float32Array(7680).fill(.05), 32000), writePcm16MonoWav(new Float32Array(7680 * 120).fill(.05), 48000)]) {
-      await expect(generateVoxCpm2(input, { maxSteps: 120, spawnImpl: successfulSpawn(wav) })).rejects.toHaveProperty("statusCode", 502);
+    for (const wav of [new Uint8Array(), Buffer.from("not a WAV"), writePcm16MonoWav(new Float32Array(7680).fill(.05), 32000)]) {
+      const onRawOutput = vi.fn().mockResolvedValue(undefined);
+      await expect(generateVoxCpm2({ ...input, onRawOutput }, { maxSteps: 120, spawnImpl: successfulSpawn(wav) })).rejects.toHaveProperty("statusCode", 502);
+      if (wav.length) expect(onRawOutput).toHaveBeenCalledWith(new Uint8Array(wav));
     }
+  });
+  it.each(["silent", "step_limit"])("delivers the exact %s recording with a warning instead of rejecting it", async (kind) => {
+    const { input } = await fixture();
+    const wav = writePcm16MonoWav(new Float32Array(7680 * (kind === "silent" ? 1 : 120)).fill(kind === "silent" ? 0 : .05), 48000);
+    const onRawOutput = vi.fn().mockResolvedValue(undefined);
+    const result = await generateVoxCpm2({ ...input, onRawOutput }, { maxSteps: 120, spawnImpl: successfulSpawn(wav) });
+    expect(Buffer.from(result.wav).equals(Buffer.from(wav))).toBe(true);
+    expect(onRawOutput).toHaveBeenCalledOnce();
+    expect(Buffer.from(onRawOutput.mock.calls[0][0]).equals(Buffer.from(wav))).toBe(true);
+    expect(result.qualityWarnings.join(" ")).toContain(kind === "silent" ? "接近静音" : "长度上限");
+  });
+  it("publishes an existing native output even when the process reports failure", async () => {
+    const { input, output } = await fixture();
+    const onRawOutput = vi.fn().mockResolvedValue(undefined);
+    const spawnImpl: VoxCpm2Spawn = (_command, args) => {
+      const process = child();
+      setImmediate(async () => { await writeFile(args[args.indexOf("-o") + 1], output); process.emit("close", 1, null); });
+      return process;
+    };
+    await expect(generateVoxCpm2({ ...input, onRawOutput }, { spawnImpl })).rejects.toHaveProperty("statusCode", 502);
+    expect(onRawOutput).toHaveBeenCalledExactlyOnceWith(output);
   });
   it("does not start work for a pre-cancelled request", async () => {
     const { input } = await fixture();

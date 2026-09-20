@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { availableParallelism, freemem } from "node:os";
 import type { AudioCandidate, AudioCandidateProvenance } from "./audio-candidate";
 import { resolveClipAssetPath, saveClipAsset } from "./local-asset-store";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
@@ -11,6 +12,7 @@ import { planVoiceLongText } from "./voice-longtext-planner";
 import { VoiceLongTextResultSchema, type VoiceLongTextResult } from "./voice-longtext-result";
 import { generateVoxCpm2, VoxCpm2Error } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
+import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 
 export type VoiceGenerationProgress = { progress: number; message: string };
 type GroupAudio = { wav: Uint8Array; leadingQuietMs: number; trailingQuietMs: number };
@@ -28,7 +30,8 @@ export function assembleVoiceGroups(groups: GroupAudio[], joins: ReturnType<type
     return { addedSamples, actualDurationMs: Math.round((existing + addedSamples / 48) * 10) / 10 };
   });
   const frameCount = decoded.reduce((sum, audio) => sum + audio.samples.length, 0) + gaps.reduce((sum, gap) => sum + gap.addedSamples, 0);
-  if (frameCount > 48_000 * 600) throw new Error("Long-text output too large");
+  // Twelve full originals may be retained when extraction needs human review.
+  if (frameCount > 48_000 * 1500) throw new Error("Long-text output too large");
   const samples = new Float32Array(frameCount);
   let offset = 0;
   decoded.forEach((audio, index) => { samples.set(audio.samples, offset); offset += audio.samples.length + (gaps[index]?.addedSamples ?? 0); });
@@ -39,7 +42,8 @@ export function assembleVoiceGroups(groups: GroupAudio[], joins: ReturnType<type
   const floor = Math.max(peak * .01, .001);
   let power = 0; let count = 0;
   for (const sample of samples) if (Math.abs(sample) >= floor) { power += sample * sample; count++; }
-  if (!count) throw new Error("Silent long-text output");
+  if (!count) return { wav: writePcm16Wav(samples, 48_000), loudnessGainDb: 0,
+    joins: joins.map((join, index) => ({ ...join, actualDurationMs: gaps[index].actualDurationMs })) };
   const rms = Math.sqrt(power / count);
   const gain = Math.min(10 ** (-27 / 20) / rms, 10 ** (-1 / 20) / peak);
   for (let index = 0; index < samples.length; index++) samples[index] *= gain;
@@ -51,6 +55,7 @@ export function assembleVoiceGroups(groups: GroupAudio[], joins: ReturnType<type
 
 type LongTextInput = {
   text: string; clipId: string; voicePackId: string;
+  projectId?: string; sourceFingerprint?: string;
   referenceMode: "reference_only" | "with_reference_text";
   analysisProvider: "local" | "api"; config: LocalRuntimeConfig; signal?: AbortSignal;
   onProgress?: (progress: VoiceGenerationProgress) => void;
@@ -60,51 +65,17 @@ type Dependencies = {
   plan?: typeof planVoiceLongText; generate?: typeof generateVoxCpm2; analyze?: typeof analyzeVoiceGroup;
   readiness?: typeof getVoiceAnalysisReadiness; timeoutMs?: number;
   writeTrace?: (filePath: string, data: string | Uint8Array) => Promise<void>;
+  pipeline?: "overlap" | "serial";
 };
 
-type GroupFailureStage = "generate" | "analyze" | "save";
-
-function groupFailureMessage(index: number, text: string, attempts: number, stage: GroupFailureStage, error: unknown) {
+function reviewMessage(index: number, text: string, code?: string) {
   const characters = Array.from(text.replace(/\s+/gu, " ").trim());
   const excerpt = characters.slice(0, 28).join("") + (characters.length > 28 ? "…" : "");
-  const prefix = `第 ${index + 1} 段“${excerpt}”已尝试 ${attempts} 次，仍未完成。`;
-  if (stage === "generate") {
-    const reason = error instanceof VoxCpm2Error ? error.message : "请稍后重试；若仍失败，请检查本机模型运行环境。";
-    return `${prefix}模型生成失败。${reason}`;
-  }
-  if (stage === "save") return `${prefix}保存这段录音时失败。请检查运行目录的可用空间和写入权限，然后重试。`;
-  const code = error instanceof VoiceGroupAnalysisError ? error.diagnosticCode : undefined;
-  const retryAdvice = "可以重试；文案较短时，也可以在“生成方式”里选“当前片段”，生成后完整试听。";
-  switch (code) {
-    case "no_safe_quiet_cut":
-    case "no_verified_quiet_cut":
-      return `${prefix}暂时找不到能确认不截掉字音的分段位置，因此没有拼接这次结果。${retryAdvice}`;
-    case "missing_continuation_boundary":
-    case "uncertain_boundary_timestamps":
-    case "invalid_word_timestamps":
-    case "invalid_quiet_crop":
-    case "missing_internal_boundary":
-    case "uncertain_internal_pause":
-      return `${prefix}还不能确定句子的起止位置和停顿，无法截取、拼接这段录音。${retryAdvice}`;
-    case "cut_text_mismatch":
-      return `${prefix}截取后的录音与台词未能核对一致，可能是识别没听清，也可能有漏字或多读。${retryAdvice}`;
-    case "missing_speech":
-    case "incomplete_or_unrelated_speech":
-    case "missing_or_extra_speech":
-    case "repeated_speech":
-    case "uncertain_word_alignment":
-    case "unrecognized_continuation":
-      return `${prefix}录音与台词未能核对一致，可能是识别没听清，也可能有漏字或多读。${retryAdvice}`;
-    case "silent_audio":
-    case "invalid_audio":
-    case "audio_too_large":
-      return `${prefix}模型输出的录音没有通过音频检查，请重新生成。`;
-    case "invalid_target":
-    case "clauses_do_not_cover_target":
-      return `${prefix}分段信息与台词未能对应，请重新生成。`;
-    default:
-      return `${prefix}录音检查未完成，暂时无法判断台词是否完整。请重试；若仍失败，请检查本机语音分析环境。`;
-  }
+  const reason = code === "cut_text_mismatch" ? "截取后的录音与台词未能核对一致"
+    : ["missing_speech", "incomplete_or_unrelated_speech", "missing_or_extra_speech", "repeated_speech", "uncertain_word_alignment", "unrecognized_continuation"].includes(code ?? "") ? "录音与台词未能核对一致"
+    : ["no_safe_quiet_cut", "no_verified_quiet_cut", "missing_continuation_boundary", "uncertain_boundary_timestamps", "invalid_word_timestamps", "invalid_quiet_crop", "missing_internal_boundary", "uncertain_internal_pause"].includes(code ?? "") ? "分段位置未能确认"
+    : "录音检查未完成";
+  return `第 ${index + 1} 段“${excerpt}”：${reason}，已保留完整原音供试听，没有因此重新生成或丢弃录音。`;
 }
 
 export async function generateVoiceLongText(input: LongTextInput, deps: Dependencies = {}): Promise<{
@@ -114,25 +85,30 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
   const abort = () => controller.abort(input.signal?.reason);
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
-  const timeout = setTimeout(() => controller.abort(new VoxCpm2Error("长文生成超时，本次没有产生完整候选。请缩短文案后重试。", 504)), deps.timeoutMs ?? 30 * 60 * 1000);
+  const timeout = setTimeout(() => controller.abort(new VoxCpm2Error("长文生成超时。已完成的完整原音仍可试听、下载。", 504)), deps.timeoutMs ?? 30 * 60 * 1000);
   const signal = controller.signal;
-  const check = () => { if (signal.aborted) throw signal.reason instanceof VoxCpm2Error ? signal.reason : new VoxCpm2Error("已取消生成。", 499); };
-  const progress = (value: number, message: string) => { check(); input.onProgress?.({ progress: value, message }); };
+  const check = () => { if (signal.aborted) throw signal.reason instanceof VoxCpm2Error ? signal.reason : new VoxCpm2Error("已取消生成，已完成的原音仍可试听、下载。", 499); };
+  let progressValue = 0;
+  const progress = (value: number, message: string) => { check(); progressValue = Math.max(progressValue, value); input.onProgress?.({ progress: progressValue, message }); };
   try {
     check();
     if (!input.text.trim() || input.text.trim().length > 500 || !/[\p{L}\p{N}]/u.test(input.text)) {
       throw new VoxCpm2Error("长文人声需要 1 至 500 字的可朗读文案，请拆分过长片段后再生成。", 400);
     }
-    const ready = await (deps.readiness ?? getVoiceAnalysisReadiness)(input.config);
-    check();
-    if (!ready.available) throw new VoxCpm2Error(ready.reason ?? "长文语音分析尚未就绪。", 503);
     return await withVoxCpm2RuntimeSession(input.config, signal, async (runtimeSession) => {
-      const traceRoot = path.join(input.config.runtimeRoot, "voxcpm2-product", "long-text", randomUUID());
+      const traceRoot = path.join(getVoiceGenerationRoot(input.config), "long-text", randomUUID());
       await mkdir(traceRoot, { recursive: true });
       const writeTrace = deps.writeTrace ?? ((filePath, data) => writeFile(filePath, data));
       const record = (name: string, value: unknown) => writeTrace(path.join(traceRoot, name), JSON.stringify(value, null, 2));
+      const bestEffortRecord = (name: string, value: unknown) => record(name, value).catch(() => undefined);
+      let pending: Promise<void> | undefined;
+      let asyncError: unknown;
       try {
-        progress(3, "正在分组文案");
+        progress(3, "正在分组文案，同时准备录音检查");
+        // Readiness is advisory and overlaps planning/the first TTS. A missing
+        // recognizer must never prevent the model's original audio being delivered.
+        const readiness = (deps.readiness ?? getVoiceAnalysisReadiness)(input.config, { runtimeSession })
+          .catch(() => ({ available: false, reason: "录音检查暂不可用" }));
         const prior = input.retryCandidate?.provenance.longText;
         const plan = prior?.plan ?? await (deps.plan ?? planVoiceLongText)({ text: input.text, analysisProvider: input.analysisProvider, signal });
         if (plan.clauses.join("") !== input.text.trim()) throw new VoxCpm2Error("分组内容与当前文案不一致，请重新生成。", 400);
@@ -140,110 +116,143 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
         let targets: ReturnType<typeof buildLongTextInputs>;
         try { targets = buildLongTextInputs(plan); }
         catch { throw new VoxCpm2Error("文案分组或加上停顿标点后的输入超出限制，请拆分片段后再生成。", 400); }
-        await record("plan.json", { plan, targets, createdAt: new Date().toISOString() });
+        await record("plan.json", { plan, targets, projectId: input.projectId, clipId: input.clipId,
+          sourceFingerprint: input.sourceFingerprint, createdAt: new Date().toISOString() });
         const metadata: VoiceLongTextResult["groups"] = [];
         const audioGroups: GroupAudio[] = [];
-        // A partial retry does not certify that earlier audio cautions are resolved.
-        // Preserve prior candidate warnings conservatively alongside new checks.
         const warnings = [...plan.warnings, ...(input.retryCandidate?.qualityWarnings ?? [])];
         let firstProvenance: AudioCandidateProvenance | undefined = input.retryCandidate?.provenance;
-        let asrModel = "";
+        let asrModel = prior?.asrModel ?? "unavailable";
+        const startedAt = Date.now();
+        const mode = deps.pipeline ?? process.env.ASMR_VOICE_PIPELINE;
+        const overlap = mode === "overlap" || (mode !== "serial" && freemem() >= 8 * 1024 ** 3 && availableParallelism() >= 8);
+        let analysisUnavailable = false;
+        const finishPending = async () => { await pending; pending = undefined; if (asyncError) throw asyncError; check(); };
+        const saveFailure = (index: number) => new VoxCpm2Error(`第 ${index + 1} 段保存录音时失败。请检查运行目录的可用空间和写入权限。已保存的原音仍可试听、下载。`, 503);
+        const consume = async (index: number, take: Awaited<ReturnType<typeof generateVoxCpm2>>) => {
+          const target = targets[index], prefix = `group-${index + 1}-take-1`;
+          const analysisStarted = Date.now();
+          progress(8 + index / targets.length * 84, `正在检查第 ${index + 1}/${targets.length} 组；完整原音已可试听`);
+          let analysis: Awaited<ReturnType<typeof analyzeVoiceGroup>> | undefined;
+          let diagnosticCode: string | undefined;
+          try {
+            const ready = await readiness;
+            check();
+            if (!ready.available || analysisUnavailable) throw new VoiceGroupAnalysisError("录音检查暂不可用", 503, "analysis_unavailable");
+            analysis = await (deps.analyze ?? analyzeVoiceGroup)({ wav: take.wav, expectedText: target.expectedText,
+              followingText: target.followingText, clauses: target.clauses, config: input.config, signal }, { runtimeSession });
+            check();
+            decodePcmWav(analysis.wav);
+          } catch (error) {
+            check();
+            analysis = undefined;
+            diagnosticCode = error instanceof VoiceGroupAnalysisError ? error.diagnosticCode ?? "analysis_unavailable" : "analysis_failed";
+            if (error instanceof VoiceGroupAnalysisError && [503, 504].includes(error.statusCode)) analysisUnavailable = true;
+            warnings.push(reviewMessage(index, target.expectedText, diagnosticCode));
+            await bestEffortRecord(`${prefix}-failure.json`, { stage: "analyze", code: diagnosticCode,
+              message: reviewMessage(index, target.expectedText, diagnosticCode), retainedOriginal: true, at: new Date().toISOString() });
+          }
+          const wav = analysis?.wav ?? take.wav;
+          const decoded = decodePcmWav(wav);
+          const duration = decoded.samples.length / decoded.sampleRate / decoded.channels;
+          try {
+            const asset = await saveClipAsset({ config: input.config, clipId: `${input.clipId}_group_${index + 1}`, wav, duration });
+            check();
+            const { wav: _wav, ...checks } = analysis ?? { wav };
+            void _wav;
+            await bestEffortRecord(`${prefix}-analysis.json`, { ...checks, checkStatus: analysis ? "passed" : "review", diagnosticCode,
+              analysisDurationMs: Date.now() - analysisStarted });
+            firstProvenance ??= take.provenance;
+            if (analysis) asrModel = analysis.asrModel;
+            metadata.push({ index, text: target.expectedText, inputText: target.text, paddingClauses: target.paddingClauses,
+              isFinal: target.isFinal, pauseAfter: plan.groups[index].pauseAfter,
+              seed: take.provenance.seed, parameters: take.provenance.parameters, asset,
+              internalPausesMs: analysis?.internalPausesMs ?? [],
+              internalPauseClasses: plan.clausePauseClasses.slice(plan.groups[index].start, plan.groups[index].end),
+              leadingQuietMs: analysis?.leadingQuietMs ?? 0, trailingQuietMs: analysis?.trailingQuietMs ?? 0,
+              transcript: analysis?.transcript ?? "", coverage: analysis?.coverage ?? 0,
+              cutStartSeconds: analysis?.cutStartSeconds ?? 0, cutEndSeconds: analysis?.cutEndSeconds ?? duration,
+              attempts: 1, runtimeVersion: take.provenance.runtimeVersion, referenceIdentity: take.provenance.referenceIdentity,
+              checkStatus: analysis ? "passed" : "review", diagnosticCode });
+            audioGroups.push({ wav, leadingQuietMs: analysis?.leadingQuietMs ?? 0, trailingQuietMs: analysis?.trailingQuietMs ?? 0 });
+            warnings.push(...take.qualityWarnings);
+            await bestEffortRecord("groups.json", metadata);
+            progress(8 + (index + 1) / targets.length * 84, `第 ${index + 1}/${targets.length} 组已完成${analysis ? "" : "，完整原音待试听确认"}`);
+          } catch { check(); await bestEffortRecord(`${prefix}-failure.json`, { stage: "save", message: saveFailure(index).message }); throw saveFailure(index); }
+        };
         for (let index = 0; index < targets.length; index++) {
           const target = targets[index];
           check();
           if (prior && index !== input.retryGroupIndex) {
+            await finishPending();
             const group = prior.groups[index];
             if (!group || group.text !== target.expectedText) throw new VoxCpm2Error("原候选分组已失效，请重新生成。", 400);
             const assetPath = resolveClipAssetPath(group.asset.assetId, input.config);
             const assetInfo = await stat(assetPath);
             if (!assetInfo.isFile() || assetInfo.size > 24 * 1024 * 1024) throw new VoxCpm2Error("原候选分组音频不可用，请重新生成。", 400);
             const wav = new Uint8Array(await readFile(assetPath));
-            check();
-            metadata.push(group);
-            audioGroups.push({ wav, leadingQuietMs: group.leadingQuietMs, trailingQuietMs: group.trailingQuietMs });
-            asrModel = prior.asrModel;
+            check(); metadata.push(group); audioGroups.push({ wav, leadingQuietMs: group.leadingQuietMs, trailingQuietMs: group.trailingQuietMs });
             continue;
           }
-          let accepted = false;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            check();
-            const baseProgress = 8 + index / targets.length * 84;
-            progress(baseProgress, `正在生成第 ${index + 1}/${targets.length} 组${attempt > 1 ? `（重试 ${attempt - 1}）` : ""}`);
-            const tracePrefix = `group-${index + 1}-take-${attempt}`;
-            let failureStage: GroupFailureStage = "generate";
+          if (!overlap) await finishPending();
+          const prefix = `group-${index + 1}-take-1`;
+          let rawSaved = false;
+          const publishRaw = async (wav: Uint8Array) => {
             try {
-              const take = await (deps.generate ?? generateVoxCpm2)({ text: target.text, voicePackId: input.voicePackId, referenceMode: input.referenceMode, config: input.config, signal }, { runtimeSession });
-              check();
-              failureStage = "save";
-              await writeTrace(path.join(traceRoot, `${tracePrefix}-source.wav`), take.wav);
-              await record(`${tracePrefix}-source.json`, take.provenance);
-              progress(baseProgress + 35 / targets.length, `正在核对第 ${index + 1}/${targets.length} 组台词`);
-              failureStage = "analyze";
-              const analysis = await (deps.analyze ?? analyzeVoiceGroup)({ wav: take.wav, expectedText: target.expectedText, followingText: target.followingText, clauses: target.clauses, config: input.config, signal }, { runtimeSession });
-              check();
-              const { wav, ...checks } = analysis;
-              const decoded = decodePcmWav(wav);
-              failureStage = "save";
-              await record(`${tracePrefix}-analysis.json`, checks);
-              const asset = await saveClipAsset({ config: input.config, clipId: `${input.clipId}_group_${index + 1}`, wav, duration: decoded.samples.length / decoded.sampleRate / decoded.channels });
-              check();
-              firstProvenance ??= take.provenance;
-              asrModel = analysis.asrModel;
-              metadata.push({
-                index, text: target.expectedText, inputText: target.text, paddingClauses: target.paddingClauses,
-                isFinal: target.isFinal, pauseAfter: plan.groups[index].pauseAfter,
-                seed: take.provenance.seed, parameters: take.provenance.parameters, asset,
-                internalPausesMs: analysis.internalPausesMs,
-                internalPauseClasses: plan.clausePauseClasses.slice(plan.groups[index].start, plan.groups[index].end),
-                leadingQuietMs: analysis.leadingQuietMs, trailingQuietMs: analysis.trailingQuietMs,
-                transcript: analysis.transcript, coverage: analysis.coverage,
-                cutStartSeconds: analysis.cutStartSeconds, cutEndSeconds: analysis.cutEndSeconds,
-                attempts: attempt, runtimeVersion: take.provenance.runtimeVersion, referenceIdentity: take.provenance.referenceIdentity,
-              });
-              audioGroups.push({ wav, leadingQuietMs: analysis.leadingQuietMs, trailingQuietMs: analysis.trailingQuietMs });
-              warnings.push(...take.qualityWarnings);
-              await record("groups.json", metadata);
-              accepted = true;
-              break;
-            } catch (error) {
-              check();
-              // A full/unwritable disk may also reject this diagnostic. Preserve
-              // the original failure instead of replacing it with a log error.
-              await record(`${tracePrefix}-failure.json`, { message: error instanceof Error ? error.message : "Group failed",
-                stage: failureStage, code: error instanceof VoiceGroupAnalysisError ? error.diagnosticCode : undefined, at: new Date().toISOString() }).catch(() => undefined);
-              // Configuration/resource/cancellation faults will not improve with
-              // another seed. Only failed generation/alignment takes are retried.
-              if (failureStage === "save") throw new VoxCpm2Error(groupFailureMessage(index, target.expectedText, attempt, failureStage, error), 503);
-              if (error instanceof VoxCpm2Error && error.statusCode !== 502) throw error;
-              if (error instanceof VoiceGroupAnalysisError && ![422, 502].includes(error.statusCode)) throw new VoxCpm2Error(error.message, error.statusCode);
-              if (attempt === 3) throw new VoxCpm2Error(groupFailureMessage(index, target.expectedText, attempt, failureStage, error));
+              const source = path.join(traceRoot, `${prefix}-source.wav`);
+              await writeTrace(`${source}.tmp`, wav);
+              await rename(`${source}.tmp`, source);
+              rawSaved = true;
             }
+            catch { throw saveFailure(index); }
+          };
+          progress(8 + index / targets.length * 84, `正在生成第 ${index + 1}/${targets.length} 组${pending ? "，同时检查上一组" : ""}`);
+          const generationStarted = Date.now();
+          let take: Awaited<ReturnType<typeof generateVoxCpm2>>;
+          try {
+            take = await (deps.generate ?? generateVoxCpm2)({ text: target.text, voicePackId: input.voicePackId,
+              referenceMode: input.referenceMode, config: input.config, signal, onRawOutput: publishRaw }, { runtimeSession });
+            // Publish before any recognition or content decision, including on cancellation.
+            if (!rawSaved) await publishRaw(take.wav);
+            await bestEffortRecord(`${prefix}-source.json`, { ...take.provenance, generationDurationMs: Date.now() - generationStarted });
+          } catch (error) {
+            await bestEffortRecord(`${prefix}-failure.json`, { stage: rawSaved ? "save" : "generate",
+              message: error instanceof Error ? error.message : "生成未完成", at: new Date().toISOString() });
+            check();
+            if (error instanceof VoxCpm2Error) throw error;
+            throw new VoxCpm2Error(`第 ${index + 1} 段模型生成未完成。已保存的完整原音仍可试听、下载。`);
           }
-          if (!accepted) throw new VoxCpm2Error("长文片段未完成，请重试。");
+          check();
+          // At most one completed take waits behind one ASR job. No unbounded
+          // Promise.all across heavy models, and ASR always preserves group order.
+          await finishPending();
+          pending = consume(index, take).catch((error: unknown) => { asyncError = error; controller.abort(error); });
         }
-        check();
+        await finishPending();
         progress(94, "正在连接语音与停顿");
         const assembled = assembleVoiceGroups(audioGroups, chooseGroupPauses(metadata));
         const longText = VoiceLongTextResultSchema.parse({ version: 1, analysisProvider: plan.provider, analysisModel: plan.model, plan,
           ...(input.retryCandidate ? { baseCandidateId: input.retryCandidate.candidateId, rerolledGroup: input.retryGroupIndex } : {}),
           groups: metadata, joins: assembled.joins, loudnessGainDb: assembled.loudnessGainDb, asrModel });
+        if (metadata.some((group) => group.checkStatus === "review")) warnings.push("本候选保留了待确认组的完整原音，可能包含后续台词、补句或重复内容；各次完整原音都可单独试听、下载，请听后决定是否采用。");
         if (assembled.joins.some((join) => join.actualDurationMs > join.durationMs + 15)) warnings.push("部分连接保留了较长的自然停顿，请试听后决定是否采用。");
-        await record("result.json", longText);
-        await writeTrace(path.join(traceRoot, "assembled.wav"), assembled.wav);
-        check();
+        await bestEffortRecord("result.json", longText);
+        await bestEffortRecord("performance.json", { pipeline: overlap ? "overlap" : "serial", totalDurationMs: Date.now() - startedAt,
+          generatedGroups: metadata.filter((group) => !prior || group.index === input.retryGroupIndex).length, automaticQualityRetries: 0 });
+        await writeTrace(path.join(traceRoot, "assembled.wav"), assembled.wav).catch(() => undefined);
         progress(98, "正在保存长文候选");
         return { wav: assembled.wav, provenance: { ...firstProvenance!, seed: metadata[0].seed,
           runtimeVersion: metadata[0].runtimeVersion, referenceIdentity: metadata[0].referenceIdentity,
           generationMode: "long_text", longText,
-          parameters: { ...metadata[0].parameters, groupCount: metadata.length, normalization: "whole_active_rms_-27dBFS", padding: "fixed_neutral", totalTimeoutMs: deps.timeoutMs ?? 30 * 60 * 1000 } },
+          parameters: { ...metadata[0].parameters, groupCount: metadata.length, normalization: "whole_active_rms_-27dBFS", padding: "fixed_neutral",
+            pipeline: overlap ? "overlap" : "serial", automaticQualityRetries: 0, totalTimeoutMs: deps.timeoutMs ?? 30 * 60 * 1000 } },
           qualityWarnings: [...new Set(warnings)] };
       } catch (error) {
-        await record("failure.json", { message: error instanceof Error ? error.message : "Failed", cancelled: signal.aborted, at: new Date().toISOString() }).catch(() => undefined);
+        controller.abort(error);
+        await pending;
+        await bestEffortRecord("failure.json", { message: error instanceof Error ? error.message : "Failed", cancelled: input.signal?.aborted ?? false, at: new Date().toISOString() });
         throw error;
       }
     });
-  } finally {
-    clearTimeout(timeout);
-    input.signal?.removeEventListener("abort", abort);
-  }
+  } finally { clearTimeout(timeout); input.signal?.removeEventListener("abort", abort); }
 }

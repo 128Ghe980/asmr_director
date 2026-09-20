@@ -19,6 +19,38 @@ describe("persisted long-text result integrity", () => {
     expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(true);
   });
 
+  it("preserves an unverified full recording without inventing pause measurements or losing planned classes", () => {
+    const result = makeVoiceLongTextResultFixture();
+    const group = result.groups[0];
+    group.checkStatus = "review";
+    group.diagnosticCode = "cut_text_mismatch";
+    group.internalPausesMs = [];
+    group.transcript = "";
+    group.coverage = 0;
+    expect(group.internalPauseClasses).not.toHaveLength(0);
+    expect(VoiceLongTextResultSchema.parse(result)).toEqual(result);
+  });
+
+  it("retains strict measurement and plan integrity for review groups", () => {
+    const result = makeVoiceLongTextResultFixture();
+    result.groups[0].checkStatus = "review";
+    result.groups[0].internalPausesMs = [100, 200];
+    expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(false);
+    result.groups[0].internalPausesMs = [];
+    result.groups[0].internalPauseClasses = [];
+    expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(false);
+  });
+
+  it("does not let passed groups omit measurements or store raw diagnostic output", () => {
+    const result = makeVoiceLongTextResultFixture();
+    result.groups[0].checkStatus = "passed";
+    result.groups[0].internalPausesMs = [];
+    expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(false);
+    result.groups[0].checkStatus = "review";
+    result.groups[0].diagnosticCode = "Error: C:/private/file.wav";
+    expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(false);
+  });
+
   const corruptions: [string, (value: VoiceLongTextResult) => void][] = [
     ["duplicate group indices", (value) => { value.groups[1].index = 0; }],
     ["non-zero first group index", (value) => { value.groups[0].index = 1; }],

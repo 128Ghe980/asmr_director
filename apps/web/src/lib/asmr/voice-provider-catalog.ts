@@ -38,7 +38,8 @@ export async function getVoiceProviderCatalog(config: LocalRuntimeConfig): Promi
       },
       vox.status === "fulfilled" ? {
         id: "voxcpm2", label: "VoxCPM2", available: true,
-        longText: { ...analysis, apiConfigured },
+        longText: { available: true, apiConfigured,
+          ...(!analysis.available ? { reason: "录音检查暂不可用，仍可生成并试听完整原音。" } : {}) },
         defaultReferenceId: vox.value.defaultReferenceId,
         references: vox.value.references.map((ref) => ({ id: ref.id, label: ref.displayName, referenceModes: ref.promptText ? ["reference_only", "with_reference_text"] : ["reference_only"] })),
       } : {

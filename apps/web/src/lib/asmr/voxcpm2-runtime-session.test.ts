@@ -38,6 +38,38 @@ afterEach(async () => {
 });
 
 describe("VoxCPM2 runtime session reservation", () => {
+  it("tracks overlapping TTS and ASR separately and retains a late ASR reservation", async () => {
+    const { config, lockPath } = await fixture();
+    let session!: VoxCpm2RuntimeSession;
+    await withVoxCpm2RuntimeSession(config, undefined, async (value) => {
+      session = value;
+      session.processStarted(11);
+      session.processStarted(22);
+      expect(JSON.parse(await readFile(lockPath, "utf8")).childPids).toEqual([11, 22]);
+      await session.processExited(11);
+      expect(JSON.parse(await readFile(lockPath, "utf8")).childPids).toEqual([22]);
+    });
+    await expect(withVoxCpm2RuntimeSession(config, undefined, async () => {})).rejects.toMatchObject({ statusCode: 409 });
+    await session.processExited(11); // Duplicate TTS close must not retire ASR.
+    expect(JSON.parse(await readFile(lockPath, "utf8")).childPids).toEqual([22]);
+    await session.processExited(22);
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("finishes scoped worker cleanup before releasing the reservation", async () => {
+    const { config, lockPath } = await fixture();
+    const cleanup = vi.fn();
+    await withVoxCpm2RuntimeSession(config, undefined, async (session) => {
+      session.processStarted(22);
+      session.onClose!(async () => {
+        expect(JSON.parse(await readFile(lockPath, "utf8")).childPids).toEqual([22]);
+        cleanup();
+        await session.processExited(22);
+      });
+    });
+    expect(cleanup).toHaveBeenCalledOnce();
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("blocks another request for the whole operation, including intervals without a running child", async () => {
     const { root, config, lockPath } = await fixture();
     const started = deferred();

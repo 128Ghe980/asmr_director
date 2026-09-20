@@ -7,8 +7,10 @@ import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/play
 import type { TimelineClip } from "@/lib/asmr/schema";
 import type { VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
+import { VoiceGenerationRecordingsSchema, type VoiceGenerationRecording } from "@/lib/asmr/voice-generation-recording";
 
 export type VoiceGenerationPanelProps = {
+  projectId?: string;
   binaural?: boolean;
   options: VoiceGenerationOptions;
   onOptionsChange: (options: VoiceGenerationOptions) => void;
@@ -114,6 +116,102 @@ function VoicePreview({ src, label, onPreviewPlay }: {
   </div>;
 }
 
+function OriginalVoiceRecordings({ projectId, clipId, text, busy, onPreviewPlay }: {
+  projectId: string; clipId: string; text: string; busy: boolean;
+  onPreviewPlay: (audio: HTMLAudioElement) => void;
+}) {
+  const [recordings, setRecordings] = useState<VoiceGenerationRecording[]>([]);
+  const [error, setError] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const loadedOlder = useRef(false);
+  const paginationRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => { paginationRequest.current?.abort(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function load() {
+      try {
+        const query = new URLSearchParams({ projectId, clipId, text });
+        const response = await fetch(`/api/voice-generation-recordings?${query}`, { signal: controller.signal, cache: "no-store" });
+        if (!response.ok) throw new Error("read failed");
+        const value = VoiceGenerationRecordingsSchema.parse(await response.json());
+        if (!controller.signal.aborted) {
+          const ids = new Set(value.recordings.map((recording) => recording.recordingId));
+          setRecordings((previous) => [...value.recordings, ...previous.filter((recording) => !ids.has(recording.recordingId))]);
+          if (!loadedOlder.current) setNextCursor(value.nextCursor);
+          setError("");
+        }
+      } catch {
+        if (!controller.signal.aborted) setError("原始录音列表暂时无法更新，可重试读取。已显示的录音仍可试听和下载。");
+      } finally {
+        if (busy && !controller.signal.aborted) timer = setTimeout(() => { void load(); }, 2000);
+      }
+    }
+    void load();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [projectId, clipId, text, busy, refresh]);
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    const controller = new AbortController();
+    paginationRequest.current?.abort();
+    paginationRequest.current = controller;
+    loadedOlder.current = true;
+    setLoadingMore(true);
+    try {
+      const query = new URLSearchParams({ projectId, clipId, text, cursor: nextCursor });
+      const response = await fetch(`/api/voice-generation-recordings?${query}`, { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) throw new Error("read failed");
+      const value = VoiceGenerationRecordingsSchema.parse(await response.json());
+      if (!controller.signal.aborted) {
+        setRecordings((previous) => {
+          const ids = new Set(previous.map((recording) => recording.recordingId));
+          return [...previous, ...value.recordings.filter((recording) => !ids.has(recording.recordingId))];
+        });
+        setNextCursor(value.nextCursor);
+        setError("");
+      }
+    } catch {
+      if (!controller.signal.aborted) setError("较早录音暂时无法读取，请再次加载。已显示的录音仍可试听和下载。");
+    } finally {
+      if (!controller.signal.aborted) setLoadingMore(false);
+    }
+  }
+
+  return <section aria-label="完整原始录音" className="min-w-0 space-y-2 rounded-lg border border-studio-line p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-xs font-semibold text-studio-text">完整原始录音</p>
+      <button type="button" className={`${buttonClass} text-studio-muted`} onClick={() => setRefresh((value) => value + 1)}>刷新录音</button>
+    </div>
+    <p className="break-words text-xs leading-5 text-studio-muted">每条录音生成后即可完整试听、下载，检查结果仅作提示。长文录音可能包含后续台词和用于保持语气的补充文案。</p>
+    {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
+    {!recordings.length ? <p className="text-xs leading-5 text-studio-muted">{nextCursor ? "本页尚未找到这段台词的录音，可加载更多继续查看。" : busy ? "第一条录音完成后会自动显示在这里。" : "这段台词暂无原始录音。"}</p> : null}
+    <div className="max-h-[32rem] min-w-0 space-y-3 overflow-y-auto">
+      {recordings.map((recording, index) => <article key={recording.recordingId} aria-label={`完整原音 ${index + 1}`} className="min-w-0 space-y-2 border-t border-studio-line pt-3">
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          <span className="font-semibold text-studio-text">第 {recording.group} 组 · 第 {recording.take} 次</span>
+          {recording.duration !== null ? <span className="text-studio-muted">{recording.duration.toFixed(1)} 秒</span> : null}
+          {recording.historicalMatch ? <span className="text-studio-muted">历史同文案</span> : null}
+        </div>
+        <p className="break-words text-xs leading-5 text-studio-muted">{recording.expectedText}</p>
+        <VoicePreview src={recording.audioUrl} label={`完整原音 ${index + 1} 试听`} onPreviewPlay={onPreviewPlay} />
+        <p className={`break-words text-xs leading-5 ${recording.status === "needs_review" ? "text-amber-100" : "text-studio-muted"}`}>{recording.warning}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <a className={`${buttonClass} inline-flex items-center text-studio-text`} href={`${recording.audioUrl}?download=1`} download>下载完整原音</a>
+          <span className="text-xs text-studio-muted">{new Date(recording.createdAt).toLocaleString("zh-CN")}</span>
+        </div>
+        <details className="text-xs leading-5 text-studio-muted">
+          <summary className="cursor-pointer">查看本次模型朗读文案</summary>
+          <p className="mt-1 break-words">{recording.inputText}</p>
+        </details>
+      </article>)}
+    </div>
+    {nextCursor ? <button type="button" className={`${buttonClass} text-studio-muted`} disabled={loadingMore} onClick={() => { void loadMore(); }}>{loadingMore ? "正在读取更多录音…" : "加载更多录音"}</button> : null}
+  </section>;
+}
+
 function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenerationDisabled, onRegenerateGroup, onPreviewPlay }: {
   candidate: AudioCandidate;
   candidateNumber: number;
@@ -156,6 +254,7 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
         const audio = resolvePlayableAssetUri(group.asset.uri);
         return <li key={group.index} className="min-w-0 space-y-2">
           <p className="font-semibold text-studio-text">第 {groupNumber} 组</p>
+          {group.checkStatus === "review" ? <p className="break-words leading-5 text-amber-100">完整原音 · 待试听确认</p> : null}
           <p title={group.text} className="truncate leading-5">{group.text}</p>
           {audio ? <details className="min-w-0">
             <summary className="cursor-pointer py-1">试听本组</summary>
@@ -169,6 +268,7 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
 }
 
 export function VoiceGenerationPanel({
+  projectId,
   options, onOptionsChange, catalog, catalogError, busy, candidates, selectedClip,
   onAdopt, onDiscard, onUndo, canUndo, hasUndo, error, loading = false,
   generationControl, onRegenerateGroup,
@@ -288,6 +388,9 @@ export function VoiceGenerationPanel({
     {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
 
     {generationControl}
+
+    {isVox && projectId ? <OriginalVoiceRecordings key={`${projectId}:${selectedClip.id}:${selectedClip.text}`} projectId={projectId}
+      clipId={selectedClip.id} text={selectedClip.text} busy={busy} onPreviewPlay={pauseOtherPreviews} /> : null}
 
     {currentAudio ? <div className="min-w-0 space-y-2">
       <p className="text-xs text-studio-muted">当前人声</p>

@@ -10,6 +10,7 @@ import { resolveVoxCpm2ProfilePath, type VoiceReferenceMode } from "./voice-prov
 import { loadVoxCpm2Profile, selectVoxCpm2Reference } from "./voxcpm2-profile";
 import { VoxCpm2Error } from "./voxcpm2-error";
 import { withVoxCpm2RuntimeSession, type VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
+import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 export { VoxCpm2Error } from "./voxcpm2-error";
 
 type VoxCpm2Child = {
@@ -33,6 +34,8 @@ export type GenerateVoxCpm2Input = {
   config: LocalRuntimeConfig;
   signal?: AbortSignal;
   now?: Date;
+  // Internal publisher: retain exact native output before any quality decision.
+  onRawOutput?: (wav: Uint8Array) => Promise<void>;
 };
 
 // These controls are server/test dependencies; the HTTP route never accepts them.
@@ -62,10 +65,16 @@ function waitForProcess(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let exitConfirmed = false;
     let stopping: VoxCpm2Error | null = null;
     let terminationTimer: ReturnType<typeof setTimeout> | undefined;
     let log = "";
     const capture = (chunk: Buffer | string) => { log = (log + chunk.toString()).slice(-MAX_LOG_LENGTH); };
+    const confirmExit = () => {
+      if (exitConfirmed) return;
+      exitConfirmed = true;
+      onConfirmedExit();
+    };
     child.stdout?.on("data", capture);
     child.stderr?.on("data", capture);
     const finish = (error?: VoxCpm2Error) => {
@@ -87,14 +96,14 @@ function waitForProcess(
     const timer = setTimeout(() => stop(new VoxCpm2Error("生成超时，请缩短台词后重试。", 504)), timeoutMs);
     child.once("error", () => {
       if (!child.pid) {
-        onConfirmedExit();
+        confirmExit();
         finish(new VoxCpm2Error("VoxCPM2 无法启动，请检查本机运行环境。", 503));
       } else {
         stop(new VoxCpm2Error("VoxCPM2 生成失败，请稍后重试。"));
       }
     });
     child.once("close", (code) => {
-      onConfirmedExit();
+      confirmExit();
       finish(stopping ?? (code === 0 ? undefined : new VoxCpm2Error("VoxCPM2 生成失败，请稍后重试。")));
     });
     signal?.addEventListener("abort", abort, { once: true });
@@ -159,7 +168,24 @@ export async function generateVoxCpm2(
 
   let confirmedExit = true;
   let temporaryRoot: string | undefined;
-  const temporaryBase = path.resolve(config.runtimeRoot, "voxcpm2-product", "runs");
+  let rawPublished = false;
+  let operationFinished = false;
+  let lateRecoveryStarted = false;
+  const temporaryBase = path.join(getVoiceGenerationRoot(config), "runs");
+  const recoverRawOutput = async () => {
+    if (rawPublished || !confirmedExit || !temporaryRoot || !input.onRawOutput) return;
+    const outputPath = path.join(temporaryRoot, "output.wav");
+    const info = await stat(outputPath).catch(() => undefined);
+    if (info?.isFile() && info.size > 0 && info.size <= 24 * 1024 * 1024) {
+      await input.onRawOutput(new Uint8Array(await readFile(outputPath)));
+      rawPublished = true;
+    }
+  };
+  const removeTemporaryOutput = async () => {
+    if (temporaryRoot && path.resolve(temporaryRoot).startsWith(temporaryBase + path.sep)) {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  };
   try {
     checkCancelled(signal);
     const referenceInfo = await stat(reference.audioPath);
@@ -184,21 +210,37 @@ export async function generateVoxCpm2(
     const child = spawnImpl(profile.cliPath, args, { cwd: path.dirname(profile.cliPath), shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     confirmedExit = false;
     dependencies.runtimeSession.processStarted(child.pid);
-    const completion = waitForProcess(child, { signal, timeoutMs, exitWaitMs }, () => { confirmedExit = true; dependencies.runtimeSession!.processExited(); });
+    const completion = waitForProcess(child, { signal, timeoutMs, exitWaitMs }, () => {
+      confirmedExit = true;
+      if (operationFinished && !lateRecoveryStarted) {
+        lateRecoveryStarted = true;
+        // The caller may already have received an exit-wait timeout. Only this
+        // confirmed close makes its final output safe to publish and clean up.
+        void (async () => {
+          try {
+            await recoverRawOutput();
+            if (rawPublished || !input.onRawOutput) await removeTemporaryOutput();
+          } finally { await dependencies.runtimeSession!.processExited(child.pid); }
+        })().catch(() => undefined);
+      } else dependencies.runtimeSession!.processExited(child.pid);
+    });
     await completion;
     checkCancelled(signal);
     const outputInfo = await stat(outputPath).catch(() => { throw new VoxCpm2Error("VoxCPM2 没有生成有效音频，请重试。"); });
     if (!outputInfo.isFile() || outputInfo.size < 44 || outputInfo.size > 24 * 1024 * 1024) throw new VoxCpm2Error("VoxCPM2 没有生成有效音频，请重试。");
     const output = await readFile(outputPath);
+    if (input.onRawOutput) { await input.onRawOutput(new Uint8Array(output)); rawPublished = true; }
     const decoded = (() => {
       try { return decodePcmWav(output); }
       catch { throw new VoxCpm2Error("VoxCPM2 返回的音频已损坏，请重试。"); }
     })();
-    if (decoded.sampleRate !== 48_000 || decoded.channels !== 1 || !decoded.samples.length || !decoded.samples.some((sample) => Math.abs(sample) > .0001)) {
+    if (decoded.sampleRate !== 48_000 || decoded.channels !== 1 || !decoded.samples.length) {
       throw new VoxCpm2Error("VoxCPM2 没有生成有效的 48 kHz 人声音频，请重试。");
     }
     const generatedSteps = decoded.samples.length / SAMPLES_PER_STEP;
-    if (generatedSteps >= maxSteps - 0.001) throw new VoxCpm2Error("片段达到生成长度上限，请拆短台词后重试。");
+    const qualityWarnings: string[] = [];
+    if (generatedSteps >= maxSteps - 0.001) qualityWarnings.push("录音达到模型长度上限，可能没有读完。完整原音已保留，请试听后决定是否重新生成。");
+    if (!decoded.samples.some((sample) => Math.abs(sample) > .0001)) qualityWarnings.push("这条录音接近静音，完整原音已保留，可以试听或下载检查。");
     const clipping = decoded.samples.reduce((count, sample) => count + Number(Math.abs(sample) >= .999), 0);
     return {
       wav: new Uint8Array(output),
@@ -210,17 +252,19 @@ export async function generateVoxCpm2(
         modelIdentity: `${baseIdentity}|${acousticIdentity}`,
         referenceIdentity: `sha256:${createHash("sha256").update(referenceBytes).update(referenceMode === "with_reference_text" ? reference.promptText! : "").digest("hex")}`,
       },
-      qualityWarnings: clipping > decoded.samples.length * .001 ? ["这条候选可能有削波失真，请试听后决定是否采用。"] : [],
+      qualityWarnings: [...qualityWarnings, ...(clipping > decoded.samples.length * .001 ? ["这条候选可能有削波失真，请试听后决定是否采用。"] : [])],
     };
   } catch (error) {
     if (error instanceof VoxCpm2Error) throw error;
     throw new VoxCpm2Error("VoxCPM2 生成失败，请检查本机运行环境后重试。");
   } finally {
+    operationFinished = true;
     // A failed kill never permits another request to overlap the still-running native process.
     if (confirmedExit) {
-      if (temporaryRoot && path.resolve(temporaryRoot).startsWith(temporaryBase + path.sep)) {
-        await rm(temporaryRoot, { recursive: true, force: true });
-      }
+      // A native failure/timeout may still leave audio. Publish only after exit;
+      // a later close recovers it above when this finally block cannot do so.
+      await recoverRawOutput().catch(() => undefined);
+      await removeTemporaryOutput();
     }
   }
 }

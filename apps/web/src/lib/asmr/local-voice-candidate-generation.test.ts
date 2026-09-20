@@ -1,4 +1,4 @@
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +9,8 @@ import { writePcm16MonoWav } from "./procedural-audio";
 import { listAudioCandidates } from "./local-candidate-store";
 import { makeVoiceCandidateFixture } from "./voice-candidate-fixture";
 import { generateVoxCpm2 } from "./voxcpm2-provider";
+import { listVoiceGenerationRecordings, resolveVoiceGenerationRecording } from "./voice-generation-recordings";
+import { flattenClips } from "./view-model";
 
 vi.mock("./voxcpm2-provider", () => ({ generateVoxCpm2: vi.fn() }));
 const voiceOptions = { provider: "voxcpm2" as const, voicePackId: "soft_zh", referenceMode: "with_reference_text" as const, generationMode: "clip" as const };
@@ -42,5 +44,24 @@ describe("VoxCPM2 clip dispatch", () => {
     await expect(generateLocalClip({ project: demoProject, clipId: "voice_001", config, voiceOptions, signal: controller.signal })).rejects.toThrow();
     expect(await listAudioCandidates({ config, projectId: demoProject.project_id, clipId: "voice_001" })).toHaveLength(0);
     await expect(readdir(config.clipAssetRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps published clip originals accessible after a canceled request without adopting a candidate", async () => {
+    const config = await setup();
+    const controller = new AbortController();
+    const wav = writePcm16MonoWav(new Float32Array(48000).fill(.05), 48000);
+    vi.mocked(generateVoxCpm2).mockImplementation(async (input) => {
+      await input.onRawOutput!(wav);
+      controller.abort();
+      return { wav, provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] };
+    });
+    await expect(generateLocalClip({ project: demoProject, clipId: "voice_001", config, voiceOptions, signal: controller.signal })).rejects.toThrow();
+    const clip = flattenClips(demoProject).find((item) => item.id === "voice_001")!;
+    if (clip.type !== "voice") throw new Error("Fixture must be voice");
+    const listed = await listVoiceGenerationRecordings({ config, projectId: demoProject.project_id, clipId: clip.id, text: clip.text });
+    expect(listed.recordings).toHaveLength(1);
+    const recording = await resolveVoiceGenerationRecording(config, listed.recordings[0].recordingId);
+    expect((await readFile(recording.filePath)).equals(Buffer.from(wav))).toBe(true);
+    expect(await listAudioCandidates({ config, projectId: demoProject.project_id, clipId: clip.id })).toHaveLength(0);
   });
 });

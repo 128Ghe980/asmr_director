@@ -1,17 +1,14 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { z } from "zod";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { decodePcmWav } from "./pcm-audio";
 import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
-
-export class VoiceGroupAnalysisError extends Error {
-  constructor(message: string, public readonly statusCode = 502, public readonly diagnosticCode?: string) {
-    super(message);
-    this.name = "VoiceGroupAnalysisError";
-  }
-}
+import { getVoiceGenerationRoot } from "./voice-generation-recordings";
+import { VoiceAnalysisWorker, VoiceGroupAnalysisError, type VoiceAnalysisWorkerSpawn } from "./voice-analysis-worker";
+export { VoiceGroupAnalysisError } from "./voice-analysis-worker";
 
 type AnalysisChild = {
   pid?: number;
@@ -27,6 +24,7 @@ export type VoiceAnalysisSpawn = (
 type Dependencies = {
   runtimeSession?: VoxCpm2RuntimeSession;
   spawnImpl?: VoiceAnalysisSpawn;
+  workerSpawnImpl?: VoiceAnalysisWorkerSpawn;
   timeoutMs?: number;
   exitWaitMs?: number;
   // Server/test dependency only; never accepted in a generation HTTP request.
@@ -37,6 +35,16 @@ const cancelError = () => new VoiceGroupAnalysisError("已取消生成。", 499)
 const unavailableError = () => new VoiceGroupAnalysisError("本机长文语音检查尚未就绪，请检查语音分析环境。", 503);
 const unsafeError = () => new VoiceGroupAnalysisError("未能确认这组台词完整且截取安全，请重新生成。", 422);
 const analysisCache = new Map<string, { checkedAt: number; result: Promise<{ pythonPath: string; modelPath: string }> }>();
+const workers = new WeakMap<VoxCpm2RuntimeSession, VoiceAnalysisWorker>();
+const sessionRuntimes = new WeakMap<VoxCpm2RuntimeSession, Promise<{ pythonPath: string; modelPath: string }>>();
+
+export function shouldReuseVoiceAnalysis(freeBytes = os.freemem(), mode = process.env.ASMR_VOICE_ASR_REUSE): boolean {
+  if (mode === "always") return true;
+  if (mode === "off") return false;
+  // The native TTS models already occupy several GiB. Do not keep Whisper
+  // resident beside them on a small-memory machine just to save a reload.
+  return freeBytes >= 8 * 1024 ** 3;
+}
 
 function checkCancelled(signal?: AbortSignal) {
   if (signal?.aborted) throw cancelError();
@@ -47,8 +55,14 @@ function waitForChild(child: AnalysisChild, options: {
 }): Promise<void> {
   return new Promise((resolve, reject) => {
     let finished = false;
+    let exitConfirmed = false;
     let stopping: VoiceGroupAnalysisError | undefined;
     let exitTimer: ReturnType<typeof setTimeout> | undefined;
+    const confirmExit = () => {
+      if (exitConfirmed) return;
+      exitConfirmed = true;
+      options.onExit();
+    };
     const finish = (error?: VoiceGroupAnalysisError) => {
       if (finished) return;
       finished = true;
@@ -66,11 +80,11 @@ function waitForChild(child: AnalysisChild, options: {
     const abort = () => stop(cancelError());
     const timer = setTimeout(() => stop(new VoiceGroupAnalysisError("语音检查超时，请稍后重试。", 504)), options.timeoutMs);
     child.once("error", () => {
-      if (!child.pid) { options.onExit(); finish(unavailableError()); }
+      if (!child.pid) { confirmExit(); finish(unavailableError()); }
       else stop(unavailableError());
     });
     child.once("close", (code) => {
-      options.onExit();
+      confirmExit();
       finish(stopping ?? (code === 0 ? undefined : unavailableError()));
     });
     options.signal?.addEventListener("abort", abort, { once: true });
@@ -114,9 +128,26 @@ async function resolveAnalysisRuntime(config: LocalRuntimeConfig): Promise<{ pyt
   return result;
 }
 
-export async function getVoiceAnalysisReadiness(config: LocalRuntimeConfig): Promise<{ available: boolean; reason?: string }> {
+type ReadinessDependencies = Pick<Dependencies, "runtimeSession" | "readinessImpl">;
+
+function resolveSessionAnalysisRuntime(config: LocalRuntimeConfig, dependencies: ReadinessDependencies) {
+  // A native take can outlast the catalog cache. Reuse its initial environment
+  // probe until this candidate closes instead of importing Python again.
+  const session = dependencies.runtimeSession;
+  let runtime = session?.onClose ? sessionRuntimes.get(session) : undefined;
+  if (!runtime) {
+    runtime = (dependencies.readinessImpl ?? resolveAnalysisRuntime)(config);
+    if (session?.onClose) {
+      sessionRuntimes.set(session, runtime);
+      session.onClose(async () => { sessionRuntimes.delete(session); });
+    }
+  }
+  return runtime;
+}
+
+export async function getVoiceAnalysisReadiness(config: LocalRuntimeConfig, dependencies: ReadinessDependencies = {}): Promise<{ available: boolean; reason?: string }> {
   try {
-    await resolveAnalysisRuntime(config);
+    await resolveSessionAnalysisRuntime(config, dependencies);
     return { available: true };
   } catch { return { available: false, reason: "本机长文语音检查尚未就绪。" }; }
 }
@@ -159,10 +190,11 @@ export async function analyzeVoiceGroup(input: {
   try { source = decodePcmWav(input.wav); } catch { throw unsafeError(); }
   const sourceDuration = source.samples.length / source.sampleRate;
   if (source.channels !== 1 || source.sampleRate !== 48_000 || sourceDuration <= 0 || sourceDuration > 120) throw unsafeError();
-  const runtime = await (dependencies.readinessImpl ?? resolveAnalysisRuntime)(input.config);
+  const session = dependencies.runtimeSession;
+  const runtime = await resolveSessionAnalysisRuntime(input.config, dependencies);
   checkCancelled(input.signal);
   const helper = await scriptPath();
-  const temporaryRoot = path.resolve(input.config.runtimeRoot, "voxcpm2-product", "analysis-runs");
+  const temporaryRoot = path.join(getVoiceGenerationRoot(input.config), "analysis-runs");
   await mkdir(temporaryRoot, { recursive: true });
   const canonicalRoot = await realpath(temporaryRoot);
   const directory = await mkdtemp(path.join(canonicalRoot, "group-"));
@@ -178,13 +210,39 @@ export async function analyzeVoiceGroup(input: {
       followingText: input.followingText ?? "", clauses: input.clauses,
     }), "utf8");
     checkCancelled(input.signal);
-    const child = (dependencies.spawnImpl ?? spawn)(runtime.pythonPath, [helper, "--request", requestPath], spawnOptions(directory));
-    confirmedExit = false;
-    dependencies.runtimeSession?.processStarted(child.pid);
-    await waitForChild(child, {
-      signal: input.signal, timeoutMs: dependencies.timeoutMs ?? 300_000, exitWaitMs: dependencies.exitWaitMs ?? 5_000,
-      onExit: () => { confirmedExit = true; dependencies.runtimeSession?.processExited(); },
-    });
+    if (session?.onClose && !dependencies.spawnImpl && (workers.has(session) || shouldReuseVoiceAnalysis())) {
+      let worker = workers.get(session);
+      if (!worker) {
+        worker = new VoiceAnalysisWorker({ ...runtime, helper, cwd: canonicalRoot, runtimeSession: session,
+          spawnImpl: dependencies.workerSpawnImpl, timeoutMs: dependencies.timeoutMs ?? 300_000,
+          exitWaitMs: dependencies.exitWaitMs ?? 5_000 });
+        workers.set(session, worker);
+        const createdWorker = worker;
+        session.onClose(async () => { await createdWorker.close(); workers.delete(session); });
+      }
+      confirmedExit = false;
+      try {
+        await worker.run(requestPath, input.signal);
+        // The worker stays alive, but its completion message guarantees this
+        // request's files are closed and no longer in use.
+        confirmedExit = true;
+      } finally {
+        confirmedExit ||= worker.exitConfirmed;
+        if (process.env.ASMR_VOICE_ASR_REUSE !== "always" && os.freemem() < 6 * 1024 ** 3) {
+          await worker.close();
+          workers.delete(session);
+          confirmedExit ||= worker.exitConfirmed;
+        }
+      }
+    } else {
+      const child = (dependencies.spawnImpl ?? spawn)(runtime.pythonPath, [helper, "--request", requestPath], spawnOptions(directory));
+      confirmedExit = false;
+      session?.processStarted(child.pid);
+      await waitForChild(child, {
+        signal: input.signal, timeoutMs: dependencies.timeoutMs ?? 300_000, exitWaitMs: dependencies.exitWaitMs ?? 5_000,
+        onExit: () => { confirmedExit = true; session?.processExited(child.pid); },
+      });
+    }
     checkCancelled(input.signal);
     if ((await stat(outputJson)).size > 65_536) throw unsafeError();
     const response: unknown = JSON.parse(await readFile(outputJson, "utf8"));

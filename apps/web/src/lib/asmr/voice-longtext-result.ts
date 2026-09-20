@@ -33,6 +33,8 @@ export const VoiceLongTextResultSchema = z.object({
     cutStartSeconds: z.number().min(0),
     cutEndSeconds: z.number().positive(),
     attempts: z.number().int().positive(),
+    checkStatus: z.enum(["passed", "review"]).optional(),
+    diagnosticCode: z.string().min(1).max(120).regex(/^[a-z0-9_]+$/).optional(),
     runtimeVersion: z.string().optional(),
     referenceIdentity: z.string().optional(),
   }).strict()).min(1).max(12),
@@ -51,7 +53,8 @@ export const VoiceLongTextResultSchema = z.object({
     if (group.index !== index) issue(["groups", index, "index"], "Long-text group indices must be ordered and contiguous");
     if (group.isFinal !== (index === result.groups.length - 1)) issue(["groups", index, "isFinal"], "Only the last group may be final");
     if (group.asset.uri !== `asset://clip/${group.asset.assetId}`) issue(["groups", index, "asset", "uri"], "Group asset URI must match its stable clip asset id");
-    if (group.internalPausesMs.length !== group.internalPauseClasses.length) issue(["groups", index, "internalPauseClasses"], "Every internal pause must have a corresponding class");
+    const unmeasuredReview = group.checkStatus === "review" && group.internalPausesMs.length === 0;
+    if (!unmeasuredReview && group.internalPausesMs.length !== group.internalPauseClasses.length) issue(["groups", index, "internalPauseClasses"], "Every measured internal pause must have a corresponding class");
     if (group.cutEndSeconds <= group.cutStartSeconds) issue(["groups", index, "cutEndSeconds"], "Group audio end must follow its start");
     if (result.joins[index] && result.joins[index].category !== group.pauseAfter) issue(["joins", index, "category"], "Join category must match its preceding group boundary");
   });

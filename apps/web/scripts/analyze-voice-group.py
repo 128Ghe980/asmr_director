@@ -1,7 +1,8 @@
 """CPU-only, offline verification and quiet-boundary extraction of a voice group.
 
 The JSON-file interface deliberately has no estimated/per-character cut fallback.
-Uncertain speech alignment fails the job so it can be regenerated safely.
+Uncertain speech alignment produces a diagnostic; the caller retains source audio.
+Worker mode reuses one CPU model across a candidate's serial analysis requests.
 """
 from __future__ import annotations
 
@@ -355,11 +356,15 @@ def analyze(model, audio: np.ndarray, expected: str, following: str, clauses: li
     return processed, result
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--request", required=True)
-    arguments = parser.parse_args()
-    request_path = Path(arguments.request).resolve(strict=True)
+def load_model(model_path: str):
+    from faster_whisper import WhisperModel
+    return WhisperModel(str(Path(model_path).resolve(strict=True)), device="cpu", compute_type="int8",
+                        cpu_threads=min(4, max(1, (os.cpu_count() or 2) // 2)), num_workers=1,
+                        local_files_only=True)
+
+
+def process_request(request_file: str, model_provider=load_model) -> int:
+    request_path = Path(request_file).resolve(strict=True)
     if request_path.stat().st_size > 65536:
         return 2
     request = json.loads(request_path.read_text(encoding="utf-8-sig"))
@@ -387,10 +392,7 @@ def main() -> int:
         audio, _ = sf.read(source, dtype="float64")
         if not np.all(np.isfinite(audio)):
             raise UnsafeGroup("invalid_audio")
-        from faster_whisper import WhisperModel
-        model = WhisperModel(str(Path(request["modelPath"]).resolve(strict=True)), device="cpu", compute_type="int8",
-                             cpu_threads=min(4, max(1, (os.cpu_count() or 2) // 2)), num_workers=1,
-                             local_files_only=True)
+        model = model_provider(request["modelPath"])
         processed, result = analyze(model, audio, request["expectedText"], request["followingText"], request["clauses"])
         sf.write(paths["outputWav"], processed, RATE, subtype="PCM_16", format="WAV")
     except UnsafeGroup as error:
@@ -400,6 +402,57 @@ def main() -> int:
         result = {"version": 1, "success": False, "code": "analysis_failed"}
     output.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     return 0
+
+
+def worker(model_path: str, incoming=None, outgoing=None) -> int:
+    incoming = sys.stdin if incoming is None else incoming
+    outgoing = sys.stdout if outgoing is None else outgoing
+    model = None
+    configured_path = Path(model_path).resolve()
+
+    def get_model(requested_path: str):
+        nonlocal model
+        if Path(requested_path).resolve() != configured_path:
+            raise ValueError("worker_model_mismatch")
+        if model is None:
+            model = load_model(str(configured_path))
+        return model
+
+    while True:
+        line = incoming.readline(8193)
+        if not line:
+            return 0
+        if len(line) > 8192:
+            return 2
+        try:
+            command = json.loads(line)
+            if set(command) != {"requestPath"} or not isinstance(command["requestPath"], str):
+                return 2
+            request_path = command["requestPath"]
+            try:
+                code = process_request(request_path, get_model)
+            except Exception:
+                code = 2
+            # Completion is sent only after all file handles for this request
+            # have closed, so the caller may safely delete its scratch folder.
+            outgoing.write(json.dumps({"requestPath": request_path, "code": code}) + "\n")
+            outgoing.flush()
+        except (ValueError, TypeError):
+            return 2
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--request")
+    mode.add_argument("--worker", action="store_true")
+    parser.add_argument("--model")
+    arguments = parser.parse_args()
+    if arguments.worker:
+        if not arguments.model:
+            parser.error("--worker requires --model")
+        return worker(arguments.model)
+    return process_request(arguments.request)
 
 
 if __name__ == "__main__":

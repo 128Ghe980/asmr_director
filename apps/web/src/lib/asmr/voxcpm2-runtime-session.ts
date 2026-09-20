@@ -8,7 +8,8 @@ import { VoxCpm2Error } from "./voxcpm2-error";
 export type VoxCpm2RuntimeSession = {
   runtimeRoot: string;
   processStarted: (pid?: number) => void;
-  processExited: () => void | Promise<void>;
+  processExited: (pid?: number) => void | Promise<void>;
+  onClose?: (cleanup: () => Promise<void>) => void;
 };
 
 // Keep the reservation across planning, all TTS takes and CPU alignment. A second
@@ -26,15 +27,17 @@ export async function withVoxCpm2RuntimeSession<T>(
     if (error.code === "EEXIST") throw new VoxCpm2Error("VoxCPM2 正在生成，请等待当前候选完成。", 409);
     throw new VoxCpm2Error("无法准备 VoxCPM2 生成目录。", 503);
   });
-  let childRunning = false;
+  const children = new Map<number | undefined, number>();
+  const cleanups: Array<() => Promise<void>> = [];
   let operationFinished = false;
   let closing: Promise<void> | undefined;
   let identity: { dev: bigint; ino: bigint } | undefined;
   let release: Promise<void> | undefined;
   const owner = { ownerPid: process.pid, ownerToken: randomUUID(), childPid: null as number | null, createdAt: new Date().toISOString() };
-  const record = (pid: number | null) => {
+  const record = () => {
     // Pad to a stable size so updating a shorter PID never leaves invalid JSON.
-    writeSync(lock.fd, JSON.stringify({ ...owner, childPid: pid }).padEnd(256, " "), 0, "utf8");
+    const childPids = [...children.keys()].filter((pid): pid is number => pid !== undefined);
+    writeSync(lock.fd, JSON.stringify({ ...owner, childPid: childPids[0] ?? null, childPids }).padEnd(1024, " "), 0, "utf8");
   };
   const removeOwnedLock = async () => {
     if (!identity) return;
@@ -65,27 +68,36 @@ export async function withVoxCpm2RuntimeSession<T>(
   };
   try {
     identity = await lock.stat({ bigint: true });
-    record(null);
+    record();
     signal?.throwIfAborted();
     return await operation({
       runtimeRoot,
-      processStarted(pid) { childRunning = true; try { record(pid ?? null); } catch { /* Reservation remains held. */ } },
-      processExited() {
-        childRunning = false;
+      onClose(cleanup) { cleanups.push(cleanup); },
+      processStarted(pid) { children.set(pid, (children.get(pid) ?? 0) + 1); try { record(); } catch { /* Reservation remains held. */ } },
+      processExited(pid) {
+        // Legacy single-child callers omit the PID. Concurrent callers identify
+        // their own child so a TTS exit cannot release a still-running ASR job.
+        const key = pid ?? (children.size === 1 ? children.keys().next().value : undefined);
+        const count = children.get(key);
+        if (!count) return;
+        if (count === 1) children.delete(key); else children.set(key, count - 1);
         if (!operationFinished) {
-          try { record(null); } catch { /* Reservation remains held until session cleanup. */ }
+          try { record(); } catch { /* Reservation remains held until session cleanup. */ }
           return;
         }
         // A child can close after its exit-wait deadline and the caller's finally.
         // The original descriptor is closed; verify inode and owner before removal.
         // An unconfirmed/replaced lock stays reserved if cleanup cannot be proven.
-        return closing!.then(releaseOwnedLock).catch(() => undefined);
+        if (children.size === 0) return closing!.then(releaseOwnedLock).catch(() => undefined);
       },
     });
   } finally {
+    // Persistent CPU analysis is scoped to this candidate and must leave before
+    // another candidate can acquire the native runtime reservation.
+    await Promise.allSettled(cleanups.map((cleanup) => Promise.resolve().then(cleanup)));
     operationFinished = true;
     closing = lock.close();
     await closing;
-    if (!childRunning) await releaseOwnedLock();
+    if (children.size === 0) await releaseOwnedLock();
   }
 }
