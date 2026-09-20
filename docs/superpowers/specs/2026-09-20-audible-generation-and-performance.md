@@ -32,6 +32,8 @@ A real worker loaded its model once in 9.55 seconds, then checked the same 22.72
 
 Evidence root: `I:/AI/asmr-director-audible-generation/2026-09-20`.
 
+Session closeout: implementation `df30bb9` is committed and pushed on `codex/voxcpm2-product-generation`. This delivery fix has no open implementation items; broader Audio Quality V1 and user listening acceptance remain separate. The subsequent documentation-only handoff rechecked the running 3001 server and retained evidence without new model calls. Start at [AI_HANDOFF.md](../../AI_HANDOFF.md) for current policies, storage, the `.next-spatial-build` restart override and remaining work; historical fail-closed/retry rules are superseded.
+
 - Historical recovery found nine same-text originals. The selected previous failed run's 20.16/24.48/22.72-second recordings are byte-identical by SHA256. Latest listing took about 45 ms.
 - Real two-group generation, with only the plan fixed: 141.086 seconds, two native TTS calls, two ASR calls, two originals, zero automatic retries. Both groups failed checks, yet a complete 34.91-second candidate was returned and the runtime lock released.
 - The first 31.52-second original was listable at 32.593 seconds, before ASR completion; the second 3.04-second original appeared at 116.460 seconds. Both retained group assets match their original bytes exactly. Assembly contains both full groups plus 350 ms silence; whole-result gain error is below `2/32767`.
