@@ -4,6 +4,7 @@ import {
   buildLongTextInputs,
   chooseGroupPauses,
   createRuleVoiceLongTextPlan,
+  createSemanticVoiceLongTextPlan,
   splitVoiceClauses,
   validateVoiceLongTextAnalysis,
   VOICE_CONTINUATION_CLAUSES,
@@ -93,6 +94,28 @@ describe("accepted long-input construction", () => {
     const first = buildLongTextInputs(plan)[0];
     expect(first.paddingClauses).toEqual([]);
     for (let index = 0; index < 20; index += 1) expect(first.text).toContain(`内容${index}……`);
+  });
+
+  it("bounds semantic input even when a caller supplies 69 clauses of target and forward context", () => {
+    const text = "回来啦？外面是不是很冷？";
+    const followingClauses = Array.from({ length: 67 }, (_, index) => `后文${index}。`);
+    const context = { version: 1, followingClauses, isFinal: false } as const;
+    const plan = createSemanticVoiceLongTextPlan(text, context);
+    const input = buildLongTextInputs(plan, context);
+    expect(input).toHaveLength(1);
+    expect(input[0].text).toBe("回来啦……外面是不是很冷……" + followingClauses.slice(0, 14).map((clause) => clause.replace("。", "……")).join(""));
+    expect(input[0]).toMatchObject({ expectedText: text, followingText: followingClauses[0], isFinal: false, paddingClauses: [] });
+    expect(plan.clauses.join("")).toBe(text);
+    expect(context.followingClauses).toHaveLength(67);
+  });
+
+  it("never truncates a semantic target to fit the 16-clause forward window", () => {
+    const text = Array.from({ length: 16 }, (_, index) => `目标${index}。`).join("");
+    const context = { version: 1 as const, followingClauses: ["下一段。"], isFinal: false };
+    const plan = createSemanticVoiceLongTextPlan(text, context);
+    expect(() => buildLongTextInputs(plan, context)).toThrow("请先拆分片段");
+    const finalContext = { version: 1 as const, followingClauses: [], isFinal: true };
+    expect(buildLongTextInputs(createSemanticVoiceLongTextPlan(text, finalContext), finalContext)[0].text).toBe(text);
   });
 
   it("reduces padding within 500 characters without discarding original body", () => {

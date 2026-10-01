@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { VoiceGenerationContext } from "./voice-generation-context";
 
 export const VoicePauseClassSchema = z.enum(["short", "medium", "long"]);
 export type VoicePauseClass = z.infer<typeof VoicePauseClassSchema>;
@@ -23,6 +24,8 @@ export const VoiceLongTextAnalysisSchema = z.object({
 
 // The accepted 2026-09-03 recipe's fixed continuation list. These words only
 // maintain long input context; their generated audio must never be retained.
+export const VOICE_LONGTEXT_WINDOW_CLAUSES = 16;
+
 export const VOICE_CONTINUATION_CLAUSES = [
   "如果眼前还有一点微光", "就让它慢慢淡下去", "被角会安静地贴在身边",
   "窗外的雨声也会继续陪着你", "也不用再去留意时间", "等到周围的一切完全安静下来",
@@ -119,11 +122,21 @@ export function createRuleVoiceLongTextPlan(clauses: string[], warnings: string[
   return { clauses: [...clauses], groups, clausePauseClasses, provider: "rules", warnings: [...warnings] };
 }
 
-function continuationClause(clause: string): string {
+export function createSemanticVoiceLongTextPlan(text: string, context: VoiceGenerationContext): VoiceLongTextPlan {
+  const clauses = splitVoiceClauses(text);
+  const rules = createRuleVoiceLongTextPlan(clauses);
+  return {
+    ...rules,
+    groups: [{ start: 0, end: clauses.length - 1, text: clauses.join(""), pauseAfter: context.isFinal ? "long" : "medium" }],
+    provider: "project_segments",
+  };
+}
+
+export function continuationClause(clause: string): string {
   return clause.trim().replace(/[，。！？；：、,.!?;:…\s]+$/u, "") + "……";
 }
 
-export function buildLongTextInputs(plan: VoiceLongTextPlan): {
+export function buildLongTextInputs(plan: VoiceLongTextPlan, context?: VoiceGenerationContext): {
   text: string;
   expectedText: string;
   followingText?: string;
@@ -141,24 +154,29 @@ export function buildLongTextInputs(plan: VoiceLongTextPlan): {
     const clauses = plan.clauses.slice(group.start, group.end + 1);
     const expectedText = clauses.join("");
     if (group.text !== expectedText) throw new Error("语义组内容与原文不一致。");
-    const isFinal = index === plan.groups.length - 1;
+    const isFinal = index === plan.groups.length - 1 && (context?.isFinal ?? true);
     if (isFinal) {
       const natural = expectedText.trim().replace(/[，；：、,…\s]+$/u, "");
       const text = /[。！？.!?][”’」』）)]*$/u.test(natural) ? natural : `${natural}。`;
       if (text.length > 500) throw new Error("末组超过 500 字，请缩短文案后重试。");
       return { text, expectedText, clauses, isFinal, paddingClauses: [] };
     }
-    const remaining = plan.clauses.slice(group.start);
+    const body = [...plan.clauses.slice(group.start), ...(context?.followingClauses ?? [])];
+    // Semantic clips slide a fixed-size forward window across the project.
+    // Legacy multi-group plans retain their original complete-body recipe.
+    const remaining = context ? body.slice(0, VOICE_LONGTEXT_WINDOW_CLAUSES) : body;
+    const followingText = remaining[clauses.length];
+    if (!followingText) throw new Error("目标段太长，无法容纳后续语境，请先拆分片段。");
     let text = remaining.map(continuationClause).join("");
     if (text.length > 500) throw new Error("加上停顿标点后的长文输入超过 500 字，请缩短文案后重试。");
     const paddingClauses: string[] = [];
-    for (const filler of VOICE_CONTINUATION_CLAUSES.slice(0, Math.max(0, 16 - remaining.length))) {
+    for (const filler of VOICE_CONTINUATION_CLAUSES.slice(0, Math.max(0, VOICE_LONGTEXT_WINDOW_CLAUSES - remaining.length))) {
       const padded = text + continuationClause(filler);
       if (padded.length > 500) break;
       text = padded;
       paddingClauses.push(filler);
     }
-    return { text, expectedText, followingText: plan.clauses[group.end + 1], clauses, isFinal, paddingClauses };
+    return { text, expectedText, followingText, clauses, isFinal, paddingClauses };
   });
 }
 

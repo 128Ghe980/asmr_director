@@ -11,7 +11,7 @@ import {
   RotateCcw,
   Upload,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { ProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 
@@ -52,6 +52,9 @@ export function ProjectWorkspaceHeader({
 }: ProjectWorkspaceHeaderProps) {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const importToggleRef = useRef<HTMLButtonElement>(null);
+  const importPanelRef = useRef<HTMLDivElement>(null);
+  const importTextRef = useRef<HTMLTextAreaElement>(null);
   const isFocusActive = leftCollapsed && rightCollapsed;
   const focusLabel = isFocusActive
     ? "两侧已收起，退出专注编辑"
@@ -60,15 +63,33 @@ export function ProjectWorkspaceHeader({
   const leftToggleLabel = leftCollapsed ? "展开项目栏" : "收起项目栏";
   const rightToggleLabel = rightCollapsed ? "展开项目详情" : "收起项目详情";
 
+  useEffect(() => {
+    if (!isImportOpen || planning) return;
+    const panel = importPanelRef.current;
+    if (!panel) return;
+    function fitImportPanel() {
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      panel!.style.maxHeight = `${Math.max(0, viewportHeight - panel!.getBoundingClientRect().top - 8)}px`;
+    }
+    fitImportPanel();
+    importTextRef.current?.focus({ preventScroll: true });
+    window.addEventListener("resize", fitImportPanel);
+    window.visualViewport?.addEventListener("resize", fitImportPanel);
+    return () => {
+      window.removeEventListener("resize", fitImportPanel);
+      window.visualViewport?.removeEventListener("resize", fitImportPanel);
+    };
+  }, [isImportOpen, planning]);
+
   return (
-    <header className="min-w-0 border-b border-studio-line bg-studio-panel/92 px-4 py-4 md:px-5">
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold tracking-normal text-studio-text">
+    <header className="relative z-20 min-w-0 shrink-0 border-b border-studio-line bg-studio-panel/92 px-3 py-2">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold tracking-normal text-studio-text md:text-base">
             {planning ? "创作工作台" : summary.identity.title}
           </h1>
           {!planning && (
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-studio-muted">
+            <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-[11px] text-studio-muted">
               <span>{summary.identity.duration}</span>
               <WorkspaceBadge badge={summary.saveState} />
               {summary.validation.issueCount > 0 && (
@@ -78,11 +99,11 @@ export function ProjectWorkspaceHeader({
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2 xl:justify-end">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={onToggleLeft}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-studio-line bg-white/[0.035] px-2 text-xs font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
             aria-controls={leftPanelId}
             aria-expanded={!leftCollapsed}
             aria-label={leftToggleLabel}
@@ -93,13 +114,13 @@ export function ProjectWorkspaceHeader({
             ) : (
               <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
             )}
-            项目
+            <span className="sr-only lg:not-sr-only">项目</span>
           </button>
           {!planning && <>
           <button
             type="button"
             onClick={onToggleRight}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-studio-line bg-white/[0.035] px-2 text-xs font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
             aria-controls={rightPanelId}
             aria-expanded={!rightCollapsed}
             aria-label={rightToggleLabel}
@@ -110,12 +131,12 @@ export function ProjectWorkspaceHeader({
             ) : (
               <PanelRightClose className="h-4 w-4" aria-hidden="true" />
             )}
-            详情
+            <span className="sr-only lg:not-sr-only">详情</span>
           </button>
           <button
             type="button"
             onClick={onToggleFocus}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            className="hidden h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-studio-line bg-white/[0.035] px-2 text-xs font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45 lg:inline-flex"
             aria-label={focusLabel}
             aria-pressed={isFocusActive}
             title={focusLabel}
@@ -126,21 +147,22 @@ export function ProjectWorkspaceHeader({
           <button
             type="button"
             onClick={onExportJson}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/25 bg-sky-300/12 px-3 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-sky-300/25 bg-sky-300/12 px-2 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
           >
             <Download className="h-4 w-4" aria-hidden="true" />
-            导出
+            <span className="sr-only lg:not-sr-only">导出</span>
           </button>
           <button
             type="button"
+            ref={importToggleRef}
             onClick={() => setIsImportOpen((current) => !current)}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-sky-300/25 bg-sky-300/12 px-3 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-sky-300/25 bg-sky-300/12 px-2 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-300/18 focus:outline-none focus:ring-2 focus:ring-sky-300/45"
             aria-controls={importPanelId}
             aria-expanded={isImportOpen}
             aria-label={importToggleLabel}
           >
             <Upload className="h-4 w-4" aria-hidden="true" />
-            载入
+            <span className="sr-only lg:not-sr-only">载入</span>
           </button>
           <button
             type="button"
@@ -148,10 +170,10 @@ export function ProjectWorkspaceHeader({
               setImportText("");
               onResetDemo();
             }}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-studio-line bg-white/[0.035] px-3 text-sm font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
+            className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-studio-line bg-white/[0.035] px-2 text-xs font-semibold text-studio-text transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-sky-300/45"
           >
             <RotateCcw className="h-4 w-4" aria-hidden="true" />
-            重置
+            <span className="sr-only lg:not-sr-only">重置</span>
           </button>
           </>}
         </div>
@@ -159,8 +181,15 @@ export function ProjectWorkspaceHeader({
 
       <div
         id={importPanelId}
+        ref={importPanelRef}
         hidden={planning || !isImportOpen}
-        className="mt-4 rounded-lg border border-studio-line bg-black/16 p-3"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { event.preventDefault(); setIsImportOpen(false); importToggleRef.current?.focus(); }
+        }}
+        onBlur={(event) => {
+          if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget) && event.relatedTarget !== importToggleRef.current) setIsImportOpen(false);
+        }}
+        className="absolute left-2 right-2 top-full mt-1 max-h-[calc(100dvh-5rem)] overflow-y-auto overscroll-contain rounded-lg border border-studio-line bg-studio-panel p-3 shadow-2xl"
       >
         <label className="block">
           <span className="mb-2 flex items-center gap-2 text-xs font-semibold text-studio-muted">
@@ -168,6 +197,7 @@ export function ProjectWorkspaceHeader({
             导入 JSON
           </span>
           <textarea
+            ref={importTextRef}
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
             placeholder="粘贴 ASMR Project JSON"

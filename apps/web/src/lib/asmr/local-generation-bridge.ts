@@ -9,6 +9,7 @@ import type {
 import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint } from "./audio-candidate";
 import { flattenClips } from "./view-model";
 import { readGenerationResponse } from "./generation-response";
+import { getVoiceGenerationContext } from "./voice-generation-context";
 
 export type LocalGenerationBridgeOptions = {
   endpoint?: string;
@@ -186,10 +187,11 @@ export function createLocalGenerationBridge({
         if (typeof payload === "object" && payload !== null && "candidate" in payload) {
           const candidate = AudioCandidateSchema.parse(payload.candidate);
           const voice = flattenClips(request.project).find((item) => item.id === request.clipId);
+          const context = request.voiceOptions?.generationMode === "long_text" ? getVoiceGenerationContext(request.project, request.clipId) : undefined;
           if (candidate.projectId !== request.project.project_id || candidate.clipId !== request.clipId ||
               request.voiceOptions?.provider !== "voxcpm2" || candidate.status !== "ready" ||
-              voice?.type !== "voice" || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(voice) ||
-              candidate.requestFingerprint !== getVoiceCandidateRequestFingerprint(voice, request.voiceOptions, request.longTextRetry) ||
+              voice?.type !== "voice" || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(voice, context) ||
+              candidate.requestFingerprint !== getVoiceCandidateRequestFingerprint(voice, request.voiceOptions, request.longTextRetry, context) ||
               candidate.provenance.voicePackId !== request.voiceOptions.voicePackId ||
               candidate.provenance.referenceMode !== request.voiceOptions.referenceMode ||
               candidate.provenance.generationMode !== request.voiceOptions.generationMode ||

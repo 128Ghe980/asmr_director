@@ -4,8 +4,9 @@ import path from "node:path";
 import { z } from "zod";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import type { VoiceGenerationRecording } from "./voice-generation-recording";
+import { VoiceRecognitionSchema, type VoiceRecognition } from "./voice-recognition";
 
-const MAX_JSON_BYTES = 256 * 1024;
+const MAX_JSON_BYTES = 1024 * 1024;
 export const MAX_RECORDING_BYTES = 128 * 1024 * 1024;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const runPattern = new RegExp(`^${UUID}$`, "i");
@@ -89,9 +90,10 @@ async function wavDuration(filePath: string, size: number): Promise<number | nul
   } finally { await file.close(); }
 }
 
-function checkWarning(failure: Record<string, unknown> | undefined, checked: boolean, ended: boolean, analysis?: Record<string, unknown>) {
+function checkWarning(failure: Record<string, unknown> | undefined, checked: boolean, ended: boolean, analysis?: Record<string, unknown>, recognition?: VoiceRecognition) {
   if (failure) {
     const code = failure.code;
+    if (code === "uncertain_word_alignment") return "识别文字未能定位目标句的结束位置；请展开识别对照，并试听完整原音。";
     if (["uncertain_word_alignment", "cut_text_mismatch", "missing_speech", "incomplete_or_unrelated_speech", "missing_or_extra_speech", "repeated_speech", "unrecognized_continuation"].includes(String(code))) {
       return "台词核对有疑问，可能是识别差异或漏读、多读。请直接试听这条完整录音。";
     }
@@ -103,6 +105,10 @@ function checkWarning(failure: Record<string, unknown> | undefined, checked: boo
   if (analysis?.checkStatus === "not_checked") {
     const message = typeof analysis.message === "string" ? analysis.message.trim().slice(0, 800) : "";
     return `当前片段原音（未做分组检查）。${message}`;
+  }
+  const comparison = recognition?.contentComparison;
+  if (checked && comparison?.status === "different") {
+    return `目标片段已通过截取检查，但识别结果与源文有差异（相似度 ${(comparison.similarity * 100).toFixed(1)}%），请试听确认。这里保留模型输出的完整原音。`;
   }
   if (checked) return "检查已完成。这里保留模型输出的全部声音。";
   return ended ? "这次生成已结束，尚无这条录音的检查结果；可以完整试听。" : "录音已生成，检查结果尚未保存；现在就可以完整试听。";
@@ -176,6 +182,8 @@ export async function listVoiceGenerationRecordings(input: {
           const prefix = source.name.replace(/-source\.wav$/, "");
           const failure = await optionalJson(path.join(directory, `${prefix}-failure.json`), run.root);
           const analysis = await optionalJson(path.join(directory, `${prefix}-analysis.json`), run.root);
+          const recognition = [analysis?.recognition, failure?.recognition].map((value) => VoiceRecognitionSchema.safeParse(value))
+            .find((value) => value.success && value.data.expectedText === target.expectedText)?.data;
           const review = failure ?? (analysis?.checkStatus === "review" ? { code: analysis.diagnosticCode } : undefined);
           const checked = !review && typeof analysis?.transcript === "string" && typeof analysis?.cutEndSeconds === "number";
           const recordingId = `${run.kind}_${run.runId}_${group}_${take}`;
@@ -184,7 +192,7 @@ export async function listVoiceGenerationRecordings(input: {
             expectedText: target.expectedText, inputText: target.text ?? target.inputText ?? "", duration: await wavDuration(filePath, info.size),
             audioUrl: `/api/voice-generation-recordings/${recordingId}`,
             status: review ? "needs_review" : checked ? "checked" : analysis?.checkStatus === "not_checked" ? "not_checked" : "recorded",
-            warning: checkWarning(review, checked, ended, analysis), historicalMatch,
+            warning: checkWarning(review, checked, ended, analysis, recognition), recognition, historicalMatch,
           });
         } catch { /* A partial write or unavailable take must not hide other recordings. */ }
         if (recordings.length >= RECORDINGS_PER_PAGE || inspectedSources >= 100) {

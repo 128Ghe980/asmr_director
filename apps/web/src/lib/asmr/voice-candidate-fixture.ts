@@ -1,8 +1,22 @@
 import { getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "./audio-candidate";
 import { demoProject } from "./mock-project";
 import { flattenClips } from "./view-model";
-import { buildLongTextInputs, type VoiceLongTextPlan } from "./voice-longtext-plan";
+import { buildLongTextInputs, createSemanticVoiceLongTextPlan, type VoiceLongTextPlan } from "./voice-longtext-plan";
 import type { VoiceLongTextResult } from "./voice-longtext-result";
+import type { VoiceGenerationContext } from "./voice-generation-context";
+
+export function makeSemanticVoiceLongTextResultFixture(text: string, context: VoiceGenerationContext): VoiceLongTextResult {
+  const plan = createSemanticVoiceLongTextPlan(text, context);
+  const input = buildLongTextInputs(plan, context)[0];
+  const base = makeVoiceLongTextResultFixture();
+  return {
+    ...base, context, plan, analysisProvider: plan.provider,
+    groups: [{ ...base.groups[0], text: input.expectedText, inputText: input.text, paddingClauses: input.paddingClauses,
+      isFinal: input.isFinal, pauseAfter: plan.groups[0].pauseAfter,
+      internalPauseClasses: plan.clausePauseClasses, internalPausesMs: plan.clausePauseClasses.map(() => 180) }],
+    joins: [],
+  };
+}
 
 export function makeVoiceLongTextResultFixture(): VoiceLongTextResult {
   const clauses = ["放松肩膀，", "慢慢呼吸。", "夜已经深了，", "安心休息。"];

@@ -153,6 +153,215 @@ describe("long-text PCM assembly", () => {
 });
 
 describe("long-text generation orchestration with injected engine and alignment", () => {
+  it("generates one selected semantic unit using future text as context without producing future groups", async () => {
+    const { input, waves, deps } = await fixture();
+    const context = { version: 1 as const, followingClauses: ["后面再慢慢呼吸。", "安心休息。"], isFinal: false };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockImplementation(async ({ expectedText }) => ({ ...analysis(waves[0], expectedText), internalPausesMs: [] }));
+    const result = await generateVoiceLongText({ ...input, text: "请坐近一点。", context }, deps);
+    expect(deps.plan).not.toHaveBeenCalled();
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.generate.mock.calls[0][0].text).toContain("请坐近一点……后面再慢慢呼吸……安心休息……");
+    expect(deps.analyze.mock.calls[0][0]).toMatchObject({ expectedText: "请坐近一点。", followingText: "后面再慢慢呼吸。", clauses: ["请坐近一点。"] });
+    expect(result.provenance.longText!.groups).toHaveLength(1);
+    expect(result.provenance.longText!.groups[0]).toMatchObject({ text: "请坐近一点。", isFinal: false, attempts: 1 });
+    expect(result.provenance.longText!.context).toEqual(context);
+    expect(result.provenance.longText!.joins).toEqual([]);
+  });
+
+  it("generates the real project ending alone, without fixed padding or a planning request", async () => {
+    const { input, waves, deps } = await fixture();
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockImplementation(async ({ expectedText }) => ({ ...analysis(waves[0], expectedText), internalPausesMs: [] }));
+    const result = await generateVoiceLongText({ ...input, text: "晚安。", context: { version: 1, followingClauses: [], isFinal: true } }, deps);
+    expect(deps.plan).not.toHaveBeenCalled();
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.generate.mock.calls[0][0].text).toBe("晚安。");
+    expect(deps.analyze.mock.calls[0][0].followingText).toBeUndefined();
+    expect(result.provenance.longText!.groups[0]).toMatchObject({ isFinal: true, paddingClauses: [] });
+  });
+
+  it("delivers a semantic unit's complete original once when window extraction needs review", async () => {
+    const { root, input, waves, deps } = await fixture();
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("Uncertain boundary", 422, "no_safe_quiet_cut"));
+    const result = await generateVoiceLongText({ ...input, text: "请坐近一点。", context: { version: 1, followingClauses: ["慢慢呼吸。"], isFinal: false } }, deps);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(result.provenance.longText!.groups[0]).toMatchObject({ checkStatus: "review", attempts: 1, isFinal: false });
+    expect(decodePcmWav(result.wav).samples.length).toBe(decodePcmWav(waves[0]).samples.length);
+    expect(await traceFiles(root)).toContain("group-1-take-1-source.wav");
+  });
+
+  it("persists source recognition in review metadata and original traces without rerolling or cropping", async () => {
+    const { root, input, waves, deps } = await fixture();
+    const expectedText = "回来啦？外面是不是很冷？", followingText = "快进来。";
+    const recognition = { stage: "source_alignment" as const, sourceTranscript: "回来了，外面是不是很冷，快进来。",
+      sourceWords: [{ text: "回来了", start: .1, end: .6 }, { text: "外面", start: .8, end: 1 }], expectedText, followingText,
+      alignment: { expected: "回来啦外面是不是很冷", recognizedPrefix: "回来了外面是不是很冷快进来", reason: "uncertain_word_alignment" } };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("Alignment unavailable", 422, "uncertain_word_alignment", recognition));
+    const result = await generateVoiceLongText({ ...input, text: expectedText,
+      context: { version: 1, followingClauses: [followingText], isFinal: false } }, deps);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(result.provenance.longText!.groups[0]).toMatchObject({ recognition, checkStatus: "review", diagnosticCode: "uncertain_word_alignment", attempts: 1 });
+    expect(result.qualityWarnings.join("")).toContain("识别文字未能定位目标句的结束位置");
+    expect(result.qualityWarnings.join("")).not.toContain("录音与台词未能核对一致");
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    const traceRoot = path.join(root, "voxcpm2-product", "long-text", run);
+    for (const name of ["group-1-take-1-analysis.json", "group-1-take-1-failure.json"]) {
+      expect(JSON.parse(await readFile(path.join(traceRoot, name), "utf8"))).toMatchObject({ recognition });
+    }
+    expect(new Uint8Array(await readFile(path.join(traceRoot, "group-1-take-1-source.wav")))).toEqual(waves[0]);
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(result.provenance.longText!.groups[0].asset.assetId, input.config)))).toEqual(waves[0]);
+  });
+
+  it("keeps successful source and cropped transcripts distinct in the persisted result", async () => {
+    const { root, input, waves, deps } = await fixture();
+    const expectedText = "请坐近一点。", followingText = "慢慢呼吸。";
+    const recognition = { stage: "complete" as const, sourceTranscript: expectedText + followingText,
+      targetTranscript: expectedText, expectedText, followingText, sourceWords: [{ text: "请坐近一点", start: .1, end: .2 }] };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockImplementation(async () => ({ ...analysis(waves[0], expectedText), internalPausesMs: [], recognition }));
+    const result = await generateVoiceLongText({ ...input, text: expectedText,
+      context: { version: 1, followingClauses: [followingText], isFinal: false } }, deps);
+    expect(result.provenance.longText!.groups[0]).toMatchObject({ recognition, transcript: expectedText, checkStatus: "passed" });
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    expect(JSON.parse(await readFile(path.join(root, "voxcpm2-product", "long-text", run, "group-1-take-1-analysis.json"), "utf8"))).toMatchObject({ recognition });
+  });
+
+  it("delivers a safe crop with a content-difference warning and removes that warning after a matched reroll", async () => {
+    const { root, input, waves, deps } = await fixture();
+    const expectedText = "回来啦？外面是不是很冷？", followingText = "快进来。";
+    const cropped = groupWave({ pauseMs: 180 });
+    const comparison = { status: "different" as const, similarity: .9, threshold: .9 as const, substitutionCount: 1,
+      expected: "回来啦外面是不是很冷", recognized: "回来了外面是不是很冷" };
+    const recognition = { stage: "complete" as const, sourceTranscript: "回来了，外面是不是很冷，快进来。", expectedText, followingText,
+      targetTranscript: "回来了，外面是不是很冷？", contentComparison: comparison };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockImplementation(async () => ({ ...analysis(cropped, recognition.targetTranscript, 180), coverage: .9, recognition }));
+    const request = { ...input, text: expectedText, context: { version: 1 as const, followingClauses: [followingText], isFinal: false } };
+    const result = await generateVoiceLongText(request, deps);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    const group = result.provenance.longText!.groups[0];
+    expect(group).toMatchObject({ checkStatus: "passed", recognition, coverage: .9 });
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(group.asset.assetId, input.config)))).toEqual(cropped);
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    expect(new Uint8Array(await readFile(path.join(root, "voxcpm2-product", "long-text", run, "group-1-take-1-source.wav")))).toEqual(waves[0]);
+    expect(result.qualityWarnings.join("")).toContain("已截取目标片段；识别结果与源文有差异（相似度 90.0%），请试听确认");
+    expect(result.qualityWarnings.join("")).not.toContain("保留完整原音");
+    expect(decodePcmWav(result.wav).samples.length).toBe(decodePcmWav(cropped).samples.length);
+
+    const matched = { ...recognition, targetTranscript: expectedText,
+      contentComparison: { ...comparison, status: "matched" as const, similarity: 1, substitutionCount: 0, recognized: comparison.expected } };
+    deps.analyze.mockImplementation(async () => ({ ...analysis(cropped, expectedText, 180), recognition: matched }));
+    const retryCandidate = makeVoiceCandidateFixture({ provenance: result.provenance, qualityWarnings: result.qualityWarnings });
+    const retry = await generateVoiceLongText({ ...request, retryCandidate, retryGroupIndex: 0 }, deps);
+    expect(retry.provenance.longText!.groups[0].recognition?.contentComparison?.status).toBe("matched");
+    expect(retry.qualityWarnings.join("")).not.toContain("识别结果与源文有差异");
+  });
+
+  it("still retains the full original when boundary verification fails despite an acceptable content difference", async () => {
+    const { input, waves, deps } = await fixture();
+    const expectedText = "回来啦？外面是不是很冷？", followingText = "快进来。";
+    const recognition = { stage: "boundary_check" as const, sourceTranscript: "回来了，外面是不是很冷，快进来。", expectedText, followingText,
+      contentComparison: { status: "different" as const, similarity: .9, threshold: .9 as const, substitutionCount: 1,
+        expected: "回来啦外面是不是很冷", recognized: "回来了外面是不是很冷" } };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("No verified boundary", 422, "no_verified_quiet_cut", recognition));
+    const result = await generateVoiceLongText({ ...input, text: expectedText,
+      context: { version: 1, followingClauses: [followingText], isFinal: false } }, deps);
+    const group = result.provenance.longText!.groups[0];
+    expect(group).toMatchObject({ checkStatus: "review", recognition });
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(group.asset.assetId, input.config)))).toEqual(waves[0]);
+    expect(result.qualityWarnings.join("")).toContain("已保留完整原音");
+    expect(result.qualityWarnings.join("")).not.toContain("已截取目标片段");
+    expect(deps.generate).toHaveBeenCalledOnce();
+  });
+
+  it.each(["matched", "different"] as const)("replaces legacy full-original warnings when the only review group becomes safely cropped and %s", async (status) => {
+    const { input, waves, deps } = await fixture();
+    const expectedText = "回来啦？外面是不是很冷？", followingText = "快进来。";
+    const request = { ...input, text: expectedText, context: { version: 1 as const, followingClauses: [followingText], isFinal: false } };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("Uncertain alignment", 422, "uncertain_word_alignment"));
+    const original = await generateVoiceLongText(request, deps);
+    const legacyWarning = `第 1 段“${expectedText}”：录音与台词未能核对一致，已保留完整原音供试听，没有因此重新生成或丢弃录音。`;
+    const nativeWarning = "模型提醒：请留意音量。";
+    const retryCandidate = makeVoiceCandidateFixture({ provenance: original.provenance,
+      qualityWarnings: [...original.qualityWarnings, legacyWarning, nativeWarning] });
+    const cropped = groupWave({ pauseMs: 180 });
+    const recognized = status === "matched" ? "回来啦外面是不是很冷" : "回来了外面是不是很冷";
+    deps.analyze.mockImplementation(async () => ({ ...analysis(cropped, recognized, 180), coverage: status === "matched" ? 1 : .9,
+      recognition: { stage: "complete", sourceTranscript: recognized + followingText, expectedText, followingText, targetTranscript: recognized,
+        contentComparison: { status, similarity: status === "matched" ? 1 : .9, threshold: .9, substitutionCount: status === "matched" ? 0 : 1,
+          expected: "回来啦外面是不是很冷", recognized } } }));
+    deps.generate.mockClear();
+    const result = await generateVoiceLongText({ ...request, retryCandidate, retryGroupIndex: 0 }, deps);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(result.provenance.longText!.groups[0].checkStatus).toBe("passed");
+    expect(result.qualityWarnings).toContain(nativeWarning);
+    expect(result.qualityWarnings.join("")).not.toMatch(/保留.*完整原音|录音与台词未能核对一致|未能定位目标句/);
+    expect(result.qualityWarnings.some((warning) => warning.includes("已截取目标片段；识别结果与源文有差异"))).toBe(status === "different");
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(result.provenance.longText!.groups[0].asset.assetId, input.config)))).toEqual(cropped);
+    expect(retryCandidate.qualityWarnings).toContain(legacyWarning);
+  });
+
+  it("rebuilds review warnings only for untouched review groups while preserving unrelated cautions", async () => {
+    const { input, plan, targets, deps } = await fixture();
+    const normalAnalysis = deps.analyze.getMockImplementation()!;
+    plan.warnings.push("规划提醒：请试听节奏。");
+    deps.analyze.mockImplementation(async (...args) => {
+      const target = targets.findIndex((value) => value.expectedText === args[0].expectedText);
+      if (target < 2) throw new VoiceGroupAnalysisError("Unverified crop", 422, target === 0 ? "uncertain_word_alignment" : "cut_text_mismatch");
+      return normalAnalysis(...args);
+    });
+    const original = await generateVoiceLongText(input, deps);
+    const nativeWarning = "这条候选可能有削波失真，请试听后决定是否采用。";
+    const retryCandidate = makeVoiceCandidateFixture({ provenance: original.provenance, qualityWarnings: [...original.qualityWarnings, nativeWarning] });
+    deps.analyze.mockImplementation(normalAnalysis);
+    deps.generate.mockClear();
+    const result = await generateVoiceLongText({ ...input, retryCandidate, retryGroupIndex: 0 }, deps);
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(result.provenance.longText!.groups.map((group) => group.checkStatus)).toEqual(["passed", "review", "passed"]);
+    expect(result.qualityWarnings.some((warning) => warning.startsWith("第 1 段") && warning.includes("完整原音"))).toBe(false);
+    expect(result.qualityWarnings.filter((warning) => warning.startsWith("第 2 段") && warning.includes("完整原音"))).toHaveLength(1);
+    expect(result.qualityWarnings.filter((warning) => warning.startsWith("本候选保留了待确认组"))).toHaveLength(1);
+    expect(result.qualityWarnings).toEqual(expect.arrayContaining([nativeWarning, plan.warnings[0]]));
+    expect(result.provenance.longText!.groups[1]).toEqual(original.provenance.longText!.groups[1]);
+  });
+
+  it("keeps the last recognition checkpoint with the original when cancelled during ASR", async () => {
+    const { root, input, waves, deps } = await fixture();
+    const controller = new AbortController();
+    const expectedText = "请坐近一点。", followingText = "慢慢呼吸。";
+    const recognition = { stage: "boundary_check" as const, sourceTranscript: expectedText + followingText, expectedText, followingText };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockImplementation(async () => {
+      controller.abort();
+      throw new VoiceGroupAnalysisError("已取消生成。", 499, undefined, recognition);
+    });
+    await expect(generateVoiceLongText({ ...input, text: expectedText, signal: controller.signal,
+      context: { version: 1, followingClauses: [followingText], isFinal: false } }, deps)).rejects.toMatchObject({ statusCode: 499 });
+    expect(deps.generate).toHaveBeenCalledOnce();
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    const traceRoot = path.join(root, "voxcpm2-product", "long-text", run);
+    expect(JSON.parse(await readFile(path.join(traceRoot, "group-1-take-1-failure.json"), "utf8"))).toMatchObject({ stage: "analyze", recognition });
+    expect(new Uint8Array(await readFile(path.join(traceRoot, "group-1-take-1-source.wav")))).toEqual(waves[0]);
+  });
+
+  it("rejects a semantic reroll after the following context changes, before generating any audio", async () => {
+    const { input, waves, deps } = await fixture();
+    const context = { version: 1 as const, followingClauses: ["慢慢呼吸。"], isFinal: false };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockImplementation(async ({ expectedText }) => ({ ...analysis(waves[0], expectedText), internalPausesMs: [] }));
+    const result = await generateVoiceLongText({ ...input, text: "请坐近一点。", context }, deps);
+    const candidate = makeVoiceCandidateFixture({ provenance: result.provenance });
+    deps.generate.mockClear();
+    await expect(generateVoiceLongText({ ...input, text: "请坐近一点。", context: { ...context, followingClauses: ["改过的后文。"] }, retryCandidate: candidate, retryGroupIndex: 0 }, deps))
+      .rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining("后续文案") });
+    expect(deps.generate).not.toHaveBeenCalled();
+  });
+
   it.each(["。……", "慢".repeat(501)])("rejects unsupported input before analysis or native generation", async (text) => {
     const { input, deps } = await fixture();
     await expect(generateVoiceLongText({ ...input, text }, deps)).rejects.toMatchObject({ statusCode: 400 });

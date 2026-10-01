@@ -8,6 +8,8 @@ import { decodePcmWav } from "./pcm-audio";
 import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { VoiceAnalysisWorker, VoiceGroupAnalysisError, type VoiceAnalysisWorkerSpawn } from "./voice-analysis-worker";
+import { VoiceRecognitionSchema, type VoiceRecognition } from "./voice-recognition";
+import { selectVoiceBoundaryWithApi, type VoiceAlignmentHint } from "./voice-boundary-api";
 export { VoiceGroupAnalysisError } from "./voice-analysis-worker";
 
 type AnalysisChild = {
@@ -27,6 +29,9 @@ type Dependencies = {
   workerSpawnImpl?: VoiceAnalysisWorkerSpawn;
   timeoutMs?: number;
   exitWaitMs?: number;
+  env?: Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  apiTimeoutMs?: number;
   // Server/test dependency only; never accepted in a generation HTTP request.
   readinessImpl?: (config: LocalRuntimeConfig) => Promise<{ pythonPath: string; modelPath: string }>;
 };
@@ -157,7 +162,8 @@ const AnalysisResultSchema = z.object({
   internalPausesMs: z.array(z.number().finite().min(0).max(10_000)).max(31),
   leadingQuietMs: z.number().finite().min(0).max(120_000),
   trailingQuietMs: z.number().finite().min(0).max(120_000),
-  transcript: z.string().min(1).max(2000), coverage: z.number().finite().min(0.9).max(1),
+  transcript: z.string().min(1).max(2000), coverage: z.number().finite().min(0.85).max(1),
+  recognition: VoiceRecognitionSchema.optional(),
   cutStartSeconds: z.number().finite().min(0).max(120),
   cutEndSeconds: z.number().finite().positive().max(120),
   asrModel: z.literal("faster-whisper-large-v3/cpu/int8"),
@@ -172,6 +178,24 @@ const AnalysisResultSchema = z.object({
 
 export type VoiceGroupAnalysis = Omit<z.infer<typeof AnalysisResultSchema>, "version" | "success"> & { wav: Uint8Array };
 
+const AnalysisFailureSchema = z.object({
+  version: z.literal(1), success: z.literal(false), code: z.string().regex(/^[a-z_]{1,80}$/),
+  recognition: VoiceRecognitionSchema.optional(),
+}).strict();
+const MAX_ANALYSIS_JSON_BYTES = 1024 * 1024;
+
+async function readAnalysisResponse(filePath: string): Promise<unknown> {
+  if ((await stat(filePath)).size > MAX_ANALYSIS_JSON_BYTES) throw unsafeError();
+  return JSON.parse(await readFile(filePath, "utf8"));
+}
+
+function responseRecognition(response: unknown, expectedText: string, followingText?: string): VoiceRecognition | undefined {
+  const parsed = VoiceRecognitionSchema.safeParse(response && typeof response === "object" && "recognition" in response ? response.recognition : undefined);
+  const recognition = parsed.success ? parsed.data : undefined;
+  // A checkpoint from another request must never be presented as this take's evidence.
+  return recognition?.expectedText === expectedText && (recognition.followingText ?? "") === (followingText ?? "") ? recognition : undefined;
+}
+
 async function scriptPath() {
   const candidates = [path.resolve("scripts", "analyze-voice-group.py"), path.resolve("apps", "web", "scripts", "analyze-voice-group.py")];
   for (const candidate of candidates) if (await isFile(candidate)) return candidate;
@@ -182,6 +206,51 @@ export async function analyzeVoiceGroup(input: {
   wav: Uint8Array; expectedText: string; followingText?: string; clauses: string[];
   config: LocalRuntimeConfig; signal?: AbortSignal;
 }, dependencies: Dependencies = {}): Promise<VoiceGroupAnalysis> {
+  let originalRecognition: VoiceRecognition | undefined;
+  let apiFallback: VoiceRecognition["apiFallback"];
+  const withApiStatus = (recognition: VoiceRecognition | undefined) => recognition && apiFallback ? { ...recognition, apiFallback } : recognition;
+  try {
+    try {
+      return await analyzeVoiceGroupImpl(input, dependencies);
+    } catch (error) {
+      if (error instanceof VoiceGroupAnalysisError) originalRecognition = error.recognition;
+      checkCancelled(input.signal);
+      if (error instanceof VoiceGroupAnalysisError && error.statusCode === 422
+          && ["uncertain_word_alignment", "ambiguous_ending_anchor"].includes(error.diagnosticCode ?? "")
+          && error.recognition?.stage === "source_alignment" && error.recognition.endpointCandidates?.length
+          && input.followingText?.trim()) {
+        originalRecognition = error.recognition;
+        const hint = await selectVoiceBoundaryWithApi(error.recognition, {
+          env: dependencies.env, fetchImpl: dependencies.fetchImpl, timeoutMs: dependencies.apiTimeoutMs, signal: input.signal,
+          onStatus: (status) => { apiFallback = status; },
+        });
+        checkCancelled(input.signal);
+        // Exactly one optional semantic selection and one local verification
+        // pass. No recursion, API retries or native voice regeneration.
+        if (hint) {
+          const result = await analyzeVoiceGroupImpl(input, dependencies, hint);
+          return { ...result, recognition: withApiStatus(result.recognition) };
+        }
+      }
+      throw error;
+    }
+  } catch (error) {
+    const safe = input.signal?.aborted ? cancelError() : error instanceof VoiceGroupAnalysisError ? error : unsafeError();
+    const recognition = error instanceof VoiceGroupAnalysisError ? error.recognition : undefined;
+    // A second pass may stop before ASR. Retain the complete first checkpoint
+    // until the new pass has real recognition; never merge two cut attempts.
+    const hasNewRecognition = Boolean(recognition?.sourceTranscript.trim() || recognition?.sourceWords?.length || recognition?.targetTranscript?.trim());
+    const retainedRecognition = hasNewRecognition || !originalRecognition ? recognition : originalRecognition;
+    throw new VoiceGroupAnalysisError(safe.message, safe.statusCode, safe.diagnosticCode, withApiStatus(retainedRecognition ?? {
+      stage: safe.statusCode === 422 ? "input_validation" : "unavailable", sourceTranscript: "",
+      expectedText: input.expectedText.slice(0, 500),
+      ...(input.followingText ? { followingText: input.followingText.slice(0, 1500) } : {}),
+    }));
+  }
+}
+
+async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>[0], dependencies: Dependencies,
+  alignmentHint?: VoiceAlignmentHint): Promise<VoiceGroupAnalysis> {
   checkCancelled(input.signal);
   if (!input.expectedText.trim() || input.expectedText.length > 500 || (input.followingText?.length ?? 0) > 1500
       || input.clauses.length < 1 || input.clauses.length > 32 || input.clauses.some((clause) => !clause.trim())
@@ -198,16 +267,17 @@ export async function analyzeVoiceGroup(input: {
   await mkdir(temporaryRoot, { recursive: true });
   const canonicalRoot = await realpath(temporaryRoot);
   const directory = await mkdtemp(path.join(canonicalRoot, "group-"));
+  const outputJson = path.join(directory, "result.json");
   let confirmedExit = true;
   try {
     const requestPath = path.join(directory, "request.json");
     const outputWav = path.join(directory, "output.wav");
-    const outputJson = path.join(directory, "result.json");
     await writeFile(path.join(directory, "input.wav"), input.wav);
     await writeFile(requestPath, JSON.stringify({
       version: 1, inputWav: path.join(directory, "input.wav"), outputWav, outputJson,
       modelPath: runtime.modelPath, expectedText: input.expectedText,
       followingText: input.followingText ?? "", clauses: input.clauses,
+      ...(alignmentHint ? { alignmentHint } : {}),
     }), "utf8");
     checkCancelled(input.signal);
     if (session?.onClose && !dependencies.spawnImpl && (workers.has(session) || shouldReuseVoiceAnalysis())) {
@@ -244,15 +314,28 @@ export async function analyzeVoiceGroup(input: {
       });
     }
     checkCancelled(input.signal);
-    if ((await stat(outputJson)).size > 65_536) throw unsafeError();
-    const response: unknown = JSON.parse(await readFile(outputJson, "utf8"));
-    const failure = z.object({ version: z.literal(1), success: z.literal(false), code: z.string().regex(/^[a-z_]{1,80}$/) }).strict().safeParse(response);
+    const response = await readAnalysisResponse(outputJson);
+    const failure = AnalysisFailureSchema.safeParse(response);
+    const unavailable = failure.success && ["analysis_failed", "analysis_incomplete"].includes(failure.data.code);
     if (failure.success) throw new VoiceGroupAnalysisError(
-      failure.data.code === "analysis_failed" ? unavailableError().message : unsafeError().message,
-      failure.data.code === "analysis_failed" ? 503 : 422, failure.data.code);
+      unavailable ? unavailableError().message : unsafeError().message,
+      unavailable ? 503 : 422, failure.data.code,
+      responseRecognition(response, input.expectedText, input.followingText));
     const result = AnalysisResultSchema.safeParse(response);
+    const verifiedRecognition = result.success ? responseRecognition(response, input.expectedText, input.followingText) : undefined;
+    const boundedEditEvidence = result.success && result.data.recognition?.contentComparison?.mode === "bounded_edits";
+    const boundarySafe = result.success && Boolean(input.followingText?.trim())
+      && Boolean(verifiedRecognition?.boundaryMatch) && Boolean(result.data.cutValidation);
+    const boundedEditSafe = boundedEditEvidence && boundarySafe;
     if (!result.success || result.data.cutEndSeconds <= result.data.cutStartSeconds || result.data.cutEndSeconds > sourceDuration + 0.001
-        || (result.data.cutValidation && result.data.cutValidation.quietEndSeconds > sourceDuration + .001)) throw unsafeError();
+        || (result.data.cutValidation && result.data.cutValidation.quietEndSeconds > sourceDuration + .001)
+        || (result.data.coverage < .9 && !boundedEditSafe) || (boundedEditEvidence && !boundedEditSafe)
+        || (result.data.recognition?.boundaryMatch && !boundarySafe)
+        || (result.data.recognition?.contentComparison && Math.abs(result.data.coverage - result.data.recognition.contentComparison.similarity) > .000001)
+        || (alignmentHint && (!boundarySafe || result.data.recognition?.boundaryMatch?.method !== "api"
+          || result.data.recognition.boundaryMatch.terminalWordIndex !== alignmentHint.terminalWordIndex
+          || result.data.recognition.boundaryMatch.recognizedPrefix !== alignmentHint.recognizedPrefix))
+        || (input.followingText && result.data.recognition?.contentComparison?.status === "different" && !result.data.cutValidation)) throw unsafeError();
     if ((await stat(outputWav)).size > input.wav.byteLength + 4096) throw unsafeError();
     const wav = new Uint8Array(await readFile(outputWav));
     const decoded = decodePcmWav(wav);
@@ -265,10 +348,14 @@ export async function analyzeVoiceGroup(input: {
     checkCancelled(input.signal);
     const { version: _version, success: _success, ...details } = result.data;
     void _version; void _success;
-    return { ...details, wav };
+    return { ...details, recognition: responseRecognition(response, input.expectedText, input.followingText), wav };
   } catch (error) {
-    if (error instanceof VoiceGroupAnalysisError) throw error;
-    throw unsafeError();
+    const safe = error instanceof VoiceGroupAnalysisError ? error : unsafeError();
+    // A timeout, worker failure or malformed crop must not erase recognition
+    // already checkpointed before the process stopped or its files are removed.
+    const recognition = safe.recognition ?? await readAnalysisResponse(outputJson)
+      .then((response) => responseRecognition(response, input.expectedText, input.followingText)).catch(() => undefined);
+    throw new VoiceGroupAnalysisError(safe.message, safe.statusCode, safe.diagnosticCode, recognition);
   } finally {
     // Resolve and check immediately before recursive deletion; never remove a live
     // child's working directory or a path outside this task's temporary root.

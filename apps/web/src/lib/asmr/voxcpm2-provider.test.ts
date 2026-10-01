@@ -9,6 +9,13 @@ import { writePcm16MonoWav } from "./procedural-audio";
 import { getLocalRuntimeConfig } from "./local-runtime-config";
 import { generateVoxCpm2, type VoxCpm2Spawn } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
+import { getVoiceGenerationRoot } from "./voice-generation-recordings";
+
+async function failureDiagnostics(input: Awaited<ReturnType<typeof fixture>>["input"]) {
+  const directory = path.join(getVoiceGenerationRoot(input.config), "diagnostics");
+  return await Promise.all((await readdir(directory)).filter((name) => name.endsWith(".json"))
+    .map(async (name) => JSON.parse(await readFile(path.join(directory, name), "utf8"))));
+}
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "voxcpm-run-"));
@@ -70,6 +77,7 @@ describe("VoxCPM2 native provider", () => {
     expect(JSON.stringify(result.provenance)).not.toContain(root);
     expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
     expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect(await readdir(path.join(getVoiceGenerationRoot(input.config), "diagnostics")).catch(() => [])).toEqual([]);
   });
   it("uses Combined -r plus prompt WAV and keeps the normalized transcript trailing space", async () => {
     const { input, output } = await fixture();
@@ -166,6 +174,7 @@ describe("VoxCPM2 native provider", () => {
     await writeFile(outputPath, output.slice(0, 100));
     await rejected;
     expect(onRawOutput).not.toHaveBeenCalled();
+    expect((await failureDiagnostics(input))[0].native.exitConfirmed).toBe(false);
     expect(await readdir(path.join(root, "locks"))).toHaveLength(1);
     expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toHaveLength(1);
     await writeFile(outputPath, output);
@@ -177,6 +186,7 @@ describe("VoxCPM2 native provider", () => {
       expect(await readdir(path.join(root, "locks"))).toEqual([]);
       expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
     });
+    expect(await failureDiagnostics(input)).toMatchObject([{ native: { exitConfirmed: true, exitCode: 0, signal: null } }]);
     process.emit("close", 0, null);
     expect(onRawOutput).toHaveBeenCalledOnce();
     await expect(generateVoxCpm2(input, { spawnImpl: successfulSpawn(output) })).resolves.toHaveProperty("wav");
@@ -206,6 +216,74 @@ describe("VoxCPM2 native provider", () => {
       setImmediate(() => { process.stderr.write("private-path secret-token input-text"); process.emit("close", 1, null); });
       return process;
     } })).rejects.toThrow("VoxCPM2 生成失败，请稍后重试。");
+  });
+  it("persists bounded separate native tails, exit status and signal after removing run files", async () => {
+    const { input, root } = await fixture();
+    const error = await generateVoxCpm2(input, { spawnImpl: () => {
+      const process = child();
+      setImmediate(() => {
+        process.stdout.write("discarded-stdout-head" + "o".repeat(100_000) + "stdout-tail input-secret");
+        process.stderr.write("discarded-stderr-head" + "e".repeat(100_000) + "stderr-tail private-path");
+        process.emit("close", 23, "SIGABRT");
+      });
+      return process;
+    } }).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ message: "VoxCPM2 生成失败，请稍后重试。", statusCode: 502 });
+    expect(String(error)).not.toMatch(/private-path|input-secret|stdout-tail|stderr-tail/);
+    expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
+    const records = await failureDiagnostics(input);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ version: 1, provider: "voxcpm2", native: { pid: 987654321, exitCode: 23, signal: "SIGABRT", exitConfirmed: true, spawnError: null } });
+    expect(records[0].native.stdoutTail).toHaveLength(32768);
+    expect(records[0].native.stderrTail).toHaveLength(32768);
+    expect(records[0].native.stdoutTail.endsWith("stdout-tail input-secret")).toBe(true);
+    expect(records[0].native.stderrTail.endsWith("stderr-tail private-path")).toBe(true);
+    expect(JSON.stringify(records)).not.toContain("discarded-");
+  });
+  it("records a bounded spawn error without returning native details", async () => {
+    const { input, root } = await fixture();
+    const process = Object.assign(new EventEmitter(), { pid: undefined, stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
+    await expect(generateVoxCpm2(input, { spawnImpl: () => {
+      setImmediate(() => {
+        process.emit("error", Object.assign(new Error("x".repeat(8000) + " private-cli-path"), { code: "ENOENT" }));
+        process.emit("close", -2, null);
+      });
+      return process;
+    } })).rejects.toMatchObject({ statusCode: 503, message: "VoxCPM2 无法启动，请检查本机运行环境。" });
+    const [record] = await failureDiagnostics(input);
+    expect(record.native).toMatchObject({ pid: null, exitCode: -2, exitConfirmed: true, spawnError: { name: "Error", code: "ENOENT" } });
+    expect(record.native.spawnError.message).toHaveLength(4096);
+    expect(record.native.spawnError.message.endsWith("private-cli-path")).toBe(true);
+    expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
+  });
+  it.each([
+    ["CUDA error: out of memory", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
+    ["std::bad_alloc", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
+    ["write failed: No space left on device", "生成所需磁盘空间不足，请腾出空间后重试。", 503],
+    ["GGML_ASSERT(n_tokens <= n_batch) failed", "本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400],
+    ["private/ggml-cuda/cpy.cu:228: GGML_ASSERT(grid_y < USHRT_MAX) failed", "生成音频超出本机解码容量，请缩短生成范围后重试。", 400],
+  ])("classifies an exact native failure safely: %s", async (nativeMessage, message, statusCode) => {
+    const { input } = await fixture();
+    await expect(generateVoxCpm2(input, { spawnImpl: () => {
+      const process = child();
+      setImmediate(() => { process.stderr.write(nativeMessage + " private-path input-secret"); process.emit("close", 1, null); });
+      return process;
+    } })).rejects.toMatchObject({ message, statusCode });
+    const [record] = await failureDiagnostics(input);
+    expect(record.native.stderrTail).toContain(nativeMessage);
+    expect(record.failure.message).not.toMatch(/private-path|input-secret|cpy\.cu/);
+  });
+  it("does not let unavailable diagnostics hide the generation failure or prevent cleanup", async () => {
+    const { input, root } = await fixture();
+    await mkdir(getVoiceGenerationRoot(input.config), { recursive: true });
+    await writeFile(path.join(getVoiceGenerationRoot(input.config), "diagnostics"), "not a directory");
+    await expect(generateVoxCpm2(input, { spawnImpl: () => {
+      const process = child();
+      setImmediate(() => process.emit("close", 1, null));
+      return process;
+    } })).rejects.toThrow("VoxCPM2 生成失败，请稍后重试。");
+    expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
   });
   it("rejects missing, malformed and mismatched-format WAVs without hiding bytes from the raw publisher", async () => {
     const { input } = await fixture();

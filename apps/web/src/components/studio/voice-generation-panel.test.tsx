@@ -12,6 +12,7 @@ import { makeVoiceCandidateFixture } from "@/lib/asmr/voice-candidate-fixture";
 import type { VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
 import type { VoiceLongTextResult } from "@/lib/asmr/voice-longtext-result";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
+import type { VoiceRecognition } from "@/lib/asmr/voice-recognition";
 
 import { VoiceGenerationPanel, type VoiceGenerationPanelProps } from "./voice-generation-panel";
 
@@ -50,6 +51,22 @@ function longTextCandidate() {
   return { ...take, provenance: { ...take.provenance, generationMode: "long_text" as const, longText } };
 }
 
+function recognitionCandidate(group: Partial<VoiceLongTextResult["groups"][number]>) {
+  const take = longTextCandidate();
+  take.provenance.longText.groups = [{ ...take.provenance.longText.groups[0], isFinal: true, ...group }];
+  take.provenance.longText.joins = [];
+  return take;
+}
+
+function recognitionWithDifference(): VoiceRecognition {
+  return {
+    expectedText: "回来啦？外面是不是很冷？", sourceTranscript: "回来了，外面是不是很冷？快进来。",
+    targetTranscript: "回来了，外面是不是很冷？", stage: "complete",
+    contentComparison: { status: "different", similarity: 0.9, threshold: 0.9, substitutionCount: 1,
+      expected: "回来啦外面是不是很冷", recognized: "回来了外面是不是很冷" },
+  };
+}
+
 function props(overrides: Partial<VoiceGenerationPanelProps> = {}): VoiceGenerationPanelProps {
   return {
     options, onOptionsChange: vi.fn(), catalog, busy: false, candidates: [], selectedClip,
@@ -82,6 +99,118 @@ afterEach(() => {
 });
 
 describe("voice generation panel", () => {
+  it("keeps successful source and cropped recognition collapsed beside the existing candidate actions", () => {
+    const target = "回来啦？先坐一会儿。";
+    const source = `${target}外面下雨了吗？`;
+    const take = recognitionCandidate({ text: target, checkStatus: "passed", cutStartSeconds: 0.12, cutEndSeconds: 3.45,
+      recognition: { expectedText: target, sourceTranscript: source, targetTranscript: target, stage: "complete" },
+    });
+    const input = props({ candidates: [take] });
+    render(<VoiceGenerationPanel {...input} />);
+    const disclosure = screen.getByText("识别对照").closest("details")!;
+    expect(disclosure.open).toBe(false);
+    expect(screen.getByLabelText("候选 1 试听")).toBeTruthy();
+    fireEvent.click(screen.getByText("识别对照"));
+    expect(disclosure.open).toBe(true);
+    expect(within(disclosure).getByText("完整窗口识别").nextElementSibling?.textContent).toBe(source);
+    expect(within(disclosure).getByText("目标台词").nextElementSibling?.textContent).toBe(target);
+    expect(within(disclosure).getByText("裁剪后识别").nextElementSibling?.textContent).toBe(target);
+    expect(within(disclosure).getByText("已提取目标片段：0.12–3.45 秒。")).toBeTruthy();
+    expect(within(disclosure).getByText("检查阶段：检查完成")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take);
+  });
+
+  it("shows a safely extracted candidate with recognized substitutions without labeling it a full-original fallback", () => {
+    const recognition = recognitionWithDifference();
+    const take = recognitionCandidate({ text: recognition.expectedText, checkStatus: "passed", cutStartSeconds: 0.1, cutEndSeconds: 2.5, recognition });
+    const input = props({ candidates: [take] });
+    render(<VoiceGenerationPanel {...input} />);
+    const disclosure = screen.getByText("识别对照").closest("details")!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(screen.getByText("识别对照"));
+    expect(within(disclosure).getByText("已截取目标片段；识别文字与源文有差异。")).toBeTruthy();
+    expect(within(disclosure).getByText("截取范围：0.10–2.50 秒。")).toBeTruthy();
+    expect(within(disclosure).getByText("文字相似度 90% · 阈值 90%")).toBeTruthy();
+    expect(within(disclosure).getByText("第 3 字：啦 → 了")).toBeTruthy();
+    expect(within(disclosure).queryByText(/保留完整原音|念错|读错/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take);
+  });
+
+  it("keeps the full-original fallback when content comparison passes but the group cut remains under review", () => {
+    const recognition = { ...recognitionWithDifference(), stage: "target_validation" as const };
+    const take = recognitionCandidate({ text: recognition.expectedText, checkStatus: "review", recognition });
+    render(<VoiceGenerationPanel {...props({ candidates: [take] })} />);
+    const disclosure = screen.getByText("识别对照").closest("details")!;
+    fireEvent.click(screen.getByText("识别对照"));
+    expect(within(disclosure).getByText("保留完整原音，未采用裁剪。")).toBeTruthy();
+    expect(within(disclosure).getByText("第 3 字：啦 → 了")).toBeTruthy();
+    expect(within(disclosure).queryByText(/已截取目标片段/)).toBeNull();
+  });
+
+  it("explains an alignment failure with the actual recognized prefix and retained original", () => {
+    const take = recognitionCandidate({ text: "回来啦？", checkStatus: "review", diagnosticCode: "uncertain_word_alignment",
+      recognition: { expectedText: "回来啦？", sourceTranscript: "回来了，先坐一会儿。", stage: "source_alignment",
+        alignment: { expected: "回来啦", recognizedPrefix: "回来了先坐", reason: "uncertain_word_alignment" },
+      },
+    });
+    render(<VoiceGenerationPanel {...props({ candidates: [take] })} />);
+    const disclosure = screen.getByText("识别对照").closest("details")!;
+    fireEvent.click(screen.getByText("识别对照"));
+    expect(within(disclosure).getByText("保留完整原音，未采用裁剪。")).toBeTruthy();
+    expect(within(disclosure).getByText("回来了，先坐一会儿。")).toBeTruthy();
+    expect(within(disclosure).getByText("定位时识别前缀").nextElementSibling?.textContent).toBe("回来了先坐");
+    expect(within(disclosure).getByText("检查阶段：目标句定位")).toBeTruthy();
+    expect(within(disclosure).getByText("识别文字未能定位目标句的结束位置。")).toBeTruthy();
+    expect(within(disclosure).queryByText("裁剪后识别")).toBeNull();
+    expect(within(disclosure).queryByText(/录音与台词未能核对一致/)).toBeNull();
+  });
+
+  it("shows an unsuccessful cropped transcript without implying that the crop was adopted", () => {
+    const take = recognitionCandidate({ text: "回来啦？", checkStatus: "review", diagnosticCode: "cut_text_mismatch",
+      recognition: { expectedText: "回来啦？", sourceTranscript: "回来啦？慢慢来。", targetTranscript: "回来了", stage: "target_validation" },
+    });
+    render(<VoiceGenerationPanel {...props({ candidates: [take] })} />);
+    const disclosure = screen.getByText("识别对照").closest("details")!;
+    fireEvent.click(screen.getByText("识别对照"));
+    expect(within(disclosure).getByText("裁剪后识别").nextElementSibling?.textContent).toBe("回来了");
+    expect(within(disclosure).getByText("尝试裁剪后的识别文字未通过核对。")).toBeTruthy();
+    expect(within(disclosure).getByText("保留完整原音，未采用裁剪。")).toBeTruthy();
+  });
+
+  it("distinguishes a saved empty recognition result from legacy candidates without recognition", () => {
+    const take = recognitionCandidate({ checkStatus: "review", transcript: "旧字段不等于完整窗口识别",
+      recognition: { expectedText: "回来啦？", sourceTranscript: "", stage: "unavailable" },
+    });
+    const input = props({ candidates: [take] });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    let disclosure = screen.getByText("识别对照").closest("details")!;
+    fireEvent.click(screen.getByText("识别对照"));
+    expect(within(disclosure).getByText("本次未取得识别文本")).toBeTruthy();
+    expect(within(disclosure).queryByText("未保存识别文本")).toBeNull();
+    const legacy = recognitionCandidate({ transcript: "旧字段不等于完整窗口识别" });
+    view.rerender(<VoiceGenerationPanel {...input} candidates={[legacy]} />);
+    disclosure = screen.getByText("识别对照").closest("details")!;
+    expect(within(disclosure).getByText("未保存识别文本")).toBeTruthy();
+    expect(within(disclosure).queryByText("完整窗口识别")).toBeNull();
+    expect(within(disclosure).queryByText("旧字段不等于完整窗口识别")).toBeNull();
+    view.rerender(<VoiceGenerationPanel {...input} candidates={[candidate()]} />);
+    expect(within(screen.getByText("识别对照").closest("details")!).getByText("未保存识别文本")).toBeTruthy();
+  });
+
+  it("checks the sliding context for long-text candidates without invalidating ordinary clip takes", () => {
+    const voiceContext = { version: 1 as const, followingClauses: ["接下来坐这里。"], isFinal: false };
+    const longTake = { ...longTextCandidate(), candidateId: "window_take",
+      sourceFingerprint: getVoiceCandidateSourceFingerprint(selectedClip, voiceContext) };
+    const input = props({ voiceContext, candidates: [longTake, candidate()] });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false);
+    view.rerender(<VoiceGenerationPanel {...input} voiceContext={{ ...voiceContext, followingClauses: ["换到旁边坐吧。"] }} />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "采用候选 2" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("exposes failed historical originals for playback and download while generation remains busy", async () => {
     const audioUrl = "/api/voice-generation-recordings/legacy_11111111-2222-4333-8444-555555555555_1_3";
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ recordings: [{
@@ -90,17 +219,79 @@ describe("voice generation panel", () => {
       duration: 22.72, audioUrl, status: "needs_review", warning: "台词核对有疑问，请试听。", historicalMatch: true,
     }], truncated: false }) });
     vi.stubGlobal("fetch", fetcher);
-    render(<VoiceGenerationPanel {...props({ projectId: "project", busy: true, error: "台词未能核对一致。",
-      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" } })} />);
+    const input = props({ projectId: "project", busy: true, error: "台词未能核对一致。",
+      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" } });
+    const view = render(<VoiceGenerationPanel {...input} />);
     const audio = await screen.findByLabelText("完整原音 1 试听");
     expect(audio.getAttribute("src")).toBe(audioUrl);
     expect(audio.hasAttribute("disabled")).toBe(false);
+    const recordings = screen.getByRole("region", { name: "完整原始录音" }).querySelector("details")!;
+    expect(recordings.open).toBe(true);
     expect(screen.getByRole("link", { name: "下载完整原音" }).getAttribute("href")).toBe(`${audioUrl}?download=1`);
     expect(screen.getByText("历史同文案")).toBeTruthy();
     expect(screen.getByText("台词未能核对一致。")).toBeTruthy();
     expect(String(fetcher.mock.calls[0][0])).toContain("projectId=project");
     fireEvent.click(screen.getByRole("button", { name: "刷新录音" }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    view.rerender(<VoiceGenerationPanel {...input} busy={false} />);
+    expect(recordings.open).toBe(true);
+  });
+
+  it.each(["needs_review", "checked"] as const)("shows saved recognition for a %s original without a candidate and keeps full-original playback", async (status) => {
+    const audioUrl = "/api/voice-generation-recordings/current_11111111-2222-4333-8444-555555555555_1_1";
+    const expectedText = "回来啦？";
+    const sourceTranscript = "回来啦？先坐一会儿。";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ recordings: [{
+      recordingId: "current_11111111-2222-4333-8444-555555555555_1_1", runId: "11111111-2222-4333-8444-555555555555",
+      group: 1, take: 1, createdAt: "2026-09-21T08:00:00.000Z", expectedText, inputText: sourceTranscript,
+      duration: 22.72, audioUrl, status, warning: "完整原音仍可试听。", historicalMatch: false,
+      recognition: { stage: status === "checked" ? "complete" : "source_alignment", expectedText, sourceTranscript,
+        ...(status === "checked" ? { targetTranscript: expectedText } : {}),
+      },
+    }], truncated: false }) }));
+    render(<VoiceGenerationPanel {...props({ projectId: "project", candidates: [], error: status === "needs_review" ? "已取消生成。" : undefined,
+      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" },
+    })} />);
+    const audio = await screen.findByLabelText("完整原音 1 试听");
+    fireEvent.click(screen.getByText("完整原始录音 · 1 条可试听"));
+    const original = screen.getByRole("article", { name: "完整原音 1" });
+    const disclosure = within(original).getByText("识别对照").closest("details")!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(within(original).getByText("识别对照"));
+    expect(disclosure.open).toBe(true);
+    expect(within(disclosure).getByText("完整窗口识别").nextElementSibling?.textContent).toBe(sourceTranscript);
+    expect(within(disclosure).getByText("目标台词").nextElementSibling?.textContent).toBe(expectedText);
+    expect(within(disclosure).getByText("本条试听与下载均为完整原音。")).toBeTruthy();
+    expect(within(disclosure).queryByText(/已提取目标片段/)).toBeNull();
+    expect(audio.getAttribute("src")).toBe(audioUrl);
+    expect(within(original).getByRole("link", { name: "下载完整原音" }).getAttribute("href")).toBe(`${audioUrl}?download=1`);
+    expect(screen.queryByRole("button", { name: /采用候选/ })).toBeNull();
+  });
+
+  it("shows accepted recognition differences on the original while playback and download still use the complete source", async () => {
+    const audioUrl = "/api/voice-generation-recordings/current_11111111-2222-4333-8444-555555555555_1_1";
+    const recognition = recognitionWithDifference();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ recordings: [{
+      recordingId: "current_11111111-2222-4333-8444-555555555555_1_1", runId: "11111111-2222-4333-8444-555555555555",
+      group: 1, take: 1, createdAt: "2026-09-23T08:00:00.000Z", expectedText: recognition.expectedText, inputText: recognition.sourceTranscript,
+      duration: 23.36, audioUrl, status: "checked", warning: "检查已完成。这里保留模型输出的全部声音。", historicalMatch: false, recognition,
+    }], truncated: false }) }));
+    render(<VoiceGenerationPanel {...props({ projectId: "project", candidates: [],
+      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "long_text" },
+    })} />);
+    const audio = await screen.findByLabelText("完整原音 1 试听");
+    fireEvent.click(screen.getByText("完整原始录音 · 1 条可试听"));
+    const original = screen.getByRole("article", { name: "完整原音 1" });
+    const disclosure = within(original).getByText("识别对照").closest("details")!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(within(original).getByText("识别对照"));
+    expect(within(disclosure).getByText("本条试听与下载均为完整原音。")).toBeTruthy();
+    expect(within(disclosure).getByText("识别文字与源文有差异。")).toBeTruthy();
+    expect(within(disclosure).getByText("文字相似度 90% · 阈值 90%")).toBeTruthy();
+    expect(within(disclosure).getByText("第 3 字：啦 → 了")).toBeTruthy();
+    expect(within(disclosure).queryByText(/已截取目标片段|未采用裁剪|念错|读错/)).toBeNull();
+    expect(audio.getAttribute("src")).toBe(audioUrl);
+    expect(within(original).getByRole("link", { name: "下载完整原音" }).getAttribute("href")).toBe(`${audioUrl}?download=1`);
   });
 
   it("polls originals during generation and stops polling after completion", async () => {
@@ -131,7 +322,12 @@ describe("voice generation panel", () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ recordings: [recording(3), recording(2)], truncated: true, nextCursor: "refreshedCursor" }) });
     vi.stubGlobal("fetch", fetcher);
     render(<VoiceGenerationPanel {...props({ projectId: "project", options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" } })} />);
-    fireEvent.click(await screen.findByRole("button", { name: "加载更多录音" }));
+    await screen.findByLabelText("完整原音 1 试听");
+    const disclosure = screen.getByRole("region", { name: "完整原始录音" }).querySelector("details")!;
+    expect(disclosure.open).toBe(false);
+    fireEvent.click(within(disclosure).getByText("完整原始录音 · 1 条可试听"));
+    expect(disclosure.open).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "加载更多录音" }));
     await screen.findByLabelText("完整原音 2 试听");
     expect(String(fetcher.mock.calls[1][0])).toContain("cursor=olderCursor");
     fireEvent.click(screen.getByRole("button", { name: "刷新录音" }));
@@ -297,7 +493,7 @@ describe("voice generation panel", () => {
     }] };
     const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" }, catalog: unavailableCatalog });
     render(<VoiceGenerationPanel {...input} />);
-    expect((screen.getByRole("option", { name: "长文分组" }) as HTMLOptionElement).disabled).toBe(true);
+    expect((screen.getByRole("option", { name: "长文连续生成" }) as HTMLOptionElement).disabled).toBe(true);
     expect(screen.getByRole("alert").textContent).toBe("请配置本地语音校验工具。");
     fireEvent.change(control("生成方式"), { target: { value: "long_text" } });
     expect(input.onOptionsChange).not.toHaveBeenCalled();
@@ -349,7 +545,7 @@ describe("voice generation panel", () => {
     const article = screen.getByRole("article", { name: "候选 1" });
     const details = within(article).getByText("生成详情").closest("details")!;
     expect(details.open).toBe(false);
-    expect(within(details).getByText("长文分组")).toBeTruthy();
+    expect(within(details).getByText("长文连续生成")).toBeTruthy();
     expect(within(details).getByText("3 组")).toBeTruthy();
     expect(within(details).getByText("350 / 440 ms")).toBeTruthy();
     expect(within(details).getByText("外部 API")).toBeTruthy();
@@ -452,7 +648,7 @@ describe("voice generation panel", () => {
     const input = props({ candidates: [candidate()], selectedClip: { ...selectedClip, text: "新的台词。" } });
     render(<VoiceGenerationPanel {...input} />);
     expect(screen.getByLabelText("候选 1 试听")).toBeTruthy();
-    expect(screen.getByText("文案已修改，请重新生成。" )).toBeTruthy();
+    expect(screen.getByText("文案或后续上下文已修改，请重新生成。" )).toBeTruthy();
     const adopt = screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement;
     expect(adopt.disabled).toBe(true);
     fireEvent.click(adopt);
@@ -491,16 +687,21 @@ describe("voice generation panel", () => {
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 
-  it("keeps the provided generation action above current audio and accumulated candidates", () => {
+  it("prioritizes generation and candidates while leaving technical settings collapsed", () => {
     render(<VoiceGenerationPanel {...props({
       generationControl: <button>生成新候选</button>,
       selectedClip: { ...selectedClip, asset: { asset_id: "original", uri: "asset://clip/original", duration: 5 } },
       candidates: [candidate()],
     })} />);
     const action = screen.getByRole("button", { name: "生成新候选" });
-    expect(control("参考模式").compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(control("参考声音").compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(action.compareDocumentPosition(screen.getByLabelText("当前人声试听")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(action.compareDocumentPosition(screen.getByLabelText("候选 1 试听")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const settings = screen.getByText("更多生成设置").closest("details")!;
+    expect(settings.open).toBe(false);
+    expect(screen.getByLabelText("候选 1 试听").compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(settings.contains(control("人声引擎"))).toBe(true);
+    expect(settings.contains(control("参考模式"))).toBe(true);
   });
 
   it("pauses the other previews when one current or candidate audio starts playing", () => {

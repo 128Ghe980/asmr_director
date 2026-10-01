@@ -57,7 +57,7 @@ export function ProjectRail({
     <aside
       id={panelId}
       aria-label="项目导航"
-      className={`${collapsed ? "hidden lg:block" : ""} min-w-0 border-b border-studio-line bg-studio-bg/72 p-3 lg:border-b-0 lg:border-r`}
+      className={`${collapsed ? "hidden lg:block" : "fixed inset-y-0 left-0 z-40 w-64 shadow-2xl lg:static lg:w-auto lg:shadow-none"} min-h-0 min-w-0 overflow-y-auto overscroll-contain border-r border-studio-line bg-studio-bg p-3`}
     >
       <div className="flex items-center justify-between gap-2">
         {collapsed ? null : (

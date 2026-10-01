@@ -50,7 +50,7 @@ describe("complete original voice recordings", () => {
     const result = await listVoiceGenerationRecordings({ config, projectId: "project", clipId: "clip", text });
     expect(result.recordings).toHaveLength(1);
     expect(result.recordings[0]).toMatchObject({ historicalMatch: true, duration: 1, group: 1, take: 1, status: "needs_review" });
-    expect(result.recordings[0].warning).toContain("识别差异");
+    expect(result.recordings[0].warning).toContain("目标句的结束位置");
     const source = await resolveVoiceGenerationRecording(config, result.recordings[0].recordingId);
     expect(new Uint8Array(await readFile(source.filePath))).toEqual(wav);
     expect((await listVoiceGenerationRecordings({ config, projectId: "project", clipId: "clip", text: "回来啦，外面是不是很冷？" })).recordings).toHaveLength(0);
@@ -75,6 +75,28 @@ describe("complete original voice recordings", () => {
     expect((await listVoiceGenerationRecordings({ config, projectId: "p", clipId: "c", text })).recordings).toHaveLength(1);
   });
 
+  it("returns validated recognition from completed or failed checks and strips unsafe trace metadata", async () => {
+    const config = await setup();
+    const recognition = { stage: "source_alignment", sourceTranscript: "回来了，外面是不是很冷。", expectedText: text,
+      sourceWords: [{ text: "回来了", start: .1, end: .6 }],
+      alignment: { expected: "回来啦外面是不是很冷", recognizedPrefix: "回来了外面是不是很冷", reason: "uncertain_word_alignment" } };
+    const directory = await take(getVoiceGenerationRoot(config), id, {}, { code: "uncertain_word_alignment", recognition, modelPath: config.runtimeRoot });
+    const query = new URLSearchParams({ projectId: "p", clipId: "c", text });
+    const response = await listGET(new Request(`http://localhost/api/voice-generation-recordings?${query}`));
+    const payload = await response.json();
+    expect(payload.recordings[0]).toMatchObject({ recognition, status: "needs_review" });
+    expect(JSON.stringify(payload)).not.toContain(config.runtimeRoot);
+    for (const invalid of [{ ...recognition, privatePath: config.runtimeRoot }, { ...recognition, expectedText: "其他台词。" }, { ...recognition, sourceTranscript: "字".repeat(8001) }]) {
+      await writeFile(path.join(directory, "group-1-take-1-failure.json"), JSON.stringify({ code: "uncertain_word_alignment", recognition: invalid }));
+      const result = await listVoiceGenerationRecordings({ config, projectId: "p", clipId: "c", text });
+      expect(result.recordings).toHaveLength(1);
+      expect(result.recordings[0].recognition).toBeUndefined();
+    }
+    const complete = { ...recognition, stage: "complete", targetTranscript: text, alignment: undefined };
+    await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ transcript: text, cutEndSeconds: 1, recognition: complete }));
+    expect((await listVoiceGenerationRecordings({ config, projectId: "p", clipId: "c", text })).recordings[0].recognition).toEqual(complete);
+  });
+
   it("supports current-clip sources and review analysis even without a failure trace", async () => {
     const config = await setup();
     const directory = await take(getVoiceGenerationRoot(config), id, {
@@ -84,6 +106,28 @@ describe("complete original voice recordings", () => {
     const result = await listVoiceGenerationRecordings({ config, projectId: "project", clipId: "clip", text });
     expect(result.recordings[0]).toMatchObject({ status: "needs_review", expectedText: text, inputText: text });
     expect(result.recordings[0].warning).toContain("识别差异");
+  });
+
+  it("distinguishes successful extraction with a text difference from an original needing boundary review", async () => {
+    const config = await setup();
+    const directory = await take(getVoiceGenerationRoot(config));
+    const recognition = { stage: "complete", sourceTranscript: "回来了，外面是不是很冷，快进来。", expectedText: text,
+      targetTranscript: "回来了，外面是不是很冷？", contentComparison: { status: "different", similarity: .9,
+        threshold: .9, substitutionCount: 1, expected: "回来啦外面是不是很冷", recognized: "回来了外面是不是很冷" } };
+    await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ checkStatus: "passed", transcript: recognition.targetTranscript, cutEndSeconds: .7, recognition }));
+    const query = { config, projectId: "p", clipId: "c", text };
+    const recording = (await listVoiceGenerationRecordings(query)).recordings[0];
+    expect(recording).toMatchObject({ status: "checked", recognition, duration: 1 });
+    expect(recording.warning).toContain("目标片段已通过截取检查");
+    expect(recording.warning).toContain("相似度 90.0%");
+    expect(recording.warning).toContain("完整原音");
+    const source = await resolveVoiceGenerationRecording(config, recording.recordingId);
+    expect(new Uint8Array(await readFile(source.filePath))).toEqual(wav);
+    await writeFile(path.join(directory, "group-1-take-1-failure.json"), JSON.stringify({ code: "no_verified_quiet_cut", recognition }));
+    const failed = (await listVoiceGenerationRecordings(query)).recordings[0];
+    expect(failed.status).toBe("needs_review");
+    expect(failed.warning).not.toContain("已通过截取检查");
+    expect(failed.warning).toContain("完整原音");
   });
 
   it("keeps whitespace-surrounded clip text visible and describes intentionally unchecked audio", async () => {

@@ -96,6 +96,7 @@ function mockApi(initialCandidates: AudioCandidate[] = []) {
       }
       return reads.shift() ?? Response.json({ candidate });
     }
+    if (url.startsWith("/api/voice-generation-recordings?")) return Response.json({ recordings: [], truncated: false });
     if (url.startsWith("/api/assets/analysis")) return Response.json({ analysis: { bars: [10, 30, 20], duration: 10, sampleRate: 48000, channels: 1, peakDbfs: -12, rmsDbfs: -20, clippedSampleCount: 0 } });
     throw new Error(`Unexpected test request: ${url}`);
   });
@@ -106,11 +107,15 @@ function mockApi(initialCandidates: AudioCandidate[] = []) {
 async function mount(project = fixtureProject()) {
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
   await waitFor(() => {
-    const engine = screen.getByRole("combobox", { name: "人声引擎" }) as HTMLSelectElement;
-    expect(engine.value).toBe("voxcpm2");
-    expect(engine.disabled).toBe(false);
+    const reference = screen.getByRole("combobox", { name: "参考声音" }) as HTMLSelectElement;
+    expect(reference.value).toBe("soft_zh");
+    expect(reference.disabled).toBe(false);
   });
   return view;
+}
+function openDisclosure(label: string) {
+  const summary = screen.getByText(label, { selector: "summary" });
+  if (!summary.closest("details")!.open) fireEvent.click(summary);
 }
 function audioSource() { return screen.getByLabelText("当前人声试听").getAttribute("src"); }
 function audioAssetId() {
@@ -130,6 +135,39 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("StudioApp voice candidate workflow with simulated HTTP", () => {
+  it("defaults newly inserted semantic speech to the sliding generation mode", async () => {
+    const project = fixtureProject();
+    seedLibrary(project);
+    mockApi();
+    await mount(project);
+    fireEvent.click(screen.getByRole("button", { name: "下方插入" }));
+    await waitFor(() => expect(currentProject().timeline.tracks.find((track) => track.track_type === "voice")!.clips[1].semantic_unit).toBe(true));
+    const savedOptions = JSON.parse(window.localStorage.getItem("ai-asmr-studio:v1:voice-options")!);
+    expect(savedOptions.generationMode).toBe("long_text");
+  });
+
+  it("cancels a semantic window when its following text changes while preserving the original target audio", async () => {
+    const project = fixtureProject();
+    const voices = project.timeline.tracks.find((track) => track.track_type === "voice")!.clips;
+    voices.forEach((clip) => { clip.semantic_unit = true; });
+    seedLibrary(project);
+    window.localStorage.setItem("ai-asmr-studio:v1:voice-options", JSON.stringify({ ...voiceOptions, generationMode: "long_text", analysisProvider: "local" }));
+    const api = mockApi();
+    const delayed = deferred<Response>();
+    api.respond(delayed.promise);
+    await mount(project);
+    fireEvent.click(screen.getByRole("button", { name: "重生成" }));
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    expect(api.posts[0].request.voiceOptions?.generationMode).toBe("long_text");
+    fireEvent.click(screen.getByRole("button", { name: "选择第 2 段" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "台词" }), { target: { value: "后文已经更改。" } });
+    await waitFor(() => expect(api.posts[0].signal?.aborted).toBe(true));
+    await act(async () => { delayed.resolve(Response.json({ error: "canceled" }, { status: 499 })); await delayed.promise; });
+    expect(firstVoice().asset.uri).toBe("asset://clip/original_0");
+    expect(firstVoice().text).toBe(voices[0].text);
+    expect(currentProject().timeline.tracks.find((track) => track.track_type === "voice")!.clips[1].text).toBe("后文已经更改。");
+  });
+
   it("switches spatial playback routes and edits orbit distance without replacing the dry asset", async () => {
     const initial = seedLibrary();
     const entry = initial.projects[0];
@@ -138,6 +176,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     const dryAsset = structuredClone(firstVoice(entry.project).asset);
     const api = mockApi();
     await mount(entry.project);
+    fireEvent.click(screen.getAllByRole("button", { name: "展开项目详情" })[0]);
     const toggle = screen.getByRole("checkbox", { name: "双耳空间与房间感" }) as HTMLInputElement;
     const preview = within(screen.getByRole("complementary", { name: "试听与导出" }));
     expect(toggle.checked).toBe(true);
@@ -176,6 +215,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     const api = mockApi();
     api.respond(Response.json({ error: "测试生成失败。" }, { status: 503 }));
     let view = await mount(project);
+    openDisclosure("更多生成设置");
     fireEvent.change(screen.getByRole("combobox", { name: "生成方式" }), { target: { value: "long_text" } });
     expect((screen.getByRole("combobox", { name: "文本分析" }) as HTMLSelectElement).value).toBe("local");
     if (analysisProvider === "api") fireEvent.change(screen.getByRole("combobox", { name: "文本分析" }), { target: { value: "api" } });
@@ -185,6 +225,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     expect(currentProject()).toEqual(project);
     view.unmount();
     view = await mount(project);
+    openDisclosure("更多生成设置");
     expect((screen.getByRole("combobox", { name: "生成方式" }) as HTMLSelectElement).value).toBe("long_text");
     expect((screen.getByRole("combobox", { name: "文本分析" }) as HTMLSelectElement).value).toBe(analysisProvider);
     expect(api.posts).toHaveLength(1);
@@ -239,9 +280,15 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     }
     await waitFor(() => expect(api.posts[0].signal?.aborted).toBe(true));
     await act(async () => { late.resolve(Response.json({ candidate })); await late.promise; });
-    await waitOriginal();
-    expect(firstVoice().asset.asset_id).toBe("original_0");
-    if (action === "edit") expect(firstVoice().text).toBe("我刚刚编辑的新台词。");
+    if (action === "edit") {
+      await waitFor(() => expect(firstVoice().asset.asset_id).toBeNull());
+      expect(screen.queryByLabelText("当前人声试听")).toBeNull();
+      expect(firstVoice().text).toBe("我刚刚编辑的新台词。");
+      expect(getCurrentLibraryEntry(storedLibrary()).revisions.some((revision) => firstVoice(revision.project).asset.asset_id === "original_0")).toBe(true);
+    } else {
+      await waitOriginal();
+      expect(firstVoice().asset.asset_id).toBe("original_0");
+    }
     if (action === "switch") expect(storedLibrary().currentProjectId).toBe("other_project");
     const originalEntry = storedLibrary().projects.find((entry) => entry.projectId === project.project_id)!;
     expect(originalEntry.candidateAcceptance).toBeUndefined();
@@ -281,7 +328,9 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
       await late.promise;
     });
     await waitFor(() => expect(firstVoice().text).toBe("检查期间的新编辑。"));
-    expect(audioAssetId()).toBe("original_0");
+    expect(firstVoice().asset.asset_id).toBeNull();
+    expect(screen.queryByLabelText("当前人声试听")).toBeNull();
+    expect(getCurrentLibraryEntry(storedLibrary()).revisions.some((revision) => firstVoice(revision.project).asset.asset_id === "original_0")).toBe(true);
     expect(getCurrentLibraryEntry(storedLibrary()).candidateAcceptance).toBeUndefined();
   });
 
@@ -294,6 +343,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     mockApi([takeFor(project)]);
     await mount(project);
     await screen.findByRole("button", { name: "采用候选 1" });
+    if (field === "emotion") openDisclosure("表演与导演快捷");
     const savedBefore = currentProject();
     const input = screen.getByLabelText(label) as HTMLInputElement | HTMLTextAreaElement;
 
@@ -302,11 +352,13 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     expect(document.body.contains(input)).toBe(true);
     expect(input.value).toBe("");
     expect(currentProject()).toEqual(savedBefore);
-    expect(audioAssetId()).toBe("original_0");
+    if (field === "text") expect(screen.queryByLabelText("当前人声试听")).toBeNull();
+    else expect(audioAssetId()).toBe("original_0");
 
     fireEvent.change(input, { target: { value: replacement } });
     await waitFor(() => expect(firstVoice()[field]).toBe(replacement));
-    expect(firstVoice().asset.asset_id).toBe("original_0");
+    expect(firstVoice().asset.asset_id).toBe(field === "text" ? null : "original_0");
+    if (field === "text") expect(getCurrentLibraryEntry(storedLibrary()).revisions.some((revision) => firstVoice(revision.project).asset.asset_id === "original_0")).toBe(true);
     expect(getCurrentLibraryEntry(storedLibrary()).plannerSource).toEqual(initial.projects[0].plannerSource);
   });
 });

@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
+import type { VoiceRecognition } from "./voice-recognition";
 
 export class VoiceGroupAnalysisError extends Error {
-  constructor(message: string, public readonly statusCode = 502, public readonly diagnosticCode?: string) {
+  constructor(message: string, public readonly statusCode = 502, public readonly diagnosticCode?: string, public readonly recognition?: VoiceRecognition) {
     super(message);
     this.name = "VoiceGroupAnalysisError";
   }

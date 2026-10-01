@@ -8,6 +8,7 @@ import {
   type PlannerDraft,
 } from "./planner";
 import { AsmrProjectSchema } from "./schema";
+import { commitGenerationSuccess } from "./generation-project-state";
 
 function draftFixture(): PlannerDraft {
   return {
@@ -82,7 +83,8 @@ describe("planner contracts", () => {
     const missingDirection = JSON.parse(JSON.stringify(valid));
     delete missingDirection.sections[0].direction;
     expect(PlannerDraftSchema.safeParse(missingDirection).success).toBe(false);
-    expect(PlannerDraftSchema.safeParse({ ...valid, sections: [valid.sections[0]] }).success).toBe(false);
+    expect(PlannerDraftSchema.safeParse({ ...valid, sections: [valid.sections[0]] }).success).toBe(true);
+    expect(PlannerDraftSchema.safeParse({ ...valid, sections: [] }).success).toBe(false);
     expect(PlannerDraftSchema.safeParse({ ...valid, instructions: "hidden" }).success).toBe(false);
   });
 
@@ -102,6 +104,23 @@ describe("planner contracts", () => {
 });
 
 describe("planner compilation", () => {
+  it("keeps the selected six-second pause after generated speech is shorter than the planning estimate", () => {
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    const compiled = compilePlannerDraft(brief, draftFixture(), "planned_pause");
+    const [estimated, nextEstimated] = compiled.timeline.tracks[0].clips;
+    const spokenDuration = 2;
+    expect(estimated.duration).toBeGreaterThan(spokenDuration);
+    const generated = commitGenerationSuccess(compiled, estimated.id, {
+      assetId: "shorter_voice", uri: "asset://clip/shorter_voice", duration: spokenDuration,
+    }, { fitVoiceTiming: true });
+    const [first, second] = generated.timeline.tracks[0].clips;
+    expect(first).toMatchObject({ duration: spokenDuration, pause_after: 6, asset: { duration: spokenDuration } });
+    expect(second.start - first.start - spokenDuration).toBe(6);
+    expect(second.start).toBeLessThan(nextEstimated.start);
+    expect(AsmrProjectSchema.safeParse(generated).success).toBe(true);
+    expect(compiled.timeline.tracks[0].clips[0].duration).toBe(estimated.duration);
+  });
+
   it("creates an editable valid pending project and keeps directions out of speech", () => {
     const brief = PlannerBriefSchema.parse({ theme: "深夜书店" });
     const draft = draftFixture();

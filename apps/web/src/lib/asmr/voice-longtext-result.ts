@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { validateVoiceLongTextAnalysis } from "./voice-longtext-plan";
+import { VoiceGenerationContextSchema } from "./voice-generation-context";
+import { VoiceRecognitionSchema } from "./voice-recognition";
 
 const PauseClass = z.enum(["short", "medium", "long"]);
 const Scalar = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
@@ -7,6 +9,7 @@ export const VoiceLongTextResultSchema = z.object({
   version: z.literal(1),
   analysisProvider: z.string().min(1),
   analysisModel: z.string().optional(),
+  context: VoiceGenerationContextSchema.optional(),
   plan: z.object({
     clauses: z.array(z.string().min(1)).min(1).max(500),
     groups: z.array(z.object({ start: z.number().int().min(0), end: z.number().int().min(0), text: z.string().min(1), pauseAfter: PauseClass }).strict()).min(1).max(12),
@@ -29,6 +32,7 @@ export const VoiceLongTextResultSchema = z.object({
     leadingQuietMs: z.number().finite().min(0),
     trailingQuietMs: z.number().finite().min(0),
     transcript: z.string(),
+    recognition: VoiceRecognitionSchema.optional(),
     coverage: z.number().min(0).max(1),
     cutStartSeconds: z.number().min(0),
     cutEndSeconds: z.number().positive(),
@@ -51,7 +55,7 @@ export const VoiceLongTextResultSchema = z.object({
   if (result.joins.length !== result.groups.length - 1) issue(["joins"], "Long-text joins must connect every adjacent group exactly once");
   result.groups.forEach((group, index) => {
     if (group.index !== index) issue(["groups", index, "index"], "Long-text group indices must be ordered and contiguous");
-    if (group.isFinal !== (index === result.groups.length - 1)) issue(["groups", index, "isFinal"], "Only the last group may be final");
+    if (group.isFinal !== (index === result.groups.length - 1 && (result.context?.isFinal ?? true))) issue(["groups", index, "isFinal"], "Final speech must agree with its project context");
     if (group.asset.uri !== `asset://clip/${group.asset.assetId}`) issue(["groups", index, "asset", "uri"], "Group asset URI must match its stable clip asset id");
     const unmeasuredReview = group.checkStatus === "review" && group.internalPausesMs.length === 0;
     if (!unmeasuredReview && group.internalPausesMs.length !== group.internalPauseClasses.length) issue(["groups", index, "internalPauseClasses"], "Every measured internal pause must have a corresponding class");

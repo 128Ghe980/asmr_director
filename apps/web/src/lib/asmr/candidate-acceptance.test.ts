@@ -6,6 +6,8 @@ import { PlannerBriefSchema, type PlannerDraft } from "./planner";
 import { adoptPlannerDraft, createInitialProjectLibrary, createLibraryProject, getCurrentLibraryEntry, loadProjectLibrary, replaceLibraryProject, saveProjectLibrary, setLibraryProjectMixFingerprint, updateLibraryProject } from "./project-library";
 import { serializeProject } from "./project-persistence";
 import type { AsmrProject, TimelineClip } from "./schema";
+import { getVoiceGenerationContext } from "./voice-generation-context";
+import { makeSemanticVoiceLongTextResultFixture } from "./voice-candidate-fixture";
 
 const now = new Date("2026-09-08T00:00:00.000Z");
 function voice(project: AsmrProject) {
@@ -29,6 +31,23 @@ function editVoice(project: AsmrProject, text: string): AsmrProject {
 }
 
 describe("adopting voice candidates", () => {
+  it("rejects a semantic candidate after a later window paragraph changes, while direct takes remain usable", () => {
+    const project = structuredClone(demoProject);
+    voice(project).semantic_unit = true;
+    const context = getVoiceGenerationContext(project, voice(project).id)!;
+    const windowTake = candidate(project);
+    windowTake.sourceFingerprint = getVoiceCandidateSourceFingerprint(voice(project), context);
+    windowTake.provenance = { ...windowTake.provenance, generationMode: "long_text",
+      longText: makeSemanticVoiceLongTextResultFixture(voice(project).text, context) };
+    expect(() => adoptAudioCandidate(createInitialProjectLibrary(project), windowTake)).not.toThrow();
+    const directTake = candidate(project);
+    project.timeline.tracks.find((track) => track.track_type === "voice")!.clips[1].text = "后文现在变了。";
+    const library = createInitialProjectLibrary(project);
+    expect(() => adoptAudioCandidate(library, windowTake)).toThrow(/后续文案/);
+    expect(library.projects[0].revisions).toHaveLength(0);
+    expect(() => adoptAudioCandidate(library, directTake)).not.toThrow();
+  });
+
   it("atomically protects the old project, fits non-Planner timing and invalidates the mix", () => {
     const library = setLibraryProjectMixFingerprint(createInitialProjectLibrary(demoProject, now), demoProject.project_id, "old_mix");
     const before = structuredClone(library);

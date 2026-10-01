@@ -9,7 +9,7 @@ import { demoProject } from "@/lib/asmr/mock-project";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import { ClipInspector } from "./clip-inspector";
 
-function mountInspector(movement: TimelineClip["position"]["movement"] = "static", binaural = true) {
+function mountInspector(movement: TimelineClip["position"]["movement"] = "static", binaural = true, textEditorExternal = false) {
   const onUpdateClip = vi.fn<(clipId: string, patch: ClipPatch) => void>();
   const onApplyDirectorPreset = vi.fn();
   function Harness() {
@@ -19,6 +19,7 @@ function mountInspector(movement: TimelineClip["position"]["movement"] = "static
     const selectedClip = project.timeline.tracks.find((track) => track.track_type === "voice")!.clips[1];
     return <ClipInspector
       binaural={binaural}
+      textEditorExternal={textEditorExternal}
       fieldValidationIssues={{}}
       selectedClip={selectedClip}
       selectedClipGeneration={{ action: "generate", label: "生成", disabled: false, statusLabel: "待生成", tone: "neutral" }}
@@ -44,6 +45,27 @@ const panControl = () => screen.getByRole("spinbutton", { name: /^声像/ }) as 
 afterEach(cleanup);
 
 describe("ClipInspector spatial controls", () => {
+  it("shows a range summary without a duplicate editor when text is edited in the storyboard", () => {
+    mountInspector("static", true, true);
+    expect(screen.queryByRole("textbox", { name: "台词" })).toBeNull();
+    const voice = demoProject.timeline.tracks.find((track) => track.track_type === "voice")!.clips[1];
+    if (voice.type !== "voice") throw new Error("Expected a voice clip");
+    expect(screen.getByLabelText("当前范围文本").textContent).toBe(voice.text);
+    const generation = screen.getByRole("button", { name: "生成" });
+    expect(generation.compareDocumentPosition(distanceControl()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const label of ["时间与微调", "表演与导演快捷", "素材与生成信息"]) {
+      const details = screen.getByText(label).closest("details")!;
+      expect(details.open).toBe(false);
+      expect(distanceControl().compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("keeps the standalone text editor available by default", () => {
+    const { onUpdateClip } = mountInspector();
+    fireEvent.change(screen.getByRole("textbox", { name: "台词" }), { target: { value: "修改这句话。" } });
+    expect(onUpdateClip).toHaveBeenLastCalledWith("voice_002", { text: "修改这句话。" });
+  });
+
   it("offers both orbit routes and preserves existing movement options", () => {
     const { onUpdateClip } = mountInspector();
     expect(Array.from(movementControl().options, (option) => option.value)).toEqual([

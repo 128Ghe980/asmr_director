@@ -4,6 +4,7 @@ node_modules/
 .next/
 .next-spatial/
 .next-spatial-build/
+.next-semantic-build/
 out/
 dist/
 coverage/

@@ -46,6 +46,7 @@ import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/play
 import { AudioCandidateSchema, type AudioCandidate } from "@/lib/asmr/audio-candidate";
 import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
+import { getVoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
 import {
@@ -80,20 +81,27 @@ import {
 import { getProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import type { PlannerBrief, PlannerDraft } from "@/lib/asmr/planner";
+import { addVoiceClip, deleteVoiceClip, getVoiceGapAfter, mergeVoiceClipWithNext, setVoiceGapAfter, splitVoiceClip } from "@/lib/asmr/voice-segments";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 
 import { ClipInspector } from "./clip-inspector";
+import { EditorPanels } from "./editor-panels";
 import { VoiceGenerationPanel } from "./voice-generation-panel";
 import { PlannerPanel } from "./planner-panel";
 import { ProjectWorkspace } from "./project-workspace";
-import { StoryboardPanel } from "./storyboard-panel";
+import { ScriptEditorPanel } from "./script-editor-panel";
 import { TimelinePanel } from "./timeline-panel";
 import { ValidationPanel } from "./validation-panel";
 
 type StudioAppProps = {
   project: AsmrProject;
 };
+
+function defaultClipId(project: AsmrProject) {
+  const clips = flattenClips(project);
+  return (clips.find((clip) => clip.type === "voice") ?? clips[0])?.id;
+}
 
 function exportProjectJson(project: AsmrProject) {
   const blob = new Blob([JSON.stringify(project, null, 2)], {
@@ -154,6 +162,8 @@ export function StudioApp({ project }: StudioAppProps) {
   const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
   const editableProjectRef = useRef(editableProject);
   const editRevisionRef = useRef(0);
+  const [scriptHistory, setScriptHistory] = useState<{ project: AsmrProject; clipId?: string }[]>([]);
+  const [scriptNotice, setScriptNotice] = useState<string>();
   const [voiceOptions, setVoiceOptions] = useState<VoiceGenerationOptions>({
     provider: "gpt-sovits", voicePackId: "default", referenceMode: "with_reference_text", generationMode: "clip",
   });
@@ -165,6 +175,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const [candidateActionBusy, setCandidateActionBusy] = useState(false);
   const [candidateRefresh, setCandidateRefresh] = useState(0);
   const candidateJobIdsRef = useRef(new Set<string>());
+  const windowedVoiceJobsRef = useRef(new Map<string, { clipId: string; context: string }>());
   const [projectLibrary, setProjectLibrary] = useState(() =>
     createInitialProjectLibrary(project, new Date(0)),
   );
@@ -190,7 +201,7 @@ export function StudioApp({ project }: StudioAppProps) {
   );
   const clips = useMemo(() => flattenClips(editableProject), [editableProject]);
   const [selectedClipId, setSelectedClipId] = useState<string | undefined>(
-    () => clips[0]?.id,
+    () => defaultClipId(project),
   );
   const selectedClip =
     clips.find((clip) => clip.id === selectedClipId) ?? clips[0];
@@ -367,6 +378,7 @@ export function StudioApp({ project }: StudioAppProps) {
     // Persist first: storage failure must leave the original audible project intact.
     saveProjectLibrary(window.localStorage, next);
     clearGenerationSession();
+    setScriptHistory([]);
     projectLibraryRef.current = next;
     setProjectLibrary(next);
     const entry = getCurrentLibraryEntry(next);
@@ -462,7 +474,7 @@ export function StudioApp({ project }: StudioAppProps) {
             ? "demo"
             : "restored",
         );
-        setSelectedClipId(flattenClips(loadedEntry.project)[0]?.id);
+        setSelectedClipId(defaultClipId(loadedEntry.project));
       } catch {
         const fallbackLibrary = createInitialProjectLibrary(project);
         setStorageAvailable(false);
@@ -470,7 +482,7 @@ export function StudioApp({ project }: StudioAppProps) {
         setProjectLibrary(fallbackLibrary);
         setEditableProject(project);
         setRestoreState("demo");
-        setSelectedClipId(flattenClips(project)[0]?.id);
+        setSelectedClipId(defaultClipId(project));
       } finally {
         setHasLoadedStorage(true);
       }
@@ -572,6 +584,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }, [generationRuntimeState]);
 
   useEffect(() => {
+    const windowedJobs = windowedVoiceJobsRef.current;
     return () => {
       generationSessionRef.current += 1;
       const jobIds = new Set([
@@ -587,6 +600,7 @@ export function StudioApp({ project }: StudioAppProps) {
       }
 
       generationReasonsRef.current = {};
+      windowedJobs.clear();
       generationFingerprintsRef.current = {};
       projectMixReasonsRef.current = {};
       projectMixJobFingerprintsRef.current = {};
@@ -597,6 +611,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function clearGenerationSession() {
     candidateJobIdsRef.current.clear();
+    windowedVoiceJobsRef.current.clear();
     generationSessionRef.current += 1;
     const jobIds = new Set([
       ...Object.keys(generationReasonsRef.current),
@@ -640,10 +655,13 @@ export function StudioApp({ project }: StudioAppProps) {
     const entry = getCurrentLibraryEntry(nextLibrary);
 
     clearGenerationSession();
+    setScriptHistory([]);
+    setScriptNotice(undefined);
     persistLibrary(nextLibrary);
+    editableProjectRef.current = entry.project;
     setEditableProject(entry.project);
     setProjectMixFingerprint(entry.mixFingerprint);
-    setSelectedClipId(flattenClips(entry.project)[0]?.id);
+    setSelectedClipId(defaultClipId(entry.project));
     setRestoreState(nextRestoreState);
     setImportError(undefined);
   }
@@ -670,6 +688,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
     delete generationReasonsRef.current[job.jobId];
     delete generationFingerprintsRef.current[job.jobId];
+    windowedVoiceJobsRef.current.delete(job.jobId);
     setRuntimeState(next);
     void bridgeRef.current?.cancelGeneration(job.jobId);
   }
@@ -702,6 +721,8 @@ export function StudioApp({ project }: StudioAppProps) {
     if (generationSession !== generationSessionRef.current) {
       return;
     }
+
+    if (update.type !== "snapshot") windowedVoiceJobsRef.current.delete(update.job.jobId);
 
     if (update.type === "snapshot") {
       setGenerationRuntimeState((current) => {
@@ -772,9 +793,7 @@ export function StudioApp({ project }: StudioAppProps) {
           update.job.clipId,
           fingerprint,
           {
-            ignoreVoiceStart: Boolean(projectLibraryRef.current.projects.find(
-              (entry) => entry.projectId === currentProject.project_id,
-            )?.plannerSource),
+            ignoreVoiceStart: true,
           },
         )
           ? commitGenerationSuccess(
@@ -782,9 +801,7 @@ export function StudioApp({ project }: StudioAppProps) {
               update.job.clipId,
               update.asset,
               {
-                fitVoiceTiming: Boolean(projectLibraryRef.current.projects.find(
-                  (entry) => entry.projectId === currentProject.project_id,
-                )?.plannerSource),
+                fitVoiceTiming: true,
               },
             )
           : currentProject,
@@ -838,9 +855,7 @@ export function StudioApp({ project }: StudioAppProps) {
           update.job.clipId,
           fingerprint,
           {
-            ignoreVoiceStart: Boolean(projectLibraryRef.current.projects.find(
-              (entry) => entry.projectId === currentProject.project_id,
-            )?.plannerSource),
+            ignoreVoiceStart: true,
           },
         )
           ? commitGenerationFailure(currentProject, update.job.clipId, {
@@ -885,11 +900,14 @@ export function StudioApp({ project }: StudioAppProps) {
     startSelectedClipGeneration(options, { candidateId: candidate.candidateId, groupIndex });
   }
 
-  function startSelectedClipGeneration(optionsOverride?: VoiceGenerationOptions, longTextRetry?: LongTextRetry) {
-    if (!selectedClip || generationView.selectedClipControl.disabled) {
+  function startSelectedClipGeneration(optionsOverride?: VoiceGenerationOptions, longTextRetry?: LongTextRetry, target?: { project: AsmrProject; clipId: string }) {
+    const generationProject = target?.project ?? editableProject;
+    const generationClip = target ? flattenClips(generationProject).find((clip) => clip.id === target.clipId) : selectedClip;
+    const control = target ? getGenerationView({ project: generationProject, selectedClip: generationClip, runtimeState: generationRuntimeStateRef.current, selectedClipHasValidationIssues: Object.keys(getClipFieldValidationIssues(generationProject, target.clipId, getProjectValidationIssues(generationProject))).length > 0, projectMixFingerprint }).selectedClipControl : generationView.selectedClipControl;
+    if (!generationClip || control.disabled) {
       return;
     }
-    const options = selectedClip.type === "voice" ? optionsOverride ?? voiceOptions : undefined;
+    const options = generationClip.type === "voice" ? optionsOverride ?? voiceOptions : undefined;
     if (options?.provider === "voxcpm2" && voiceBusy) return;
     if (options?.provider === "voxcpm2" && !voiceCatalog?.providers.find((item) => item.id === "voxcpm2")?.available) {
       setVoiceError("VoxCPM2 尚未就绪，请检查本机配置。");
@@ -898,11 +916,11 @@ export function StudioApp({ project }: StudioAppProps) {
     if (options?.provider === "voxcpm2" && options.generationMode === "long_text") {
       const capability = voiceCatalog?.providers.find((item) => item.id === "voxcpm2")?.longText;
       if (!capability?.available) { setVoiceError(capability?.reason || "长文语音分析尚未就绪。"); return; }
-      if (!longTextRetry && options.analysisProvider === "api" && !capability.apiConfigured) { setVoiceError("请先配置外部文本分析 API，或选择本地分析。"); return; }
+      if (!(generationClip.type === "voice" && generationClip.semantic_unit) && !longTextRetry && options.analysisProvider === "api" && !capability.apiConfigured) { setVoiceError("请先配置外部文本分析 API，或选择本地分析。"); return; }
     }
     setVoiceError(undefined);
 
-    const action = generationView.selectedClipControl.action;
+    const action = control.action;
     const reason: GenerateClipReason =
       action === "retry"
         ? "retry"
@@ -911,15 +929,17 @@ export function StudioApp({ project }: StudioAppProps) {
           : "generate";
     let didFinishBeforeStart = false;
     const generationSession = generationSessionRef.current;
-    const fingerprint = getClipGenerationFingerprint(selectedClip, {
-      ignoreVoiceStart: Boolean(currentLibraryEntry?.plannerSource),
+    const fingerprint = getClipGenerationFingerprint(generationClip, {
+      ignoreVoiceStart: true,
     });
+    const voiceContext = options?.provider === "voxcpm2" && options.generationMode === "long_text"
+      ? getVoiceGenerationContext(generationProject, generationClip.id) : undefined;
 
     void getGenerationBridge()
       .generateClip(
         {
-          project: editableProject,
-          clipId: selectedClip.id,
+          project: generationProject,
+          clipId: generationClip.id,
           reason,
           voiceOptions: options,
           ...(longTextRetry ? { longTextRetry } : {}),
@@ -930,6 +950,9 @@ export function StudioApp({ project }: StudioAppProps) {
           }
 
           generationReasonsRef.current[update.job.jobId] = reason;
+          if (voiceContext && update.type === "snapshot") windowedVoiceJobsRef.current.set(update.job.jobId, {
+            clipId: generationClip.id, context: JSON.stringify(voiceContext),
+          });
           if (options?.provider === "voxcpm2") candidateJobIdsRef.current.add(update.job.jobId);
           generationFingerprintsRef.current[update.job.jobId] = fingerprint;
           handleGenerationUpdate(update, generationSession);
@@ -1116,16 +1139,36 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleUpdateClip(clipId: string, patch: ClipPatch) {
+    const current = editableProjectRef.current;
+    const clip = flattenClips(current).find((item) => item.id === clipId);
+    if (clip?.type === "voice" && patch.text !== undefined && patch.text !== clip.text) {
+      const next = updateClipInProject(current, clipId, patch);
+      const track = next.timeline.tracks.find((item) => item.track_type === "voice")!;
+      track.clips = track.clips.map((item) => item.id === clipId ? {
+        ...item, asset: { asset_id: null, uri: null, duration: null },
+        generation: { ...item.generation, status: "asset_pending", error: null },
+      } : item);
+      commitScriptEdit(next, clipId, "台词已更新，可以生成这一段的新音频。", Boolean(clip.asset.uri));
+      return;
+    }
     editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
-    setEditableProject((currentProject) =>
-      updateClipInProject(currentProject, clipId, patch),
-    );
+    const updated = syncExplicitWaits(updateClipInProject(current, clipId, patch));
+    cancelChangedVoiceWindows(updated);
+    editableProjectRef.current = updated;
+    setEditableProject(updated);
     setImportError(undefined);
   }
 
   function handleApplyDirectorPreset(clipId: string, preset: DirectorPreset) {
+    if (preset === "add-pause") {
+      const current = editableProjectRef.current;
+      const gap = getVoiceGapAfter(current, clipId);
+      if (gap !== null) commitScriptEdit(setVoiceGapAfter(current, clipId, gap + 0.5), clipId, "段后等待增加了 0.5 秒。");
+      else setScriptNotice("这是最后一段；添加下一段后即可设置段间等待。");
+      return;
+    }
     editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
@@ -1139,10 +1182,90 @@ export function StudioApp({ project }: StudioAppProps) {
     editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
-    setEditableProject((currentProject) =>
-      nudgeClipTiming(currentProject, clipId, nudge),
-    );
+    const updated = syncExplicitWaits(nudgeClipTiming(editableProjectRef.current, clipId, nudge));
+    cancelChangedVoiceWindows(updated);
+    editableProjectRef.current = updated;
+    setEditableProject(updated);
     setImportError(undefined);
+  }
+
+  function syncExplicitWaits(next: AsmrProject): AsmrProject {
+    return { ...next, timeline: { ...next.timeline, tracks: next.timeline.tracks.map((track) => track.track_type !== "voice" ? track : {
+      ...track, clips: track.clips.map((clip) => clip.pause_after === undefined ? clip : { ...clip, pause_after: getVoiceGapAfter(next, clip.id) ?? clip.pause_after }),
+    }) } };
+  }
+
+  function commitScriptEdit(next: AsmrProject, clipId?: string, notice?: string, protect = true) {
+    const current = editableProjectRef.current;
+    if (next === current) return;
+    setScriptHistory((history) => [...history.slice(-29), { project: current, clipId: activeClipId }]);
+    if (protect && getProjectValidationIssues(current).length === 0) {
+      persistLibrary(createProjectRevision(updateLibraryProject(projectLibraryRef.current, current), current.project_id, new Date(), "文案编辑前"));
+    }
+    editRevisionRef.current += 1;
+    cancelChangedVoiceWindows(next);
+    const after = new Map(flattenClips(next).map((clip) => [clip.id, clip]));
+    for (const clip of flattenClips(current)) {
+      if (JSON.stringify(clip) !== JSON.stringify(after.get(clip.id))) cancelGenerationForClip(clip.id);
+    }
+    cancelProjectMixGeneration();
+    audioRef.current?.pause();
+    editableProjectRef.current = next;
+    setEditableProject(next);
+    setSelectedClipId(clipId);
+    setScriptNotice(notice);
+    setImportError(undefined);
+  }
+
+  function cancelChangedVoiceWindows(next: AsmrProject) {
+    for (const [jobId, job] of windowedVoiceJobsRef.current) {
+      if (JSON.stringify(getVoiceGenerationContext(next, job.clipId)) !== job.context) {
+        cancelGenerationForClip(job.clipId);
+        windowedVoiceJobsRef.current.delete(jobId);
+      }
+    }
+  }
+
+  function handleSplitVoice(clipId: string, start: number, end: number, generate = false) {
+    if (generate && voiceBusy) return;
+    const result = splitVoiceClip(editableProjectRef.current, clipId, start, end);
+    const targetId = result.selectedClipId ?? clipId;
+    commitScriptEdit(result.project, targetId, "已按所选范围分段；各段可独立编辑、生成和设置等待。");
+    setSelectedClipId(targetId);
+    const options = voiceOptions.provider === "voxcpm2"
+      ? { ...voiceOptions, generationMode: "long_text" as const } : voiceOptions;
+    if ((generate || result.project !== editableProject) && options !== voiceOptions) handleVoiceOptionsChange(options);
+    if (generate) {
+      startSelectedClipGeneration(options, undefined, { project: result.project, clipId: targetId });
+    }
+  }
+
+  function handleAddVoice(afterClipId?: string) {
+    const result = addVoiceClip(editableProjectRef.current, afterClipId);
+    commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已添加一段，直接输入台词即可。");
+    if (voiceOptions.provider === "voxcpm2") handleVoiceOptionsChange({ ...voiceOptions, generationMode: "long_text" });
+  }
+
+  function handleUndoScriptEdit() {
+    const previous = scriptHistory.at(-1);
+    if (!previous || previous.project.project_id !== editableProject.project_id) return;
+    editRevisionRef.current += 1;
+    clearGenerationSession();
+    editableProjectRef.current = previous.project;
+    setEditableProject(previous.project);
+    setSelectedClipId(previous.clipId);
+    setScriptHistory((history) => history.slice(0, -1));
+    setScriptNotice("已撤回上一次文案编辑。");
+  }
+
+  function handleRewriteVoice(clipId: string, original: string, text: string) {
+    const target = flattenClips(editableProjectRef.current).find((clip) => clip.id === clipId);
+    if (target?.type !== "voice" || target.text !== original) {
+      setScriptNotice("文案已修改，未覆盖新的内容。请重新选择范围改写。");
+      return;
+    }
+    handleUpdateClip(clipId, { text });
+    setScriptNotice("已只改写选定文字，可继续编辑或生成音频。");
   }
 
   function getLibraryWithCurrentProject() {
@@ -1176,6 +1299,9 @@ export function StudioApp({ project }: StudioAppProps) {
   function handleAdoptPlanner(brief: PlannerBrief, draft: PlannerDraft) {
     const nextLibrary = adoptPlannerDraft(getLibraryWithCurrentProject(), brief, draft);
     activateLibraryProject(nextLibrary);
+    if (draft.segmentation === "semantic" && voiceOptions.provider === "voxcpm2") {
+      handleVoiceOptionsChange({ ...voiceOptions, generationMode: "long_text" });
+    }
     setWorkspaceView("editor");
   }
 
@@ -1299,41 +1425,46 @@ export function StudioApp({ project }: StudioAppProps) {
       onResetDemo={handleResetDemo}
       onSelectProject={handleSelectProject}
     >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
         <div className="inline-flex rounded-lg border border-studio-line bg-studio-panel p-1" aria-label="工作区视图">
-          <button type="button" aria-pressed={workspaceView === "planner"} aria-controls="planner-workspace" onClick={() => setWorkspaceView("planner")} className={`min-h-10 rounded-md px-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-sky-300 ${workspaceView === "planner" ? "bg-sky-300/12 text-sky-100" : "text-studio-muted hover:text-studio-text"}`}>AI 创意策划</button>
-          <button type="button" aria-pressed={workspaceView === "editor"} aria-controls="editor-workspace" onClick={() => setWorkspaceView("editor")} className={`min-h-10 rounded-md px-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-sky-300 ${workspaceView === "editor" ? "bg-sky-300/12 text-sky-100" : "text-studio-muted hover:text-studio-text"}`}>工程编辑</button>
+          <button type="button" aria-pressed={workspaceView === "planner"} aria-controls="planner-workspace" onClick={() => setWorkspaceView("planner")} className={`min-h-8 rounded-md px-3 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-sky-300 ${workspaceView === "planner" ? "bg-sky-300/12 text-sky-100" : "text-studio-muted hover:text-studio-text"}`}>AI 创意策划</button>
+          <button type="button" aria-pressed={workspaceView === "editor"} aria-controls="editor-workspace" onClick={() => setWorkspaceView("editor")} className={`min-h-8 rounded-md px-3 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-sky-300 ${workspaceView === "editor" ? "bg-sky-300/12 text-sky-100" : "text-studio-muted hover:text-studio-text"}`}>工程编辑</button>
         </div>
       </div>
-      <div id="planner-workspace" hidden={workspaceView !== "planner"}>
+      <div id="planner-workspace" className="min-h-0 flex-1 overflow-hidden" hidden={workspaceView !== "planner"}>
         <PlannerPanel source={currentLibraryEntry?.plannerSource} onAdopt={handleAdoptPlanner} />
       </div>
-      <div id="editor-workspace" hidden={workspaceView !== "editor"}>
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(220px,0.86fr)_minmax(0,1.26fr)_minmax(220px,0.86fr)]">
-        <div className="min-h-[520px] xl:h-[calc(100vh-152px)]">
-          <StoryboardPanel
+      <div id="editor-workspace" className="min-h-0 flex-1 overflow-hidden" hidden={workspaceView !== "editor"}>
+      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_minmax(0,0.42fr)] gap-2">
+      <EditorPanels>
+        <div className="h-full min-h-0 min-w-0">
+          <ScriptEditorPanel
+            key={editableProject.project_id}
             project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
+            busy={voiceBusy}
+            canUndo={scriptHistory.length > 0}
+            notice={scriptNotice}
+            onUpdateClip={handleUpdateClip}
+            onAddClip={handleAddVoice}
+            onDeleteClip={(clipId) => { const result = deleteVoiceClip(editableProjectRef.current, clipId); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除片段，可撤回编辑。"); }}
+            onSplitClip={handleSplitVoice}
+            onMergeClip={(clipId) => { const result = mergeVoiceClipWithNext(editableProjectRef.current, clipId); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已合并，可重新选择修改或生成的范围。"); }}
+            onGapChange={(clipId, seconds) => commitScriptEdit(setVoiceGapAfter(editableProjectRef.current, clipId, seconds), clipId, `下一段将在人声结束后等待 ${seconds} 秒。`)}
+            onRewriteClip={handleRewriteVoice}
+            onUndo={handleUndoScriptEdit}
           />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-4">
-          <TimelinePanel
-            project={displayProject}
-            selectedClipId={activeClipId}
-            onSelectClip={setSelectedClipId}
-          />
-          <EmotionCurve project={editableProject} />
-          <ValidationPanel issues={validationIssues} />
-        </div>
-
-        <div className="min-w-0">
+        <div aria-label="声音与生成设置" className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain rounded-xl border border-studio-line bg-studio-panel/88 [&>section]:border-0">
           <ClipInspector
+            textEditorExternal
             binaural={editableProject.timeline.mixing.binaural}
             voiceGenerationPanel={selectedClip?.type === "voice" ? (generationControl) => (
               <VoiceGenerationPanel
                 projectId={editableProject.project_id}
+                voiceContext={getVoiceGenerationContext(editableProject, selectedClip.id)}
                 binaural={editableProject.timeline.mixing.binaural}
                 generationControl={generationControl}
                 options={voiceOptions} onOptionsChange={handleVoiceOptionsChange}
@@ -1360,6 +1491,11 @@ export function StudioApp({ project }: StudioAppProps) {
             onUpdateClip={handleUpdateClip}
           />
         </div>
+      </EditorPanels>
+      <div className="flex min-h-0 min-w-0 flex-col gap-1">
+        <TimelinePanel project={displayProject} selectedClipId={activeClipId} onSelectClip={setSelectedClipId} />
+        <details className="relative shrink-0 rounded-md border border-studio-line bg-studio-panel/60 px-3 py-1"><summary className="cursor-pointer text-xs text-studio-muted">情绪与工程检查{validationIssues.length ? ` · ${validationIssues.length} 项待检查` : ""}</summary><div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-[60dvh] space-y-3 overflow-y-auto rounded-lg border border-studio-line bg-studio-panel p-3 shadow-2xl"><EmotionCurve project={editableProject} /><ValidationPanel issues={validationIssues} /></div></details>
+      </div>
       </div>
       </div>
     </ProjectWorkspace>

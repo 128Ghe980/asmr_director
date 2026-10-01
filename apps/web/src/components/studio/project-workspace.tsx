@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { ProjectPreviewSummary } from "@/lib/asmr/generation-summary";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
@@ -89,7 +89,7 @@ export function ProjectWorkspace({
   onSelectProject,
 }: ProjectWorkspaceProps) {
   const [leftCollapsed, setLeftCollapsed] = useState(true);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(true);
   const workspaceColumns = useMemo(
     () =>
       `${leftCollapsed ? "3.5rem" : "13rem"} minmax(0, 1fr)${
@@ -100,6 +100,55 @@ export function ProjectWorkspace({
   const style = {
     "--workspace-columns": workspaceColumns,
   } as CSSProperties;
+
+  function togglePanel(side: "left" | "right") {
+    const collapsed = side === "left" ? leftCollapsed : rightCollapsed;
+    const panelId = side === "left" ? PROJECT_WORKSPACE_RAIL_ID : PROJECT_WORKSPACE_DETAILS_ID;
+    if (!collapsed) document.querySelector<HTMLButtonElement>(`header button[aria-controls="${panelId}"]`)?.focus();
+    if (side === "left") setLeftCollapsed(!collapsed);
+    else setRightCollapsed(!collapsed);
+    if (window.matchMedia?.("(max-width: 1023px)").matches) {
+      if (side === "left") setRightCollapsed(true);
+      else setLeftCollapsed(true);
+    }
+  }
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(max-width: 1023px)");
+    if (!media) return;
+    const handleResize = () => { if (media.matches) setRightCollapsed(true); };
+    media.addEventListener("change", handleResize);
+    return () => media.removeEventListener("change", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!window.matchMedia?.("(max-width: 1023px)").matches) return;
+    const panelId = !leftCollapsed ? PROJECT_WORKSPACE_RAIL_ID
+      : !rightCollapsed && !planning ? PROJECT_WORKSPACE_DETAILS_ID : null;
+    if (!panelId) return;
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    panel.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        document.querySelector<HTMLButtonElement>(`header button[aria-controls="${panelId}"]`)?.focus();
+        if (panelId === PROJECT_WORKSPACE_RAIL_ID) setLeftCollapsed(true);
+        else setRightCollapsed(true);
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(panel!.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex='0']"))
+        .filter((element) => element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (first && last && (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    }
+    panel.addEventListener("keydown", onKeyDown);
+    return () => panel.removeEventListener("keydown", onKeyDown);
+  }, [leftCollapsed, rightCollapsed, planning]);
 
   function handleToggleFocus() {
     if (leftCollapsed && rightCollapsed) {
@@ -114,7 +163,7 @@ export function ProjectWorkspace({
 
   return (
     <div
-      className="grid min-h-screen w-full min-w-0 overflow-x-hidden bg-studio-bg text-studio-text lg:grid-cols-[var(--workspace-columns)]"
+      className="grid h-dvh max-h-dvh w-full min-h-0 min-w-0 overflow-hidden bg-studio-bg text-studio-text lg:grid-cols-[var(--workspace-columns)]"
       style={style}
     >
       <ProjectRail
@@ -127,10 +176,10 @@ export function ProjectWorkspace({
         onDelete={onDeleteProject}
         onDuplicate={onDuplicateProject}
         onSelect={onSelectProject}
-        onToggle={() => setLeftCollapsed((current) => !current)}
+        onToggle={() => togglePanel("left")}
       />
 
-      <div className="min-w-0">
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         <ProjectWorkspaceHeader
           planning={planning}
           importError={importError}
@@ -144,11 +193,11 @@ export function ProjectWorkspace({
           onImportJson={onImportJson}
           onResetDemo={onResetDemo}
           onToggleFocus={handleToggleFocus}
-          onToggleLeft={() => setLeftCollapsed((current) => !current)}
-          onToggleRight={() => setRightCollapsed((current) => !current)}
+          onToggleLeft={() => togglePanel("left")}
+          onToggleRight={() => togglePanel("right")}
         />
 
-        <main className="min-w-0 px-4 py-4 md:px-5">{children}</main>
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2 md:px-3">{children}</main>
       </div>
 
       {!planning && <ProjectDetailsDock
@@ -171,7 +220,7 @@ export function ProjectWorkspace({
         onPlaySelectedClip={onPlaySelectedClip}
         onCreateRevision={onCreateRevision}
         onRestoreRevision={onRestoreRevision}
-        onToggle={() => setRightCollapsed((current) => !current)}
+        onToggle={() => togglePanel("right")}
       />}
     </div>
   );

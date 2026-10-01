@@ -96,7 +96,7 @@ export function ProjectDetailsDock({
     <aside
       id={panelId}
       aria-label="项目详情"
-      className="min-w-0 border-t border-studio-line bg-studio-bg/72 p-3 lg:border-l lg:border-t-0"
+      className={`${collapsed ? "hidden lg:block" : "fixed inset-y-0 right-0 z-40 w-[min(20rem,90vw)] shadow-2xl lg:static lg:w-auto lg:shadow-none"} min-h-0 min-w-0 overflow-y-auto overscroll-contain border-l border-studio-line bg-studio-bg p-3`}
     >
       <div className="flex items-center justify-between gap-2">
         {collapsed ? null : (

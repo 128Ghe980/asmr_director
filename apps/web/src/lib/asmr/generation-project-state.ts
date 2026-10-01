@@ -3,6 +3,7 @@ import type {
   GenerateClipReason,
 } from "./generation-bridge";
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
+import { fitVoiceSegmentTiming } from "./voice-segments";
 
 type GenerationFailureInput = {
   reason: GenerateClipReason;
@@ -87,6 +88,10 @@ function fitGeneratedVoiceTiming(
 
   if (!Number.isFinite(duration) || duration <= 0) {
     throw new Error("Invalid generated voice duration");
+  }
+
+  if (voice.type === "voice" && voice.pause_after !== undefined) {
+    return fitVoiceSegmentTiming(project, clipId, duration);
   }
 
   // Shorter takes retain the director's planned silence. Repeated generation

@@ -5,6 +5,7 @@ import {
   PlannerError,
   runPlanner,
 } from "./planner-provider";
+import { normalizePlannerSemanticDraft } from "./planner-semantic";
 
 const brief = {
   theme: "深夜书店",
@@ -48,6 +49,19 @@ afterEach(() => {
 });
 
 describe("Planner provider", () => {
+  it("expands compact semantic generation in one call while inheriting shared direction", async () => {
+    const { id, title, emotion, style, pace, direction, soundSuggestions, position } = section;
+    const units = Array.from({ length: 70 }, (_, index) => ({ text: `第${index + 1}句，你可以慢慢看，我在这里陪着。`, pauseAfter: "medium" }));
+    const compact = { title: draft.title, scene: draft.scene, character: draft.character, groups: [{ id, title, emotion, style, pace, direction, soundSuggestions, position, units }] };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(compact));
+    const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 600 } }, { env: {}, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    if (!("draft" in result)) throw new Error("Expected draft");
+    expect(result.draft.segmentation).toBe("semantic");
+    expect(result.draft.sections).toHaveLength(70);
+    expect(result.draft.sections.map((item) => item.text)).toEqual(units.map((unit) => unit.text));
+    expect(result.draft.sections.every((item) => item.direction === direction && item.pauseAfterSeconds === 0.35)).toBe(true);
+  });
   it("preserves the creative Planner's existing thinking behavior and output budget on DeepSeek", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(draft) }, finish_reason: "stop" }] }));
     const result = await runPlanner({ action: "generate", provider: "api", brief }, { env: {
@@ -81,13 +95,16 @@ describe("Planner provider", () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(draft));
     const result = await runPlanner({ action: "generate", provider: "ollama", brief }, { env: {}, fetchImpl });
 
-    expect(result).toEqual({ draft, provider: "ollama", model: "qwen3:1.7b" });
+    expect(result).toEqual({ draft: normalizePlannerSemanticDraft(draft), provider: "ollama", model: "qwen3:1.7b" });
     const [url, init] = fetchImpl.mock.calls[0];
     const body = JSON.parse(init?.body as string);
     expect(url).toBe("http://127.0.0.1:11434/api/chat");
     expect(body).toMatchObject({ stream: false, think: false, format: { type: "object" }, options: { num_predict: 8192 } });
     expect(body.messages[0].content).toContain("导演");
     expect(body.messages[1].content).toContain("深夜书店");
+    expect(body.format.properties.groups.items.properties.units).toBeTruthy();
+    expect(body.messages[1].content).toContain("语义短单元");
+    expect(body.messages[1].content).not.toContain("4 至 6 段");
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -145,6 +162,31 @@ describe("Planner provider", () => {
       action: "rewrite", provider: "ollama", brief, draft, sectionId: "missing", instruction: "更日常",
     }, { env: {}, fetchImpl })).rejects.toMatchObject({ status: 400 });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rewrites only the selected range and preserves exact surrounding text and direction metadata", async () => {
+    const original = { ...section, text: "  进来坐一会儿吧。\n窗边的位置还空着。  " };
+    const selectedDraft = { ...draft, sections: [original] };
+    const range = { start: 2, end: 10 };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply({ text: "先坐吧。" }));
+    const result = await runPlanner({ action: "rewrite", provider: "ollama", brief, draft: selectedDraft, sectionId: original.id, instruction: "简短一点", range }, { env: {}, fetchImpl });
+    expect(result).toMatchObject({ section: { ...original, text: original.text.slice(0, range.start) + "先坐吧。" + original.text.slice(range.end) }, replacement: "先坐吧。" });
+    const prompt = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string).messages[1].content;
+    expect(prompt).toContain("选中文字");
+    expect(prompt).toContain("仅供参考");
+    expect(selectedDraft.sections[0]).toEqual(original);
+  });
+
+  it.each([{ start: -1, end: 3 }, { start: 2, end: 2 }, { start: 0, end: 9999 }])("rejects invalid selected ranges before invoking the provider: %j", async (range) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    await expect(runPlanner({ action: "rewrite", provider: "ollama", brief, draft, sectionId: section.id, instruction: "改写", range }, { env: {}, fetchImpl })).rejects.toMatchObject({ status: 400 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses whole-section responses for a range rewrite", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => ollamaReply(section));
+    await expect(runPlanner({ action: "rewrite", provider: "ollama", brief, draft, sectionId: section.id, instruction: "改写", range: { start: 0, end: 3 } }, { env: {}, fetchImpl })).rejects.toMatchObject({ status: 502 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it("repairs malformed output once with the original brief and schema still present", async () => {

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AudioCandidateProvenance } from "./audio-candidate";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
@@ -51,8 +51,47 @@ type ProviderDependencies = {
 const cancelError = () => new VoxCpm2Error("已取消生成。", 499);
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_LOG_LENGTH = 65_536;
+const MAX_STREAM_TAIL_LENGTH = MAX_LOG_LENGTH / 2;
+const MAX_SPAWN_ERROR_LENGTH = 4096;
 // The supported VoxCPM2 GGUF architecture has 4 latent frames * 1920 decode samples.
 const SAMPLES_PER_STEP = 7680;
+
+type NativeDiagnostic = {
+  pid: number | null;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  exitConfirmed: boolean;
+  stdoutTail: string;
+  stderrTail: string;
+  spawnError: { name: string; message: string; code?: string } | null;
+};
+
+function diagnosticError(error: unknown): NonNullable<NativeDiagnostic["spawnError"]> {
+  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+  return {
+    name: (error instanceof Error ? error.name : "Error").slice(0, 80),
+    message: (error instanceof Error ? error.message : String(error)).slice(-MAX_SPAWN_ERROR_LENGTH),
+    ...(code ? { code: code.slice(0, 80) } : {}),
+  };
+}
+
+function classifiedNativeFailure(diagnostic: NativeDiagnostic, error?: unknown): VoxCpm2Error | undefined {
+  const cause = diagnostic.spawnError ?? (error ? diagnosticError(error) : undefined);
+  const output = `${diagnostic.stdoutTail}\n${diagnostic.stderrTail}\n${cause?.message ?? ""}`;
+  if (cause?.code === "ENOSPC" || /\bENOSPC\b|No space left on device|There is not enough space on the disk|\bdisk (?:is )?full\b|\[WinError 112\]/i.test(output)) {
+    return new VoxCpm2Error("生成所需磁盘空间不足，请腾出空间后重试。", 503);
+  }
+  if (cause?.code === "ENOMEM" || /\bstd::bad_alloc\b|\bCUDA (?:error: )?out of memory\b|\bcannot allocate memory\b|\bENOMEM\b/i.test(output)) {
+    return new VoxCpm2Error("语音模型运行内存不足，请关闭占用较大的程序后重试。", 503);
+  }
+  if (/GGML_ASSERT\s*\(\s*grid_y\s*<\s*USHRT_MAX\s*\)\s*failed/i.test(output)) {
+    return new VoxCpm2Error("生成音频超出本机解码容量，请缩短生成范围后重试。", 400);
+  }
+  if (/\btoo many tokens\b|GGML_ASSERT\s*\(\s*n_tokens\s*<=\s*n_(?:batch|ctx)\s*\)|\b(?:input|prompt|sequence) (?:token )?length\b[^\r\n]{0,100}\bexceeds?\b[^\r\n]{0,80}\b(?:context|capacity|maximum|max)\b/i.test(output)) {
+    return new VoxCpm2Error("本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400);
+  }
+  return undefined;
+}
 
 function checkCancelled(signal?: AbortSignal) {
   if (signal?.aborted) throw cancelError();
@@ -62,6 +101,7 @@ function waitForProcess(
   child: VoxCpm2Child,
   { signal, timeoutMs, exitWaitMs }: { signal?: AbortSignal; timeoutMs: number; exitWaitMs: number },
   onConfirmedExit: () => void,
+  diagnostic: NativeDiagnostic,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -69,14 +109,19 @@ function waitForProcess(
     let stopping: VoxCpm2Error | null = null;
     let terminationTimer: ReturnType<typeof setTimeout> | undefined;
     let log = "";
-    const capture = (chunk: Buffer | string) => { log = (log + chunk.toString()).slice(-MAX_LOG_LENGTH); };
+    const capture = (stream: "stdoutTail" | "stderrTail") => (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      log = (log + text).slice(-MAX_LOG_LENGTH);
+      diagnostic[stream] = (diagnostic[stream] + text).slice(-MAX_STREAM_TAIL_LENGTH);
+    };
     const confirmExit = () => {
       if (exitConfirmed) return;
       exitConfirmed = true;
+      diagnostic.exitConfirmed = true;
       onConfirmedExit();
     };
-    child.stdout?.on("data", capture);
-    child.stderr?.on("data", capture);
+    child.stdout?.on("data", capture("stdoutTail"));
+    child.stderr?.on("data", capture("stderrTail"));
     const finish = (error?: VoxCpm2Error) => {
       if (settled) return;
       settled = true;
@@ -94,17 +139,20 @@ function waitForProcess(
     };
     const abort = () => stop(cancelError());
     const timer = setTimeout(() => stop(new VoxCpm2Error("生成超时，请缩短台词后重试。", 504)), timeoutMs);
-    child.once("error", () => {
+    child.once("error", (error) => {
+      diagnostic.spawnError = diagnosticError(error);
       if (!child.pid) {
         confirmExit();
-        finish(new VoxCpm2Error("VoxCPM2 无法启动，请检查本机运行环境。", 503));
+        finish(classifiedNativeFailure(diagnostic) ?? new VoxCpm2Error("VoxCPM2 无法启动，请检查本机运行环境。", 503));
       } else {
-        stop(new VoxCpm2Error("VoxCPM2 生成失败，请稍后重试。"));
+        stop(classifiedNativeFailure(diagnostic) ?? new VoxCpm2Error("VoxCPM2 生成失败，请稍后重试。"));
       }
     });
-    child.once("close", (code) => {
+    child.once("close", (code, closeSignal) => {
+      diagnostic.exitCode = code;
+      diagnostic.signal = closeSignal;
       confirmExit();
-      finish(stopping ?? (code === 0 ? undefined : new VoxCpm2Error("VoxCPM2 生成失败，请稍后重试。")));
+      finish(stopping ?? (code === 0 ? undefined : classifiedNativeFailure(diagnostic) ?? new VoxCpm2Error("VoxCPM2 生成失败，请稍后重试。")));
     });
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
@@ -172,6 +220,21 @@ export async function generateVoxCpm2(
   let operationFinished = false;
   let lateRecoveryStarted = false;
   const temporaryBase = path.join(getVoiceGenerationRoot(config), "runs");
+  const nativeDiagnostic: NativeDiagnostic = { pid: null, exitCode: null, signal: null, exitConfirmed: false, stdoutTail: "", stderrTail: "", spawnError: null };
+  const diagnosticPath = path.join(getVoiceGenerationRoot(config), "diagnostics", `voxcpm2-${randomUUID()}.json`);
+  let failure: { message: string; statusCode: number } | undefined;
+  let diagnosticWrite = Promise.resolve();
+  const persistDiagnostic = () => {
+    if (!failure) return diagnosticWrite;
+    const snapshot = JSON.stringify({ version: 1, provider: "voxcpm2", recordedAt: new Date().toISOString(), failure, native: nativeDiagnostic });
+    // Serial writes let a late close update the same record after an exit-wait
+    // timeout. Diagnostics are server-only and never replace the public error.
+    diagnosticWrite = diagnosticWrite.then(async () => {
+      await mkdir(path.dirname(diagnosticPath), { recursive: true });
+      await writeFile(diagnosticPath, snapshot, { encoding: "utf8", mode: 0o600 });
+    }).catch(() => undefined);
+    return diagnosticWrite;
+  };
   const recoverRawOutput = async () => {
     if (rawPublished || !confirmedExit || !temporaryRoot || !input.onRawOutput) return;
     const outputPath = path.join(temporaryRoot, "output.wav");
@@ -207,7 +270,10 @@ export async function generateVoxCpm2(
     args.push(profile.baseModelPath, profile.acousticModelPath);
     checkCancelled(signal);
     const spawnImpl: VoxCpm2Spawn = dependencies.spawnImpl ?? ((command, parameters, options) => spawn(command, [...parameters], options));
-    const child = spawnImpl(profile.cliPath, args, { cwd: path.dirname(profile.cliPath), shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let child: VoxCpm2Child;
+    try { child = spawnImpl(profile.cliPath, args, { cwd: path.dirname(profile.cliPath), shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { nativeDiagnostic.spawnError = diagnosticError(error); throw error; }
+    nativeDiagnostic.pid = child.pid ?? null;
     confirmedExit = false;
     dependencies.runtimeSession.processStarted(child.pid);
     const completion = waitForProcess(child, { signal, timeoutMs, exitWaitMs }, () => {
@@ -218,12 +284,13 @@ export async function generateVoxCpm2(
         // confirmed close makes its final output safe to publish and clean up.
         void (async () => {
           try {
+            await persistDiagnostic();
             await recoverRawOutput();
             if (rawPublished || !input.onRawOutput) await removeTemporaryOutput();
           } finally { await dependencies.runtimeSession!.processExited(child.pid); }
         })().catch(() => undefined);
       } else dependencies.runtimeSession!.processExited(child.pid);
-    });
+    }, nativeDiagnostic);
     await completion;
     checkCancelled(signal);
     const outputInfo = await stat(outputPath).catch(() => { throw new VoxCpm2Error("VoxCPM2 没有生成有效音频，请重试。"); });
@@ -255,9 +322,14 @@ export async function generateVoxCpm2(
       qualityWarnings: [...qualityWarnings, ...(clipping > decoded.samples.length * .001 ? ["这条候选可能有削波失真，请试听后决定是否采用。"] : [])],
     };
   } catch (error) {
-    if (error instanceof VoxCpm2Error) throw error;
-    throw new VoxCpm2Error("VoxCPM2 生成失败，请检查本机运行环境后重试。");
+    const reported = error instanceof VoxCpm2Error ? error
+      : classifiedNativeFailure(nativeDiagnostic, error) ?? new VoxCpm2Error("VoxCPM2 生成失败，请检查本机运行环境后重试。");
+    failure = { message: reported.message, statusCode: reported.statusCode };
+    throw reported;
   } finally {
+    // Write while the request still owns its temporary directory. A confirmed
+    // late exit during this await is handled by the ordinary cleanup below.
+    await persistDiagnostic();
     operationFinished = true;
     // A failed kill never permits another request to overlap the still-running native process.
     if (confirmedExit) {

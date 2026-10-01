@@ -7,12 +7,16 @@ import { getLocalRuntimeConfig } from "./local-runtime-config";
 import { demoProject } from "./mock-project";
 import { writePcm16MonoWav } from "./procedural-audio";
 import { listAudioCandidates } from "./local-candidate-store";
-import { makeVoiceCandidateFixture } from "./voice-candidate-fixture";
+import { makeSemanticVoiceLongTextResultFixture, makeVoiceCandidateFixture } from "./voice-candidate-fixture";
 import { generateVoxCpm2 } from "./voxcpm2-provider";
 import { listVoiceGenerationRecordings, resolveVoiceGenerationRecording } from "./voice-generation-recordings";
 import { flattenClips } from "./view-model";
+import { generateVoiceLongText } from "./voice-longtext-generation";
+import { getVoiceGenerationContext } from "./voice-generation-context";
+import { getVoiceCandidateSourceFingerprint } from "./audio-candidate";
 
 vi.mock("./voxcpm2-provider", () => ({ generateVoxCpm2: vi.fn() }));
+vi.mock("./voice-longtext-generation", () => ({ generateVoiceLongText: vi.fn() }));
 const voiceOptions = { provider: "voxcpm2" as const, voicePackId: "soft_zh", referenceMode: "with_reference_text" as const, generationMode: "clip" as const };
 async function setup() {
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "asmr-vox-clip-"));
@@ -20,6 +24,29 @@ async function setup() {
 }
 
 describe("VoxCPM2 clip dispatch", () => {
+  it("dispatches only the selected semantic clip while storing its exact forward context fingerprint", async () => {
+    const config = await setup();
+    const project = structuredClone(demoProject);
+    const voices = project.timeline.tracks.find((track) => track.track_type === "voice")!.clips;
+    voices[1].semantic_unit = true;
+    voices[1].text = "这是选中的目标。";
+    const context = getVoiceGenerationContext(project, voices[1].id)!;
+    const before = JSON.stringify(project);
+    vi.mocked(generateVoiceLongText).mockResolvedValue({
+      wav: writePcm16MonoWav(new Float32Array(48000), 48000), qualityWarnings: [],
+      provenance: { ...makeVoiceCandidateFixture().provenance, generationMode: "long_text",
+        longText: makeSemanticVoiceLongTextResultFixture(voices[1].text, context) },
+    });
+    const result = await generateLocalClip({ project, clipId: voices[1].id, config,
+      voiceOptions: { ...voiceOptions, generationMode: "long_text" } });
+    expect(generateVoiceLongText).toHaveBeenCalledOnce();
+    expect(vi.mocked(generateVoiceLongText).mock.calls[0][0]).toMatchObject({ text: voices[1].text, clipId: voices[1].id, context });
+    expect(result).toHaveProperty("candidate.sourceFingerprint", getVoiceCandidateSourceFingerprint(voices[1], context));
+    expect(result).toHaveProperty("candidate.provenance.longText.groups.length", 1);
+    expect(JSON.stringify(project)).toBe(before);
+    expect(await listAudioCandidates({ config, projectId: project.project_id, clipId: voices[2].id })).toHaveLength(0);
+  });
+
   it("persists a candidate with measured WAV length without mutating the source project", async () => {
     const config = await setup();
     const original = JSON.stringify(demoProject);

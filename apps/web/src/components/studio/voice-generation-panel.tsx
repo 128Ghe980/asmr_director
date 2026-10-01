@@ -6,11 +6,14 @@ import { getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/a
 import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/playback-asset-resolver";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import type { VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
+import type { VoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import { VoiceGenerationRecordingsSchema, type VoiceGenerationRecording } from "@/lib/asmr/voice-generation-recording";
+import { VoiceRecognitionComparison, VoiceRecordingRecognitionComparison } from "./voice-recognition-comparison";
 
 export type VoiceGenerationPanelProps = {
   projectId?: string;
+  voiceContext?: VoiceGenerationContext;
   binaural?: boolean;
   options: VoiceGenerationOptions;
   onOptionsChange: (options: VoiceGenerationOptions) => void;
@@ -39,8 +42,8 @@ const referenceModeLabels = {
   with_reference_text: "参考音频＋文本",
 } as const;
 const generationModeLabels = {
-  clip: "当前片段",
-  long_text: "长文分组",
+  clip: "当前范围",
+  long_text: "长文连续生成",
 } as const;
 
 function preferredMode(reference: Reference): VoiceGenerationOptions["referenceMode"] {
@@ -120,6 +123,8 @@ function OriginalVoiceRecordings({ projectId, clipId, text, busy, onPreviewPlay 
   projectId: string; clipId: string; text: string; busy: boolean;
   onPreviewPlay: (audio: HTMLAudioElement) => void;
 }) {
+  const disclosureRef = useRef<HTMLDetailsElement>(null);
+  const openedForGeneration = useRef(false);
   const [recordings, setRecordings] = useState<VoiceGenerationRecording[]>([]);
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -153,6 +158,14 @@ function OriginalVoiceRecordings({ projectId, clipId, text, busy, onPreviewPlay 
     return () => { controller.abort(); clearTimeout(timer); };
   }, [projectId, clipId, text, busy, refresh]);
 
+  useEffect(() => {
+    if (!busy) openedForGeneration.current = false;
+    if (busy && recordings.length > 0 && !openedForGeneration.current) {
+      if (disclosureRef.current) disclosureRef.current.open = true;
+      openedForGeneration.current = true;
+    }
+  }, [busy, recordings.length]);
+
   async function loadMore() {
     if (!nextCursor || loadingMore) return;
     const controller = new AbortController();
@@ -180,35 +193,43 @@ function OriginalVoiceRecordings({ projectId, clipId, text, busy, onPreviewPlay 
     }
   }
 
-  return <section aria-label="完整原始录音" className="min-w-0 space-y-2 rounded-lg border border-studio-line p-3">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="text-xs font-semibold text-studio-text">完整原始录音</p>
-      <button type="button" className={`${buttonClass} text-studio-muted`} onClick={() => setRefresh((value) => value + 1)}>刷新录音</button>
-    </div>
-    <p className="break-words text-xs leading-5 text-studio-muted">每条录音生成后即可完整试听、下载，检查结果仅作提示。长文录音可能包含后续台词和用于保持语气的补充文案。</p>
-    {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
-    {!recordings.length ? <p className="text-xs leading-5 text-studio-muted">{nextCursor ? "本页尚未找到这段台词的录音，可加载更多继续查看。" : busy ? "第一条录音完成后会自动显示在这里。" : "这段台词暂无原始录音。"}</p> : null}
-    <div className="max-h-[32rem] min-w-0 space-y-3 overflow-y-auto">
-      {recordings.map((recording, index) => <article key={recording.recordingId} aria-label={`完整原音 ${index + 1}`} className="min-w-0 space-y-2 border-t border-studio-line pt-3">
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-          <span className="font-semibold text-studio-text">第 {recording.group} 组 · 第 {recording.take} 次</span>
-          {recording.duration !== null ? <span className="text-studio-muted">{recording.duration.toFixed(1)} 秒</span> : null}
-          {recording.historicalMatch ? <span className="text-studio-muted">历史同文案</span> : null}
+  return <section aria-label="完整原始录音" className="min-w-0 rounded-lg border border-studio-line p-3">
+    <details ref={disclosureRef}>
+      <summary className="cursor-pointer text-xs font-semibold text-studio-text">
+        完整原始录音{recordings.length > 0 ? ` · ${recordings.length} 条可试听` : ""}
+      </summary>
+      <div className="mt-3 min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-studio-muted">试听与下载</p>
+          <button type="button" className={`${buttonClass} text-studio-muted`} onClick={() => setRefresh((value) => value + 1)}>刷新录音</button>
         </div>
-        <p className="break-words text-xs leading-5 text-studio-muted">{recording.expectedText}</p>
-        <VoicePreview src={recording.audioUrl} label={`完整原音 ${index + 1} 试听`} onPreviewPlay={onPreviewPlay} />
-        <p className={`break-words text-xs leading-5 ${recording.status === "needs_review" ? "text-amber-100" : "text-studio-muted"}`}>{recording.warning}</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <a className={`${buttonClass} inline-flex items-center text-studio-text`} href={`${recording.audioUrl}?download=1`} download>下载完整原音</a>
-          <span className="text-xs text-studio-muted">{new Date(recording.createdAt).toLocaleString("zh-CN")}</span>
+        <p className="break-words text-xs leading-5 text-studio-muted">完整原音保留，可随时试听或下载；长文录音可能包含补充台词。</p>
+        {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
+        {!recordings.length ? <p className="text-xs leading-5 text-studio-muted">{nextCursor ? "本页尚未找到这段台词的录音，可加载更多继续查看。" : busy ? "第一条录音完成后会自动显示在这里。" : "这段台词暂无原始录音。"}</p> : null}
+        <div className="max-h-80 min-w-0 space-y-3 overflow-y-auto">
+          {recordings.map((recording, index) => <article key={recording.recordingId} aria-label={`完整原音 ${index + 1}`} className="min-w-0 space-y-2 border-t border-studio-line pt-3">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              <span className="font-semibold text-studio-text">第 {recording.group} 组 · 第 {recording.take} 次</span>
+              {recording.duration !== null ? <span className="text-studio-muted">{recording.duration.toFixed(1)} 秒</span> : null}
+              {recording.historicalMatch ? <span className="text-studio-muted">历史同文案</span> : null}
+            </div>
+            <p className="break-words text-xs leading-5 text-studio-muted">{recording.expectedText}</p>
+            <VoicePreview src={recording.audioUrl} label={`完整原音 ${index + 1} 试听`} onPreviewPlay={onPreviewPlay} />
+            <p className={`break-words text-xs leading-5 ${recording.status === "needs_review" ? "text-amber-100" : "text-studio-muted"}`}>{recording.warning}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <a className={`${buttonClass} inline-flex items-center text-studio-text`} href={`${recording.audioUrl}?download=1`} download>下载完整原音</a>
+              <span className="text-xs text-studio-muted">{new Date(recording.createdAt).toLocaleString("zh-CN")}</span>
+            </div>
+            <VoiceRecordingRecognitionComparison recognition={recording.recognition} expectedText={recording.expectedText} />
+            <details className="text-xs leading-5 text-studio-muted">
+              <summary className="cursor-pointer">查看本次模型朗读文案</summary>
+              <p className="mt-1 break-words">{recording.inputText}</p>
+            </details>
+          </article>)}
         </div>
-        <details className="text-xs leading-5 text-studio-muted">
-          <summary className="cursor-pointer">查看本次模型朗读文案</summary>
-          <p className="mt-1 break-words">{recording.inputText}</p>
-        </details>
-      </article>)}
-    </div>
-    {nextCursor ? <button type="button" className={`${buttonClass} text-studio-muted`} disabled={loadingMore} onClick={() => { void loadMore(); }}>{loadingMore ? "正在读取更多录音…" : "加载更多录音"}</button> : null}
+        {nextCursor ? <button type="button" className={`${buttonClass} text-studio-muted`} disabled={loadingMore} onClick={() => { void loadMore(); }}>{loadingMore ? "正在读取更多录音…" : "加载更多录音"}</button> : null}
+      </div>
+    </details>
   </section>;
 }
 
@@ -233,9 +254,9 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
   if (provenance.longText) {
     const { groups, joins, analysisProvider, analysisModel } = provenance.longText;
     const providerLabel = analysisProvider === "local" ? "本地" : analysisProvider === "api" ? "外部 API" : analysisProvider;
-    rows.push(["文本分析", providerLabel], ["分组", `${groups.length} 组`]);
+    rows.push(["文本分析", providerLabel], ["内部生成组", `${groups.length} 组`]);
     if (analysisModel) rows.push(["分析模型", analysisModel]);
-    if (joins.length > 0) rows.push(["组间停顿", `${joins.map((join) => Number(join.actualDurationMs.toFixed(1))).join(" / ")} ms`]);
+    if (joins.length > 0) rows.push(["内部拼接停顿", `${joins.map((join) => Number(join.actualDurationMs.toFixed(1))).join(" / ")} ms`]);
   }
   if (provenance.runtimeVersion) rows.push(["运行版本", provenance.runtimeVersion]);
   if (provenance.modelIdentity) rows.push(["模型版本", provenance.modelIdentity]);
@@ -253,14 +274,14 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
         const groupNumber = group.index + 1;
         const audio = resolvePlayableAssetUri(group.asset.uri);
         return <li key={group.index} className="min-w-0 space-y-2">
-          <p className="font-semibold text-studio-text">第 {groupNumber} 组</p>
+          <p className="font-semibold text-studio-text">内部生成组 {groupNumber}</p>
           {group.checkStatus === "review" ? <p className="break-words leading-5 text-amber-100">完整原音 · 待试听确认</p> : null}
           <p title={group.text} className="truncate leading-5">{group.text}</p>
           {audio ? <details className="min-w-0">
             <summary className="cursor-pointer py-1">试听本组</summary>
             <audio aria-label={`候选 ${candidateNumber} 第 ${groupNumber} 组试听`} controls preload="none" src={audio} onPlay={(event) => onPreviewPlay(event.currentTarget)} className="mt-1 h-9 w-full min-w-0 max-w-full" />
           </details> : null}
-          {onRegenerateGroup ? <button type="button" aria-label={`重生成候选 ${candidateNumber} 第 ${groupNumber} 组`} className={`${buttonClass} text-studio-muted`} disabled={regenerationDisabled} onClick={() => onRegenerateGroup(candidate, group.index)}>重生成本组</button> : null}
+          {onRegenerateGroup ? <button type="button" aria-label={`重生成候选 ${candidateNumber} 第 ${groupNumber} 组`} className={`${buttonClass} text-studio-muted`} disabled={regenerationDisabled} onClick={() => onRegenerateGroup(candidate, group.index)}>重生成内部组</button> : null}
         </li>;
       })}
     </ol> : null}
@@ -269,6 +290,7 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
 
 export function VoiceGenerationPanel({
   projectId,
+  voiceContext,
   options, onOptionsChange, catalog, catalogError, busy, candidates, selectedClip,
   onAdopt, onDiscard, onUndo, canUndo, hasUndo, error, loading = false,
   generationControl, onRegenerateGroup,
@@ -288,6 +310,7 @@ export function VoiceGenerationPanel({
   const settingsDisabled = busy || loading || catalog === null;
   const actionsDisabled = busy || loading;
   const sourceFingerprint = getVoiceCandidateSourceFingerprint(selectedClip);
+  const windowedSourceFingerprint = getVoiceCandidateSourceFingerprint(selectedClip, voiceContext);
   const currentAudio = resolveClipPlaybackUri(selectedClip, binaural);
   const visibleCandidates = candidates.filter((candidate) => candidate.clipId === selectedClip.id && candidate.status === "ready");
 
@@ -299,7 +322,7 @@ export function VoiceGenerationPanel({
     onOptionsChange({
       provider: next.id, voicePackId: nextReference.id,
       referenceMode: preferredMode(nextReference),
-      generationMode: next.id === "voxcpm2" ? options.generationMode : "clip",
+      generationMode: next.id === "voxcpm2" ? selectedClip.type === "voice" && selectedClip.semantic_unit ? "long_text" : options.generationMode : "clip",
       ...(next.id === "voxcpm2" && options.analysisProvider ? { analysisProvider: options.analysisProvider } : {}),
     });
   }
@@ -332,75 +355,27 @@ export function VoiceGenerationPanel({
   }
 
   return <section ref={panelRef} aria-label="人声生成设置" className="min-w-0 space-y-3">
-    <div className="grid min-w-0 gap-3">
-      <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
-        <span>人声引擎</span>
-        <select aria-label="人声引擎" className={fieldClass} value={options.provider} disabled={settingsDisabled} onChange={(event) => changeProvider(event.target.value)}>
-          {providers.length > 0 ? providers.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>
-            {item.label}{item.available ? "" : "（不可用）"}
-          </option>) : <>
-            <option value="gpt-sovits">GPT-SoVITS</option><option value="voxcpm2">VoxCPM2</option>
-          </>}
-        </select>
-      </label>
-      <div className="grid min-w-0 gap-3">
-        <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
-          <span>参考声音</span>
-          <select aria-label="参考声音" className={fieldClass} value={options.voicePackId} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeReference(event.target.value)}>
-            {!reference ? <option value={options.voicePackId} disabled>参考不可用</option> : null}
-            {provider?.references.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-          </select>
-        </label>
-        <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
-          <span>参考模式</span>
-          <select aria-label="参考模式" className={fieldClass} value={options.referenceMode} disabled={settingsDisabled || !provider?.available || !reference} onChange={(event) => {
-            const mode = event.target.value as VoiceGenerationOptions["referenceMode"];
-            if (!settingsDisabled && reference?.referenceModes.includes(mode)) onOptionsChange({ ...options, referenceMode: mode });
-          }}>
-            {reference ? reference.referenceModes.map((mode) => <option key={mode} value={mode}>{referenceModeLabels[mode]}</option>) : <option value={options.referenceMode}>参考不可用</option>}
-          </select>
-        </label>
-      </div>
-      {isVox ? <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
-        <span>生成方式</span>
-        <select aria-label="生成方式" className={fieldClass} value={options.generationMode} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeGenerationMode(event.target.value)}>
-          <option value="clip">{generationModeLabels.clip}</option>
-          <option value="long_text" disabled={!longTextAvailable}>{generationModeLabels.long_text}</option>
-        </select>
-      </label> : null}
-      {isLongText ? <div className="min-w-0 space-y-2">
-        <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
-          <span>文本分析</span>
-          <select aria-label="文本分析" className={fieldClass} value={analysisProvider} disabled={settingsDisabled || !provider?.available || !longTextAvailable} onChange={(event) => changeAnalysisProvider(event.target.value)}>
-            <option value="local">本地</option>
-            <option value="api" disabled={!apiConfigured}>外部 API{apiConfigured ? "" : "（未配置）"}</option>
-          </select>
-        </label>
-        {analysisProvider === "api" ? <p className="break-words text-xs leading-5 text-studio-muted">文案将发送到已配置的外部 API。</p> : null}
-      </div> : null}
-    </div>
-
-    {catalogError ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{catalogError}</p>
-      : provider && !provider.available ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{provider.unavailableReason || "当前引擎暂不可用。"}</p>
-      : provider?.available && isVox && !longTextAvailable ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{provider.longText?.reason || "长文分组暂不可用。"}</p>
-      : isLongText && analysisProvider === "api" && !apiConfigured ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">请先配置外部文本 API。</p>
-      : loading ? <p role="status" className="text-xs text-studio-muted">正在读取声音…</p> : null}
-    {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
+    <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
+      <span>参考声音</span>
+      <select aria-label="参考声音" className={fieldClass} value={options.voicePackId} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeReference(event.target.value)}>
+        {!reference ? <option value={options.voicePackId} disabled>参考不可用</option> : null}
+        {provider?.references.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+      </select>
+    </label>
 
     {generationControl}
 
-    {isVox && projectId ? <OriginalVoiceRecordings key={`${projectId}:${selectedClip.id}:${selectedClip.text}`} projectId={projectId}
-      clipId={selectedClip.id} text={selectedClip.text} busy={busy} onPreviewPlay={pauseOtherPreviews} /> : null}
+    {catalogError ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{catalogError}</p>
+      : provider && !provider.available ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{provider.unavailableReason || "当前引擎暂不可用。"}</p>
+      : provider?.available && isVox && !longTextAvailable ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{provider.longText?.reason || "长文连续生成暂不可用。"}</p>
+      : isLongText && !voiceContext && analysisProvider === "api" && !apiConfigured ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">请先配置外部文本 API。</p>
+      : loading ? <p role="status" className="text-xs text-studio-muted">正在读取声音…</p> : null}
+    {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
 
-    {currentAudio ? <div className="min-w-0 space-y-2">
-      <p className="text-xs text-studio-muted">当前人声</p>
-      <VoicePreview key={currentAudio} src={currentAudio} label="当前人声试听" onPreviewPlay={pauseOtherPreviews} />
-    </div> : null}
-
-    {visibleCandidates.length > 0 ? <div className="max-h-96 min-w-0 space-y-3 overflow-y-auto">
+    {visibleCandidates.length > 0 ? <div aria-label="生成候选" className="max-h-80 min-w-0 space-y-3 overflow-y-auto">
       {visibleCandidates.map((candidate, index) => {
         const adopted = candidate.asset.assetId === selectedClip.asset.asset_id;
-        const stale = candidate.sourceFingerprint !== sourceFingerprint;
+        const stale = candidate.sourceFingerprint !== (candidate.provenance.generationMode === "long_text" ? windowedSourceFingerprint : sourceFingerprint);
         const candidateAudio = resolveClipPlaybackUri(selectedClip, binaural, candidate.asset);
         const candidateReference = catalog?.providers.find((item) => item.id === candidate.provenance.provider)?.references.find((item) => item.id === candidate.provenance.voicePackId);
         return <article key={candidate.candidateId} aria-label={`候选 ${index + 1}`} className="min-w-0 space-y-2.5 rounded-lg border border-studio-line bg-black/10 p-3">
@@ -410,12 +385,13 @@ export function VoiceGenerationPanel({
             {adopted ? <span className="text-studio-green">已采用</span> : null}
           </div>
           {candidateAudio ? <VoicePreview key={candidateAudio} src={candidateAudio} label={`候选 ${index + 1} 试听`} onPreviewPlay={pauseOtherPreviews} /> : null}
-          {stale && !adopted ? <p className="break-words text-xs leading-5 text-amber-100">文案已修改，请重新生成。</p> : null}
+          {stale && !adopted ? <p className="break-words text-xs leading-5 text-amber-100">文案或后续上下文已修改，请重新生成。</p> : null}
           {candidate.qualityWarnings.map((warning, warningIndex) => <p key={warningIndex} role="alert" className="break-words text-xs leading-5 text-amber-100">{warning}</p>)}
           <div className="flex flex-wrap gap-2">
             <button type="button" aria-label={`采用候选 ${index + 1}`} className={`${buttonClass} border-sky-300/30 bg-sky-300/10 text-sky-100`} disabled={actionsDisabled || adopted || stale} onClick={() => onAdopt(candidate)}>采用</button>
             {!adopted ? <button type="button" aria-label={`放弃候选 ${index + 1}`} className={`${buttonClass} text-studio-muted`} disabled={actionsDisabled} onClick={() => onDiscard(candidate)}>放弃</button> : null}
           </div>
+          <VoiceRecognitionComparison groups={candidate.provenance.longText?.groups} />
           <CandidateDetails candidate={candidate} candidateNumber={index + 1} referenceLabel={candidateReference?.label}
             regenerationDisabled={actionsDisabled || stale || candidate.status !== "ready" || !provider?.available || !longTextAvailable}
             onRegenerateGroup={isLongText ? onRegenerateGroup : undefined} onPreviewPlay={pauseOtherPreviews} />
@@ -427,5 +403,57 @@ export function VoiceGenerationPanel({
       <button type="button" className={`${buttonClass} text-studio-muted`} disabled={actionsDisabled || !canUndo} onClick={onUndo}>撤回上次采用</button>
       {!canUndo ? <p className="break-words text-xs leading-5 text-studio-muted">片段已编辑，可从历史版本恢复。</p> : null}
     </div> : null}
+
+    {currentAudio ? <div className="min-w-0 space-y-2">
+      <p className="text-xs text-studio-muted">当前人声</p>
+      <VoicePreview key={currentAudio} src={currentAudio} label="当前人声试听" onPreviewPlay={pauseOtherPreviews} />
+    </div> : null}
+
+    {isVox && projectId ? <OriginalVoiceRecordings key={`${projectId}:${selectedClip.id}:${selectedClip.text}`} projectId={projectId}
+      clipId={selectedClip.id} text={selectedClip.text} busy={busy} onPreviewPlay={pauseOtherPreviews} /> : null}
+
+    <details className="border-t border-studio-line py-3">
+      <summary className="cursor-pointer text-xs font-semibold text-studio-muted">更多生成设置</summary>
+      <div className="mt-3">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+          <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
+            <span>人声引擎</span>
+            <select aria-label="人声引擎" className={fieldClass} value={options.provider} disabled={settingsDisabled} onChange={(event) => changeProvider(event.target.value)}>
+              {providers.length > 0 ? providers.map((item) => <option key={item.id} value={item.id} disabled={!item.available}>
+                {item.label}{item.available ? "" : "（不可用）"}
+              </option>) : <>
+                <option value="gpt-sovits">GPT-SoVITS</option><option value="voxcpm2">VoxCPM2</option>
+              </>}
+            </select>
+          </label>
+          <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
+            <span>参考模式</span>
+            <select aria-label="参考模式" className={fieldClass} value={options.referenceMode} disabled={settingsDisabled || !provider?.available || !reference} onChange={(event) => {
+              const mode = event.target.value as VoiceGenerationOptions["referenceMode"];
+              if (!settingsDisabled && reference?.referenceModes.includes(mode)) onOptionsChange({ ...options, referenceMode: mode });
+            }}>
+              {reference ? reference.referenceModes.map((mode) => <option key={mode} value={mode}>{referenceModeLabels[mode]}</option>) : <option value={options.referenceMode}>参考不可用</option>}
+            </select>
+          </label>
+          {isVox ? <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
+            <span>生成方式</span>
+            <select aria-label="生成方式" className={fieldClass} value={options.generationMode} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeGenerationMode(event.target.value)}>
+              <option value="clip">{generationModeLabels.clip}</option>
+              <option value="long_text" disabled={!longTextAvailable}>{generationModeLabels.long_text}</option>
+            </select>
+          </label> : null}
+          {isLongText && !voiceContext ? <div className="min-w-0 space-y-2">
+            <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
+              <span>文本分析</span>
+              <select aria-label="文本分析" className={fieldClass} value={analysisProvider} disabled={settingsDisabled || !provider?.available || !longTextAvailable} onChange={(event) => changeAnalysisProvider(event.target.value)}>
+                <option value="local">本地</option>
+                <option value="api" disabled={!apiConfigured}>外部 API{apiConfigured ? "" : "（未配置）"}</option>
+              </select>
+            </label>
+            {analysisProvider === "api" ? <p className="break-words text-xs leading-5 text-studio-muted">文案将发送到已配置的外部 API。</p> : null}
+          </div> : null}
+        </div>
+      </div>
+    </details>
   </section>;
 }

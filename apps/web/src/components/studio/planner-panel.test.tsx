@@ -90,7 +90,8 @@ async function mountPanel(onAdopt = vi.fn(), source?: Parameters<typeof PlannerP
 
 async function requestRewrite(api: ReturnType<typeof mockPlannerApi>, response: Response, instruction = "更日常一点") {
   api.respond(response);
-  fireEvent.click(screen.getByRole("button", { name: "AI 改写第 2 段" }));
+  fireEvent.focus(control("第 2 段台词"));
+    fireEvent.click(screen.getByRole("button", { name: "AI 改写第 2 段" }));
   fireEvent.change(control("第 2 段改写要求"), { target: { value: instruction } });
   fireEvent.click(screen.getByRole("button", { name: "改写这一段" }));
 }
@@ -106,6 +107,109 @@ afterEach(() => {
 });
 
 describe("PlannerPanel interaction with simulated provider responses", () => {
+  it("keeps the script readable and exposes editing tools only for the selected sentence", async () => {
+    const state = seedWorkingState();
+    mockPlannerApi();
+    await mountPanel();
+    expect(screen.queryByRole("button", { name: /AI 改写第/ })).toBeNull();
+    expect(screen.queryByText(/导演与声音/)).toBeNull();
+    fireEvent.focus(control("第 2 段台词"));
+    expect(screen.getAllByRole("button", { name: /AI 改写第/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "AI 改写第 2 段" })).toBeTruthy();
+    fireEvent.focus(control("第 3 段台词"));
+    expect(screen.queryByRole("button", { name: "AI 改写第 2 段" })).toBeNull();
+    expect(screen.getByRole("button", { name: "AI 改写第 3 段" })).toBeTruthy();
+    expect(control("第 2 段台词").value).toBe(state.draft!.sections[1].text);
+  });
+
+  it("preserves a restored legacy script until explicit semantic conversion and can undo it", async () => {
+    const legacy = makeDraft();
+    legacy.sections[0].text = "别着急，我把灯挪过来。这里坐着舒服些，你慢慢挑。".repeat(8);
+    seedWorkingState({ draft: legacy });
+    mockPlannerApi();
+    const { onAdopt } = await mountPanel();
+    expect(control("第 1 段台词").value).toBe(legacy.sections[0].text);
+    expect(screen.queryByLabelText("第 4 段台词")).toBeNull();
+    fireEvent.click(screen.getByText("文案设置"));
+    fireEvent.click(screen.getByRole("button", { name: "按语义整理短句" }));
+    expect(screen.getByLabelText("第 4 段台词")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
+    const converted = onAdopt.mock.calls[0][1] as PlannerDraft;
+    expect(converted.segmentation).toBe("semantic");
+    expect(converted.sections.map((section) => section.text).join("")).toBe(legacy.sections.map((section) => section.text).join(""));
+    await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.draft?.segmentation).toBe("semantic"));
+    fireEvent.click(screen.getByRole("button", { name: "撤回修改" }));
+    expect(control("第 1 段台词").value).toBe(legacy.sections[0].text);
+    expect(screen.queryByLabelText("第 4 段台词")).toBeNull();
+  });
+  it("rewrites exactly a selected phrase and leaves all other text and metadata untouched", async () => {
+    const state = seedWorkingState();
+    const api = mockPlannerApi();
+    const { onAdopt } = await mountPanel();
+    const textarea = control("第 2 段台词") as HTMLTextAreaElement;
+    act(() => textarea.focus());
+    textarea.setSelectionRange(0, 8);
+    fireEvent.select(textarea);
+    api.respond(Response.json({ section: { ...state.draft!.sections[1], text: "不应整段替换", direction: "不应修改" }, replacement: "这本书不错，" }));
+    fireEvent.focus(control("第 2 段台词"));
+    fireEvent.click(screen.getByRole("button", { name: "AI 改写第 2 段" }));
+    fireEvent.change(control("第 2 段改写要求"), { target: { value: "更口语" } });
+    fireEvent.click(screen.getByRole("button", { name: "改写选中文字" }));
+    const expected = "这本书不错，" + state.draft!.sections[1].text.slice(8);
+    await waitFor(() => expect(textarea.value).toBe(expected));
+    expect(api.posts[0].body).toMatchObject({ range: { start: 0, end: 8 }, sectionId: "section_2" });
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
+    expect(onAdopt).toHaveBeenCalledExactlyOnceWith(brief, { ...state.draft, sections: state.draft!.sections.map((section, index) => index === 1 ? { ...section, text: expected } : section) });
+  });
+
+  it.each(["generate", "rewrite"] as const)("allows manual edits during %s and discards the canceled late result", async (action) => {
+    const state = seedWorkingState();
+    const api = mockPlannerApi();
+    const late = deferred<Response>();
+    api.respond(late.promise);
+    await mountPanel();
+    if (action === "generate") fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    else {
+      fireEvent.focus(control("第 2 段台词"));
+    fireEvent.click(screen.getByRole("button", { name: "AI 改写第 2 段" }));
+      fireEvent.change(control("第 2 段改写要求"), { target: { value: "更口语" } });
+      fireEvent.click(screen.getByRole("button", { name: "改写这一段" }));
+    }
+    await screen.findByRole("button", { name: "取消" });
+    fireEvent.change(control("第 2 段台词"), { target: { value: "我在生成中手动修改的句子。" } });
+    expect(api.posts[0].signal?.aborted).toBe(true);
+    expect(screen.getByText("已停止 AI 生成，保留你的修改。")).toBeTruthy();
+    await act(async () => {
+      late.resolve(Response.json(action === "generate" ? { draft: makeDraft("迟到稿") } : { section: { ...state.draft!.sections[1], text: "迟到改写" } }));
+      await late.promise;
+    });
+    expect(control("第 2 段台词").value).toBe("我在生成中手动修改的句子。");
+    await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.draft?.sections[1].text).toBe("我在生成中手动修改的句子。"));
+  });
+
+  it("splits a selection, merges, inserts and deletes sections with undo and persistence", async () => {
+    const state = seedWorkingState();
+    mockPlannerApi();
+    await mountPanel();
+    const textarea = control("第 1 段台词") as HTMLTextAreaElement;
+    act(() => textarea.focus());
+    textarea.setSelectionRange(2, 5);
+    fireEvent.select(textarea);
+    fireEvent.click(screen.getByRole("button", { name: "拆分第 1 段" }));
+    expect(control("第 2 段台词").value).toBe(state.draft!.sections[0].text.slice(2, 5));
+    expect(control("第 5 段台词").value).toBe(state.draft!.sections[2].text);
+    fireEvent.focus(control("第 1 段台词"));
+    fireEvent.click(screen.getByRole("button", { name: "合并第 1 段与下一段" }));
+    expect(control("第 1 段台词").value).toBe(state.draft!.sections[0].text.slice(0, 5));
+    fireEvent.click(screen.getByRole("button", { name: "在第 1 段后新增" }));
+    expect(control("第 2 段台词").value).toBe("");
+    await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.draft?.sections[1].text).toBe(""));
+    fireEvent.focus(control("第 2 段台词"));
+    fireEvent.click(screen.getByRole("button", { name: "删除第 2 段" }));
+    expect(control("第 2 段台词").value).toBe(state.draft!.sections[0].text.slice(5));
+    fireEvent.click(screen.getByRole("button", { name: "撤回修改" }));
+    expect(control("第 2 段台词").value).toBe("");
+  });
   it("generates a draft and rewrites only the selected section before adoption", async () => {
     const api = mockPlannerApi();
     const draft = makeDraft();
@@ -137,7 +241,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     const { onAdopt } = await mountPanel();
     fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
     await screen.findByRole("button", { name: "取消" });
-    expect(control("第 1 段台词").disabled).toBe(true);
+    expect(control("第 1 段台词").disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(api.posts[0].signal?.aborted).toBe(true);
     expect(control("文案标题").value).toBe(original.draft?.title);
@@ -178,7 +282,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     mockPlannerApi();
     const { onAdopt } = await mountPanel();
     fireEvent.change(control("第 2 段台词"), { target: { value: "这句是我亲自改过的台词。" } });
-    fireEvent.click(screen.getAllByText("导演与声音")[1]);
+    fireEvent.click(screen.getByText(/导演与声音/));
     fireEvent.change(control("第 2 段导演提示"), { target: { value: "此处留白，再翻一页。" } });
     fireEvent.change(control("今日主题"), { target: { value: "雨夜便利店" } });
     fireEvent.change(control("目标时长"), { target: { value: "60" } });
@@ -200,7 +304,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     const rewritten = { ...state.draft!.sections[1], text: "AI 新改的第二段。" };
     await requestRewrite(api, Response.json({ section: rewritten }));
     await waitFor(() => expect(control("第 2 段台词").value).toBe(rewritten.text));
-    fireEvent.click(screen.getByRole("button", { name: "撤回 AI 修改" }));
+    fireEvent.click(screen.getByRole("button", { name: "撤回修改" }));
     expect(control("第 1 段台词").value).toBe("先保留我改过的开场。");
     expect(control("第 2 段台词").value).toBe(state.draft!.sections[1].text);
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
@@ -238,7 +342,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     fireEvent.click(screen.getByRole("button", { name: "载入当前项目策划稿" }));
     expect(control("文案标题").value).toBe(source.draft.title);
     expect(control("今日主题").value).toBe(source.brief.theme);
-    fireEvent.click(screen.getByRole("button", { name: "撤回 AI 修改" }));
+    fireEvent.click(screen.getByRole("button", { name: "撤回修改" }));
     expect(control("文案标题").value).toBe(state.draft?.title);
     expect(control("今日主题").value).toBe(brief.theme);
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));

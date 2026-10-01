@@ -3,6 +3,7 @@ import { commitGenerationSuccess } from "./generation-project-state";
 import { createProjectRevision, getCurrentLibraryEntry, updateLibraryProject, type ProjectLibrary, type ProjectLibraryEntry } from "./project-library";
 import { serializeProject } from "./project-persistence";
 import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
+import { getVoiceGenerationContext } from "./voice-generation-context";
 
 function undoFingerprint(entry: Pick<ProjectLibraryEntry, "project" | "plannerSource">): string {
   // Rendering an export does not edit the arrangement and should not remove undo.
@@ -16,7 +17,8 @@ export function adoptAudioCandidate(library: ProjectLibrary, inputCandidate: Aud
   if (candidate.status !== "ready") throw new Error("已放弃的候选不能采用。");
   const target = entry.project.timeline.tracks.flatMap((track) => track.clips as TimelineClip[]).find((clip) => clip.id === candidate.clipId);
   if (!target || target.type !== "voice") throw new Error("候选对应的人声片段已不存在。");
-  if (getVoiceCandidateSourceFingerprint(target) !== candidate.sourceFingerprint) throw new Error("片段内容已修改，请重新生成候选。");
+  const context = candidate.provenance.generationMode === "long_text" ? getVoiceGenerationContext(entry.project, target.id) : undefined;
+  if (getVoiceCandidateSourceFingerprint(target, context) !== candidate.sourceFingerprint) throw new Error("片段内容或后续文案已修改，请重新生成候选。");
   if (target.asset.asset_id === candidate.asset.assetId) return library;
 
   const timedProject = commitGenerationSuccess(entry.project, candidate.clipId, candidate.asset, { fitVoiceTiming: true });

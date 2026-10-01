@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import unittest
 import sys
+import tempfile
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
@@ -25,6 +26,362 @@ def segment_words():
         {"text": "慢慢放松", "start": 0.2, "end": 0.6},
         {"text": "安静休息", "start": 1.1, "end": 1.5},
     ]
+
+
+def greeting_words(*, recognized=True, cropped=False):
+    offset = .12 if cropped else 0
+    return [{"text": "回来了" if recognized else "回来啦", "start": .2 - offset, "end": .5 - offset},
+            {"text": "外面是不是很冷", "start": .6 - offset, "end": 1.1 - offset}]
+
+
+def greeting_audio():
+    return np.concatenate([np.zeros(9600), tone(.3), np.zeros(4800), tone(.5),
+                           np.zeros(24000), tone(.3), np.zeros(9600)])
+
+
+class BoundedContentMatchingTests(unittest.TestCase):
+    def test_ten_characters_with_one_substitution_accept_exact_ninety_percent(self):
+        expected, actual = "回来啦？外面是不是很冷？", "回来了，外面是不是很冷。"
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.content_score(expected, actual)
+        self.assertEqual(helper.content_score(expected, actual, allow_substitutions=True), .9)
+        self.assertEqual(helper.content_comparison(expected, actual), {
+            "status": "different", "similarity": .9, "threshold": .9, "substitutionCount": 1,
+            "expected": "回来啦外面是不是很冷", "recognized": "回来了外面是不是很冷",
+        })
+
+    def test_exact_match_records_no_substitution_after_existing_normalization(self):
+        self.assertEqual(helper.content_comparison("安静地休息。", "安靜的休息"), {
+            "status": "matched", "similarity": 1, "threshold": .9, "substitutionCount": 0,
+            "expected": "安静的休息", "recognized": "安静的休息",
+        })
+
+    def test_short_independent_target_does_not_borrow_longer_context_budget(self):
+        for expected, actual in (("回来啦", "回来了"), ("abcdefghi", "xbcdefghi")):
+            with self.subTest(expected=expected):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.content_comparison(expected, actual)
+
+    def test_two_substitutions_need_twenty_characters_and_three_always_fail(self):
+        target = "abcdefghijklmnopqrst"
+        self.assertEqual(helper.content_score(target, "xbcyefghijklmnopqrst", allow_substitutions=True), .9)
+        for expected, actual in ((target[:-1], "xbcyefghijklmnopqrs"),
+                                 (target + "uvwxyz0123", "xbcyefghijklmnopqrst" + "uvwxyz9123")):
+            with self.subTest(expected=expected):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.content_comparison(expected, actual)
+
+    def test_substitutions_at_either_edge_still_need_the_same_global_budget(self):
+        target = "abcdefghijklmnopqrst"
+        result = helper.content_comparison(target, "xbcdefghijklmnopqrsz")
+        self.assertEqual(result["substitutionCount"], 2)
+        self.assertEqual(result["similarity"], .9)
+
+    def test_bounded_matching_does_not_accept_deleted_added_reordered_or_repeated_text(self):
+        target = "abcdefghijklmnopqrst"
+        for actual in (target[:-1], target + "u", target[:10] + target[11:],
+                       "bacdefghijklmnopqrst", "abcdefghijklmnopqrs" + "abc", "abcdefghijklmn" + "abcdef"):
+            with self.subTest(actual=actual):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.content_comparison(target, actual)
+
+    def test_new_repetition_is_rejected_even_with_only_one_substitution(self):
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.content_comparison("abcdefabcdxfuvwxyz0123456789", "abcdefabcdefuvwxyz0123456789")
+
+    def test_full_target_mapping_locates_a_changed_short_clause_without_relaxing_it(self):
+        clauses = ["回来啦？", "外面是不是很冷？"]
+        words = greeting_words(cropped=True)
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.align_prefix(clauses[0], words)
+        boundaries = helper.resolve_clause_boundaries("".join(clauses), clauses, words)
+        self.assertEqual(boundaries, [0, 1])
+        self.assertEqual(helper.internal_pauses(tone(2), clauses, words, boundaries=boundaries), [100])
+        words[1]["start"] = words[0]["end"]
+        self.assertEqual(helper.internal_pauses(tone(2), clauses, words, boundaries=boundaries), [0])
+
+    def test_mapping_rejects_clause_boundary_inside_one_asr_word(self):
+        words = [{"text": "回来了外面", "start": .1, "end": .8},
+                 {"text": "是不是很冷", "start": .9, "end": 1.3}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^missing_internal_boundary$"):
+            helper.resolve_clause_boundaries("回来啦？外面是不是很冷？", ["回来啦？", "外面是不是很冷？"], words)
+
+    def test_mapping_requires_full_content_and_exact_clause_coverage(self):
+        for expected, clauses, words in (
+                ("回来啦？外面是不是很冷？", ["回来啦？", "外面是不是很热？"], greeting_words()),
+                ("回来啦？外面是不是很冷？", ["回来啦？", "外面是不是很冷？"],
+                 [{"text": "回来了", "start": .1, "end": .5}, {"text": "外面是不是冷", "start": .6, "end": 1.1}])):
+            with self.subTest(clauses=clauses):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.resolve_clause_boundaries(expected, clauses, words)
+
+
+class EndingAnchorContentTests(unittest.TestCase):
+    expected = "来~~，面来啦！慢点儿吃，小心烫。汤也喝一点，暖胃。"
+    actual = "来,面来了,慢点吃,小心烫,汤也喝一点,暖胃。"
+    clauses = ["来~~，", "面来啦！", "慢点儿吃，", "小心烫。", "汤也喝一点，", "暖胃。"]
+
+    def test_unusual_punctuation_is_ignored_without_discarding_annotation_letters(self):
+        self.assertEqual(helper.normalize("「来~~」～…——，面来啦！（慢点儿吃）☆"), "来面来啦慢点儿吃")
+        self.assertEqual(helper.normalize("[轻声]来~~"), "轻声来")
+
+    def test_edit_fallback_accepts_example_but_preserves_default_comparison(self):
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.content_comparison(self.expected, self.actual)
+        comparison = helper.content_comparison(self.expected, self.actual, allow_edits=True)
+        self.assertEqual(comparison, {
+            "mode": "bounded_edits", "status": "different", "similarity": .888889,
+            "threshold": .85, "substitutionCount": 1, "insertionCount": 0,
+            "deletionCount": 1, "editCount": 2,
+            "expected": "来面来啦慢点儿吃小心烫汤也喝一点暖胃",
+            "recognized": "来面来了慢点吃小心烫汤也喝一点暖胃",
+        })
+
+    def test_existing_exact_and_substitution_results_keep_their_original_shape(self):
+        for expected, actual in (("安静地休息。", "安靜的休息"),
+                                 ("回来啦？外面是不是很冷？", "回来了外面是不是很冷")):
+            with self.subTest(expected=expected):
+                self.assertEqual(helper.content_comparison(expected, actual, allow_edits=True),
+                                 helper.content_comparison(expected, actual))
+
+    def test_edit_fallback_has_minimum_length_and_two_edit_limit(self):
+        for expected, actual in (("abcdefghi", "abcefghi"),
+                                 ("abcdefghijklmnopqrstuvwxyz", "abcghijklmnopqrstuvwxyz")):
+            with self.subTest(expected=expected):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.content_comparison(expected, actual, allow_edits=True)
+        accepted = helper.content_comparison("abcdefghij", "abcefghij", allow_edits=True)
+        self.assertEqual(accepted["deletionCount"], 1)
+        self.assertEqual(accepted["editCount"], 1)
+
+    def test_threshold_uses_edit_distance_and_longer_text_length(self):
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.content_comparison("abcdefghijklm", "abcfghijklm", allow_edits=True)
+        deleted = helper.content_comparison("abcdefghijklmn", "abcfghijklmn", allow_edits=True)
+        self.assertEqual(deleted["similarity"], .857143)
+        self.assertEqual(deleted["deletionCount"], 2)
+        inserted = helper.content_comparison("abcdefghijkl", "abcXYdefghijkl", allow_edits=True)
+        self.assertEqual(inserted["similarity"], .857143)
+        self.assertEqual(inserted["insertionCount"], 2)
+
+    def test_fallback_rejects_reordered_and_newly_repeated_content(self):
+        for expected, actual in (("abcdefghijklmn", "abcedfghijklmn"),
+                                 ("abcdefghijklmn", "abedcfghijklmn"),
+                                 ("abcdefghijklmn", "abjdefghicklmn"),
+                                 ("abcdefghijklmn", "abdefgchijklmn"),
+                                 ("abcdefabcdxfuvwxyz0123456789", "abcdefabcdefuvwxyz0123456789")):
+            with self.subTest(expected=expected):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.content_comparison(expected, actual, allow_edits=True)
+
+    def words(self):
+        return [{"text": text, "start": start, "end": end} for text, start, end in (
+            ("来,", .2, .4), ("面来了,", .55, .95), ("慢点吃,", 1.1, 1.4),
+            ("小心烫,", 1.55, 1.9), ("汤也喝一点,", 2.05, 2.6), ("暖胃。", 2.75, 3.05))]
+
+    def test_deletion_alignment_maps_later_clauses_to_actual_word_ends(self):
+        words = self.words()
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.resolve_clause_boundaries(self.expected, self.clauses, words)
+        boundaries = helper.resolve_clause_boundaries(self.expected, self.clauses, words, allow_edits=True)
+        self.assertEqual(boundaries, [0, 1, 2, 3, 4, 5])
+        self.assertEqual(helper.internal_pauses(tone(3.2), self.clauses, words, boundaries=boundaries),
+                         [150, 150, 150, 150, 150])
+
+    def test_edit_alignment_does_not_create_a_boundary_inside_one_asr_word(self):
+        words = self.words()
+        words[2:4] = [{"text": "慢点吃小心烫", "start": 1.1, "end": 1.9}]
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.resolve_clause_boundaries(self.expected, self.clauses, words, allow_edits=True)
+
+    def test_deleted_clause_ending_cannot_supply_an_internal_boundary(self):
+        expected = "abcdefghijklmno"
+        words = [{"text": "abcd", "start": .1, "end": .5},
+                 {"text": "fghijklmno", "start": .7, "end": 1.2}]
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.resolve_clause_boundaries(expected, ["abcde", "fghijklmno"], words, allow_edits=True)
+
+    def test_ambiguous_deletion_near_clause_boundary_is_rejected(self):
+        expected = "abcdefghhiJKLMNO"
+        words = [{"text": "abcdefgh", "start": .1, "end": .5},
+                 {"text": "iJKLMNO", "start": .7, "end": 1.2}]
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.resolve_clause_boundaries(expected, ["abcdefgh", "hiJKLMNO"], words, allow_edits=True)
+
+    def test_target_endpoint_uses_tail_anchor_and_the_immediate_following_text(self):
+        words = self.words() + [{"text": "今天外面风大", "start": 3.6, "end": 4.0}]
+        terminal, boundary_match = helper.align_target(self.expected, words, "今天外面风大，")
+        self.assertEqual(terminal, 5)
+        self.assertIsNotNone(boundary_match)
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.align_target(self.expected, words, "完全不同的后文")
+
+    def test_fallback_requires_the_initial_two_characters_and_more_than_shared_tail(self):
+        words = self.words() + [{"text": "今天外面风大", "start": 3.6, "end": 4.0}]
+        for expected in ("去面来啦慢点吃小心烫汤也喝一点暖胃", "你今天中午准备吃什么东西暖胃"):
+            with self.subTest(expected=expected):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.align_target(expected, words, "今天外面风大")
+
+    def test_repeated_tail_in_plausible_prefix_does_not_choose_an_arbitrary_occurrence(self):
+        expected, actual = "abcdefgh暖胃ij暖胃", "abcdfgh暖胃ij暖胃"
+        words = [{"text": actual, "start": .2, "end": 2.0},
+                 {"text": "后面的内容", "start": 2.5, "end": 3.0}]
+        # The full four-character suffix is unique here, so an earlier short
+        # occurrence must not defeat a longer unambiguous ending anchor.
+        terminal, boundary_match = helper.align_target(expected, words, "后面的内容")
+        self.assertEqual(terminal, 0)
+        self.assertIsNotNone(boundary_match)
+
+    def test_repeated_ending_still_needs_the_whole_target_and_immediate_continuation(self):
+        expected, actual = "abcdefgh今天暖胃今天暖胃", "abcdfgh今天暖胃今天暖胃"
+        words = [{"text": actual, "start": .2, "end": 2.0},
+                 {"text": "后面的内容", "start": 2.5, "end": 3.0}]
+        terminal, _ = helper.align_target(expected, words, "后面的内容")
+        self.assertEqual(terminal, 0)
+        words.insert(1, {"text": "今天暖胃", "start": 2.1, "end": 2.4})
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.align_target(expected, words, "后面的内容")
+
+    def test_one_shared_final_character_does_not_establish_a_local_anchor(self):
+        words = [{"text": "abxdefghijklyn", "start": .2, "end": 2.0},
+                 {"text": "后面的内容", "start": 2.5, "end": 3.0}]
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.align_target("abcdefghijklmn", words, "后面的内容")
+        candidates = helper.bounded_endpoint_candidates("abcdefghijklmn", words)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["terminalWordIndex"], 0)
+
+    def test_two_bounded_endpoints_with_the_same_immediate_context_are_ambiguous(self):
+        words = [{"text": "abcdfghijklmnopqraa", "start": .1, "end": 1.0},
+                 {"text": "a", "start": 1.2, "end": 1.3},
+                 {"text": "aaaa", "start": 1.5, "end": 1.9}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^ambiguous_ending_anchor$"):
+            helper.align_target("abcdefghijklmnopqraa", words, "aaaa")
+
+    def test_api_hint_can_select_only_an_existing_bounded_endpoint(self):
+        expected, actual = "abcdefghijklmn", "abxdefghijklyn"
+        words = [{"text": actual, "start": .2, "end": 2.0},
+                 {"text": "后面的内容", "start": 2.5, "end": 3.0}]
+        hint = {"terminalWordIndex": 0, "recognizedPrefix": actual}
+        terminal, boundary_match = helper.align_target(expected, words, "后面的内容", alignment_hint=hint)
+        self.assertEqual(terminal, 0)
+        self.assertEqual(boundary_match["method"], "api")
+        self.assertEqual(boundary_match["recognizedPrefix"], actual)
+        for bad_hint in ({"terminalWordIndex": 9, "recognizedPrefix": actual},
+                         {"terminalWordIndex": 0, "recognizedPrefix": expected},
+                         {"terminalWordIndex": 0, "recognizedPrefix": actual + "后面"}):
+            with self.subTest(hint=bad_hint):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.align_target(expected, words, "后面的内容", alignment_hint=bad_hint)
+
+    def test_api_hint_cannot_bypass_content_budget_or_following_speech(self):
+        expected = "abcdefghijklmn"
+        for actual, following in (("ab完全无关的内容", "后面的内容"),
+                                  ("abxdefghijklyn", "另一个不同的后文")):
+            words = [{"text": actual, "start": .2, "end": 2.0},
+                     {"text": "后面的内容", "start": 2.5, "end": 3.0}]
+            with self.subTest(actual=actual):
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.align_target(expected, words, following,
+                                        alignment_hint={"terminalWordIndex": 0, "recognizedPrefix": actual})
+
+    def test_complete_fallback_requires_two_sided_and_final_recognition(self):
+        words = self.words()
+        following = {"text": "今天外面风大", "start": 3.6, "end": 4.0}
+        audio = np.zeros(round(4.2 * helper.RATE))
+        for word in words + [following]:
+            start, end = round(word["start"] * helper.RATE), round(word["end"] * helper.RATE)
+            audio[start:end] = tone((end - start) / helper.RATE)
+        source = (self.actual + following["text"], words + [following])
+        left = (self.actual, words)
+        right = (following["text"], [{"text": following["text"], "start": .275, "end": .675}])
+        final = (self.actual, [{**word, "start": word["start"] - .12, "end": word["end"] - .12}
+                               for word in words])
+        with patch.object(helper, "transcribe", side_effect=[source, left, right, final]) as recognize:
+            processed, result = helper.analyze(None, audio, self.expected, following["text"], self.clauses)
+        self.assertEqual(recognize.call_count, 4)
+        self.assertLess(processed.size, audio.size)
+        self.assertEqual(result["recognition"]["contentComparison"]["mode"], "bounded_edits")
+        self.assertEqual(result["recognition"]["contentComparison"]["editCount"], 2)
+        self.assertIn("cutValidation", result)
+        self.assertEqual(result["internalPausesMs"], [150, 150, 150, 150, 150])
+
+    def test_endpoint_matching_does_not_replace_actual_quiet_proof(self):
+        words = self.words() + [{"text": "今天外面风大", "start": 3.6, "end": 4.0}]
+        with patch.object(helper, "transcribe", return_value=(self.actual + "今天外面风大", words)) as recognize:
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+                helper.analyze(None, tone(4.2), self.expected, "今天外面风大", self.clauses)
+        self.assertEqual(recognize.call_count, 1)
+
+
+class ApproximateCutVerificationTests(unittest.TestCase):
+    expected = "回来啦？外面是不是很冷？"
+    clauses = ["回来啦？", "外面是不是很冷？"]
+
+    def source(self, recognized=True):
+        words = greeting_words(recognized=recognized)
+        words.append({"text": "快进来", "start": 1.6, "end": 1.9})
+        return "".join(word["text"] for word in words), words
+
+    def left(self):
+        words = greeting_words()
+        return "".join(word["text"] for word in words), words
+
+    def right(self, text="快进来"):
+        return text, [{"text": text, "start": .25, "end": .55}]
+
+    def final(self):
+        words = greeting_words(cropped=True)
+        return "".join(word["text"] for word in words), words
+
+    def test_source_difference_requires_both_sides_and_final_independent_recognition(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.left(), self.right(), self.final()]) as recognize:
+            audio, result = helper.analyze(None, greeting_audio(), self.expected, "快进来", self.clauses)
+        self.assertEqual(recognize.call_count, 4)
+        self.assertLess(audio.size, greeting_audio().size)
+        self.assertEqual(result["recognition"]["contentComparison"]["status"], "different")
+        self.assertEqual(result["recognition"]["contentComparison"]["similarity"], .9)
+        self.assertEqual(result["internalPausesMs"], [100])
+        self.assertGreaterEqual(result["cutValidation"]["quietEndSeconds"]
+                                - result["cutValidation"]["quietStartSeconds"], .16)
+
+    def test_difference_first_seen_after_fast_crop_triggers_one_two_sided_recheck(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(False), self.final(), self.left(),
+                                                            self.right(), self.final()]) as recognize:
+            _, result = helper.analyze(None, greeting_audio(), self.expected, "快进来", self.clauses)
+        self.assertEqual(recognize.call_count, 5)
+        self.assertIn("cutValidation", result)
+        self.assertEqual(result["recognition"]["contentComparison"]["substitutionCount"], 1)
+
+    def test_two_sided_requirement_cannot_be_satisfied_by_word_timestamps_without_quiet(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source()]) as recognize:
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+                helper.analyze(None, tone(2.1), self.expected, "快进来", self.clauses)
+        self.assertEqual(recognize.call_count, 1)
+
+    def test_approximate_target_does_not_relax_the_following_first_syllable(self):
+        replies = [self.source()] + [self.left(), self.right("慢进来")] * 3
+        with patch.object(helper, "transcribe", side_effect=replies) as recognize:
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                helper.analyze(None, greeting_audio(), self.expected, "快进来", self.clauses)
+        self.assertLessEqual(recognize.call_count, 7)
+
+    def test_final_segment_and_word_transcripts_must_agree_even_if_both_are_ninety_percent(self):
+        words = greeting_words(recognized=False, cropped=True)
+        words[1]["text"] = "外面是不是很热"
+        mismatched = ("回来了外面是不是很冷", words)
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.left(), self.right(), mismatched]):
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^inconsistent_recognition$"):
+                helper.analyze(None, greeting_audio(), self.expected, "快进来", self.clauses)
+
+    def test_short_independent_unit_still_fails_before_boundary_search(self):
+        with patch.object(helper, "transcribe", return_value=self.source()) as recognize:
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^uncertain_word_alignment$") as caught:
+                helper.analyze(None, greeting_audio(), "回来啦？", "外面是不是很冷？", ["回来啦？"])
+        self.assertEqual(recognize.call_count, 1)
+        self.assertEqual(caught.exception.recognition["stage"], "source_alignment")
+        self.assertEqual(caught.exception.recognition["alignment"]["expected"], "回来啦")
 
 
 class VoiceGroupSafetyTests(unittest.TestCase):
@@ -256,6 +613,199 @@ class PersistentWorkerTests(unittest.TestCase):
             self.assertEqual(helper.worker("model", incoming, outgoing), 0)
         load.assert_not_called()
         self.assertEqual(json.loads(outgoing.getvalue()), {"requestPath": "first.json", "code": 2})
+
+
+class RecognitionDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        root = Path(self.scratch.name)
+        self.request = root / "request.json"
+        self.output = root / "result.json"
+        self.source = root / "source.wav"
+        self.audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(24000), tone(.4), np.zeros(9600)])
+        helper.sf.write(self.source, self.audio, helper.RATE, subtype="PCM_16")
+        self.request.write_text(json.dumps({
+            "version": 1, "inputWav": str(self.source), "outputWav": str(root / "processed.wav"),
+            "outputJson": str(self.output), "modelPath": "model", "expectedText": "慢慢放松",
+            "followingText": "安静休息", "clauses": ["慢慢放松"],
+        }), encoding="utf-8")
+
+    def read_result(self):
+        return json.loads(self.output.read_text(encoding="utf-8"))
+
+    def test_success_retains_distinct_full_source_and_extracted_transcripts(self):
+        source = ("慢慢放松，安静休息。", segment_words())
+        target = ("慢慢放松", segment_words()[:1])
+        with patch.object(helper, "transcribe", side_effect=[source, target]):
+            processed, result = helper.analyze(None, self.audio, "慢慢放松", "安静休息", ["慢慢放松"])
+        self.assertLess(processed.size, self.audio.size)
+        self.assertEqual(result["recognition"], {
+            "stage": "complete", "sourceTranscript": source[0], "sourceWords": source[1],
+            "targetTranscript": target[0], "expectedText": "慢慢放松", "followingText": "安静休息",
+            "contentComparison": {"status": "matched", "similarity": 1, "threshold": .9,
+                                  "substitutionCount": 0, "expected": "慢慢放松", "recognized": "慢慢放松"},
+        })
+
+    def test_changed_opening_is_accepted_only_with_verified_cut_and_visible_content_difference(self):
+        words = greeting_words() + [{"text": "快进来", "start": 1.6, "end": 1.9}]
+        source = ("回来了，外面是不是很冷，快进来", words)
+        left = ("回来了外面是不是很冷", greeting_words())
+        right = ("快进来", [{"text": "快进来", "start": .25, "end": .55}])
+        final = ("回来了外面是不是很冷", greeting_words(cropped=True))
+        with patch.object(helper, "transcribe", side_effect=[source, left, right, final]) as recognize:
+            _, result = helper.analyze(None, greeting_audio(), "回来啦？外面是不是很冷？", "快进来",
+                                       ["回来啦？", "外面是不是很冷？"])
+        self.assertEqual(recognize.call_count, 4)
+        recognition = result["recognition"]
+        self.assertEqual(recognition["stage"], "complete")
+        self.assertEqual(recognition["sourceTranscript"], source[0])
+        self.assertEqual(recognition["sourceWords"], words)
+        self.assertEqual(recognition["contentComparison"], {
+            "status": "different", "similarity": .9, "threshold": .9, "substitutionCount": 1,
+            "expected": "回来啦外面是不是很冷", "recognized": "回来了外面是不是很冷",
+        })
+        self.assertIn("cutValidation", result)
+        self.assertNotIn("alignment", recognition)
+
+    def test_target_validation_failure_keeps_both_transcripts(self):
+        with patch.object(helper, "transcribe", side_effect=[
+                ("慢慢放松安静休息", segment_words()), ("慢慢放", segment_words()[:1])]):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        result = self.read_result()
+        self.assertFalse(result["success"])
+        self.assertEqual(result["recognition"]["stage"], "target_validation")
+        self.assertEqual(result["recognition"]["targetTranscript"], "慢慢放")
+        self.assertEqual(result["recognition"]["sourceTranscript"], "慢慢放松安静休息")
+
+    def test_failed_cut_alignment_does_not_leak_into_later_cut_or_final_validation(self):
+        coarse = segment_words()
+        coarse[1]["start"] = .61
+        source = ("慢慢放松安静休息", coarse)
+        left = ("慢慢放松", [{"text": "慢慢放松", "start": .2, "end": .6}])
+        wrong_right = ("别的内容", [{"text": "别的内容", "start": .25, "end": .65}])
+        right = ("安静休息", [{"text": "安静休息", "start": .25, "end": .65}])
+        wrong_final = ("慢慢放", [{"text": "慢慢放", "start": .08, "end": .48}])
+        replies = [source, left, wrong_right, left, right, wrong_final]
+        calls = 0
+
+        def recognize(_model, _audio):
+            nonlocal calls
+            if calls in (3, 5):
+                checkpoint = self.read_result()["recognition"]
+                self.assertNotIn("alignment", checkpoint)
+                self.assertNotIn("targetTranscript", checkpoint)
+                self.assertEqual(checkpoint["stage"], "boundary_check" if calls == 3 else "target_transcription")
+            result = replies[calls]
+            calls += 1
+            return result
+
+        candidates = [{"method": "two_sided", "thresholdDbfs": -68,
+                       "quietStartSeconds": .6, "quietEndSeconds": 1.1, "cut": cut}
+                      for cut in (.8, .85)]
+        with patch.object(helper, "transcribe", side_effect=recognize), \
+                patch.object(helper, "quiet_cut_candidates", return_value=candidates):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        self.assertEqual(calls, 6)
+        result = self.read_result()
+        self.assertEqual(result["code"], "missing_or_extra_speech")
+        self.assertEqual(result["recognition"]["stage"], "target_validation")
+        self.assertEqual(result["recognition"]["targetTranscript"], "慢慢放")
+        self.assertEqual(result["recognition"]["sourceTranscript"], source[0])
+        self.assertNotIn("alignment", result["recognition"])
+
+    def test_failed_cut_diagnostics_are_cleared_before_a_later_cut_asr_crashes(self):
+        coarse = segment_words()
+        coarse[1]["start"] = .61
+        left = ("慢慢放松", [{"text": "慢慢放松", "start": .2, "end": .6}])
+        wrong_right = ("别的内容", [{"text": "别的内容", "start": .25, "end": .65}])
+        candidates = [{"method": "two_sided", "thresholdDbfs": -68,
+                       "quietStartSeconds": .6, "quietEndSeconds": 1.1, "cut": cut}
+                      for cut in (.8, .85)]
+        with patch.object(helper, "transcribe", side_effect=[("慢慢放松安静休息", coarse), left,
+                                                             wrong_right, RuntimeError("private runtime error")]), \
+                patch.object(helper, "quiet_cut_candidates", return_value=candidates):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        result = self.read_result()
+        self.assertEqual(result["code"], "analysis_failed")
+        self.assertEqual(result["recognition"]["stage"], "boundary_check")
+        self.assertNotIn("alignment", result["recognition"])
+        self.assertNotIn("targetTranscript", result["recognition"])
+        self.assertEqual(result["recognition"]["sourceWords"], coarse)
+        self.assertNotIn("private", self.output.read_text(encoding="utf-8"))
+
+    def test_generic_analyze_failure_keeps_source_without_exception_message(self):
+        with patch.object(helper, "transcribe", return_value=("慢慢放松安静休息", segment_words())), \
+                patch.object(helper, "trim_quiet_edges", side_effect=RuntimeError("I:/private/model secret failure")):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        result = self.read_result()
+        self.assertEqual(result["code"], "analysis_failed")
+        self.assertEqual(result["recognition"]["sourceWords"], segment_words())
+        self.assertEqual(result["recognition"]["stage"], "boundary_check")
+        self.assertNotIn("private", self.output.read_text(encoding="utf-8"))
+
+    def test_process_failure_after_analysis_preserves_completed_asr(self):
+        with patch.object(helper, "transcribe", side_effect=[
+                ("慢慢放松安静休息", segment_words()), ("慢慢放松", segment_words()[:1])]), \
+                patch.object(helper.sf, "write", side_effect=OSError("private path denied")):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        result = self.read_result()
+        self.assertEqual(result["code"], "analysis_failed")
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertEqual(result["recognition"]["targetTranscript"], "慢慢放松")
+        self.assertNotIn("private", self.output.read_text(encoding="utf-8"))
+
+    def test_checkpoint_survives_interruption_immediately_after_source_asr(self):
+        def interrupt(_expected, _words, **_options):
+            checkpoint = self.read_result()
+            self.assertEqual(checkpoint["code"], "analysis_incomplete")
+            self.assertEqual(checkpoint["recognition"]["sourceTranscript"], "慢慢放松安静休息")
+            self.assertEqual(checkpoint["recognition"]["sourceWords"], segment_words())
+            raise KeyboardInterrupt()
+
+        with patch.object(helper, "transcribe", return_value=("慢慢放松安静休息", segment_words())), \
+                patch.object(helper, "align_prefix", side_effect=interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                helper.process_request(str(self.request), lambda _: None)
+        self.assertEqual(self.read_result()["recognition"]["stage"], "source_alignment")
+        self.assertEqual(list(self.output.parent.glob("*.tmp")), [])
+
+    def test_model_load_failure_has_empty_safe_recognition(self):
+        def fail(_path):
+            raise RuntimeError("I:/private/model unavailable")
+        self.assertEqual(helper.process_request(str(self.request), fail), 0)
+        result = self.read_result()
+        self.assertEqual(result["code"], "analysis_failed")
+        self.assertEqual(result["recognition"]["sourceTranscript"], "")
+        self.assertEqual(result["recognition"]["stage"], "source_transcription")
+        self.assertNotIn("private", self.output.read_text(encoding="utf-8"))
+
+    def test_worker_keeps_failed_recognition_in_same_result_file(self):
+        incoming = io.StringIO(json.dumps({"requestPath": str(self.request)}) + "\n")
+        outgoing = io.StringIO()
+        wrong = [{"text": "完全不同", "start": .1, "end": .5}]
+        with patch.object(helper, "load_model", return_value=object()), \
+                patch.object(helper, "transcribe", return_value=("完全不同", wrong)):
+            self.assertEqual(helper.worker("model", incoming, outgoing), 0)
+        self.assertEqual(json.loads(outgoing.getvalue()), {"requestPath": str(self.request), "code": 0})
+        result = self.read_result()
+        self.assertEqual(result["code"], "uncertain_word_alignment")
+        self.assertEqual(result["recognition"]["sourceTranscript"], "完全不同")
+        self.assertEqual(result["recognition"]["alignment"]["recognizedPrefix"], "完全不同")
+
+    def test_diagnostic_bounds_do_not_admit_invalid_timestamps_or_unbounded_strings(self):
+        words = [{"text": "字" * 201, "start": 0, "end": 120.1}] * 2001
+        words[0] = {"text": "invalid", "start": 0, "end": float("nan")}
+        result = helper.recognition_snapshot({"stage": "source_alignment", "sourceTranscript": "a" * 9000,
+                                               "expectedText": "😀" * 501, "sourceWords": words,
+                                               "followingText": "b" * 2000, "targetTranscript": "c" * 9000})
+        self.assertEqual(len(result["sourceTranscript"]), 8000)
+        self.assertEqual(len(result["expectedText"].encode("utf-16-le")), 1000)
+        self.assertEqual(len(result["targetTranscript"]), 8000)
+        self.assertEqual(len(result["followingText"]), 1500)
+        self.assertLessEqual(len(result["sourceWords"]), 2000)
+        self.assertEqual(len(result["sourceWords"][0]["text"]), 200)
+        json.dumps(result, allow_nan=False)
 
 
 if __name__ == "__main__":

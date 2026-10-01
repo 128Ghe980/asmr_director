@@ -48,7 +48,7 @@ function getTrackClips(project: AsmrProject, trackType: ClipTrackType): Timeline
 function getClipLabel(clip: TimelineClip): string {
   switch (clip.type) {
     case "voice":
-      return getValueLabel(clip.emotion);
+      return clip.text;
     case "breath":
       return getValueLabel(clip.breath);
     case "sfx":
@@ -74,16 +74,16 @@ export function TimelinePanel({
   onSelectClip,
 }: TimelinePanelProps) {
   return (
-    <section className="rounded-lg border border-studio-line bg-studio-panel/88">
-      <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
+    <section aria-label="时间线" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-studio-line bg-studio-panel/88">
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-studio-line px-3">
         <h2 className="text-sm font-semibold text-studio-text">时间线</h2>
         <div className="text-xs tabular-nums text-studio-muted">
           {formatTimeRange(0, project.duration)}
         </div>
       </div>
 
-      <div className="overflow-x-auto p-3">
-        <div className="min-w-[720px] overflow-hidden rounded-lg border border-white/[0.06] bg-black/16 lg:min-w-0">
+      <div role="region" aria-label="时间线轨道" tabIndex={0} className="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-300/45">
+        <div className="min-w-[600px] overflow-hidden rounded-md border border-white/[0.06] bg-black/16 lg:min-w-0">
           {fixedTracks.map(({ type, label }) => {
             const clips =
               type === "post_processing"
@@ -93,9 +93,9 @@ export function TimelinePanel({
             return (
               <div
                 key={type}
-                className="grid h-[64px] grid-cols-[78px_minmax(0,1fr)] border-b border-white/[0.06] last:border-b-0"
+                className="grid h-9 grid-cols-[62px_minmax(0,1fr)] border-b border-white/[0.06] last:border-b-0"
               >
-                <div className="flex items-center border-r border-white/[0.06] bg-white/[0.025] px-3">
+                <div className="flex items-center border-r border-white/[0.06] bg-white/[0.025] px-2">
                   <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
                     {label}
                   </span>
@@ -123,7 +123,7 @@ export function TimelinePanel({
                         aria-pressed={isSelected}
                         title={`${getClipLabel(clip)} · ${timeRange} · ${generationStatus.statusLabel}`}
                         className={clsx(
-                          "absolute top-3 flex h-10 min-w-24 items-center gap-1.5 overflow-hidden rounded-md border px-2 text-left text-[11px] font-semibold leading-none shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45",
+                          "absolute top-1 flex h-7 min-w-0 items-center gap-1.5 overflow-hidden rounded border px-2 text-left text-[11px] font-semibold leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45",
                           clipTones[clip.track],
                           isSelected && "ring-2 ring-sky-200/70",
                         )}

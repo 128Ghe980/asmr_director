@@ -28,6 +28,15 @@ const draft: PlannerDraft = {
 };
 
 describe("planner working draft persistence", () => {
+  it("persists newly added blank sections and an empty draft while the user edits", () => {
+    const storage = createStorage();
+    const brief = PlannerBriefSchema.parse({ theme: "书店" });
+    for (const sections of [[{ ...draft.sections[0], title: "", text: "" }], []]) {
+      const state = { ...createEmptyPlannerWorkingState(), brief, draftBrief: brief, draft: { ...draft, sections } };
+      expect(savePlannerDraft(storage, state)).toEqual({ success: true });
+      expect(loadPlannerDraft(storage)).toEqual({ state, restored: true });
+    }
+  });
   it("starts empty and can restore a hand-entered brief before generation", () => {
     const storage = createStorage();
     const empty = createEmptyPlannerWorkingState();

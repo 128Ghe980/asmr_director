@@ -1,6 +1,7 @@
 import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
 import { SPATIAL_RENDER_VERSION } from "./spatial-settings";
+import type { VoiceGenerationContext } from "./voice-generation-context";
 
 type ClipGenerationFingerprintInput = {
   id: string;
@@ -13,6 +14,7 @@ type ClipGenerationFingerprintInput = {
   fade_out: number;
   position: TimelineClip["position"];
   typed: Record<string, boolean | string>;
+  voice_context?: VoiceGenerationContext;
 };
 
 type ProjectMixExportType = "wav";
@@ -72,6 +74,7 @@ function getTypedFingerprintInput(
 
 type ClipGenerationFingerprintOptions = {
   ignoreVoiceStart?: boolean;
+  voiceContext?: VoiceGenerationContext;
 };
 
 export function getClipGenerationFingerprint(
@@ -91,6 +94,7 @@ export function getClipGenerationFingerprint(
     fade_out: clip.fade_out,
     position: clip.position,
     typed: getTypedFingerprintInput(clip),
+    ...(clip.type === "voice" && options.voiceContext ? { voice_context: options.voiceContext } : {}),
   };
 
   return JSON.stringify(input);

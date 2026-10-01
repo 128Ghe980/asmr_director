@@ -37,6 +37,7 @@ import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
   binaural?: boolean;
+  textEditorExternal?: boolean;
   voiceGenerationPanel?: (generationControl: React.ReactNode) => React.ReactNode;
   fieldValidationIssues: ClipFieldValidationIssues;
   selectedClip: TimelineClip | undefined;
@@ -125,7 +126,7 @@ function InspectorField({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid grid-cols-[82px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-3 last:border-b-0">
+    <label className="grid grid-cols-[54px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-2.5 last:border-b-0">
       <span className="pt-2 text-xs font-semibold uppercase tracking-normal text-studio-muted">
         {label}
       </span>
@@ -142,7 +143,7 @@ function ReadOnlyRow({
   value: React.ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[82px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-3 last:border-b-0">
+    <div className="grid grid-cols-[54px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-2.5 last:border-b-0">
       <dt className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
         {label}
       </dt>
@@ -371,6 +372,7 @@ function parseNumericInput(value: string): number {
 
 export function ClipInspector({
   binaural = true,
+  textEditorExternal = false,
   voiceGenerationPanel,
   fieldValidationIssues,
   selectedClip,
@@ -448,70 +450,36 @@ export function ClipInspector({
       </div>
 
       <div className="px-4">
-        {selectedClip.type === "voice" ? (
-          <DirectorActionStrip onApplyPreset={applyPreset} fixedApproach={isOrbitApproach} />
+        {selectedClip.type === "voice" && textEditorExternal ? (
+          <div className="border-b border-white/[0.06] py-3">
+            <p className="text-xs font-semibold text-studio-muted">当前范围</p>
+            <p aria-label="当前范围文本" title={selectedClip.text} className="mt-1.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-studio-text">
+              {selectedClip.text || "在左侧输入台词"}
+            </p>
+            <FieldError id={getFieldErrorId("text")} issues={getFieldIssues("text")} />
+          </div>
         ) : null}
-
-        <TimingActionStrip onNudge={nudgeTiming} />
 
         {selectedClip.type === "voice" && voiceGenerationPanel ? voiceGenerationPanel(
           <GenerationActionPanel control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />,
         ) : <GenerationActionPanel control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />}
 
-        {selectedClip.type === "voice" ? (
-          <>
-            <InspectorField label="台词">
-              <textarea
-                value={selectedClip.text}
-                onChange={(event) => updateClip({ text: event.target.value })}
-                className={controlClassName(
-                  "min-h-24 resize-y leading-6",
-                  hasFieldIssues("text"),
-                )}
-                {...getFieldControlProps("text")}
-              />
-              <FieldError
-                id={getFieldErrorId("text")}
-                issues={getFieldIssues("text")}
-              />
-            </InspectorField>
-            <InspectorField label="情绪">
-              <input
-                value={selectedClip.emotion}
-                onChange={(event) => updateClip({ emotion: event.target.value })}
-                className={controlClassName("", hasFieldIssues("emotion"))}
-                {...getFieldControlProps("emotion")}
-              />
-              <FieldError
-                id={getFieldErrorId("emotion")}
-                issues={getFieldIssues("emotion")}
-              />
-            </InspectorField>
-            <InspectorField label="风格">
-              <input
-                value={selectedClip.style}
-                onChange={(event) => updateClip({ style: event.target.value })}
-                className={controlClassName("", hasFieldIssues("style"))}
-                {...getFieldControlProps("style")}
-              />
-              <FieldError
-                id={getFieldErrorId("style")}
-                issues={getFieldIssues("style")}
-              />
-            </InspectorField>
-            <InspectorField label="语速">
-              <input
-                value={selectedClip.pace}
-                onChange={(event) => updateClip({ pace: event.target.value })}
-                className={controlClassName("", hasFieldIssues("pace"))}
-                {...getFieldControlProps("pace")}
-              />
-              <FieldError
-                id={getFieldErrorId("pace")}
-                issues={getFieldIssues("pace")}
-              />
-            </InspectorField>
-          </>
+        {selectedClip.type === "voice" && !textEditorExternal ? (
+          <InspectorField label="台词">
+            <textarea
+              value={selectedClip.text}
+              onChange={(event) => updateClip({ text: event.target.value })}
+              className={controlClassName(
+                "min-h-24 resize-y leading-6",
+                hasFieldIssues("text"),
+              )}
+              {...getFieldControlProps("text")}
+            />
+            <FieldError
+              id={getFieldErrorId("text")}
+              issues={getFieldIssues("text")}
+            />
+          </InspectorField>
         ) : null}
 
         {selectedClip.type === "breath" ? (
@@ -558,7 +526,7 @@ export function ClipInspector({
                 issues={getFieldIssues("ambience")}
               />
             </InspectorField>
-            <label className="grid grid-cols-[82px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-3">
+            <label className="grid grid-cols-[54px_minmax(0,1fr)] gap-3 border-b border-white/[0.06] py-2.5">
               <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
                 循环
               </span>
@@ -578,49 +546,6 @@ export function ClipInspector({
             </label>
           </>
         ) : null}
-
-        <div className="grid grid-cols-2 gap-3 border-b border-white/[0.06] py-3">
-          <label>
-            <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-              开始
-            </span>
-            <input
-              type="number"
-              min={0}
-              step={0.1}
-              value={selectedClip.start}
-              onChange={(event) =>
-                updateClip({ start: parseNumericInput(event.target.value) })
-              }
-              className={controlClassName("mt-2", hasFieldIssues("start"))}
-              {...getFieldControlProps("start")}
-            />
-            <FieldError
-              id={getFieldErrorId("start")}
-              issues={getFieldIssues("start")}
-            />
-          </label>
-          <label>
-            <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
-              时长
-            </span>
-            <input
-              type="number"
-              min={0.1}
-              step={0.1}
-              value={selectedClip.duration}
-              onChange={(event) =>
-                updateClip({ duration: parseNumericInput(event.target.value) })
-              }
-              className={controlClassName("mt-2", hasFieldIssues("duration"))}
-              {...getFieldControlProps("duration")}
-            />
-            <FieldError
-              id={getFieldErrorId("duration")}
-              issues={getFieldIssues("duration")}
-            />
-          </label>
-        </div>
 
         <div className="grid grid-cols-2 gap-3 border-b border-white/[0.06] py-3">
           <label>
@@ -745,9 +670,100 @@ export function ClipInspector({
           </div>
         ) : null}
 
+        <details className="border-t border-white/[0.06] py-3" open={hasFieldIssues("start") || hasFieldIssues("duration") || undefined}>
+          <summary className="cursor-pointer text-xs font-semibold text-studio-muted">时间与微调</summary>
+          <div className="grid grid-cols-2 gap-3 border-b border-white/[0.06] py-3">
+            <label>
+              <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
+                开始
+              </span>
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={selectedClip.start}
+                onChange={(event) =>
+                  updateClip({ start: parseNumericInput(event.target.value) })
+                }
+                className={controlClassName("mt-2", hasFieldIssues("start"))}
+                {...getFieldControlProps("start")}
+              />
+              <FieldError
+                id={getFieldErrorId("start")}
+                issues={getFieldIssues("start")}
+              />
+            </label>
+            <label>
+              <span className="text-xs font-semibold uppercase tracking-normal text-studio-muted">
+                时长
+              </span>
+              <input
+                type="number"
+                min={0.1}
+                step={0.1}
+                value={selectedClip.duration}
+                onChange={(event) =>
+                  updateClip({ duration: parseNumericInput(event.target.value) })
+                }
+                className={controlClassName("mt-2", hasFieldIssues("duration"))}
+                {...getFieldControlProps("duration")}
+              />
+              <FieldError
+                id={getFieldErrorId("duration")}
+                issues={getFieldIssues("duration")}
+              />
+            </label>
+          </div>
+
+          <TimingActionStrip onNudge={nudgeTiming} />
+        </details>
+
+        {selectedClip.type === "voice" ? (
+          <details className="border-t border-white/[0.06] py-3" open={hasFieldIssues("emotion") || hasFieldIssues("style") || hasFieldIssues("pace") || undefined}>
+            <summary className="cursor-pointer text-xs font-semibold text-studio-muted">表演与导演快捷</summary>
+            <InspectorField label="情绪">
+              <input
+                value={selectedClip.emotion}
+                onChange={(event) => updateClip({ emotion: event.target.value })}
+                className={controlClassName("", hasFieldIssues("emotion"))}
+                {...getFieldControlProps("emotion")}
+              />
+              <FieldError
+                id={getFieldErrorId("emotion")}
+                issues={getFieldIssues("emotion")}
+              />
+            </InspectorField>
+            <InspectorField label="风格">
+              <input
+                value={selectedClip.style}
+                onChange={(event) => updateClip({ style: event.target.value })}
+                className={controlClassName("", hasFieldIssues("style"))}
+                {...getFieldControlProps("style")}
+              />
+              <FieldError
+                id={getFieldErrorId("style")}
+                issues={getFieldIssues("style")}
+              />
+            </InspectorField>
+            <InspectorField label="语速">
+              <input
+                value={selectedClip.pace}
+                onChange={(event) => updateClip({ pace: event.target.value })}
+                className={controlClassName("", hasFieldIssues("pace"))}
+                {...getFieldControlProps("pace")}
+              />
+              <FieldError
+                id={getFieldErrorId("pace")}
+                issues={getFieldIssues("pace")}
+              />
+            </InspectorField>
+            <DirectorActionStrip onApplyPreset={applyPreset} fixedApproach={isOrbitApproach} />
+          </details>
+        ) : null}
+
         <details className="border-t border-white/[0.06] py-3">
           <summary className="cursor-pointer text-xs text-studio-muted">
-            生成详情
+            素材与生成信息
           </summary>
           <dl className="mt-1 break-words">
             <ReadOnlyRow label="片段 ID" value={selectedClip.id} />

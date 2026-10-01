@@ -7,12 +7,14 @@ import { resolveClipAssetPath, saveClipAsset } from "./local-asset-store";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { decodePcmWav, writePcm16Wav } from "./pcm-audio";
 import { analyzeVoiceGroup, getVoiceAnalysisReadiness, VoiceGroupAnalysisError } from "./voice-group-analysis";
-import { buildLongTextInputs, chooseGroupPauses } from "./voice-longtext-plan";
+import { buildLongTextInputs, chooseGroupPauses, createSemanticVoiceLongTextPlan } from "./voice-longtext-plan";
 import { planVoiceLongText } from "./voice-longtext-planner";
 import { VoiceLongTextResultSchema, type VoiceLongTextResult } from "./voice-longtext-result";
 import { generateVoxCpm2, VoxCpm2Error } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
+import { VoiceGenerationContextSchema, type VoiceGenerationContext } from "./voice-generation-context";
+import { VoiceRecognitionSchema, type VoiceContentComparison, type VoiceRecognition } from "./voice-recognition";
 
 export type VoiceGenerationProgress = { progress: number; message: string };
 type GroupAudio = { wav: Uint8Array; leadingQuietMs: number; trailingQuietMs: number };
@@ -60,6 +62,7 @@ type LongTextInput = {
   analysisProvider: "local" | "api"; config: LocalRuntimeConfig; signal?: AbortSignal;
   onProgress?: (progress: VoiceGenerationProgress) => void;
   retryCandidate?: AudioCandidate; retryGroupIndex?: number;
+  context?: VoiceGenerationContext;
 };
 type Dependencies = {
   plan?: typeof planVoiceLongText; generate?: typeof generateVoxCpm2; analyze?: typeof analyzeVoiceGroup;
@@ -68,14 +71,21 @@ type Dependencies = {
   pipeline?: "overlap" | "serial";
 };
 
-function reviewMessage(index: number, text: string, code?: string) {
+const FULL_SOURCE_REVIEW_WARNING = "本候选保留了待确认组的完整原音，可能包含后续台词、补句或重复内容；各次完整原音都可单独试听、下载，请听后决定是否采用。";
+
+function reviewMessage(index: number, text: string, code?: string, reasonOverride?: string) {
   const characters = Array.from(text.replace(/\s+/gu, " ").trim());
   const excerpt = characters.slice(0, 28).join("") + (characters.length > 28 ? "…" : "");
-  const reason = code === "cut_text_mismatch" ? "截取后的录音与台词未能核对一致"
-    : ["missing_speech", "incomplete_or_unrelated_speech", "missing_or_extra_speech", "repeated_speech", "uncertain_word_alignment", "unrecognized_continuation"].includes(code ?? "") ? "录音与台词未能核对一致"
+  const reason = reasonOverride ?? (code === "uncertain_word_alignment" ? "识别文字未能定位目标句的结束位置"
+    : code === "cut_text_mismatch" ? "截取后的识别文字与目标台词存在差异"
+    : ["missing_speech", "incomplete_or_unrelated_speech", "missing_or_extra_speech", "repeated_speech", "unrecognized_continuation"].includes(code ?? "") ? "识别文字与目标台词存在差异"
     : ["no_safe_quiet_cut", "no_verified_quiet_cut", "missing_continuation_boundary", "uncertain_boundary_timestamps", "invalid_word_timestamps", "invalid_quiet_crop", "missing_internal_boundary", "uncertain_internal_pause"].includes(code ?? "") ? "分段位置未能确认"
-    : "录音检查未完成";
+    : "录音检查未完成");
   return `第 ${index + 1} 段“${excerpt}”：${reason}，已保留完整原音供试听，没有因此重新生成或丢弃录音。`;
+}
+
+function contentDifferenceMessage(index: number, comparison: VoiceContentComparison) {
+  return `第 ${index + 1} 段：已截取目标片段；识别结果与源文有差异（相似度 ${(comparison.similarity * 100).toFixed(1)}%），请试听确认。`;
 }
 
 export async function generateVoiceLongText(input: LongTextInput, deps: Dependencies = {}): Promise<{
@@ -110,17 +120,40 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
         const readiness = (deps.readiness ?? getVoiceAnalysisReadiness)(input.config, { runtimeSession })
           .catch(() => ({ available: false, reason: "录音检查暂不可用" }));
         const prior = input.retryCandidate?.provenance.longText;
-        const plan = prior?.plan ?? await (deps.plan ?? planVoiceLongText)({ text: input.text, analysisProvider: input.analysisProvider, signal });
+        const context = input.context ? VoiceGenerationContextSchema.parse(input.context) : undefined;
+        if (prior && JSON.stringify(prior.context) !== JSON.stringify(context)) {
+          throw new VoxCpm2Error("原候选的后续文案已修改，请重新生成。", 400);
+        }
+        const plan = prior?.plan ?? (context
+          ? createSemanticVoiceLongTextPlan(input.text, context)
+          : await (deps.plan ?? planVoiceLongText)({ text: input.text, analysisProvider: input.analysisProvider, signal }));
         if (plan.clauses.join("") !== input.text.trim()) throw new VoxCpm2Error("分组内容与当前文案不一致，请重新生成。", 400);
         check();
         let targets: ReturnType<typeof buildLongTextInputs>;
-        try { targets = buildLongTextInputs(plan); }
+        try { targets = buildLongTextInputs(plan, context); }
         catch { throw new VoxCpm2Error("文案分组或加上停顿标点后的输入超出限制，请拆分片段后再生成。", 400); }
+        if (prior && (prior.groups.length !== targets.length || targets.some((target, index) => {
+          const group = prior.groups[index];
+          return !group || group.text !== target.expectedText || group.inputText !== target.text || group.isFinal !== target.isFinal;
+        }))) throw new VoxCpm2Error("原候选的分组或生成语境已失效，请重新生成。", 400);
         await record("plan.json", { plan, targets, projectId: input.projectId, clipId: input.clipId,
-          sourceFingerprint: input.sourceFingerprint, createdAt: new Date().toISOString() });
+          sourceFingerprint: input.sourceFingerprint, context, createdAt: new Date().toISOString() });
         const metadata: VoiceLongTextResult["groups"] = [];
         const audioGroups: GroupAudio[] = [];
-        const warnings = [...plan.warnings, ...(input.retryCandidate?.qualityWarnings ?? [])];
+        // Rebuild analysis notices from the final groups. Match only exact
+        // generated messages, including older wording; preserve native/planner
+        // cautions whose provenance cannot be resolved by this partial retry.
+        const previousAnalysisWarnings = new Set(prior ? [FULL_SOURCE_REVIEW_WARNING] : []);
+        for (const group of prior?.groups ?? []) {
+          previousAnalysisWarnings.add(reviewMessage(group.index, group.text, group.diagnosticCode));
+          for (const reason of ["识别文字未能定位目标句的结束位置", "截取后的识别文字与目标台词存在差异", "识别文字与目标台词存在差异",
+            "分段位置未能确认", "录音检查未完成", "截取后的录音与台词未能核对一致", "录音与台词未能核对一致"]) {
+            previousAnalysisWarnings.add(reviewMessage(group.index, group.text, group.diagnosticCode, reason));
+          }
+          const comparison = group.recognition?.contentComparison;
+          if (comparison?.status === "different") previousAnalysisWarnings.add(contentDifferenceMessage(group.index, comparison));
+        }
+        const warnings = [...plan.warnings, ...(input.retryCandidate?.qualityWarnings ?? []).filter((warning) => !previousAnalysisWarnings.has(warning))];
         let firstProvenance: AudioCandidateProvenance | undefined = input.retryCandidate?.provenance;
         let asrModel = prior?.asrModel ?? "unavailable";
         const startedAt = Date.now();
@@ -135,22 +168,29 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
           progress(8 + index / targets.length * 84, `正在检查第 ${index + 1}/${targets.length} 组；完整原音已可试听`);
           let analysis: Awaited<ReturnType<typeof analyzeVoiceGroup>> | undefined;
           let diagnosticCode: string | undefined;
+          let recognition: VoiceRecognition | undefined;
           try {
             const ready = await readiness;
             check();
             if (!ready.available || analysisUnavailable) throw new VoiceGroupAnalysisError("录音检查暂不可用", 503, "analysis_unavailable");
             analysis = await (deps.analyze ?? analyzeVoiceGroup)({ wav: take.wav, expectedText: target.expectedText,
               followingText: target.followingText, clauses: target.clauses, config: input.config, signal }, { runtimeSession });
+            recognition = analysis.recognition;
             check();
             decodePcmWav(analysis.wav);
           } catch (error) {
-            check();
             analysis = undefined;
             diagnosticCode = error instanceof VoiceGroupAnalysisError ? error.diagnosticCode ?? "analysis_unavailable" : "analysis_failed";
+            const diagnostic = VoiceRecognitionSchema.safeParse(error instanceof VoiceGroupAnalysisError ? error.recognition : undefined);
+            recognition = diagnostic.success && diagnostic.data.expectedText === target.expectedText
+              && (diagnostic.data.followingText ?? "") === (target.followingText ?? "") ? diagnostic.data : recognition ?? {
+                stage: "unavailable", sourceTranscript: "", expectedText: target.expectedText,
+                ...(target.followingText ? { followingText: target.followingText } : {}),
+              };
             if (error instanceof VoiceGroupAnalysisError && [503, 504].includes(error.statusCode)) analysisUnavailable = true;
-            warnings.push(reviewMessage(index, target.expectedText, diagnosticCode));
             await bestEffortRecord(`${prefix}-failure.json`, { stage: "analyze", code: diagnosticCode,
-              message: reviewMessage(index, target.expectedText, diagnosticCode), retainedOriginal: true, at: new Date().toISOString() });
+              message: reviewMessage(index, target.expectedText, diagnosticCode), recognition, retainedOriginal: true, at: new Date().toISOString() });
+            check();
           }
           const wav = analysis?.wav ?? take.wav;
           const decoded = decodePcmWav(wav);
@@ -161,7 +201,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
             const { wav: _wav, ...checks } = analysis ?? { wav };
             void _wav;
             await bestEffortRecord(`${prefix}-analysis.json`, { ...checks, checkStatus: analysis ? "passed" : "review", diagnosticCode,
-              analysisDurationMs: Date.now() - analysisStarted });
+              recognition, analysisDurationMs: Date.now() - analysisStarted });
             firstProvenance ??= take.provenance;
             if (analysis) asrModel = analysis.asrModel;
             metadata.push({ index, text: target.expectedText, inputText: target.text, paddingClauses: target.paddingClauses,
@@ -170,7 +210,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
               internalPausesMs: analysis?.internalPausesMs ?? [],
               internalPauseClasses: plan.clausePauseClasses.slice(plan.groups[index].start, plan.groups[index].end),
               leadingQuietMs: analysis?.leadingQuietMs ?? 0, trailingQuietMs: analysis?.trailingQuietMs ?? 0,
-              transcript: analysis?.transcript ?? "", coverage: analysis?.coverage ?? 0,
+              transcript: analysis?.transcript ?? "", recognition, coverage: analysis?.coverage ?? 0,
               cutStartSeconds: analysis?.cutStartSeconds ?? 0, cutEndSeconds: analysis?.cutEndSeconds ?? duration,
               attempts: 1, runtimeVersion: take.provenance.runtimeVersion, referenceIdentity: take.provenance.referenceIdentity,
               checkStatus: analysis ? "passed" : "review", diagnosticCode });
@@ -231,10 +271,15 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
         await finishPending();
         progress(94, "正在连接语音与停顿");
         const assembled = assembleVoiceGroups(audioGroups, chooseGroupPauses(metadata));
-        const longText = VoiceLongTextResultSchema.parse({ version: 1, analysisProvider: plan.provider, analysisModel: plan.model, plan,
+        const longText = VoiceLongTextResultSchema.parse({ version: 1, analysisProvider: plan.provider, analysisModel: plan.model, plan, ...(context ? { context } : {}),
           ...(input.retryCandidate ? { baseCandidateId: input.retryCandidate.candidateId, rerolledGroup: input.retryGroupIndex } : {}),
           groups: metadata, joins: assembled.joins, loudnessGainDb: assembled.loudnessGainDb, asrModel });
-        if (metadata.some((group) => group.checkStatus === "review")) warnings.push("本候选保留了待确认组的完整原音，可能包含后续台词、补句或重复内容；各次完整原音都可单独试听、下载，请听后决定是否采用。");
+        for (const group of metadata) {
+          if (group.checkStatus === "review") warnings.push(reviewMessage(group.index, group.text, group.diagnosticCode));
+          const comparison = group.recognition?.contentComparison;
+          if (group.checkStatus === "passed" && comparison?.status === "different") warnings.push(contentDifferenceMessage(group.index, comparison));
+        }
+        if (metadata.some((group) => group.checkStatus === "review")) warnings.push(FULL_SOURCE_REVIEW_WARNING);
         if (assembled.joins.some((join) => join.actualDurationMs > join.durationMs + 15)) warnings.push("部分连接保留了较长的自然停顿，请试听后决定是否采用。");
         await bestEffortRecord("result.json", longText);
         await bestEffortRecord("performance.json", { pipeline: overlap ? "overlap" : "serial", totalDurationMs: Date.now() - startedAt,

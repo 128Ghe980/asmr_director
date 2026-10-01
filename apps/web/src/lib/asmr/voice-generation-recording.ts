@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VoiceRecognitionSchema } from "./voice-recognition";
 
 export const VoiceGenerationRecordingSchema = z.object({
   recordingId: z.string().min(1).max(100),
@@ -12,6 +13,7 @@ export const VoiceGenerationRecordingSchema = z.object({
   audioUrl: z.string().regex(/^\/api\/voice-generation-recordings\/[a-zA-Z0-9_-]+$/),
   status: z.enum(["recorded", "checked", "needs_review", "not_checked"]),
   warning: z.string().max(1000),
+  recognition: VoiceRecognitionSchema.optional(),
   historicalMatch: z.boolean(),
 });
 

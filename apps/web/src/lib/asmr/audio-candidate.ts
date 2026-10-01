@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { TimelineClip } from "./schema";
 import { VoiceGenerationOptionsSchema, VoiceReferenceModeSchema, type VoiceGenerationOptions, type LongTextRetry } from "./voice-generation-options";
 import { VoiceLongTextResultSchema } from "./voice-longtext-result";
+import type { VoiceGenerationContext } from "./voice-generation-context";
 
 const SafeIdSchema = z.string().min(1).max(240).regex(/^[A-Za-z0-9_-]+$/);
 const ScalarSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
@@ -67,15 +68,15 @@ export type AudioCandidateProvenance = z.infer<typeof AudioCandidateProvenanceSc
 export type AudioCandidate = z.infer<typeof AudioCandidateSchema>;
 export type AudioCandidateManifest = z.infer<typeof AudioCandidateManifestSchema>;
 
-export function getVoiceCandidateSourceFingerprint(clip: TimelineClip): string {
+export function getVoiceCandidateSourceFingerprint(clip: TimelineClip, context?: VoiceGenerationContext): string {
   if (clip.type !== "voice") throw new Error("仅人声片段支持声音候选。");
   // Timing and the previous generated asset may change while comparing takes.
-  return JSON.stringify({ text: clip.text, emotion: clip.emotion, style: clip.style, pace: clip.pace });
+  return JSON.stringify({ text: clip.text, emotion: clip.emotion, style: clip.style, pace: clip.pace, ...(context ? { context } : {}) });
 }
 
-export function getVoiceCandidateRequestFingerprint(clip: TimelineClip, options: VoiceGenerationOptions, longTextRetry?: LongTextRetry): string {
+export function getVoiceCandidateRequestFingerprint(clip: TimelineClip, options: VoiceGenerationOptions, longTextRetry?: LongTextRetry, context?: VoiceGenerationContext): string {
   return JSON.stringify({
-    source: getVoiceCandidateSourceFingerprint(clip),
+    source: getVoiceCandidateSourceFingerprint(clip, options.generationMode === "long_text" ? context : undefined),
     options: VoiceGenerationOptionsSchema.parse(options),
     requestedSeed: clip.generation.seed,
     requestedTemperature: clip.generation.temperature,

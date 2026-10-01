@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   PlannerBriefSchema,
   PlannerDraftSchema,
+  PlannerSectionSchema,
   createEmptyPlannerBrief,
   type PlannerBrief,
   type PlannerDraft,
@@ -11,6 +12,15 @@ import type { StorageLike } from "./project-persistence";
 
 export const PLANNER_DRAFT_STORAGE_KEY = "ai-asmr-studio:v1:planner-draft";
 const MAX_STORED_DRAFT_CHARACTERS = 200000;
+
+// Local work can contain a new/temporarily cleared paragraph. Adoption and model
+// calls still validate against the complete PlannerDraftSchema.
+const EditableDraftSchema = PlannerDraftSchema.safeExtend({
+  sections: z.array(PlannerSectionSchema.extend({
+    title: z.string().max(200),
+    text: z.string().max(3000),
+  })).max(200),
+});
 
 export type PlannerWorkingState = {
   version: 1;
@@ -25,7 +35,7 @@ const WorkingStateSchema = z.object({
   // A theme is required for generation, but the local editor starts empty.
   brief: PlannerBriefSchema.extend({ theme: z.string().trim().max(2000) }),
   draftBrief: PlannerBriefSchema.nullable(),
-  draft: PlannerDraftSchema.nullable(),
+  draft: EditableDraftSchema.nullable(),
   provider: z.enum(["ollama", "api"]),
 }).strict().refine(
   (state) => (state.draft === null) === (state.draftBrief === null),

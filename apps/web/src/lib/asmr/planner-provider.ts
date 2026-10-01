@@ -7,6 +7,8 @@ import {
   type PlannerDraft,
   type PlannerSection,
 } from "./planner";
+import { PlannerReplacementSchema, PlannerTextRangeSchema, replacePlannerRange, validPlannerRange } from "./planner-editing";
+import { expandPlannerGeneratedDraft, normalizePlannerSemanticDraft, PlannerGeneratedDraftSchema, PLANNER_SEMANTIC_GUIDANCE, semanticPauseSeconds } from "./planner-semantic";
 
 // Imported only by the server route. Credentials never enter the browser contract.
 export const PlannerProviderIdSchema = z.enum(["ollama", "api"]);
@@ -25,6 +27,7 @@ export const PlannerRequestSchema = z.discriminatedUnion("action", [
     draft: PlannerDraftSchema,
     sectionId: z.string().trim().min(1).max(100),
     instruction: z.string().trim().min(1).max(2000),
+    range: PlannerTextRangeSchema.optional(),
   }).strict(),
 ]);
 
@@ -33,7 +36,7 @@ type PlannerEnvironment = Record<string, string | undefined>;
 
 export type PlannerResult =
   | { draft: PlannerDraft; provider: PlannerProviderId; model: string }
-  | { section: PlannerSection; provider: PlannerProviderId; model: string };
+  | { section: PlannerSection; replacement?: string; provider: PlannerProviderId; model: string };
 
 export class PlannerError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -188,11 +191,23 @@ function prompts(request: PlannerRequest, jsonSchema: unknown): ChatMessage[] {
 
   const task = request.action === "generate"
     ? [
-      "根据以下 brief 创作整份策划稿。sections 建议 4 至 6 段，可按内容用 2 至 12 段；id 使用 section_1、section_2 等唯一标识。",
+      "根据以下 brief 创作整份策划稿。groups 只用来共享导演与声音属性，同一角色和表演设置写一次，不需要为每条台词重复。id 使用 group_1、group_2 等唯一标识。",
+      "每个 group 内的 units 是实际语义短单元，每条仅返回 text 与 pauseAfter；顺序串联所有 groups 的 units 即为完整文案。不要为了凑 group 数量截断同一意思。",
+      "标题简短，导演说明和音效建议仅在需要时填写，其他时候写空字符串。",
+      PLANNER_SEMANTIC_GUIDANCE,
+      "不要自行设置毫秒或秒数，程序将按短句停顿类别设置自然衔接时间。",
       `目标约 ${request.brief.durationSeconds} 秒，可朗读台词总字数约 ${Math.round(wordTarget * 0.75)} 至 ${Math.round(wordTarget * 1.15)} 字，包含自然留白；这只是创作估计。`,
       `brief: ${JSON.stringify(request.brief)}`,
     ].join("\n")
-    : [
+    : request.range ? [
+      `只改写 sectionId=${request.sectionId} 中用户选中的文字。返回 {"text":"替换文字"}，不要返回整段、前后文或任何导演字段。`,
+      "选区之外的文字和元信息会由程序原样保留。保持选区与前后文字衔接，不重复前后文，不自行扩大范围。",
+      `brief: ${JSON.stringify(request.brief)}`,
+      `上下文原稿（仅供参考）: ${JSON.stringify(request.draft)}`,
+      `选中文字: ${JSON.stringify(request.draft.sections.find((section) => section.id === request.sectionId)!.text.slice(request.range.start, request.range.end))}`,
+      `选区位置（UTF-16，下标从 0 开始，end 不包含）: ${JSON.stringify(request.range)}`,
+      `修改意见: ${JSON.stringify(request.instruction)}`,
+    ].join("\n") : [
       `只改写 sectionId=${request.sectionId} 这一段，返回单个 section 对象，不返回整份草稿。保留这一段的 id=${request.sectionId}。`,
       "其他段落只用作上下文；不改写、不返回其他段落。让本段与前后段落衔接，保留主题与角色，按修改意见更新台词或导演提示。",
       `brief: ${JSON.stringify(request.brief)}`,
@@ -202,7 +217,7 @@ function prompts(request: PlannerRequest, jsonSchema: unknown): ChatMessage[] {
   return [{ role: "system", content: system }, { role: "user", content: task }];
 }
 
-function parseOutput(text: string, schema: typeof PlannerDraftSchema | typeof PlannerSectionSchema) {
+function parseOutput(text: string, schema: typeof PlannerDraftSchema | typeof PlannerSectionSchema | typeof PlannerReplacementSchema | typeof PlannerGeneratedDraftSchema) {
   let value: unknown;
   try {
     // Tolerate a single enclosing code fence, never extract arbitrary nested JSON.
@@ -213,6 +228,12 @@ function parseOutput(text: string, schema: typeof PlannerDraftSchema | typeof Pl
   }
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
+    // Tolerate a provider still returning the previously supported flat shape;
+    // the requested generation schema itself is compact, avoiding token bloat.
+    if (schema === PlannerGeneratedDraftSchema) {
+      const legacy = PlannerDraftSchema.safeParse(value);
+      if (legacy.success) return legacy.data;
+    }
     const paths = parsed.error.issues.slice(0, 8).map((issue) => `${issue.path.join(".") || "root"}: ${issue.code}`).join("；");
     throw new InvalidPlannerOutput(`结构校验失败：${paths}`);
   }
@@ -329,6 +350,10 @@ export async function runPlanner(
   if (request.action === "rewrite" && !request.draft.sections.some((section) => section.id === request.sectionId)) {
     throw new PlannerError(400, "找不到要改写的段落，请重新选择。");
   }
+  if (request.action === "rewrite" && request.range
+    && !validPlannerRange(request.draft.sections.find((section) => section.id === request.sectionId)!.text, request.range)) {
+    throw new PlannerError(400, "所选文字范围已失效，请重新选择。");
+  }
   if (options.signal?.aborted) throw new PlannerError(499, "策划已取消。");
   const config = configuration(options.env ?? process.env);
   const provider = config.providers.find((candidate) => candidate.id === request.provider)!;
@@ -342,7 +367,7 @@ export async function runPlanner(
   if (options.signal?.aborted) onCancel();
   const timer = setTimeout(() => controller.abort(new PlannerError(504, "策划超时，请缩短目标时长或检查模型服务后重试。")), config.timeoutMs);
   try {
-    const schema = request.action === "generate" ? PlannerDraftSchema : PlannerSectionSchema;
+    const schema = request.action === "generate" ? PlannerGeneratedDraftSchema : request.range ? PlannerReplacementSchema : PlannerSectionSchema;
     const jsonSchema = z.toJSONSchema(schema);
     const messages = prompts(request, jsonSchema);
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -352,9 +377,32 @@ export async function runPlanner(
         if (controller.signal.aborted) throw abortError(controller.signal);
         const output = parseOutput(content, schema);
         if (request.action === "generate") {
-          return { draft: output as PlannerDraft, provider: provider.id, model: provider.model };
+          let draft: PlannerDraft;
+          try { draft = "groups" in output ? expandPlannerGeneratedDraft(output) : normalizePlannerSemanticDraft(output as PlannerDraft); }
+          catch (error) { throw new InvalidPlannerOutput(error instanceof Error ? error.message : "请按语义短单元完整分段。"); }
+          return { draft, provider: provider.id, model: provider.model };
         }
-        return { section: { ...output as PlannerSection, id: request.sectionId }, provider: provider.id, model: provider.model };
+        if (request.range) {
+          const original = request.draft.sections.find((section) => section.id === request.sectionId)!;
+          const replacement = (output as z.infer<typeof PlannerReplacementSchema>).text;
+          let section: PlannerSection;
+          try {
+            section = replacePlannerRange(original, request.range, replacement);
+          } catch (error) {
+            throw new InvalidPlannerOutput(error instanceof Error ? error.message : "选区改写过长。");
+          }
+          if (!PlannerDraftSchema.safeParse({ ...request.draft, sections: request.draft.sections.map((item) => item.id === section.id ? section : item) }).success) {
+            throw new InvalidPlannerOutput("改写后文案超过允许的长度，请缩短替换文字。");
+          }
+          return { section, replacement, provider: provider.id, model: provider.model };
+        }
+        const rewritten = output as PlannerSection;
+        const original = request.draft.sections.find((section) => section.id === request.sectionId)!;
+        return { section: { ...rewritten, id: request.sectionId,
+          ...(original.pauseAfterSeconds !== undefined || request.draft.segmentation === "semantic"
+            ? { pauseAfterSeconds: rewritten.pauseAfter === original.pauseAfter && original.pauseAfterSeconds !== undefined
+              ? original.pauseAfterSeconds : semanticPauseSeconds(rewritten.pauseAfter) } : {}),
+        }, provider: provider.id, model: provider.model };
       } catch (error) {
         if (!(error instanceof InvalidPlannerOutput)) throw error;
         if (attempt === 1) throw new PlannerError(502, "模型文案结构不正确，自动修复后仍未通过校验。请重试或调整主题。");

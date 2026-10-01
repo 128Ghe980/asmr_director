@@ -81,6 +81,10 @@ export const VoiceClipSchema = ClipBaseSchema.extend({
   emotion: z.string().min(1),
   style: z.string().min(1),
   pace: z.string().min(1),
+  // Explicit user-controlled silence after the spoken audio. Older projects
+  // omit this field and retain their original estimated timing behavior.
+  pause_after: z.number().nonnegative().optional(),
+  semantic_unit: z.boolean().optional(),
 });
 
 export const BreathClipSchema = ClipBaseSchema.extend({

@@ -14,17 +14,20 @@ export const PlannerBriefSchema = z.object({
 export const PlannerSectionSchema = z.object({
   id: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(200),
-  text: z.string().trim().min(1).max(3000),
+  // Offsets in the editor use the original UTF-16 string; never trim it.
+  text: z.string().min(1).max(3000).regex(/\S/u),
   emotion: z.string().trim().min(1).max(120),
   style: z.string().trim().min(1).max(120),
   pace: z.string().trim().min(1).max(120),
   direction: z.string().trim().max(1200),
   soundSuggestions: z.string().trim().max(1200),
   pauseAfter: z.enum(["short", "medium", "long"]),
+  pauseAfterSeconds: z.number().min(0).max(30).optional(),
   position: PositionSchema.strict(),
 }).strict();
 
 export const PlannerDraftSchema = z.object({
+  segmentation: z.literal("semantic").optional(),
   title: z.string().trim().min(1).max(200),
   scene: z.string().trim().min(1).max(2000),
   character: z.object({
@@ -32,7 +35,7 @@ export const PlannerDraftSchema = z.object({
     personality: z.array(z.string().trim().min(1).max(120)).min(1).max(12),
     speechStyle: z.array(z.string().trim().min(1).max(120)).min(1).max(12),
   }).strict(),
-  sections: z.array(PlannerSectionSchema).min(2).max(12),
+  sections: z.array(PlannerSectionSchema).min(1).max(200),
 }).strict().superRefine((draft, context) => {
   const ids = new Set<string>();
   for (const [index, section] of draft.sections.entries()) {
@@ -69,6 +72,10 @@ export function createEmptyPlannerBrief(): PlannerBrief {
 // Planning silence is deliberately independent of the voice engine's internal pauses.
 const PLANNED_PAUSE_SECONDS = { short: 1.5, medium: 3, long: 6 } as const;
 
+export function getPlannerPauseSeconds(section: PlannerSection): number {
+  return section.pauseAfterSeconds ?? PLANNED_PAUSE_SECONDS[section.pauseAfter];
+}
+
 function estimateSpeechDuration(text: string): number {
   const spokenCharacters = Array.from(text.replace(/\s/gu, "")).length;
   const punctuationCount = (text.match(/[，。！？；：、,.!?;:…]/gu) ?? []).length;
@@ -93,6 +100,8 @@ export function compilePlannerDraft(
       type: "voice" as const,
       start: cursor,
       duration,
+      pause_after: getPlannerPauseSeconds(section),
+      ...(draft.segmentation === "semantic" ? { semantic_unit: true } : {}),
       text: section.text,
       emotion: section.emotion,
       style: section.style,
@@ -110,7 +119,7 @@ export function compilePlannerDraft(
       },
       asset: { asset_id: null, uri: null, duration: null },
     };
-    cursor += duration + PLANNED_PAUSE_SECONDS[section.pauseAfter];
+    cursor += duration + getPlannerPauseSeconds(section);
     return clip;
   });
 
