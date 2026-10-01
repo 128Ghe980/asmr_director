@@ -2,9 +2,61 @@
 
 记录日期：2026-06-14
 
-最后更新：2026-10-01
+最后更新：2026-10-02
 
 AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
+
+## 2026-10-02 — 批量下载与音频绑定分镜累计发布记录
+
+用户明确授权“记录一下推一版”，本地已整理自 `6c43758` 后的批量已采用音频下载、Planner兼容与场景流程、工程逐段真实音频绑定分镜、精简H3提示词和中文剧情背景。实现验收完成，沿用最新86文件/956项全量测试、一个既有opt-in跳过、全量TypeScript/ESLint/生产构建与diff检查；907字符prompt/clipboard/刷新一致，七条策划与22条工程保持，76个WAV哈希不变。本次仅记录及Git收尾，不新增模型调用、音频或运行变更，音质V1顶层仍进行中。
+
+发布分支 `codex/voxcpm2-product-generation`，提交主题 `feat: add batch audio downloads and audio-bound H3 storyboards`。具体SHA及远端核对由发布任务执行后写入证据根 `I:/AI/asmr-director-concise-h3/2026-10-02/release-verification.json`，并由Git日志/上游状态定位；不提前记已推送，不为把同一提交hash写进自身而递归提交。见 [里程碑发布记录](records/2026-10-02-audio-quality-v1-storyboard-release.md)、[恢复入口](AI_HANDOFF.md) 与唯一 [ROADMAP](ROADMAP.md)。以下未提交/未要求推送文字是各功能当时的历史快照，本次较新授权已明确累计发布范围。
+
+## 2026-10-02 — 精简 H3 prompt 与中文剧情背景
+
+用户指出 prompt 多处重复，背景应该是人看的简短中文，例如雪地木屋内；模型按背景为当前段选择壁炉 / 窗雪等具体画面，不复制背景全文。官方完整 Ref 结构有 summary，本轮采用用户要求的精简自定义产品模板，删除 summary 与完整六段包装、重复背景 / 前镜 / 声音块，共用 renderer 保留当前镜头、原台词、参考外貌及完整音轨规则。
+
+本轮实现与验证完成：共用`h3-prompt.ts`为Planner/工程两种helper导出短模板；背景与前镜只给LLM派生当前方向，仍绑定前镜stale依赖，旧存储/手改内容不自动重写。背景新生成上限160字符，旧编辑/存储仍4000。全量86文件/956项通过（一个既有opt-in跳过），全量TypeScript/ESLint/生产Webpack构建通过。本轮两个浏览器外部DeepSeek文字生成请求均UI成功：47字符中文Planner背景及第一镜，未采集上游repair调用/token成本；工程背景明确手改48字符，保留公寓深夜夜宵哄睡剧情，其他3/4等旧镜因背景变动stale而字段保留。第一镜2921旧→1569仅renderer→907重生成，约69%缩短；新字段193/59/42字符，907clipboard与刷新精确保持，原asset/current台词/实测3.210秒不变。七条策划/22条工程/timeline/采用状态保持，76WAV前后SHA256全一致。1182×892桌面/390×844/320×740无横向溢出，console0，viewport已恢复；截图仅工具目视未保存，TXT内容由测试覆盖但未重读实际下载。正式3001/PID20660/`.next-concise-h3-production`/HTTP200，D原生dist/cache-only junction到本轮I证据根`next-cache`，preview3002/PID23072经身份核对已停。证据根 `I:/AI/asmr-director-concise-h3/2026-10-02`，含`full-tests.log`/`typecheck.log`/`eslint.log`/`build.log`、`browser-verification.json`及`audio-hashes-before.json`/`audio-hashes-after.json`。0TTS/0H3视频、未创建新工程、无成片/新听感验收、未提交推送；不新增路线，旧spec保持历史。见 [中文 spec](superpowers/specs/2026-10-02-concise-h3-story-backgrounds.zh.md) / [English spec](superpowers/specs/2026-10-02-concise-h3-story-backgrounds.md) / [开发记录](records/2026-10-02-audio-quality-v1-concise-h3.md)。
+
+## 2026-10-01 — 统一基础场景与已采用音频逐段视频分镜
+
+用户调整流程：第一步只准备文案和统一基础场景；逐段视频分镜放到工程对应已采用人声旁。「文案 / 场景」支持英文基础场景生成、重生成、手改、保存 / 撤回 / 下载，采用时随新工程写入 `videoPlan`；已有 Planner 分镜兼容保留，不自动转换。工程每条人声旁的小入口打开「声音 / 分镜」检查面板，共用原内部滚动区域。
+
+逐段生成必须绑定唯一当前 `asset_generated` 本地采用 WAV，服务端验证路径并解码 PCM，保存完整实测时长，不使用时间线估计或模型编秒数。模型仅返回标题与英文画面 / 动作 / 镜头；helper 注入逐字工程中文台词，独立 `[Shot 1]`、参考图外貌优先与当前 `<Audio 1>` `fully_copy`，不新增音轨。默认独立，可选相邻前一条有效完整人声分镜作连续参考；前镜仅影响视觉连续性，不复制其台词或音频。
+
+可选 Project JSON `videoPlan` 随复制与版本保留，坏 metadata 独立丢弃，不丢原音频 / 稿件。台词、asset、场景 / 角色及引用前镜变化保留说明并标记过期，复制 / TXT 禁用；依赖链迭代检查避免递归环。编辑中暂空字段允许保存。视频编辑不修改声音指纹、不取消音频任务；撤回声音候选采用保留当前视频元数据，让来源自然失效。取消、手改与来源变化有迟到覆盖保护。
+
+实现及验证完成：最终86文件/953项全量Vitest通过，一个既有opt-in文件/测试跳过，全量TypeScript/ESLint/diff check/生产Webpack构建通过，既有Win32 SWC警告回退成功。正式3001/PID25824/`.next-clip-storyboard-production`/HTTP200，临时3002已停，仅cache junction到证据根`next-cache`。三次真实DeepSeek-v4-pro请求成功：基础场景、第三段独立分镜、第四段引用第三段；prompt使用当前工程原台词与实测3.24/8.59秒，第四段含前镜画面/动作/镜头而不含前镜台词，fresh第五段默认独立。clipboard逐字回读、前镜编辑导致后镜过期/保留说明/禁用复制及恢复、空场景禁用生成/复制、场景/分镜/参考/完整prompt刷新保留通过。Planner七条初稿逐字不变且刷新后场景/重生成入口保持，工程22条/title/台词/时间线标签和编排不变，76个WAV SHA256全一致。1768×1252桌面/390×844/320×740无整页宽高溢出，检查面板内部滚动，手机入口定位及可见标签焦点正确，console errors为零。TXT控件触发、Blob字节/文件名自动测试通过，未重读浏览器下载文件，截图只工具查看未保存。0TTS/0视频调用，无H3成片/画质/耳机听感验收。证据根 `I:/AI/asmr-director-clip-video/2026-10-01`，日志 `full-tests-final.log`、`typecheck-final.log`、`eslint-final.log`、`diff-check-final.log`、`build-final.log`，结构化证据`browser-verification.json`与`audio-hashes-before.json`/`audio-hashes-after.json`。见 [中文 spec](superpowers/specs/2026-10-01-adopted-clip-video-storyboards.zh.md) / [English spec](superpowers/specs/2026-10-01-adopted-clip-video-storyboards.md) / [开发记录](records/2026-10-01-audio-quality-v1-clip-video-storyboards.md)。属于既有音质V1内部工作流，不新增顶层路线；未提交/推送，旧历史保持完整。
+
+## 2026-10-01 — 官方 H3 分镜提示词调整
+
+用户批准按本会话已阅读的官方 H3 指南第四节与 Ref 格式修改分镜，使用角色参考图与每镜对应的现有 TTS。新画面 / 动作 / 镜头为英文，中文台词来自原 draft，模型不改写。统一 Subject1(S1)，Picture1 用于外貌衣服参考而非首帧；Audio1 选择 `fully_copy`，完整最终音轨保持原速原停顿，不新增对白 / 环境声 / 音效 / BGM，`non_diegetic_music: N/A`。嘴部可见时跟随音轨 timing，停顿及末尾闭嘴；简单连续动作、一镜轻运镜，不硬编秒数或假音频 duration。官方另一模式是 `partially_copy`，本轮不实现，不能误写 `partial_copy`。
+
+新生成数据加 `promptFormat: 'minimax-h3'`，旧中文分镜保留、提示重新生成获得英文。每镜提供可展开的 H3 提示词和复制，工具栏下载全部 H3 TXT；来源过期禁用 H3 使用 / 导出，普通 Markdown 仍可保留。只产提示词供用户配对应素材，不接角色图上传、TTS 合成 / 音频连接或 H3 视频 API，实际音频 duration 绑定后续再做。
+
+提示词策划 / 导出实现与验证完成，双语说明为 [中文 spec](superpowers/specs/2026-10-01-h3-storyboard-prompts.zh.md) / [English spec](superpowers/specs/2026-10-01-h3-storyboard-prompts.md)，证据根 `I:/AI/asmr-director-h3-storyboard/2026-10-01`。77 文件 / 829 项全量测试通过（1 个既有 opt-in 跳过），全量 TypeScript / ESLint / Webpack 构建通过。首轮与构建并行时既有录音分页测试五秒超时，构建结束后以四 workers 全套复跑通过，未修改该测试或生产代码。真实 DeepSeek-v4-pro 一次生成七个英文镜头，七段原台词和当前 22 条时间线 label/title 完全不变。模型仍推测外貌，经 UI 修正推测和复杂转身后，加强参考图优先规则并重建；新模型要求由合同测试验证，未重复付费调用。最终剪贴板回读原文和参考优先句、过期禁用 / 撤回、刷新及桌面 / 390 / 320px 无整页溢出通过；TXT 与复制失败回退由自动测试覆盖。3001 PID17600 / `.next-h3-storyboard-production` / HTTP200，临时 3002 已停，截图只工具查看未保存。无新 TTS、音频工程采用、图上传或 H3 视频输出。此前批量下载与文字分镜未提交改动保留。仍为音质 V1 内部策划功能，不新增顶层路线；未提交 / 推送。
+
+## 2026-10-01 — 第一步策划文字分镜扩展
+
+用户要求在第一步生成位置增加分镜部分，当前 prompt 保持简单，后续再补官方 skill。本轮范围为文字分镜：Planner 右栏「文案 / 分镜」标签共用内部滚动区，按场景和动作将相邻台词组织为通常 6–12 镜、最多 24 镜，每镜关联多条语义短句并可编辑标题、画面、动作及镜头。保持一屏布局，不把最多 200 条音频语义单元直接变成等量分镜。
+
+约定 `POST /api/storyboard { provider, draft, instruction? }` 返回 version-1 分镜，包含标题、服务器附加文案指纹与镜头列表。指纹涵盖 title/scene/character/有序 section ID+text；文案变更保留手改分镜并提示过期，撤回可恢复关联。工作态兼容旧 V1 和编辑中暂空字段；可选 `PlannerSource.storyboard` 随采用、复制、版本及候选撤回保留，坏分镜单独丢弃，不丢有效文案，来源载入不串项目。首版 prompt 独立便于以后补充，音频 Project JSON 与原 D 处理不变。
+
+实现、自动验证、真实模型与桌面 / 手机视觉检查完成，双语说明为 [中文 spec](superpowers/specs/2026-10-01-planner-storyboard.zh.md) / [English spec](superpowers/specs/2026-10-01-planner-storyboard.md)，证据 / 日志根 `I:/AI/asmr-director-storyboard/2026-10-01`。全量 Vitest 76 文件 / 809 项通过，1 个既有 opt-in 文件 / 测试跳过（`tests.log`）；全量 ESLint（`lint.log`）、最终 TypeScript（`types-final.log`）及生产 Webpack 构建（`build.log`）通过。最后的类型修复仅改新项目库测试 fixture；自动化证明旧 V1、坏分镜独立恢复、台词映射、取消迟到、编辑 / 撤回及来源采用 / 复制 / 版本保留。
+
+真实浏览器用现有 DeepSeek-v4-pro 一次 POST，从未改的七条工作台词生成七镜 / 28 个编辑字段；画面编辑撤回、修改台词的过期提示及撤回消除、刷新七镜全部字段一致通过。原音频工程仍 15 句 / 9 条采用；没有创建或采用新工程，没有新音频。1768×1252 桌面、390×844 和 320×740 视觉通过，document 无溢出、内部滚动正确；恢复桌面再次刷新七镜仍完整。ArrowLeft / End 标签切换焦点正确，console errors / warnings 为空。截图只工具查看而未保存图片；结构化证据已保存为 `browser-verification.json`，`git diff --check` 通过，仅 CRLF 转换警告。
+
+正式 3001 为 PID 19916 / `.next-storyboard-production` / HTTP 200，原 PID 4380 已停止；构建输出在 D 盘原生，仅 cache junction 到 I 盘本轮证据根下 `native-cache`。批量下载临时目录继续原 `I:/AI/asmr-director-batch-download/2026-10-01/temp-downloads`；临时 3002 / PID 18584 已停止，正式 3001 保留。此前批量下载未提交改动保留，本轮未要求提交 / 推送；属于现有音质 V1 内部扩展，不新增顶层路线或听感验收。
+
+## 2026-10-01 — 已采用音频批量下载
+
+用户要求工程增加美观的批量下载按钮，将已经生成并接受的音频统一放进一个文件夹，再分无后处理与环绕等后处理版本。共享工作树新增顶部绿色入口及紧凑弹层，显示采用数量、双文件夹预览、空间开关状态、空状态、准备中/取消/重试与已发起下载；沿用一屏布局，小屏弹层内部滚动。
+
+下载仅收当前时间线已生成的本地采用素材，按开始时间配对编号，不混入未采用候选、完整生成窗口、历史或整段混音。ZIP 单工程目录含「无后处理」「后处理」及JSON清单。原声字节不变；后处理保留完整来源时长及当前片段音量/淡入淡出/适用空间设置，原D保留650ms尾响，不做逐片段主归一、时间线裁剪或循环。mono空间回退明确报错，原立体声不冒称新增环绕。后端预先完成临时ZIP再返回，逐片段处理，保留输入/素材错误、取消、单并发及安全清理边界；新临时文件沿用I盘缓存。
+
+本轮72文件/755项全量Vitest（1个既有opt-in文件/测试跳过）、全量TypeScript/ESLint/生产Webpack构建通过；新增构建目录忽略后的最终lint复跑也通过。定向UI3文件/24项（下载组件新增6项）、后端5文件/35项（含既有mix DSP）通过，独立后端只读审查无必须修正项。构建为D盘`.next-batch-production`、cache junction到I盘；正式3001已更新至PID4380/HTTP200。证据根为 `I:/AI/asmr-director-batch-download/2026-10-01`，日志`tests.log`、`lint.log`、`build.log`。
+
+真实复用首条已采用素材的单片段POST保存`live-api.zip`与`live-api-verification.json`：HTTP200/1,051,540字节，标准zipfile全部CRC通过、中文双目录/清单完整，raw3.21秒字节哈希不变，真实D后处理3.86秒/48kHz双声道含650ms尾响。正式浏览器点击9段批量下载显示成功发起；下载事件工具未提供路径，未重读其九段文件，因此不扩大独立单片段文件证据范围。刷新15段全文不变；1768×1252桌面视觉检查、390×844/320×740无溢出、弹层视口内、Escape焦点恢复与无console error/warn通过。工具截图已查看而未保存文件。双语spec、ROADMAP及AI_HANDOFF已同步当前dist/重启命令，保留历史恢复；未提交/推送、未改变用户工程/采用/新TTS，不新增路线阶段或听感验收。
 
 ## 2026-10-01 — 语义工作区与截取修正交接版本
 

@@ -8,6 +8,7 @@ import { serializeProject } from "./project-persistence";
 import type { AsmrProject, TimelineClip } from "./schema";
 import { getVoiceGenerationContext } from "./voice-generation-context";
 import { makeSemanticVoiceLongTextResultFixture } from "./voice-candidate-fixture";
+import { createClipVideoSourceFingerprint, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type ProjectVideoPlan } from "./video-plan";
 
 const now = new Date("2026-09-08T00:00:00.000Z");
 function voice(project: AsmrProject) {
@@ -28,6 +29,9 @@ function storage() {
 }
 function editVoice(project: AsmrProject, text: string): AsmrProject {
   return { ...project, timeline: { ...project.timeline, tracks: project.timeline.tracks.map((track) => track.track_type === "voice" ? { ...track, clips: track.clips.map((clip, index) => index === 0 ? { ...clip, text } : clip) } : track) } };
+}
+function videoPlan(sceneDescription = "暖光中的书店"): ProjectVideoPlan {
+  return { version: 1, sceneDescription, shots: {} };
 }
 
 describe("adopting voice candidates", () => {
@@ -120,6 +124,99 @@ describe("adopting voice candidates", () => {
     const undone = undoLastAudioCandidate(mixed);
     expect(getCurrentLibraryEntry(undone).project).toEqual(demoProject);
     expect(getCurrentLibraryEntry(undone).mixFingerprint).toBeUndefined();
+  });
+
+  it.each(["add", "edit", "remove"] as const)("allows undo after a video-only %s and keeps the latest video metadata", (change) => {
+    const originalProject: AsmrProject = {
+      ...demoProject,
+      ...(change === "add" ? {} : { videoPlan: videoPlan("采用音频前的旧场景") }),
+    };
+    const adopted = adoptAudioCandidate(createInitialProjectLibrary(originalProject, now), candidate(originalProject), now);
+    const entry = getCurrentLibraryEntry(adopted);
+    const currentVideoPlan = change === "remove" ? undefined : videoPlan("用户后来修改的场景");
+    const edited = updateLibraryProject(adopted, { ...entry.project, videoPlan: currentVideoPlan }, now);
+
+    expect(canUndoLastAudioCandidate(edited)).toBe(true);
+    const undone = getCurrentLibraryEntry(undoLastAudioCandidate(edited));
+    const expected = structuredClone(originalProject);
+    if (currentVideoPlan) expected.videoPlan = currentVideoPlan;
+    else delete expected.videoPlan;
+    expect(undone.project).toEqual(expected);
+    expect(undone.project.videoPlan).toEqual(currentVideoPlan);
+    expect(undone.candidateAcceptance).toBeUndefined();
+    expect(undone.revisions.at(-1)?.project.videoPlan).toEqual(currentVideoPlan);
+    expect(voice(undone.revisions.at(-1)!.project).asset.asset_id).toBe("candidate_1");
+    expect(entry.candidateAcceptance?.beforeProject.videoPlan).toEqual(originalProject.videoPlan);
+  });
+
+  it("keeps a video shot bound to the adopted take visible and stale after audio undo", () => {
+    const original = structuredClone(demoProject);
+    voice(original).generation.status = "asset_generated";
+    voice(original).asset = { asset_id: "prior_take", uri: "asset://clip/prior_take", duration: 7.5 };
+    original.videoPlan = videoPlan();
+    const adopted = adoptAudioCandidate(createInitialProjectLibrary(original, now), candidate(original), now);
+    const project = getCurrentLibraryEntry(adopted).project;
+    const clip = voice(project);
+    const shot: ClipVideoStoryboard = {
+      version: 1, promptFormat: "minimax-h3", clipId: clip.id,
+      sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id),
+      audio: { assetId: "candidate_1", uri: "asset://clip/candidate_1", duration: 12 },
+      title: "书店近景", visual: "Warm light falls across the bookstore.",
+      action: "The clerk slowly opens a book.", camera: "[Static shot] Medium close-up.",
+    };
+    const withShot = updateLibraryProject(adopted, { ...project, videoPlan: { ...project.videoPlan!, shots: { [clip.id]: shot } } }, now);
+    expect(isClipVideoStoryboardCurrent(getCurrentLibraryEntry(withShot).project, clip.id)).toBe(true);
+    expect(canUndoLastAudioCandidate(withShot)).toBe(true);
+
+    const undone = getCurrentLibraryEntry(undoLastAudioCandidate(withShot));
+    expect(voice(undone.project).asset.asset_id).toBe("prior_take");
+    expect(undone.project.videoPlan?.shots[clip.id]).toEqual(shot);
+    expect(undone.project.videoPlan?.shots[clip.id]).not.toBe(shot);
+    expect(isClipVideoStoryboardCurrent(undone.project, clip.id)).toBe(false);
+  });
+
+  it.each([
+    ["spoken text", (project: AsmrProject) => { voice(project).text = "已经修改的台词。"; }],
+    ["voice gain", (project: AsmrProject) => { voice(project).volume_db += 1; }],
+    ["the accepted audio asset", (project: AsmrProject) => { voice(project).asset.uri = "asset://clip/another_take"; }],
+  ] as const)("still blocks undo when %s changes alongside video notes", (_, editAudio) => {
+    const adopted = adoptAudioCandidate(createInitialProjectLibrary(demoProject, now), candidate(), now);
+    const project = structuredClone(getCurrentLibraryEntry(adopted).project);
+    project.videoPlan = videoPlan("后来修改的场景");
+    editAudio(project);
+    const edited = updateLibraryProject(adopted, project, now);
+
+    expect(canUndoLastAudioCandidate(edited)).toBe(false);
+    expect(() => undoLastAudioCandidate(edited)).toThrow(/版本/);
+    expect(getCurrentLibraryEntry(edited).project).toEqual(project);
+    expect(getCurrentLibraryEntry(edited).revisions[0].project).toEqual(demoProject);
+  });
+
+  it("loads a legacy fingerprint without video metadata and permits undo after adding video notes", () => {
+    const adopted = adoptAudioCandidate(createInitialProjectLibrary(demoProject, now), candidate(), now);
+    const entry = getCurrentLibraryEntry(adopted);
+    const legacyFingerprint = JSON.stringify({
+      project: JSON.parse(serializeProject({ ...entry.project, exports: [] })),
+      plannerSource: entry.plannerSource,
+    });
+    expect(legacyFingerprint).not.toContain("videoPlan");
+    const legacy = {
+      ...adopted,
+      projects: adopted.projects.map((item) => item.projectId === entry.projectId ? {
+        ...item, candidateAcceptance: { ...item.candidateAcceptance!, afterFingerprint: legacyFingerprint },
+      } : item),
+    };
+    const currentVideoPlan = videoPlan("旧采用记录之后新增的场景");
+    const withVideo = updateLibraryProject(legacy, { ...entry.project, videoPlan: currentVideoPlan }, now);
+    const persistence = storage();
+    saveProjectLibrary(persistence, withVideo);
+    const reloaded = loadProjectLibrary(persistence, demoProject, now);
+
+    expect(getCurrentLibraryEntry(reloaded).candidateAcceptance?.afterFingerprint).toBe(legacyFingerprint);
+    expect(canUndoLastAudioCandidate(reloaded)).toBe(true);
+    const undone = getCurrentLibraryEntry(undoLastAudioCandidate(reloaded));
+    expect(undone.project).toEqual({ ...demoProject, videoPlan: currentVideoPlan });
+    expect(undone.candidateAcceptance).toBeUndefined();
   });
 
   it("does not load malformed or foreign recovery records", () => {

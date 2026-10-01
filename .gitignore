@@ -5,6 +5,12 @@ node_modules/
 .next-spatial/
 .next-spatial-build/
 .next-semantic-build/
+.next-batch-build/
+.next-batch-production/
+.next-storyboard-production/
+.next-h3-storyboard-production/
+.next-clip-storyboard-production/
+.next-concise-h3-production/
 out/
 dist/
 coverage/

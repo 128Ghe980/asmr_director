@@ -14,10 +14,13 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import type { ProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
+import type { AsmrProject } from "@/lib/asmr/schema";
 
+import { BatchAudioDownload } from "./batch-audio-download";
 import { WorkspaceBadge } from "./project-workspace-badge";
 
 type ProjectWorkspaceHeaderProps = {
+  project: AsmrProject;
   planning?: boolean;
   importError: string | undefined;
   importPanelId: string;
@@ -35,6 +38,7 @@ type ProjectWorkspaceHeaderProps = {
 };
 
 export function ProjectWorkspaceHeader({
+  project,
   planning = false,
   importError,
   importPanelId,
@@ -117,6 +121,7 @@ export function ProjectWorkspaceHeader({
             <span className="sr-only lg:not-sr-only">项目</span>
           </button>
           {!planning && <>
+          <BatchAudioDownload key={project.project_id} project={project} />
           <button
             type="button"
             onClick={onToggleRight}

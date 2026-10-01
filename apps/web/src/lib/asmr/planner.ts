@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { AsmrProjectSchema, PositionSchema, type AsmrProject } from "./schema";
+import { EditableStoryboardSchema } from "./storyboard";
 
 export const PlannerBriefSchema = z.object({
   theme: z.string().trim().min(1).max(2000),
@@ -56,6 +57,9 @@ export const PlannerDraftSchema = z.object({
 export const PlannerSourceSchema = z.object({
   brief: PlannerBriefSchema,
   draft: PlannerDraftSchema,
+  // Damaged optional visual notes must not discard the original script.
+  storyboard: EditableStoryboardSchema.optional().catch(undefined),
+  sceneDescription: z.string().max(4000).optional().catch(undefined),
 }).strict();
 
 export type PlannerBrief = z.infer<typeof PlannerBriefSchema>;

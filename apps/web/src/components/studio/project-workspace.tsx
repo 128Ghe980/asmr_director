@@ -15,6 +15,7 @@ import type {
   ProjectRevision,
 } from "@/lib/asmr/project-library";
 import type { AudioAnalysisStatus, ProductQualityReport } from "@/lib/asmr/product-quality";
+import type { AsmrProject } from "@/lib/asmr/schema";
 
 import { ProjectDetailsDock } from "./project-details-dock";
 import { ProjectRail } from "./project-rail";
@@ -25,6 +26,7 @@ const PROJECT_WORKSPACE_DETAILS_ID = "project-workspace-details";
 const PROJECT_WORKSPACE_IMPORT_ID = "project-workspace-import";
 
 type ProjectWorkspaceProps = {
+  project: AsmrProject;
   binaural?: boolean;
   onBinauralChange?: (enabled: boolean) => void;
   children: ReactNode;
@@ -58,6 +60,7 @@ type ProjectWorkspaceProps = {
 };
 
 export function ProjectWorkspace({
+  project,
   binaural, onBinauralChange,
   children,
   planning = false,
@@ -181,6 +184,7 @@ export function ProjectWorkspace({
 
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         <ProjectWorkspaceHeader
+          project={project}
           planning={planning}
           importError={importError}
           importPanelId={PROJECT_WORKSPACE_IMPORT_ID}

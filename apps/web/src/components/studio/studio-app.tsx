@@ -84,8 +84,10 @@ import type { PlannerBrief, PlannerDraft } from "@/lib/asmr/planner";
 import { addVoiceClip, deleteVoiceClip, getVoiceGapAfter, mergeVoiceClipWithNext, setVoiceGapAfter, splitVoiceClip } from "@/lib/asmr/voice-segments";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
+import { createClipH3Prompt, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "@/lib/asmr/video-plan";
 
 import { ClipInspector } from "./clip-inspector";
+import { ClipStoryboardEditor } from "./clip-storyboard-editor";
 import { EditorPanels } from "./editor-panels";
 import { VoiceGenerationPanel } from "./voice-generation-panel";
 import { PlannerPanel } from "./planner-panel";
@@ -159,6 +161,8 @@ function EmotionCurve({ project }: { project: AsmrProject }) {
 
 export function StudioApp({ project }: StudioAppProps) {
   const [workspaceView, setWorkspaceView] = useState<"editor" | "planner">("editor");
+  const [inspectorTab, setInspectorTab] = useState<"audio" | "storyboard">("audio");
+  const [editorPanel, setEditorPanel] = useState(0);
   const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
   const editableProjectRef = useRef(editableProject);
   const editRevisionRef = useRef(0);
@@ -206,6 +210,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const selectedClip =
     clips.find((clip) => clip.id === selectedClipId) ?? clips[0];
   const activeClipId = selectedClip?.id;
+  const inspectorView = selectedClip?.type === "voice" ? inspectorTab : "audio";
   const validationIssues = useMemo(
     () => getProjectValidationIssues(editableProject),
     [editableProject],
@@ -662,6 +667,8 @@ export function StudioApp({ project }: StudioAppProps) {
     setEditableProject(entry.project);
     setProjectMixFingerprint(entry.mixFingerprint);
     setSelectedClipId(defaultClipId(entry.project));
+    setInspectorTab("audio");
+    setEditorPanel(0);
     setRestoreState(nextRestoreState);
     setImportError(undefined);
   }
@@ -1296,13 +1303,45 @@ export function StudioApp({ project }: StudioAppProps) {
     activateLibraryProject(createLibraryProject(protectedLibrary, project));
   }
 
-  function handleAdoptPlanner(brief: PlannerBrief, draft: PlannerDraft) {
-    const nextLibrary = adoptPlannerDraft(getLibraryWithCurrentProject(), brief, draft);
+  function handleAdoptPlanner(brief: PlannerBrief, draft: PlannerDraft, storyboard?: import("@/lib/asmr/storyboard").PlannerStoryboard, sceneDescription?: string) {
+    const nextLibrary = adoptPlannerDraft(getLibraryWithCurrentProject(), brief, draft, new Date(), storyboard, sceneDescription);
     activateLibraryProject(nextLibrary);
     if (draft.segmentation === "semantic" && voiceOptions.provider === "voxcpm2") {
       handleVoiceOptionsChange({ ...voiceOptions, generationMode: "long_text" });
     }
     setWorkspaceView("editor");
+  }
+
+  function handleVideoSceneChange(sceneDescription: string) {
+    const current = editableProjectRef.current;
+    const next = { ...current, videoPlan: { version: 1 as const, sceneDescription, shots: current.videoPlan?.shots ?? {} } };
+    editableProjectRef.current = next;
+    setEditableProject(next);
+  }
+
+  function handleSaveClipStoryboard(projectId: string, shot: ClipVideoStoryboard): boolean {
+    const current = editableProjectRef.current;
+    if (current.project_id !== projectId) return false;
+    const next = { ...current, videoPlan: {
+      version: 1 as const, sceneDescription: current.videoPlan?.sceneDescription ?? current.scene.name,
+      shots: { ...current.videoPlan?.shots, [shot.clipId]: shot },
+    } };
+    if (!isClipVideoStoryboardCurrent(next, shot.clipId)) return false;
+    try { createClipH3Prompt(next, shot.clipId); }
+    catch { return false; }
+    editableProjectRef.current = next;
+    setEditableProject(next);
+    return true;
+  }
+
+  function handleEditClipStoryboard(clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera">>) {
+    const current = editableProjectRef.current;
+    const plan = current.videoPlan;
+    const shot = plan?.shots[clipId];
+    if (!plan || !shot) return;
+    const next = { ...current, videoPlan: { ...plan, shots: { ...plan.shots, [clipId]: { ...shot, ...patch } } } };
+    editableProjectRef.current = next;
+    setEditableProject(next);
   }
 
   function handleDuplicateProject() {
@@ -1395,6 +1434,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
   return (
     <ProjectWorkspace
+      project={editableProject}
       binaural={editableProject.timeline.mixing.binaural}
       onBinauralChange={handleBinauralChange}
       planning={workspaceView === "planner"}
@@ -1436,7 +1476,7 @@ export function StudioApp({ project }: StudioAppProps) {
       </div>
       <div id="editor-workspace" className="min-h-0 flex-1 overflow-hidden" hidden={workspaceView !== "editor"}>
       <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_minmax(0,0.42fr)] gap-2">
-      <EditorPanels>
+      <EditorPanels activePanel={editorPanel} onPanelChange={setEditorPanel}>
         <div className="h-full min-h-0 min-w-0">
           <ScriptEditorPanel
             key={editableProject.project_id}
@@ -1454,10 +1494,18 @@ export function StudioApp({ project }: StudioAppProps) {
             onGapChange={(clipId, seconds) => commitScriptEdit(setVoiceGapAfter(editableProjectRef.current, clipId, seconds), clipId, `下一段将在人声结束后等待 ${seconds} 秒。`)}
             onRewriteClip={handleRewriteVoice}
             onUndo={handleUndoScriptEdit}
+            onOpenStoryboard={(clipId) => {
+              setSelectedClipId(clipId); setInspectorTab("storyboard"); setEditorPanel(1);
+              requestAnimationFrame(() => document.getElementById("clip-inspector-tab-storyboard")?.focus());
+            }}
           />
         </div>
 
-        <div aria-label="声音与生成设置" className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain rounded-xl border border-studio-line bg-studio-panel/88 [&>section]:border-0">
+        <div aria-label="声音与分镜设置" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-studio-line bg-studio-panel/88">
+          <div role="tablist" aria-label="片段工作内容" className="flex shrink-0 gap-1 border-b border-studio-line px-3 py-2">
+            {([['audio', '声音'], ['storyboard', '分镜']] as const).map(([tab, label]) => <button key={tab} type="button" role="tab" id={`clip-inspector-tab-${tab}`} aria-selected={inspectorView === tab} aria-controls={`clip-inspector-${tab}`} tabIndex={inspectorView === tab ? 0 : -1} disabled={tab === "storyboard" && selectedClip?.type !== "voice"} onClick={() => setInspectorTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || selectedClip?.type !== "voice") return; event.preventDefault(); const next = event.key === "Home" ? "audio" : event.key === "End" ? "storyboard" : tab === "audio" ? "storyboard" : "audio"; setInspectorTab(next); document.getElementById(`clip-inspector-tab-${next}`)?.focus(); }} className={`min-h-8 rounded-lg px-4 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 disabled:opacity-35 ${inspectorView === tab ? tab === "storyboard" ? "bg-violet-300/15 text-violet-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5"}`}>{label}</button>)}
+          </div>
+          <div id="clip-inspector-audio" role="tabpanel" aria-labelledby="clip-inspector-tab-audio" hidden={inspectorView !== "audio"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [&>section]:border-0">
           <ClipInspector
             textEditorExternal
             binaural={editableProject.timeline.mixing.binaural}
@@ -1490,6 +1538,10 @@ export function StudioApp({ project }: StudioAppProps) {
             onNudgeClipTiming={handleNudgeClipTiming}
             onUpdateClip={handleUpdateClip}
           />
+          </div>
+          <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} onSceneChange={handleVideoSceneChange} onSave={handleSaveClipStoryboard} onEdit={handleEditClipStoryboard} /> : null}
+          </div>
         </div>
       </EditorPanels>
       <div className="flex min-h-0 min-w-0 flex-col gap-1">

@@ -223,6 +223,22 @@ function applyLimiter(samples: Float32Array) {
   }
 }
 
+/** Export one positioned clip, preserving D's tail and the existing clip DSP.
+ * Master loudness normalization belongs to the complete mix, never each stem.
+ */
+export async function renderProcessedClipWav(
+  clip: TimelineClip,
+  loaded: LoadedMixClip,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  signal?.throwIfAborted();
+  const localClip = { ...clip, start: 0 };
+  const output = new Float32Array(Math.ceil(clip.duration * INTERNAL_SAMPLE_RATE) * 2);
+  const result = await mixClipIntoOutput(output, localClip, INTERNAL_SAMPLE_RATE, async () => loaded);
+  signal?.throwIfAborted();
+  return writePcm16StereoWav(result.output, INTERNAL_SAMPLE_RATE);
+}
+
 export async function renderProjectMixWav({
   project,
   loadClipAsset,

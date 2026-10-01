@@ -9,6 +9,7 @@ import {
   type PlannerDraft,
 } from "./planner";
 import type { StorageLike } from "./project-persistence";
+import { EditableStoryboardSchema, type PlannerStoryboard } from "./storyboard";
 
 export const PLANNER_DRAFT_STORAGE_KEY = "ai-asmr-studio:v1:planner-draft";
 const MAX_STORED_DRAFT_CHARACTERS = 200000;
@@ -28,6 +29,8 @@ export type PlannerWorkingState = {
   draftBrief: PlannerBrief | null;
   draft: PlannerDraft | null;
   provider: "ollama" | "api";
+  storyboard?: PlannerStoryboard | null;
+  sceneDescription?: string | null;
 };
 
 const WorkingStateSchema = z.object({
@@ -37,6 +40,8 @@ const WorkingStateSchema = z.object({
   draftBrief: PlannerBriefSchema.nullable(),
   draft: EditableDraftSchema.nullable(),
   provider: z.enum(["ollama", "api"]),
+  storyboard: EditableStoryboardSchema.nullable().optional().catch(undefined),
+  sceneDescription: z.string().max(4000).nullable().optional().catch(undefined),
 }).strict().refine(
   (state) => (state.draft === null) === (state.draftBrief === null),
   { message: "草稿必须保留生成时的主题。", path: ["draftBrief"] },

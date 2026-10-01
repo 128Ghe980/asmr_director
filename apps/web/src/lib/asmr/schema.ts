@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProjectVideoPlanSchema } from "./video-plan";
 
 export const ProjectStatusSchema = z.enum([
   "draft",
@@ -193,6 +194,8 @@ export const AsmrProjectSchema = z.object({
     speech_style: z.array(z.string().min(1)).min(1),
   }),
   emotion_curve: z.array(EmotionCurvePointSchema).min(1),
+  // Damaged optional video metadata must not discard an existing audio project.
+  videoPlan: ProjectVideoPlanSchema.optional().catch(undefined),
   timeline: z.object({
     tracks: TimelineTracksSchema,
     mixing: z.object({
@@ -259,5 +262,6 @@ export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 export type AssetStatus = z.infer<typeof AssetStatusSchema>;
 export type TrackType = z.infer<typeof TrackTypeSchema>;
 export type TimelineClip = z.infer<typeof TimelineClipSchema>;
+export type VoiceClip = z.infer<typeof VoiceClipSchema>;
 export type TimelineTrack = z.infer<typeof TimelineTrackSchema>;
 export type AsmrProject = z.infer<typeof AsmrProjectSchema>;

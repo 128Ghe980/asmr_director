@@ -6,8 +6,10 @@ import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
 import { getVoiceGenerationContext } from "./voice-generation-context";
 
 function undoFingerprint(entry: Pick<ProjectLibraryEntry, "project" | "plannerSource">): string {
-  // Rendering an export does not edit the arrangement and should not remove undo.
-  return JSON.stringify({ project: JSON.parse(serializeProject({ ...entry.project, exports: [] })), plannerSource: entry.plannerSource });
+  // Video notes and rendered exports do not edit the audio arrangement.
+  const project = { ...entry.project, exports: [] };
+  delete project.videoPlan;
+  return JSON.stringify({ project: JSON.parse(serializeProject(project)), plannerSource: entry.plannerSource });
 }
 
 export function adoptAudioCandidate(library: ProjectLibrary, inputCandidate: AudioCandidate, now = new Date()): ProjectLibrary {
@@ -63,7 +65,12 @@ export function undoLastAudioCandidate(library: ProjectLibrary, projectId = libr
   if (!canUndoLastAudioCandidate(library, projectId)) throw new Error("工程已编辑，请从版本记录恢复采用前的版本。");
   const recovery = entry.candidateAcceptance;
   const protectedLibrary = createProjectRevision(library, projectId, now, "撤回音频采用前");
-  const restored = updateLibraryProject(protectedLibrary, recovery.beforeProject, now);
+  const project: AsmrProject = {
+    ...recovery.beforeProject,
+    videoPlan: entry.project.videoPlan ? structuredClone(entry.project.videoPlan) : undefined,
+  };
+  if (project.videoPlan === undefined) delete project.videoPlan;
+  const restored = updateLibraryProject(protectedLibrary, project, now);
   return {
     ...restored,
     projects: restored.projects.map((item) => item.projectId === projectId ? {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Plus, Scissors, Sparkles, Undo2 } from "lucide-react";
+import { Clapperboard, Plus, Scissors, Sparkles, Undo2 } from "lucide-react";
 import type { AsmrProject, TimelineClip } from "@/lib/asmr/schema";
 import type { ClipPatch } from "@/lib/asmr/edit-project";
 import { getVoiceGapAfter } from "@/lib/asmr/voice-segments";
@@ -25,6 +25,7 @@ type ScriptEditorPanelProps = {
   onGapChange: (clipId: string, seconds: number) => void;
   onRewriteClip: (clipId: string, original: string, replacement: string) => void;
   onUndo: () => void;
+  onOpenStoryboard?: (clipId: string) => void;
 };
 
 const buttonClass = "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-studio-line px-2.5 py-1.5 text-xs text-studio-muted hover:bg-white/5 hover:text-studio-text focus-visible:outline-2 focus-visible:outline-sky-300 disabled:opacity-35 disabled:cursor-not-allowed";
@@ -50,7 +51,7 @@ function GapInput({ value, label, onChange }: { value: number; label: string; on
   </label>;
 }
 
-export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, notice, onSelectClip, onUpdateClip, onAddClip, onDeleteClip, onSplitClip, onMergeClip, onGapChange, onRewriteClip, onUndo }: ScriptEditorPanelProps) {
+export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, notice, onSelectClip, onUpdateClip, onAddClip, onDeleteClip, onSplitClip, onMergeClip, onGapChange, onRewriteClip, onUndo, onOpenStoryboard }: ScriptEditorPanelProps) {
   const clips = flattenClips(project);
   const voices = clips.filter((clip) => clip.type === "voice");
   const [selection, setSelection] = useState<{ clipId: string; text: string; start: number; end: number }>();
@@ -82,13 +83,14 @@ export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, noti
         const gap = clip.type === "voice" ? getVoiceGapAfter(project, clip.id) : null;
         if (clip.type !== "voice") return <button type="button" key={clip.id} aria-pressed={isSelected} onClick={() => onSelectClip(clip.id)} className={`w-full rounded-md px-2 py-1.5 text-left ${isSelected ? "bg-sky-300/10 ring-1 ring-sky-300/35" : "text-studio-muted hover:bg-white/[0.025]"}`}><span className="text-sm">{clipTitle(clip)}</span><span className="ml-3 text-xs text-studio-muted">{getTrackLabel(clip.track)} · {formatTimeRange(clip.start, clip.duration)}</span></button>;
         return <article key={clip.id} ref={(node) => { if (node) cards.current.set(clip.id, node); else cards.current.delete(clip.id); }} className={`min-w-0 rounded-md px-1.5 py-1 transition-colors ${isSelected ? "bg-sky-300/[0.045]" : "hover:bg-white/[0.02]"}`}>
-          <div className="grid min-w-0 grid-cols-[22px_minmax(0,1fr)] items-start gap-2">
+          <div className={`grid min-w-0 items-start gap-2 ${onOpenStoryboard ? "grid-cols-[22px_minmax(0,1fr)_32px]" : "grid-cols-[22px_minmax(0,1fr)]"}`}>
           <button type="button" aria-label={`选择第 ${index + 1} 段`} aria-pressed={isSelected} className={`min-h-8 text-left text-[11px] tabular-nums ${isSelected ? "font-semibold text-sky-100" : "text-studio-muted/60"}`} onClick={() => onSelectClip(clip.id)}>{String(index + 1).padStart(2, "0")}</button>
           <textarea aria-label={isSelected ? "台词" : `第 ${index + 1} 段台词`} value={clip.text} rows={1}
             onFocus={() => onSelectClip(clip.id)}
             onSelect={(event) => { const node = event.currentTarget; setSelection({ clipId: clip.id, text: clip.text, start: node.selectionStart, end: node.selectionEnd }); }}
             onChange={(event) => { setSelection(undefined); onUpdateClip(clip.id, { text: event.target.value }); }}
             className={`block min-h-8 w-full min-w-0 resize-none rounded border px-1.5 py-0.5 text-sm leading-7 outline-none [field-sizing:content] ${isSelected ? "border-sky-300/25 bg-black/10 focus:border-sky-300/50" : "border-transparent bg-transparent"}`} />
+          {onOpenStoryboard ? <button type="button" aria-label={`第 ${index + 1} 段视频分镜`} title={project.videoPlan?.shots[clip.id] ? "查看本段视频分镜" : "生成本段视频分镜"} onClick={() => onOpenStoryboard(clip.id)} className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 ${project.videoPlan?.shots[clip.id] ? "border-violet-300/25 bg-violet-300/10 text-violet-100" : "border-transparent text-studio-muted/55 hover:border-violet-300/20 hover:bg-violet-300/5 hover:text-violet-200"}`}><Clapperboard className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}
           </div>
           {isSelected && <div className="ml-[30px] mt-1 space-y-2 pb-1">
             <div className="flex flex-wrap items-center gap-2"><span className="text-[11px] tabular-nums text-studio-muted">{formatTimeRange(clip.start, clip.duration)}</span><StatusBadge status={clip.generation.status} /></div>

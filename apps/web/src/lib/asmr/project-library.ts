@@ -463,13 +463,18 @@ export function adoptPlannerDraft(
   brief: PlannerBrief,
   draft: PlannerDraft,
   now: Date = new Date(),
+  storyboard?: import("./storyboard").PlannerStoryboard,
+  sceneDescription?: string,
 ): ProjectLibrary {
-  const source = PlannerSourceSchema.parse({ brief, draft });
+  const source = PlannerSourceSchema.parse({ brief, draft, ...(storyboard ? { storyboard } : {}), ...(sceneDescription !== undefined ? { sceneDescription } : {}) });
   const usedIds = new Set(library.projects.map((entry) => entry.projectId));
   const projectId = makeUniqueId(`asmr_planner_${compactTimestamp(now)}`, usedIds);
   // Compile and validate everything before creating the safety revision. Failures
   // leave the caller's project and planning workspace untouched.
   const project = compilePlannerDraft(source.brief, source.draft, projectId);
+  if (source.sceneDescription !== undefined) {
+    project.videoPlan = { version: 1, sceneDescription: source.sceneDescription, shots: {} };
+  }
   const protectedLibrary = createProjectRevision(
     library,
     library.currentProjectId,

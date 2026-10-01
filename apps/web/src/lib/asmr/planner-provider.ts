@@ -308,14 +308,20 @@ async function completion(
   return content;
 }
 
-// Server-side text analysis reuses the configured endpoints without returning
-// credentials. Local analysis is CPU-only and unloads before native TTS starts.
+// Server-side JSON requests reuse configured endpoints without returning keys.
+// Analysis defaults to CPU-only and unloads before native TTS; creative callers
+// can explicitly retain the configured local model's GPU settings and budget.
 export async function completePlannerJson(
   input: { provider: PlannerProviderId; messages: PlannerChatMessage[]; jsonSchema: unknown },
-  options: { env?: PlannerEnvironment; fetchImpl?: typeof fetch; signal?: AbortSignal; timeoutMs?: number } = {},
+  options: {
+    env?: PlannerEnvironment; fetchImpl?: typeof fetch; signal?: AbortSignal; timeoutMs?: number;
+    maxTokens?: number; temperature?: number; messageLimit?: number;
+    localCpuOnly?: boolean; timeoutLimitMs?: number;
+  } = {},
 ): Promise<{ value: unknown; provider: PlannerProviderId; model: string }> {
   if (options.signal?.aborted) throw new PlannerError(499, "文本分析已取消。");
-  if (input.messages.length > 8 || input.messages.some((message) => message.content.length > 24_000)) {
+  const messageLimit = Number.isFinite(options.messageLimit) ? Math.max(1, Math.min(96_000, Math.floor(options.messageLimit!))) : 24_000;
+  if (input.messages.length > 8 || input.messages.some((message) => message.content.length > messageLimit)) {
     throw new PlannerError(400, "文本分析请求过长。");
   }
   const provider = configuration(options.env ?? process.env).providers.find((item) => item.id === input.provider);
@@ -324,11 +330,16 @@ export async function completePlannerJson(
   const onCancel = () => controller.abort(new PlannerError(499, "文本分析已取消。"));
   options.signal?.addEventListener("abort", onCancel, { once: true });
   if (options.signal?.aborted) onCancel();
-  const timeout = Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(60_000, options.timeoutMs!)) : 60_000;
+  const timeoutLimit = Number.isFinite(options.timeoutLimitMs) ? Math.max(1, Math.min(600_000, options.timeoutLimitMs!)) : 60_000;
+  const timeout = Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(timeoutLimit, options.timeoutMs!)) : 60_000;
   const timer = setTimeout(() => controller.abort(new PlannerError(504, "文本分析超时。")), timeout);
   try {
     const content = await completion(provider, input.messages, input.jsonSchema, options.fetchImpl ?? fetch, controller.signal,
-      { maxTokens: 2048, temperature: 0.2, localCpuOnly: true, disableDeepSeekThinking: true });
+      {
+        maxTokens: Number.isFinite(options.maxTokens) ? Math.max(1, Math.min(8192, Math.floor(options.maxTokens!))) : 2048,
+        temperature: Number.isFinite(options.temperature) ? Math.max(0, Math.min(1, options.temperature!)) : 0.2,
+        localCpuOnly: options.localCpuOnly ?? true, disableDeepSeekThinking: true,
+      });
     if (controller.signal.aborted) throw abortError(controller.signal);
     const trimmed = content.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, "$1").trim();
     let value: unknown;
