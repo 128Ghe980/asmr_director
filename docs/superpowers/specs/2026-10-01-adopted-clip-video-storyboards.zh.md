@@ -2,6 +2,8 @@
 
 日期：2026-10-01
 
+后续行为已覆盖本初版的英文全局场景及可选连续参考复选框：见 [精简剧情背景](2026-10-02-concise-h3-story-backgrounds.zh.md) 与 [逐段连续镜头/新镜头](2026-10-02-storyboard-reference-modes.zh.md)。下方原验收保留为历史记录。
+
 状态：实现、自动检查、真实文字模型及正式浏览器验证完成。本项属于 [ROADMAP](../../ROADMAP.md) 已有的**人声导演与真实 ASMR 音效质量 V1**，不新增顶层阶段，也不代表 H3 成片质量验收。[English spec](2026-10-01-adopted-clip-video-storyboards.md)
 
 ## 用户流程

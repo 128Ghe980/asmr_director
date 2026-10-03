@@ -2,9 +2,53 @@
 
 记录日期：2026-06-14
 
-最后更新：2026-10-02
+最后更新：2026-10-03
 
 AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
+
+## 2026-10-03 — 累计批量工作流发布与跨会话交接
+
+用户明确授权“记录一下，推一版，我要交接给其他会话”。本地整理自 `8f22021` 后的工程串行批量生成、磁盘满恢复与原子保存、音频总览/颜色、原生 token 下载修复、分镜连续/新镜头偏好及快捷切换、分镜颜色和逐段 TXT ZIP。最新验证沿用 12 个不重复定向文件 / 211 项、16 相关文件 ESLint、全量 TypeScript/生产构建、浏览器 8 TXT / 10,645 字节逐字节与 CRC 校验、29 条文案/timeline及138素材保持证据；此前 1,028 全量套件属于历史恢复检查点，没有本轮重跑声明。本轮记录与 Git 收尾不生成模型任务或操作用户候选。
+
+发布分支 `codex/voxcpm2-product-generation`，远端 `origin` / `128Ghe980/asmr_director`；实际 SHA、推送结果、上游一致性和新运行检查由发布任务完成后写入 `I:/AI/asmr-director-storyboard-export/2026-10-03/release-verification.json`，并由 Git 日志定位，本条不提前断言远端成功。旧“未提交/无授权”说明保留为各功能当时快照。下个会话从 `AGENT.md`、唯一 ROADMAP、PROJECT_MANAGEMENT、AI_HANDOFF 和 Git 状态恢复，保留当前用户工程/候选/采用/分镜编辑，沿用 I 盘工作根和 runtime junction。音质 V1 仍进行中，真实 SFX、垂直运动与通用更柔未完成；见 [发布交接记录](records/2026-10-03-audio-quality-v1-batch-workflow-release.md) / [当前交接](AI_HANDOFF.md)。
+
+## 2026-10-03 — 分镜颜色标识与逐段 TXT 批量下载验收
+
+列表现有分镜按钮右上角新增绿色可用 / 灰色待生成 / 暖黄色需更新标识及无障碍文字，不增加列数，保留旁边的连续 / 新镜头切换。共用当前来源和前镜有效性判断，保存的分镜字段始终保留。顶部批量下载增加音频 / 分镜标签，音频沿用原声与后处理目录；分镜仅导出现有有效完整 H3，每段一个 UTF-8 TXT，按原人声段号及台词命名，在统一工程目录内打 ZIP。批量 API 可选 kind 默认音频，两类共用 JSON 准备结果和原生 token GET 下载，取消 / 迟到及临时清理保护保留。
+
+12 个不重复定向文件 / 211 项、16 个相关文件 ESLint、全量 TypeScript 与生产构建通过，未重复此前 1,028 项全量历史测试。实际 22 段分镜 8/13/1，真实浏览器成品 8 TXT / 10,645 字节，全 CRC / 精确 UTF-8 提示词 / 原段号及台词恰好一次通过，第 4 段跳过而原第 5 段仍 005。桌面 / 390 / 320px 无横溢出，弹层和 32px 列表按钮均在视口，viewport 恢复，console 空；29 条可见文案 / 标题 / timeline 和全部 138 素材（含 manifest）SHA 保持，0 实际模型调用，无候选或来源编辑。最新 3001/PID14196/`.next-batch-generation-production`/HTTP200，无生成锁、临时目录空，I 盘工作根沿用。开始时旧 38384 已不存在，临时恢复 3192 后经身份及无生成核对停止再构建；`tsconfig.json` 自动改动恢复。证据与截图在 `I:/AI/asmr-director-storyboard-export/2026-10-03`，见 [开发记录](records/2026-10-03-audio-quality-v1-storyboard-status-export.md) / [中文说明](superpowers/specs/2026-10-03-storyboard-status-and-batch-txt.zh.md)。本次未提交推送，音质 V1 父阶段仍进行中，无新成片 / 听感验收。
+
+## 2026-10-02 — 分镜双模式与逐段快捷切换验收
+
+新增「连续镜头/新镜头」二选一及分镜入口右侧链条/取景框32px按钮，按段保存偏好，列表/面板同步且切换不跳选段；首段固定新镜头，连续需要相邻完整有效前镜，新镜主要按背景剧情。手动与批量模式统一，串行批量引用刚保存的前镜，模式/音频/来源及前镜复核；旧工程、旧指纹及已有prompt兼容保留。9个定向文件181项、TypeScript/ESLint/生产构建通过；实际桌面/390/320px无横溢出，刷新同步通过，29条可见文案/timeline及138素材SHA保持，console空，0模型调用。最新3001/PID38384/HTTP200，默认viewport恢复，截图和证据在`I:/AI/asmr-director-storyboard-modes/2026-10-02`。未提交推送，音质V1父阶段仍进行中。见 [开发记录](records/2026-10-02-audio-quality-v1-storyboard-reference-modes.md)。
+
+## 2026-10-02 — 批量下载传输故障修复验收
+
+用户报告Failed to fetch；实际10段ZIP20,982,790B服务端完整准备/读取而前端二进制fetch失败，单独取消attachment声明未解决。改为小JSON准备结果及同源UUID原生GET下载，保留默认二进制POST；待下载链接5分钟过期、单次领取、最多2包，打开前校验/取消/过期/完成清理与64KiB字节背压已接。27项测试、TypeScript/ESLint/生产构建通过，实际浏览器下载文件10段21项CRC/原声字节/后处理PCM及完整时长全部通过；独立20段21,015,839B包亦通过。文案/timeline及138素材SHA保持，console空，临时包目录空，0模型调用，未采用/放弃候选或提交推送。生产3001/PID32092/HTTP200，旧进程保留为历史。见 [故障记录](records/2026-10-02-audio-quality-v1-batch-download-recovery.md)，证据根 `I:/AI/asmr-director-batch-download-recovery/2026-10-02`。音质V1整体仍进行中。
+
+## 2026-10-02 — 分段音频颜色标识验收
+
+用户要求下面分段文案有对应颜色。段号上方新增绿色/灰色/暖黄色小色点，分别对应已采用/待生成/已生成未采用；选中段落同时显示文字状态，保留生成中/失败提示。列表与总览共享一次分类，候选读取未知状态使用空心点和无障碍文字。5个定向文件45项测试、全量TypeScript、变更文件ESLint及生产构建通过。实际22段10/10/2，桌面/390/320px无整页横溢出，台词/timeline与114素材SHA不变，console为空，viewport恢复；没有实际模型调用或候选采用/放弃。生产3001/PID17804/HTTP200，旧6176确认无生成后停止。证据 `I:/AI/asmr-director-audio-markers/2026-10-02/marker-verification.json`，见 [开发记录](records/2026-10-02-audio-quality-v1-batch-generation.md)。未提交推送，音质V1整体仍进行中。
+
+## 2026-10-02 — 音频段落总览新增项验收
+
+用户要求音频X/X/X总览，按「已采用 / 待生成 / 已生成未采用」互斥统计非空voice。采用优先、同段多个当前ready候选只计1，忽略discarded/跨工程/删除clip/来源或long-text上下文stale，声音options不影响已生成状态。工程一次读取共享候选，选段面板本地filter，切段不N请求；生成/放弃刷新，采用/撤回/编辑派生，loading/error的候选依赖数显示—。原批量目标规则沿用。
+
+本新增项验收完成：7个不重复定向文件/66项通过（UI35/domain12/API19），全量TypeScript、变更文件ESLint及生产Webpack构建通过；SWC/WASM既有警告沿用，未重复1028项历史全量测试。新3001/PID6176/`.next-batch-generation-production`/HTTP200，旧2212经身份及无生成核对停止。真实browser总览10/10/2=22段，切11段右侧8候选/9.6秒显示及总览保持；原audio_missing仍12未采用目标含2有候选，跟10pending不矛盾。全部22台词/timeline/采用及114素材（含manifest）SHA不变，无增删。1182×892/390×844/320×740无横溢出、四按钮在viewport，consoleerrorwarn空，viewportreset，截图仅查看无文件。0实际TTS/文本模型/H3，未对用户候选采用/放弃；相关采用撤回放弃/刷新用真实App模拟HTTP验证。证据根 `I:/AI/asmr-director-audio-overview/2026-10-02`，overview-verification.json/assets-before-overview.json。本次未提交推送，音质V1整体仍进行中，沿用 [双语既有 spec](superpowers/specs/2026-10-02-project-batch-generation.zh.md) / [English spec](superpowers/specs/2026-10-02-project-batch-generation.md) 及 [开发记录新增节](records/2026-10-02-audio-quality-v1-batch-generation.md)，不新建路线或记录框架。
+
+## 2026-10-02 — 磁盘满保存失败与空锁恢复验收
+
+实际D可用空间归零，批量音频留下9个零字节WAV及1截断文件，均未被有效manifest引用；此前两条成功候选完好，manifest36项/单clip最多7，非容量耗尽。完整原source仍I盘voice-work，没有重生成失败原音。运行assets112文件/84,795,530字节及tmp1,146文件/362,246,998字节先复制到`I:/AI/asmr-director-runtime-storage/{assets,tmp}`逐SHA核对，再把原D目录可恢复移到本轮`original-runtime-directories`并建立junction，公开路径/URL不变。故障文件和备份均保留。仅在Next停止且无audio children后迁出已确认的零字节generation lock取证，不批量删除其他所有者锁。
+
+clip/mix原子保存、自身inode/prefix锁清理、provider/API/bridge507及队列storageFatal停止通过验收；普通failed继续，已完成候选保留。全量90文件/1028项通过，一既有opt-in跳过，全量ESLint/TypeScript/生产Webpack构建通过。新3001/PID2212/`.next-batch-generation-production`/HTTP200，旧28252已停。真实UI音频补缺12目标首项第11段成功产出1 ready候选vox_719209e4b91645eda32c7125b90b8932，再取消已开始的第二原生任务，成功1/失败0，无自动采用，不宣称全12项完成。候选9.56秒/917,804字节、完整原音26.24秒/2,519,084字节均RIFF+frames完整且在I盘；候选7→8刷新可用，保留88.9%文字差异试听警告，未宣称音质验收。111不可变素材SHA及36旧候选记录深度不变，22台词/timeline/采用保持；四按钮恢复12/22/2/10，consoleerrorwarn空，无横溢出，取消后无lock/audiochildren，截图只inspect未保存。迁移检查点D约428MiB/I约78GB，日志/临时检查都放I。证据根 `I:/AI/asmr-director-batch-generation-recovery/2026-10-02`，含`recovery-verification.json`（verify_recovery.py）、`existing-assets-preservation.json`及故障取证/检查日志。仍音质V1内部缺陷，父阶段进行中，本次未提交推送。见 [故障记录](records/2026-10-02-audio-quality-v1-storage-recovery.md) / [当前交接](AI_HANDOFF.md)。
+
+## 2026-10-02 — 工程批量音频与分镜操作验收
+
+用户新增工程编辑区四个批量入口：音频补缺/全部重生与分镜补缺/全部重生。VoxCPM2只生成候选，原采用音频留到手动采用；GPT-SoVITS沿用直接提交素材。音频补缺跳过asset_generated且ID/URI均非空的采用素材，分镜补缺保留任何已有镜头，包括过期手改；全部重生按符合条件的已采用本地人声逐项替换。串行队列提供进度、取消、单项失败继续；目标启动固定，派发/写入复核最新来源，工程切换/卸载/迟到响应与手动分镜互斥保护同步实现。
+
+本轮实现与验收完成：89文件/990项全量Vitest通过，一个既有opt-in文件/测试跳过，全量ESLint/TypeScript/生产Webpack构建通过，既有SWC警告成功回退WASM。D写满中断文件已恢复重接；五个不用的旧build server目录可恢复移至本轮`unused-build-server-backups`，新D原生dist`.next-batch-generation-production`只有cache junction到I证据根`next-cache`。正式3001/PID28252/HTTP200；旧3001/20660及临时3002/624经身份核对停止。日志根 `I:/AI/asmr-director-batch-generation/2026-10-02`，含`full-tests.log`/`eslint.log`/`typecheck.log`/`build.log`与真实`browser-verification.json`。
+
+浏览器实际分镜missing六目标，进度0/6→5/6后取消，提示成功5；第5–9段五条新镜已保存并保留，第10未保存。工程分镜[1,3,4]→[1,3,4,5,6,7,8,9]，计数13/22/6/9→13/22/1/9刷新保持。运行中四操作/单段编辑锁、取消恢复通过，Copy/TXT既有可用性由自动测试覆盖。第1镜原字段/prompt、全部22条台词/编排/采用标签及76个WAV SHA256不变；第5镜温暖归家881字符prompt含逐字台词/实测3.32秒，无summary。实际接受五个外部文字结果，第六项取消，上游内部请求/repair/token成本未采集；0TTS/0H3视频，未做真实音频批量或成片/新听感验收。1182×892桌面两组一行、390×844/320×740两组两行，无横向溢出/按钮裁切，console0、viewport已恢复；截图仅工具查看未保存。上一里程碑8f22021已推送，本次未提交/未要求推送。音质V1整体仍进行中，不新增路线/框架。见 [中文 spec](superpowers/specs/2026-10-02-project-batch-generation.zh.md) / [English spec](superpowers/specs/2026-10-02-project-batch-generation.md) / [开发记录](records/2026-10-02-audio-quality-v1-batch-generation.md)。
 
 ## 2026-10-02 — 批量下载与音频绑定分镜累计发布记录
 

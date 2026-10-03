@@ -58,7 +58,7 @@ export type GenerationJobUpdate =
       job: GenerationJobSnapshot;
       asset: GeneratedAssetResult;
     }
-  | { type: "failed"; job: GenerationJobSnapshot; error: string }
+  | { type: "failed"; job: GenerationJobSnapshot; error: string; errorCode?: string }
   | { type: "canceled"; job: GenerationJobSnapshot };
 
 export interface GenerationBridge {

@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path";
 import type { AudioCandidateProvenance } from "./audio-candidate";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
+import { getLocalStorageError, LocalStorageError } from "./local-storage-error";
 import { decodePcmWav } from "./project-mix-renderer";
 import { resolveVoxCpm2ProfilePath, type VoiceReferenceMode } from "./voice-provider-catalog";
 import { loadVoxCpm2Profile, selectVoxCpm2Reference } from "./voxcpm2-profile";
@@ -75,11 +76,15 @@ function diagnosticError(error: unknown): NonNullable<NativeDiagnostic["spawnErr
   };
 }
 
-function classifiedNativeFailure(diagnostic: NativeDiagnostic, error?: unknown): VoxCpm2Error | undefined {
+type ProviderError = VoxCpm2Error | LocalStorageError;
+
+function classifiedNativeFailure(diagnostic: NativeDiagnostic, error?: unknown): ProviderError | undefined {
+  const storageError = getLocalStorageError(error);
+  if (storageError) return storageError;
   const cause = diagnostic.spawnError ?? (error ? diagnosticError(error) : undefined);
   const output = `${diagnostic.stdoutTail}\n${diagnostic.stderrTail}\n${cause?.message ?? ""}`;
-  if (cause?.code === "ENOSPC" || /\bENOSPC\b|No space left on device|There is not enough space on the disk|\bdisk (?:is )?full\b|\[WinError 112\]/i.test(output)) {
-    return new VoxCpm2Error("生成所需磁盘空间不足，请腾出空间后重试。", 503);
+  if (getLocalStorageError(cause) || /\bENOSPC\b|\bEDQUOT\b|No space left on device|There is not enough space on the disk|\bdisk (?:is )?full\b|\[WinError 112\]/i.test(output)) {
+    return new LocalStorageError();
   }
   if (cause?.code === "ENOMEM" || /\bstd::bad_alloc\b|\bCUDA (?:error: )?out of memory\b|\bcannot allocate memory\b|\bENOMEM\b/i.test(output)) {
     return new VoxCpm2Error("语音模型运行内存不足，请关闭占用较大的程序后重试。", 503);
@@ -106,7 +111,7 @@ function waitForProcess(
   return new Promise((resolve, reject) => {
     let settled = false;
     let exitConfirmed = false;
-    let stopping: VoxCpm2Error | null = null;
+    let stopping: ProviderError | null = null;
     let terminationTimer: ReturnType<typeof setTimeout> | undefined;
     let log = "";
     const capture = (stream: "stdoutTail" | "stderrTail") => (chunk: Buffer | string) => {
@@ -122,7 +127,7 @@ function waitForProcess(
     };
     child.stdout?.on("data", capture("stdoutTail"));
     child.stderr?.on("data", capture("stderrTail"));
-    const finish = (error?: VoxCpm2Error) => {
+    const finish = (error?: ProviderError) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -131,10 +136,10 @@ function waitForProcess(
       if (error) reject(error);
       else resolve(log);
     };
-    const stop = (error: VoxCpm2Error) => {
+    const stop = (error: ProviderError) => {
       if (settled || stopping) return;
       stopping = error;
-      terminationTimer = setTimeout(() => finish(new VoxCpm2Error("生成进程尚未停止，请稍后再试。", 503)), exitWaitMs);
+      terminationTimer = setTimeout(() => finish(getLocalStorageError(stopping) ?? new VoxCpm2Error("生成进程尚未停止，请稍后再试。", 503)), exitWaitMs);
       try { child.kill("SIGKILL"); } catch { /* Keep the exclusive lock until exit is confirmed. */ }
     };
     const abort = () => stop(cancelError());
@@ -322,8 +327,8 @@ export async function generateVoxCpm2(
       qualityWarnings: [...qualityWarnings, ...(clipping > decoded.samples.length * .001 ? ["这条候选可能有削波失真，请试听后决定是否采用。"] : [])],
     };
   } catch (error) {
-    const reported = error instanceof VoxCpm2Error ? error
-      : classifiedNativeFailure(nativeDiagnostic, error) ?? new VoxCpm2Error("VoxCPM2 生成失败，请检查本机运行环境后重试。");
+    const reported = getLocalStorageError(error) ?? (error instanceof VoxCpm2Error ? error
+      : classifiedNativeFailure(nativeDiagnostic, error) ?? new VoxCpm2Error("VoxCPM2 生成失败，请检查本机运行环境后重试。"));
     failure = { message: reported.message, statusCode: reported.statusCode };
     throw reported;
   } finally {
@@ -336,7 +341,7 @@ export async function generateVoxCpm2(
       // A native failure/timeout may still leave audio. Publish only after exit;
       // a later close recovers it above when this finally block cannot do so.
       await recoverRawOutput().catch(() => undefined);
-      await removeTemporaryOutput();
+      if (rawPublished || !input.onRawOutput) await removeTemporaryOutput();
     }
   }
 }

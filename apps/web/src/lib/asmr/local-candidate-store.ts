@@ -186,10 +186,10 @@ export async function saveAudioCandidate({ config, candidate: inputCandidate, ad
 }
 
 export async function listAudioCandidates({ config, projectId, clipId, includeDiscarded = false }: {
-  config: CandidateStoreConfig; projectId: string; clipId: string; includeDiscarded?: boolean;
+  config: CandidateStoreConfig; projectId: string; clipId?: string; includeDiscarded?: boolean;
 }): Promise<AudioCandidate[]> {
   return (await readManifest(config)).candidates.filter((candidate) =>
-    candidate.projectId === projectId && candidate.clipId === clipId && (includeDiscarded || candidate.status === "ready"),
+    candidate.projectId === projectId && (clipId === undefined || candidate.clipId === clipId) && (includeDiscarded || candidate.status === "ready"),
   ).sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.candidateId.localeCompare(right.candidateId));
 }
 

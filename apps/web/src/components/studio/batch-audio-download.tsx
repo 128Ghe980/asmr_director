@@ -1,23 +1,36 @@
 "use client";
 
-import { Archive, Check, Download, Folder, Headphones, LoaderCircle, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { Archive, Check, Clapperboard, Download, FileText, Folder, Headphones, LoaderCircle, X } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { getBatchDownloadClips, getBatchDownloadFilename, getBatchDownloadFolderName } from "@/lib/asmr/batch-download";
 import type { AsmrProject } from "@/lib/asmr/schema";
+import { getBatchStoryboardClips, getBatchStoryboardDownloadFilename, getBatchStoryboardDownloadFolderName } from "@/lib/asmr/storyboard-batch-download";
+import { getStudioStoryboardProgress } from "@/lib/asmr/studio-storyboard-overview";
+
+type DownloadMode = "audio" | "storyboard";
+type DownloadState = { source: string; mode: DownloadMode; status: "idle" | "preparing" | "downloaded" | "error"; error?: string };
+const modes = [{ mode: "audio", label: "音频", icon: Headphones }, { mode: "storyboard", label: "分镜", icon: Clapperboard }] as const;
 
 export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<"idle" | "preparing" | "downloaded" | "error">("idle");
-  const [error, setError] = useState<string>();
+  const [mode, setMode] = useState<DownloadMode>("audio");
+  const [state, setState] = useState<DownloadState>();
   const panelId = useId();
   const titleId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const actionRef = useRef<HTMLButtonElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const tabRefs = useRef<Record<DownloadMode, HTMLButtonElement | null>>({ audio: null, storyboard: null });
   const focusAfterCancelRef = useRef(false);
+  const source = JSON.stringify(project);
   const clips = getBatchDownloadClips(project);
+  const storyboards = getBatchStoryboardClips(project);
+  const progress = getStudioStoryboardProgress(project);
+  const status = state?.source === source && state.mode === mode ? state.status : "idle";
+  const error = status === "error" ? state?.error : undefined;
+  const count = mode === "audio" ? clips.length : storyboards.length;
   const busy = status === "preparing";
 
   function close() {
@@ -25,7 +38,11 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
     triggerRef.current?.focus();
   }
 
-  useEffect(() => () => { requestRef.current?.abort(); }, []);
+  // Invalidate an in-flight snapshot before a new project/source can be used.
+  useLayoutEffect(() => () => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }, [source]);
 
   useEffect(() => {
     if (!busy && focusAfterCancelRef.current) {
@@ -45,7 +62,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
     function dismissOutside(event: PointerEvent) {
       if (event.target instanceof Node && !panel?.contains(event.target) && !triggerRef.current?.contains(event.target)) setOpen(false);
     }
-    function dismissEscape(event: KeyboardEvent) {
+    function dismissEscape(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape" && !event.defaultPrevented
         && (panel?.contains(document.activeElement) || document.activeElement === triggerRef.current)) {
         event.preventDefault(); setOpen(false); triggerRef.current?.focus();
@@ -63,38 +80,58 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
     };
   }, [open]);
 
+  function changeMode(next: DownloadMode) {
+    if (busy || requestRef.current || mode === next) return;
+    setMode(next);
+    setState(undefined);
+  }
+
+  function moveTab(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (busy || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? modes.length - 1
+      : (index + (event.key === "ArrowRight" ? 1 : -1) + modes.length) % modes.length;
+    const next = modes[nextIndex].mode;
+    changeMode(next);
+    tabRefs.current[next]?.focus();
+  }
+
   async function download() {
-    if (requestRef.current || clips.length === 0) return;
+    if (requestRef.current || count === 0) return;
+    const snapshot = JSON.parse(source) as AsmrProject;
+    const filename = mode === "audio" ? getBatchDownloadFilename(snapshot) : getBatchStoryboardDownloadFilename(snapshot);
     const controller = new AbortController();
     requestRef.current = controller;
-    setStatus("preparing");
-    setError(undefined);
+    const active = () => !controller.signal.aborted && requestRef.current === controller;
+    setState({ source, mode, status: "preparing" });
     try {
       const response = await fetch("/api/assets/batch-download", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project }), signal: controller.signal,
+        method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(mode === "audio" ? { project: snapshot } : { project: snapshot, kind: "storyboard" }), signal: controller.signal,
       });
+      if (!active()) return;
       if (!response.ok) {
         const detail = await response.json().catch(() => null) as { error?: unknown } | null;
         throw new Error(typeof detail?.error === "string" ? detail.error : "下载准备失败，请重试。");
       }
-      if (!response.headers.get("content-type")?.includes("application/zip")) throw new Error("下载文件暂不可用，请重试。");
-      const blob = await response.blob();
-      if (controller.signal.aborted) return;
-      const url = URL.createObjectURL(blob);
+      if (!response.headers.get("content-type")?.includes("application/json")) throw new Error("下载文件暂不可用，请重试。");
+      const archive = await response.json() as { downloadUrl?: unknown; filename?: unknown; clipCount?: unknown; size?: unknown } | null;
+      if (!active()) return;
+      if (!archive || typeof archive.downloadUrl !== "string"
+        || !/^\/api\/assets\/batch-download\?token=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(archive.downloadUrl)
+        || archive.filename !== filename || archive.clipCount !== count
+        || typeof archive.size !== "number" || !Number.isSafeInteger(archive.size) || archive.size <= 0) throw new Error("下载文件暂不可用，请重试。");
       const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = getBatchDownloadFilename(project);
+      anchor.href = archive.downloadUrl;
+      anchor.download = filename;
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
-      // Let the browser start reading the Blob before releasing its URL.
-      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      setStatus("downloaded");
+      setState({ source, mode, status: "downloaded" });
     } catch (cause) {
-      if (controller.signal.aborted) return;
-      setStatus("error");
-      setError(cause instanceof Error ? cause.message : "下载准备失败，请重试。");
+      if (!active()) return;
+      const connectionFailed = cause instanceof TypeError && /failed to fetch|fetch failed|networkerror|load failed/i.test(cause.message);
+      setState({ source, mode, status: "error", error: connectionFailed ? `${mode === "audio" ? "音频" : "分镜"}包下载连接中断，请重试。` : cause instanceof Error ? cause.message : "下载准备失败，请重试。" });
     } finally {
       if (requestRef.current === controller) requestRef.current = null;
     }
@@ -104,36 +141,43 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
     requestRef.current?.abort();
     requestRef.current = null;
     focusAfterCancelRef.current = true;
-    setStatus("idle");
-    setError(undefined);
+    setState(undefined);
   }
 
   return <>
     <button
       ref={triggerRef} type="button" onClick={() => setOpen((current) => !current)}
-      aria-label="批量下载音频" aria-controls={panelId} aria-expanded={open}
-      title={busy ? "正在准备音频下载" : "批量下载已采用音频"}
+      aria-label="批量下载" aria-controls={panelId} aria-expanded={open}
+      title={busy ? "正在准备批量下载" : "批量下载音频与分镜"}
       className="inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-emerald-300/25 bg-emerald-300/10 px-2 text-xs font-semibold text-emerald-100 transition-colors hover:bg-emerald-300/16 focus:outline-none focus:ring-2 focus:ring-emerald-300/45"
     >
       {busy ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Archive className="h-4 w-4" aria-hidden="true" />}
       <span className="sr-only sm:not-sr-only">批量下载</span>
-      {clips.length > 0 && <span aria-hidden="true" className="hidden min-w-4 rounded bg-emerald-200/10 px-1 py-0.5 text-[10px] leading-none tabular-nums md:inline-block">{clips.length}</span>}
+      {count > 0 && <span aria-hidden="true" className="hidden min-w-4 rounded bg-emerald-200/10 px-1 py-0.5 text-[10px] leading-none tabular-nums md:inline-block">{count}</span>}
     </button>
     {open && <div
       ref={panelRef} id={panelId} role="dialog" aria-labelledby={titleId} tabIndex={-1}
       onBlur={(event) => {
         if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget) && event.relatedTarget !== triggerRef.current) setOpen(false);
       }}
-      className="absolute right-2 top-full z-30 mt-2 w-[min(23rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain rounded-xl border border-white/12 bg-studio-panel p-4 text-studio-text shadow-[0_18px_60px_rgba(0,0,0,0.5)] outline-none"
+      className="absolute right-2 top-full z-30 mt-2 w-[min(23rem,calc(100vw-1rem))] overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl border border-white/12 bg-studio-panel p-4 text-studio-text shadow-[0_18px_60px_rgba(0,0,0,0.5)] outline-none"
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold"><Archive className="h-4 w-4 text-emerald-200" aria-hidden="true" />批量下载音频</h2>
-          <p className="mt-1.5 text-xs leading-5 text-studio-muted">{clips.length > 0 ? `当前工程已采用 ${clips.length} 个片段，打包为一个 ZIP。` : "采用生成的音频后，即可在这里打包下载。"}</p>
-        </div>
+        <h2 id={titleId} className="flex items-center gap-2 pt-1 text-sm font-semibold"><Archive className="h-4 w-4 text-emerald-200" aria-hidden="true" />批量下载</h2>
         <button type="button" onClick={close} aria-label="关闭批量下载" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-studio-muted transition hover:bg-white/5 hover:text-studio-text focus:outline-none focus:ring-2 focus:ring-sky-300/45"><X className="h-4 w-4" aria-hidden="true" /></button>
       </div>
-      <div className="mt-4 rounded-lg border border-white/[0.07] bg-black/15 p-3">
+      <div role="tablist" aria-label="下载内容" className="mt-3 grid grid-cols-2 gap-1 rounded-lg border border-white/[0.06] bg-black/20 p-1">
+        {modes.map((item, index) => <button key={item.mode} ref={(element) => { tabRefs.current[item.mode] = element; }} type="button" role="tab"
+          id={`${panelId}-${item.mode}-tab`} aria-selected={mode === item.mode} aria-controls={`${panelId}-${item.mode}-panel`} tabIndex={mode === item.mode ? 0 : -1}
+          disabled={busy} onClick={() => changeMode(item.mode)} onKeyDown={(event) => moveTab(event, index)}
+          className={`inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45 disabled:cursor-wait ${mode === item.mode ? item.mode === "audio" ? "bg-emerald-300/10 text-emerald-100" : "bg-violet-300/10 text-violet-100" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`}>
+          <item.icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{item.label}
+        </button>)}
+      </div>
+      <div id={`${panelId}-${mode}-panel`} role="tabpanel" aria-labelledby={`${panelId}-${mode}-tab`} aria-busy={busy}>
+      {mode === "audio" ? <>
+      <p className="mt-3 text-xs leading-5 text-studio-muted">{clips.length > 0 ? `当前工程已采用 ${clips.length} 个片段，打包为一个 ZIP。` : "采用生成的音频后，即可在这里打包下载。"}</p>
+      <div className="mt-3 rounded-lg border border-white/[0.07] bg-black/15 p-3">
         <div className="flex min-w-0 items-center gap-2 text-xs font-medium"><Folder className="h-4 w-4 shrink-0 text-amber-200/80" aria-hidden="true" /><span className="truncate" title={getBatchDownloadFolderName(project)}>{getBatchDownloadFolderName(project)}</span></div>
         <div className="ml-2 mt-3 space-y-3 border-l border-white/10 pl-3">
           <div className="flex items-start gap-2"><Folder className="mt-0.5 h-3.5 w-3.5 shrink-0 text-studio-muted" aria-hidden="true" /><div><p className="text-xs font-medium">无后处理</p><p className="mt-0.5 text-[11px] leading-5 text-studio-muted">已采用原声，保留原始音频文件。</p></div></div>
@@ -141,16 +185,39 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
         </div>
       </div>
       <p className="mt-2.5 text-[11px] leading-5 text-studio-muted">两个版本使用相同编号，按时间线顺序排列。</p>
+      </> : <>
+        <p className="mt-3 text-xs leading-5 text-studio-muted">当前工程 {progress.total} 段台词，{storyboards.length} 段可下载。</p>
+        <div role="group" aria-label="分镜下载状态" className="mt-3 grid grid-cols-3 gap-2">
+          {[
+            { label: "已完成", value: progress.ready, tone: "text-emerald-200" },
+            { label: "待生成", value: progress.pending, tone: "text-studio-muted" },
+            { label: "需更新", value: progress.needsUpdate, tone: "text-amber-200" },
+          ].map((item) => <div key={item.label} aria-label={`${item.label} ${item.value} 段`} className="min-w-0 rounded-lg border border-white/[0.06] bg-white/[0.025] px-2 py-2">
+            <p className={`text-base font-semibold leading-5 tabular-nums ${item.tone}`}>{item.value}</p><p className="mt-1 text-[10px] text-studio-muted">{item.label}</p>
+          </div>)}
+        </div>
+        <div className="mt-3 rounded-lg border border-white/[0.07] bg-black/15 p-3">
+          <div className="flex min-w-0 items-center gap-2 text-xs font-medium"><Folder className="h-4 w-4 shrink-0 text-violet-200/80" aria-hidden="true" /><span className="truncate" title={getBatchStoryboardDownloadFolderName(project)}>{getBatchStoryboardDownloadFolderName(project)}</span></div>
+          <div className="ml-2 mt-3 space-y-2 border-l border-white/10 pl-3">
+            {storyboards.slice(0, 3).map((item) => <div key={item.clip.id} className="flex min-w-0 items-center gap-2 text-[11px] text-studio-muted"><FileText className="h-3.5 w-3.5 shrink-0 text-violet-200/60" aria-hidden="true" /><span className="truncate" title={item.filename}>{item.filename}</span></div>)}
+            {storyboards.length > 3 && <p className="text-[11px] text-studio-muted">另外 {storyboards.length - 3} 段 TXT</p>}
+            {storyboards.length === 0 && <p className="text-[11px] leading-5 text-studio-muted">暂无可下载分镜，请先生成或更新本段分镜。</p>}
+          </div>
+        </div>
+        <p className="mt-2.5 text-[11px] leading-5 text-studio-muted">每段一个完整 H3 提示词 TXT，按台词顺序打包为 ZIP。</p>
+        <p className="mt-1 text-[11px] leading-5 text-studio-muted">仅打包已保存、完整且未过期的提示词；待生成与需更新段落不包含在内。</p>
+      </>}
       {error && <p role="alert" className="mt-3 rounded-lg border border-amber-300/15 bg-amber-300/5 px-3 py-2 text-xs leading-5 text-amber-100">{error}</p>}
-      {status === "downloaded" && <p role="status" className="mt-3 flex items-center gap-2 text-xs leading-5 text-emerald-200"><Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />下载已发起，解压后即可查看两个文件夹。</p>}
+      {status === "downloaded" && <p role="status" className="mt-3 flex items-center gap-2 text-xs leading-5 text-emerald-200"><Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{mode === "audio" ? "下载已发起，解压后即可查看两个文件夹。" : "下载已发起，解压后即可逐段查看 H3 提示词。"}</p>}
       <div className="mt-4 flex items-center gap-2">
-        <button ref={actionRef} type="button" onClick={() => void download()} disabled={clips.length === 0 || busy} className="inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-300/30 bg-emerald-300/15 px-3 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-300/22 focus:outline-none focus:ring-2 focus:ring-emerald-300/45 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-studio-muted">
+        <button ref={actionRef} type="button" onClick={() => void download()} disabled={count === 0 || busy} className={`inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-studio-muted ${mode === "audio" ? "border-emerald-300/30 bg-emerald-300/15 text-emerald-100 hover:bg-emerald-300/22 focus:ring-emerald-300/45" : "border-violet-300/30 bg-violet-300/15 text-violet-100 hover:bg-violet-300/22 focus:ring-violet-300/45"}`}>
           {busy ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
-          {busy ? "正在准备音频…" : status === "error" ? "重试下载 ZIP" : "下载 ZIP"}
+          {busy ? `正在准备${mode === "audio" ? "音频" : "分镜"}…` : `${status === "error" ? "重试" : ""}下载${mode === "audio" ? "音频 ZIP" : "分镜 TXT"}`}
         </button>
         {busy && <button type="button" onClick={cancel} className="h-10 rounded-lg border border-studio-line px-3 text-xs text-studio-muted transition hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-sky-300/45">取消</button>}
       </div>
-      {busy && <p role="status" className="mt-2 text-[11px] leading-5 text-studio-muted">正在整理原声与后处理音频，请稍候。</p>}
+      {busy && <p role="status" className="mt-2 text-[11px] leading-5 text-studio-muted">{mode === "audio" ? "正在整理原声与后处理音频，请稍候。" : "正在整理分镜 TXT，请稍候。"}</p>}
+      </div>
     </div>}
   </>;
 }

@@ -15,6 +15,7 @@ import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { VoiceGenerationContextSchema, type VoiceGenerationContext } from "./voice-generation-context";
 import { VoiceRecognitionSchema, type VoiceContentComparison, type VoiceRecognition } from "./voice-recognition";
+import { getLocalStorageError } from "./local-storage-error";
 
 export type VoiceGenerationProgress = { progress: number; message: string };
 type GroupAudio = { wav: Uint8Array; leadingQuietMs: number; trailingQuietMs: number };
@@ -97,7 +98,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
   if (input.signal?.aborted) abort();
   const timeout = setTimeout(() => controller.abort(new VoxCpm2Error("长文生成超时。已完成的完整原音仍可试听、下载。", 504)), deps.timeoutMs ?? 30 * 60 * 1000);
   const signal = controller.signal;
-  const check = () => { if (signal.aborted) throw signal.reason instanceof VoxCpm2Error ? signal.reason : new VoxCpm2Error("已取消生成，已完成的原音仍可试听、下载。", 499); };
+  const check = () => { if (signal.aborted) throw getLocalStorageError(signal.reason) ?? (signal.reason instanceof VoxCpm2Error ? signal.reason : new VoxCpm2Error("已取消生成，已完成的原音仍可试听、下载。", 499)); };
   let progressValue = 0;
   const progress = (value: number, message: string) => { check(); progressValue = Math.max(progressValue, value); input.onProgress?.({ progress: progressValue, message }); };
   try {
@@ -218,7 +219,12 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
             warnings.push(...take.qualityWarnings);
             await bestEffortRecord("groups.json", metadata);
             progress(8 + (index + 1) / targets.length * 84, `第 ${index + 1}/${targets.length} 组已完成${analysis ? "" : "，完整原音待试听确认"}`);
-          } catch { check(); await bestEffortRecord(`${prefix}-failure.json`, { stage: "save", message: saveFailure(index).message }); throw saveFailure(index); }
+          } catch (error) {
+            check();
+            const reported = getLocalStorageError(error) ?? saveFailure(index);
+            await bestEffortRecord(`${prefix}-failure.json`, { stage: "save", message: reported.message });
+            throw reported;
+          }
         };
         for (let index = 0; index < targets.length; index++) {
           const target = targets[index];
@@ -244,7 +250,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
               await rename(`${source}.tmp`, source);
               rawSaved = true;
             }
-            catch { throw saveFailure(index); }
+            catch (error) { throw getLocalStorageError(error) ?? saveFailure(index); }
           };
           progress(8 + index / targets.length * 84, `正在生成第 ${index + 1}/${targets.length} 组${pending ? "，同时检查上一组" : ""}`);
           const generationStarted = Date.now();
@@ -259,6 +265,8 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
             await bestEffortRecord(`${prefix}-failure.json`, { stage: rawSaved ? "save" : "generate",
               message: error instanceof Error ? error.message : "生成未完成", at: new Date().toISOString() });
             check();
+            const storageError = getLocalStorageError(error);
+            if (storageError) throw storageError;
             if (error instanceof VoxCpm2Error) throw error;
             throw new VoxCpm2Error(`第 ${index + 1} 段模型生成未完成。已保存的完整原音仍可试听、下载。`);
           }

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
+import { getLocalStorageError } from "./local-storage-error";
 import { VoxCpm2Error } from "./voxcpm2-error";
 
 export type VoxCpm2RuntimeSession = {
@@ -12,12 +13,25 @@ export type VoxCpm2RuntimeSession = {
   onClose?: (cleanup: () => Promise<void>) => void;
 };
 
+type RuntimeSessionDependencies = { writeOwnerRecord?: (fd: number, content: string) => void };
+
+function writeOwnerRecord(fd: number, content: string): void {
+  const bytes = Buffer.from(content, "utf8");
+  let offset = 0;
+  while (offset < bytes.length) {
+    const written = writeSync(fd, bytes, offset, bytes.length - offset, offset);
+    if (written <= 0) throw Object.assign(new Error("Could not write runtime reservation owner"), { code: "EIO" });
+    offset += written;
+  }
+}
+
 // Keep the reservation across planning, all TTS takes and CPU alignment. A second
 // tab cannot interleave another native job between this candidate's groups.
 export async function withVoxCpm2RuntimeSession<T>(
   config: LocalRuntimeConfig,
   signal: AbortSignal | undefined,
   operation: (session: VoxCpm2RuntimeSession) => Promise<T>,
+  dependencies: RuntimeSessionDependencies = {},
 ): Promise<T> {
   signal?.throwIfAborted();
   const runtimeRoot = path.resolve(config.runtimeRoot);
@@ -25,6 +39,8 @@ export async function withVoxCpm2RuntimeSession<T>(
   await mkdir(path.dirname(lockPath), { recursive: true });
   const lock = await open(lockPath, "wx").catch((error: NodeJS.ErrnoException) => {
     if (error.code === "EEXIST") throw new VoxCpm2Error("VoxCPM2 正在生成，请等待当前候选完成。", 409);
+    const storageError = getLocalStorageError(error);
+    if (storageError) throw storageError;
     throw new VoxCpm2Error("无法准备 VoxCPM2 生成目录。", 503);
   });
   const children = new Map<number | undefined, number>();
@@ -33,11 +49,15 @@ export async function withVoxCpm2RuntimeSession<T>(
   let closing: Promise<void> | undefined;
   let identity: { dev: bigint; ino: bigint } | undefined;
   let release: Promise<void> | undefined;
+  let initialRecordCompleted = false;
+  let initialOwnerRecord: string | undefined;
   const owner = { ownerPid: process.pid, ownerToken: randomUUID(), childPid: null as number | null, createdAt: new Date().toISOString() };
   const record = () => {
     // Pad to a stable size so updating a shorter PID never leaves invalid JSON.
     const childPids = [...children.keys()].filter((pid): pid is number => pid !== undefined);
-    writeSync(lock.fd, JSON.stringify({ ...owner, childPid: childPids[0] ?? null, childPids }).padEnd(1024, " "), 0, "utf8");
+    const contents = JSON.stringify({ ...owner, childPid: childPids[0] ?? null, childPids }).padEnd(1024, " ");
+    if (!initialRecordCompleted) initialOwnerRecord = contents;
+    (dependencies.writeOwnerRecord ?? writeOwnerRecord)(lock.fd, contents);
   };
   const removeOwnedLock = async () => {
     if (!identity) return;
@@ -46,9 +66,14 @@ export async function withVoxCpm2RuntimeSession<T>(
     try {
       const info = await current.stat({ bigint: true });
       if (info.dev !== identity.dev || info.ino !== identity.ino || info.size > BigInt(4096)) return;
-      try {
-        owned = JSON.parse(await current.readFile("utf8")).ownerToken === owner.ownerToken;
-      } catch { return; }
+      const contents = await current.readFile("utf8");
+      try { owned = JSON.parse(contents).ownerToken === owner.ownerToken; }
+      catch {
+        // Only our newly created inode and the exact attempted prefix prove
+        // ownership when an initial write ran out of space before valid JSON.
+        owned = !initialRecordCompleted && initialOwnerRecord !== undefined
+          && initialOwnerRecord.startsWith(contents);
+      }
     } finally { await current.close(); }
     if (owned) await unlink(lockPath);
   };
@@ -68,7 +93,8 @@ export async function withVoxCpm2RuntimeSession<T>(
   };
   try {
     identity = await lock.stat({ bigint: true });
-    record();
+    try { record(); initialRecordCompleted = true; }
+    catch (error) { throw getLocalStorageError(error) ?? error; }
     signal?.throwIfAborted();
     return await operation({
       runtimeRoot,

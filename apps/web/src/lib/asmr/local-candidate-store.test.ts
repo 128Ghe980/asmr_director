@@ -71,6 +71,27 @@ describe("product candidate store", () => {
     expect(await readFile(wavPath, "utf8")).toBe("saved-audio");
   });
 
+  it("lists ready candidates across one project's clips in stable newest-first order without changing the manifest", async () => {
+    const runtime = await config();
+    const records = [
+      candidate("older", "voice_1"),
+      { ...candidate("newer_b", "voice_1"), createdAt: "2026-09-09T00:00:00.000Z" },
+      { ...candidate("newer_a", "voice_2"), createdAt: "2026-09-09T00:00:00.000Z" },
+      { ...candidate("discarded", "voice_2"), status: "discarded" as const, createdAt: "2026-09-10T00:00:00.000Z" },
+      candidate("foreign", "voice_1", "project_10"),
+    ];
+    for (const record of records) await saveAudioCandidate({ config: runtime, candidate: record });
+    const manifestPath = resolveCandidateManifestPath(runtime);
+    const before = await readFile(manifestPath, "utf8");
+
+    expect((await listAudioCandidates({ config: runtime, projectId: "project_1" })).map((item) => item.candidateId)).toEqual(["newer_a", "newer_b", "older"]);
+    expect((await listAudioCandidates({ config: runtime, projectId: "project_1", clipId: "voice_1" })).map((item) => item.candidateId)).toEqual(["newer_b", "older"]);
+    expect((await listAudioCandidates({ config: runtime, projectId: "project_1", includeDiscarded: true })).map((item) => item.candidateId)).toEqual(["discarded", "newer_a", "newer_b", "older"]);
+    expect(await listAudioCandidates({ config: runtime, projectId: "unknown_project" })).toEqual([]);
+    expect(await listAudioCandidates({ config: runtime, projectId: "project_1", clipId: "" })).toEqual([]);
+    expect(await readFile(manifestPath, "utf8")).toBe(before);
+  });
+
   it("enforces 12 unadopted candidates under concurrent saves without losing updates", async () => {
     const runtime = await config();
     const outcomes = await Promise.allSettled(Array.from({ length: 15 }, (_, index) => saveAudioCandidate({ config: runtime, candidate: candidate(`c_${index}`) })));

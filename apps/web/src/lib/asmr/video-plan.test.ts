@@ -7,7 +7,8 @@ import { parseImportedProject, serializeProject } from "./project-persistence";
 import { AsmrProjectSchema, type AsmrProject, type VoiceClip } from "./schema";
 import {
   ClipVideoStoryboardSchema, ProjectVideoPlanSchema, createClipH3Prompt,
-  createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint,
+  StoryboardReferenceModeSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext,
+  getClipStoryboardReferenceMode, getPreviousClipPromptFingerprint,
   getPreviousVoiceClip, isClipVideoStoryboardCurrent, type ClipVideoStoryboard,
 } from "./video-plan";
 
@@ -285,5 +286,98 @@ describe("optional preceding-shot continuity", () => {
     expect(isClipVideoStoryboardCurrent(project, firstId)).toBe(true);
     expect(getPreviousClipPromptFingerprint(project, secondId)).toBeUndefined();
     expect(isClipVideoStoryboardCurrent(project, secondId)).toBe(false);
+  });
+});
+
+describe("storyboard reference modes", () => {
+  it("preserves optional preferences and generated mode in exported project JSON while keeping legacy records unchanged", () => {
+    const project = makeProject();
+    putShot(project, firstId, { referenceMode: "new" });
+    project.videoPlan!.referenceModes = { [firstId]: "new", [secondId]: "continuous", [thirdId]: "new" };
+    expect(parseImportedProject(serializeProject(project))).toEqual({ success: true, project });
+    const legacy = makeProject();
+    putShot(legacy);
+    expect(ProjectVideoPlanSchema.parse(legacy.videoPlan)).toEqual(legacy.videoPlan);
+    expect(legacy.videoPlan).not.toHaveProperty("referenceModes");
+    expect(legacy.videoPlan!.shots[firstId]).not.toHaveProperty("referenceMode");
+  });
+
+  it("resolves explicit preferences before generated mode and legacy links, while always forcing the first voice to new", () => {
+    const project = makeProject();
+    putShot(project);
+    const second = putLinkedShot(project, secondId);
+    expect(getClipStoryboardReferenceMode(project, secondId)).toBe("continuous");
+    second.referenceMode = "new";
+    expect(getClipStoryboardReferenceMode(project, secondId)).toBe("new");
+    project.videoPlan!.referenceModes = { [firstId]: "continuous", [secondId]: "continuous" };
+    project.videoPlan!.shots[firstId].referenceMode = "continuous";
+    expect(getClipStoryboardReferenceMode(project, firstId)).toBe("new");
+    expect(getClipStoryboardReferenceMode(project, secondId)).toBe("continuous");
+    expect(getClipStoryboardReferenceMode(project, thirdId)).toBe("new");
+    const track = project.timeline.tracks.find((item) => item.track_type === "voice")!;
+    track.clips.reverse();
+    expect(getClipStoryboardReferenceMode(project, firstId)).toBe("new");
+  });
+
+  it("keeps existing prompts, source identity and dependent-shot validity when only next-generation preferences change", () => {
+    const project = makeProject();
+    putShot(project);
+    putLinkedShot(project, secondId);
+    const source = createClipVideoSourceFingerprint(project, secondId);
+    const predecessor = getPreviousClipPromptFingerprint(project, secondId);
+    const firstPrompt = createClipH3Prompt(project, firstId);
+    const secondPrompt = createClipH3Prompt(project, secondId);
+    const shots = structuredClone(project.videoPlan!.shots);
+    project.videoPlan!.referenceModes = { [firstId]: "continuous", [secondId]: "new" };
+    expect(createClipVideoSourceFingerprint(project, secondId)).toBe(source);
+    expect(getPreviousClipPromptFingerprint(project, secondId)).toBe(predecessor);
+    expect(isClipVideoStoryboardCurrent(project, firstId)).toBe(true);
+    expect(isClipVideoStoryboardCurrent(project, secondId)).toBe(true);
+    expect(createClipH3Prompt(project, firstId)).toBe(firstPrompt);
+    expect(createClipH3Prompt(project, secondId)).toBe(secondPrompt);
+    expect(project.videoPlan!.shots).toEqual(shots);
+  });
+
+  it.each(["continuous", "new"] as const)("offers only a usable adjacent predecessor for %s generation", (mode) => {
+    const project = makeProject();
+    expect(getClipStoryboardReferenceContext(project, firstId, mode)).toBeUndefined();
+    expect(getClipStoryboardReferenceContext(project, secondId, mode)).toBeUndefined();
+    const previous = putShot(project);
+    expect(getClipStoryboardReferenceContext(project, secondId, mode)).toEqual({
+      previousClipId: firstId, previousPromptFingerprint: getPreviousClipPromptFingerprint(project, secondId),
+    });
+    expect(getClipStoryboardReferenceContext(project, thirdId, mode)).toBeUndefined();
+    previous.camera = "";
+    expect(getClipStoryboardReferenceContext(project, secondId, mode)).toBeUndefined();
+    previous.camera = "Static medium close-up.";
+    voice(project).text += "Edited dialogue.";
+    expect(getClipStoryboardReferenceContext(project, secondId, mode)).toBeUndefined();
+  });
+
+  it("keeps legacy predecessor fingerprint bytes and includes mode only when a generated shot stores it", () => {
+    const project = makeProject();
+    const shot = putShot(project);
+    const legacy = JSON.stringify({
+      clipId: shot.clipId, sourceFingerprint: shot.sourceFingerprint, audio: shot.audio,
+      title: shot.title, visual: shot.visual, action: shot.action, camera: shot.camera,
+    });
+    expect(getPreviousClipPromptFingerprint(project, secondId)).toBe(legacy);
+    shot.referenceMode = "new";
+    expect(getPreviousClipPromptFingerprint(project, secondId)).toBe(JSON.stringify({
+      ...JSON.parse(legacy), referenceMode: "new",
+    }));
+  });
+
+  it("rejects unsupported preference or saved modes without discarding the audio project", () => {
+    expect(StoryboardReferenceModeSchema.safeParse("independent").success).toBe(false);
+    const project = makeProject();
+    putShot(project);
+    const raw = JSON.parse(serializeProject(project));
+    raw.videoPlan.referenceModes = { [secondId]: "independent" };
+    expect(AsmrProjectSchema.parse(raw).videoPlan).toBeUndefined();
+    expect(AsmrProjectSchema.parse(raw).timeline).toEqual(project.timeline);
+    delete raw.videoPlan.referenceModes;
+    raw.videoPlan.shots[firstId].referenceMode = "independent";
+    expect(AsmrProjectSchema.parse(raw).videoPlan).toBeUndefined();
   });
 });

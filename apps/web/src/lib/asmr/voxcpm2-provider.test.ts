@@ -7,6 +7,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { writePcm16MonoWav } from "./procedural-audio";
 import { getLocalRuntimeConfig } from "./local-runtime-config";
+import { LocalStorageError } from "./local-storage-error";
 import { generateVoxCpm2, type VoxCpm2Spawn } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
@@ -209,6 +210,23 @@ describe("VoxCPM2 native provider", () => {
     expect(onRawOutput).toHaveBeenCalledExactlyOnceWith(output);
     expect(new Uint8Array(await readFile(outputPath))).toEqual(output);
   });
+  it.each(["typed", "filesystem cause"] as const)("preserves the %s storage error from raw publication and retains its complete audio", async (kind) => {
+    const { input, root, output } = await fixture();
+    const error = kind === "typed" ? new LocalStorageError()
+      : new Error("Could not publish original", { cause: Object.assign(new Error("disk full"), { code: "ENOSPC" }) });
+    const onRawOutput = vi.fn().mockRejectedValue(error);
+    let outputPath = "";
+    const reported = await generateVoxCpm2({ ...input, onRawOutput }, {
+      spawnImpl: successfulSpawn(output, (args) => { outputPath = args[args.indexOf("-o") + 1]; }),
+    }).catch((caught: unknown) => caught);
+    expect(reported).toBeInstanceOf(LocalStorageError);
+    expect(reported).toMatchObject({ statusCode: 507, code: "INSUFFICIENT_STORAGE", message: "音频保存空间不足，请释放存储空间后重试。" });
+    if (kind === "typed") expect(reported).toBe(error);
+    expect(onRawOutput).toHaveBeenCalledWith(output);
+    expect(new Uint8Array(await readFile(outputPath))).toEqual(output);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect(await failureDiagnostics(input)).toMatchObject([{ failure: { statusCode: 507 }, native: { exitConfirmed: true } }]);
+  });
   it("does not expose raw CLI errors or server paths", async () => {
     const { input } = await fixture();
     await expect(generateVoxCpm2(input, { spawnImpl: () => {
@@ -259,19 +277,44 @@ describe("VoxCPM2 native provider", () => {
   it.each([
     ["CUDA error: out of memory", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
     ["std::bad_alloc", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
-    ["write failed: No space left on device", "生成所需磁盘空间不足，请腾出空间后重试。", 503],
+    ["write failed: No space left on device", "音频保存空间不足，请释放存储空间后重试。", 507],
+    ["write failed: [WinError 112]", "音频保存空间不足，请释放存储空间后重试。", 507],
     ["GGML_ASSERT(n_tokens <= n_batch) failed", "本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400],
     ["private/ggml-cuda/cpy.cu:228: GGML_ASSERT(grid_y < USHRT_MAX) failed", "生成音频超出本机解码容量，请缩短生成范围后重试。", 400],
   ])("classifies an exact native failure safely: %s", async (nativeMessage, message, statusCode) => {
     const { input } = await fixture();
-    await expect(generateVoxCpm2(input, { spawnImpl: () => {
+    const reported = await generateVoxCpm2(input, { spawnImpl: () => {
       const process = child();
       setImmediate(() => { process.stderr.write(nativeMessage + " private-path input-secret"); process.emit("close", 1, null); });
       return process;
-    } })).rejects.toMatchObject({ message, statusCode });
+    } }).catch((caught: unknown) => caught);
+    expect(reported).toMatchObject({ message, statusCode });
+    if (statusCode === 507) expect(reported).toHaveProperty("code", "INSUFFICIENT_STORAGE");
     const [record] = await failureDiagnostics(input);
     expect(record.native.stderrTail).toContain(nativeMessage);
     expect(record.failure.message).not.toMatch(/private-path|input-secret|cpy\.cu/);
+  });
+  it.each(["ENOSPC", "EDQUOT"])("retains native %s as a typed storage error", async (code) => {
+    const { input, root } = await fixture();
+    await expect(generateVoxCpm2(input, { spawnImpl: () => {
+      throw Object.assign(new Error("private-runtime-path"), { code });
+    } })).rejects.toMatchObject({ statusCode: 507, code: "INSUFFICIENT_STORAGE", message: "音频保存空间不足，请释放存储空间后重试。" });
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect((await failureDiagnostics(input))[0].native.spawnError.code).toBe(code);
+  });
+  it("keeps the storage signal and reservation when a native storage failure has not confirmed exit", async () => {
+    const { input, root } = await fixture();
+    const process = child();
+    process.kill.mockImplementation(() => false);
+    try {
+      await expect(generateVoxCpm2(input, { exitWaitMs: 5, spawnImpl: () => {
+        setImmediate(() => process.emit("error", Object.assign(new Error("native write failed"), { code: "ENOSPC" })));
+        return process;
+      } })).rejects.toMatchObject({ statusCode: 507, code: "INSUFFICIENT_STORAGE" });
+      expect(await readdir(path.join(root, "locks"))).toHaveLength(1);
+      expect((await failureDiagnostics(input))[0].native.exitConfirmed).toBe(false);
+    } finally { process.emit("close", 1, null); }
+    await vi.waitFor(async () => { expect(await readdir(path.join(root, "locks"))).toEqual([]); });
   });
   it("does not let unavailable diagnostics hide the generation failure or prevent cleanup", async () => {
     const { input, root } = await fixture();

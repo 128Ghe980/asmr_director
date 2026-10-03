@@ -7,6 +7,7 @@ import { getVoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import { flattenClips } from "@/lib/asmr/view-model";
 import { VoxCpm2Error } from "@/lib/asmr/voxcpm2-provider";
 import { CandidateCapacityError } from "@/lib/asmr/local-candidate-store";
+import { getLocalStorageError } from "@/lib/asmr/local-storage-error";
 
 export const runtime = "nodejs";
 
@@ -48,7 +49,9 @@ export async function POST(request: Request) {
             onProgress: (progress) => send({ type: "progress", ...progress }) });
           send({ type: "result", result });
         } catch (error) {
-          send({ type: "error", error: error instanceof VoxCpm2Error || error instanceof CandidateCapacityError ? error.message : "生成未完成。已保存的完整原音仍可试听、下载。" });
+          const storageError = getLocalStorageError(error);
+          send({ type: "error", ...(storageError ? { error: storageError.message, code: storageError.code }
+            : { error: error instanceof VoxCpm2Error || error instanceof CandidateCapacityError ? error.message : "生成未完成。已保存的完整原音仍可试听、下载。" }) });
         } finally {
           clearInterval(heartbeat);
           request.signal.removeEventListener("abort", abort);
@@ -64,6 +67,8 @@ export async function POST(request: Request) {
     return Response.json("candidate" in result ? result : { asset: result });
   } catch (error) {
     if (request.signal.aborted) return Response.json({ error: "已取消生成。" }, { status: 499 });
+    const storageError = getLocalStorageError(error);
+    if (storageError) return Response.json({ error: storageError.message, code: storageError.code }, { status: storageError.statusCode });
     if (error instanceof VoxCpm2Error || error instanceof CandidateCapacityError) return Response.json({ error: error.message }, { status: error.statusCode });
     return Response.json({ error: "生成失败，请检查人声服务后重试。" }, { status: 502 });
   }

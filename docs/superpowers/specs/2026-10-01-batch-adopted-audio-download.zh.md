@@ -2,6 +2,8 @@
 
 日期：2026-10-01。属于现有音质 V1 的工程导出改进，不新增 roadmap 阶段。[English](2026-10-01-batch-adopted-audio-download.md)。
 
+最新界面扩展（2026-10-03）：同一「批量下载」入口增加「音频 / 分镜」标签。音频沿用下述目录与处理行为；分镜另打 TXT ZIP，每段对应现有可用 H3 提示词，保留原段落编号。见 [分镜状态与批量 TXT 说明](2026-10-03-storyboard-status-and-batch-txt.zh.md) / [开发记录](../../records/2026-10-03-audio-quality-v1-storyboard-status-export.md)。两类均沿用后文下载传输修复所述的原生 token 下载流程。
+
 ## 范围与目录
 
 用户要求新增美观的批量下载入口，将已经生成并接受的全部音频放进一个目录，并区分无后处理和环绕等后处理版本。
@@ -24,7 +26,13 @@
 
 `POST /api/assets/batch-download` 校验工程并先准备完整临时 ZIP，再返回文件流，缺失素材或处理失败仍返回可读 JSON 错误。按片段顺序处理，原声流式写入不压缩 ZIP；每个服务进程同一时间只准备一包。限制为 2,000 段、单源 128 MiB、单段 10 分钟及整包 1 GiB。取消传递到素材读取和空间处理；失败/取消和响应流结束均只清理本次生成的临时目录。新临时文件沿用既有 I 盘空间缓存配置，可通过 `ASMR_BATCH_DOWNLOAD_TEMP_ROOT` 指定。
 
-## 验证状态
+前端现发送`Accept: application/json`，POST返回`{ downloadUrl, filename, clipCount, size }`，浏览器通过`GET /api/assets/batch-download?token=<UUID>`直接下载ZIP，不再读取二进制Blob。默认POST仍保留原ZIP及attachment响应。UUID链接仅在当前进程有效、单次领取、5分钟过期，最多保留2个待下载包；不公开或接受文件路径。GET先领取，再打开/检查文件后返回头部，以64KiB字节背压传输，完成/取消/打开失败只清理一次；放弃链接自动过期，重启需重新打包。音频与目录行为保持。
+
+## 2026-10-02 传输故障修复 — 已验收
+
+服务端已完整准备/读取10段20,982,790B ZIP，但内置浏览器二进制fetch失败；仅去除attachment声明未解决，未确认浏览器内部的具体大小上限。JSON准备→原生GET已成功。已打开实际浏览器下载的ZIP：21项全部CRC/原声SHA/后处理PCM及完整时长校验通过；独立20段现有素材验证包21,015,839B/41项亦通过。2个定向文件27项、变更文件ESLint、全量TypeScript及生产构建通过，138素材哈希与可见文案/timeline保持。0音频/文本/H3生成，未操作候选采用/放弃，未提交推送。证据 `I:/AI/asmr-director-batch-download-recovery/2026-10-02`，见 [故障记录](../../records/2026-10-02-audio-quality-v1-batch-download-recovery.md) / [最新运行入口](../../AI_HANDOFF.md)。
+
+## 2026-10-01 历史验收
 
 实现、自动化、真实API下载及正式浏览器验证已完成。证据根：`I:/AI/asmr-director-batch-download/2026-10-01`。全量Vitest 72文件/755项通过，1个既有opt-in文件/测试跳过；定向UI 3文件/24项（下载组件新增6项）、后端5文件/35项（含既有mix DSP）通过。全量TypeScript、ESLint及生产Webpack构建通过；新增构建目录忽略配置后的最终ESLint复跑也通过。独立后端只读审查没有必须修正项。
 

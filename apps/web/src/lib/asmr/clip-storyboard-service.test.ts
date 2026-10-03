@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { generateClipStoryboard, type ClipStoryboardRequest } from "./clip-storyboard-service";
+import { ClipStoryboardRequestSchema, generateClipStoryboard, readClipStoryboardRequest, type ClipStoryboardRequest } from "./clip-storyboard-service";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { demoProject } from "./mock-project";
 import { writePcm16Wav } from "./pcm-audio";
 import { createClipH3Prompt, createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "./video-plan";
 
-const base = path.resolve(process.platform === "win32" ? "I:/AI" : tmpdir());
+const base = path.resolve(process.platform === "win32" ? "I:/AI/asmr-director-storyboard-modes/2026-10-02/test-temp" : tmpdir());
 let root: string, config: LocalRuntimeConfig;
 const generated = { title: "暖光迎接", visual: "S1 stands beside a warmly lit kitchen counter.", action: "S1 gently gestures toward the counter.", camera: "Static eye-level medium close-up." };
 function reply(value: unknown) { return Response.json({ message: { content: JSON.stringify(value) } }); }
@@ -249,5 +249,90 @@ describe("已采用音频的单片段分镜", () => {
     fetchImpl.mockClear();
     await expect(generateClipStoryboard(input, { env: {}, config: { ...config, clipAssetRoot: "missing" }, fetchImpl, signal: controller.signal })).rejects.toMatchObject({ status: 499 });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("explicit storyboard reference modes", () => {
+  it("accepts both modes and optional legacy includePrevious through the API request parser", async () => {
+    const { input } = await fixture();
+    const withoutLegacyFlag = { provider: input.provider, project: input.project, clipId: input.clipId, instruction: input.instruction };
+    const parsed = await readClipStoryboardRequest(new Request("http://localhost/api/clip-storyboard", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...withoutLegacyFlag, referenceMode: "new" }),
+    }));
+    expect(parsed.includePrevious).toBe(false);
+    expect(parsed.referenceMode).toBe("new");
+    expect(ClipStoryboardRequestSchema.parse(withoutLegacyFlag).referenceMode).toBeUndefined();
+    expect(ClipStoryboardRequestSchema.safeParse({ ...input, referenceMode: "continuous" }).success).toBe(true);
+    expect(ClipStoryboardRequestSchema.safeParse({ ...input, referenceMode: "independent" }).success).toBe(false);
+  });
+
+  it.each(["continuous", "new"] as const)("uses adjacent visual context and current audio/dialogue only for %s, recording actual reference provenance", async (referenceMode) => {
+    const { input, project, voices } = await fixture();
+    const previous = attachPrevious(project, voices[0].id);
+    previous.action = "S1 rests one hand lightly on the counter.";
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generated));
+    const result = await generateClipStoryboard({ ...input, referenceMode }, { env: {}, config, fetchImpl });
+    expect(result.storyboard.referenceMode).toBe(referenceMode);
+    expect(result.storyboard.previousClipId).toBe(voices[0].id);
+    expect(result.storyboard.previousPromptFingerprint).toBe(getPreviousClipPromptFingerprint(project, voices[1].id));
+    expect(result.storyboard.audio).toEqual({ assetId: "audio_1", uri: "asset://clip/audio_1", duration: .3 });
+    expect(result.storyboard.sourceFingerprint).toBe(createClipVideoSourceFingerprint(project, voices[1].id));
+    const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    const messages = JSON.stringify(body.messages);
+    expect(body.messages[1].content).toContain(previous.visual);
+    expect(body.messages[1].content).toContain(previous.action);
+    expect(body.messages[1].content).toContain(JSON.stringify(voices[1].text).slice(1, -1));
+    expect(messages).not.toContain(voices[0].text);
+    expect(messages).not.toContain("audio_0");
+    expect(messages).not.toContain(createClipH3Prompt(project, voices[0].id));
+    expect(body.messages[0].content).toContain("不能复制上一镜台词、音频");
+    expect(body.messages[0].content).toContain("仅作为语义上下文");
+    if (referenceMode === "continuous") {
+      expect(body.messages[0].content).toContain("同一具体场景、光线、景别与机位");
+      expect(body.messages[0].content).toContain("从上一镜动作自然接续");
+      expect(body.messages[0].content).not.toContain("可以选择新的景别");
+    } else {
+      expect(body.messages[0].content).toContain("新分镜优先依据 baseScene、当前剧情和当前台词");
+      expect(body.messages[0].content).toContain("可以选择新的景别、机位或相关位置");
+      expect(body.messages[0].content).toContain("次要参考");
+    }
+    project.videoPlan!.shots[voices[1].id] = result.storyboard;
+    expect(isClipVideoStoryboardCurrent(project, voices[1].id)).toBe(true);
+    const prompt = createClipH3Prompt(project, voices[1].id);
+    expect(prompt).toContain(`<d>[Chinese]${voices[1].text}</d>`);
+    expect(prompt).not.toContain(voices[0].text);
+    expect(prompt).toContain("0.3 seconds");
+    previous.camera += " A hand edit.";
+    expect(isClipVideoStoryboardCurrent(project, voices[1].id)).toBe(false);
+  });
+
+  it.each(["missing", "stale", "incomplete", "nonadjacent", "first"])("rejects continuous generation for a %s predecessor before model dispatch", async (kind) => {
+    const { input, project, voices } = await fixture();
+    const fetchImpl = vi.fn<typeof fetch>();
+    if (kind !== "missing") attachPrevious(project, voices[0].id);
+    if (kind === "stale") voices[0].text += "修改。";
+    if (kind === "incomplete") project.videoPlan!.shots[voices[0].id].camera = "";
+    const clipId = kind === "first" ? voices[0].id : kind === "nonadjacent" ? voices[2].id : input.clipId;
+    await expect(generateClipStoryboard({ ...input, clipId, referenceMode: "continuous" }, { env: {}, config, fetchImpl }))
+      .rejects.toMatchObject({ status: 409, message: expect.stringContaining(kind === "first" ? "第一条人声" : "连续镜头") });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing", "stale", "incomplete", "nonadjacent", "first"])("allows new generation with background/current dialogue for a %s predecessor", async (kind) => {
+    const { input, project, voices } = await fixture();
+    if (kind !== "missing") attachPrevious(project, voices[0].id);
+    if (kind === "stale") voices[0].text += "修改。";
+    if (kind === "incomplete") project.videoPlan!.shots[voices[0].id].camera = "";
+    const clipId = kind === "first" ? voices[0].id : kind === "nonadjacent" ? voices[2].id : input.clipId;
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generated));
+    const result = await generateClipStoryboard({ ...input, clipId, includePrevious: true, referenceMode: "new" }, { env: {}, config, fetchImpl });
+    expect(result.storyboard.referenceMode).toBe("new");
+    expect(result.storyboard).not.toHaveProperty("previousClipId");
+    expect(result.storyboard).not.toHaveProperty("previousPromptFingerprint");
+    const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    expect(body.messages[1].content).toContain(project.videoPlan!.sceneDescription);
+    expect(body.messages[1].content).not.toContain("上一镜连续参考");
+    expect(body.messages[1].content).not.toContain("上一镜次要连续参考");
+    expect(body.messages[0].content).toContain("新分镜优先依据");
   });
 });

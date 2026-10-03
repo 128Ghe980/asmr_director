@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveClipAssetPath, saveClipAsset } from "./local-asset-store";
+import * as assetStore from "./local-asset-store";
 import { getLocalRuntimeConfig } from "./local-runtime-config";
 import { decodePcmWav, writePcm16Wav } from "./pcm-audio";
 import { makeVoiceCandidateFixture } from "./voice-candidate-fixture";
@@ -10,6 +11,7 @@ import { VoiceGroupAnalysisError, type VoiceGroupAnalysis } from "./voice-group-
 import { assembleVoiceGroups, generateVoiceLongText } from "./voice-longtext-generation";
 import { buildLongTextInputs, type VoiceLongTextPlan } from "./voice-longtext-plan";
 import { VoxCpm2Error } from "./voxcpm2-provider";
+import { INSUFFICIENT_STORAGE } from "./local-storage-error";
 
 type Dependencies = NonNullable<Parameters<typeof generateVoiceLongText>[1]>;
 type GenerationInput = Parameters<typeof generateVoiceLongText>[0];
@@ -515,8 +517,7 @@ describe("long-text generation orchestration with injected engine and alignment"
       throw Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
     });
     const failure = await generateVoiceLongText(input, { ...deps, writeTrace }).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ statusCode: 503, message: expect.stringContaining("第 1 段保存录音时失败") });
-    expect((failure as Error).message).toContain("请检查运行目录的可用空间和写入权限");
+    expect(failure).toMatchObject({ statusCode: 507, code: INSUFFICIENT_STORAGE, message: "音频保存空间不足，请释放存储空间后重试。" });
     expect((failure as Error).message).not.toMatch(/模型生成失败|录音与台词/);
     expect(deps.generate).toHaveBeenCalledOnce();
     expect(deps.analyze).not.toHaveBeenCalled();
@@ -568,6 +569,20 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(await traceFiles(root)).toEqual(expect.arrayContaining(["group-1-take-1-source.wav", "group-1-take-1-failure.json", "failure.json"]));
     expect(await traceFiles(root)).not.toContain("assembled.wav");
     expect(await readdir(path.join(root, "locks"))).toEqual([]);
+  });
+
+  it("keeps the published complete source and storage code when saving analyzed audio runs out of space", async () => {
+    const { root, input, deps, waves } = await fixture();
+    const saving = vi.spyOn(assetStore, "saveClipAsset").mockRejectedValueOnce(Object.assign(new Error("No space left on device"), { code: "ENOSPC" }));
+    try {
+      await expect(generateVoiceLongText(input, deps)).rejects.toMatchObject({ code: INSUFFICIENT_STORAGE, statusCode: 507 });
+      expect(deps.generate.mock.calls.length).toBeLessThanOrEqual(2);
+      expect(saving).toHaveBeenCalledOnce();
+      const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+      const original = await readFile(path.join(root, "voxcpm2-product", "long-text", run, "group-1-take-1-source.wav"));
+      expect(new Uint8Array(original)).toEqual(waves[0]);
+      expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    } finally { saving.mockRestore(); }
   });
 
   it("shows only a readable excerpt for a long failed passage without changing the text sent to the model", async () => {

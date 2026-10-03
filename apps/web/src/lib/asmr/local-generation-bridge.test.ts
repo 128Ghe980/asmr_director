@@ -99,6 +99,14 @@ describe("local generation bridge", () => {
     });
   });
 
+  it("classifies HTTP 507 as storage exhaustion even when the response omits the error code", async () => {
+    const bridge = createLocalGenerationBridge({ fetchImpl: vi.fn(async () => Response.json({ error: "storage full" }, { status: 507 })) });
+    const updates: GenerationJobUpdate[] = [];
+    await bridge.generateClip({ project: demoProject, clipId: "voice_001", reason: "generate" }, (update) => updates.push(update));
+    expect(updates.at(-1)).toMatchObject({ type: "failed", errorCode: "INSUFFICIENT_STORAGE", error: "音频保存空间不足，请释放存储空间后重试。", job: { status: "failed" } });
+    expect(updates.map((update) => update.type)).toEqual(["snapshot", "snapshot", "failed"]);
+  });
+
   it("emits canceled and ignores late success after local cancellation", async () => {
     let resolveFetch: (response: Response) => void = () => undefined;
     const fetchImpl = vi.fn(
@@ -233,6 +241,13 @@ describe("local generation bridge", () => {
         status: "failed",
       },
     });
+  });
+
+  it("keeps the storage code on failed mix updates", async () => {
+    const bridge = createLocalGenerationBridge({ fetchImpl: vi.fn(async () => Response.json({ code: "INSUFFICIENT_STORAGE", error: "storage full" }, { status: 507 })) });
+    const updates: GenerationJobUpdate[] = [];
+    await bridge.generateProjectMix({ project: demoProject, exportType: "wav", reason: "mix" }, (update) => updates.push(update));
+    expect(updates.at(-1)).toMatchObject({ type: "failed", errorCode: "INSUFFICIENT_STORAGE", error: "音频保存空间不足，请释放存储空间后重试。", job: { target: { type: "project_mix", exportType: "wav" } } });
   });
 
   it("emits canceled and ignores late project mix success", async () => {

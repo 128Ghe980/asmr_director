@@ -85,7 +85,7 @@ function mockApi(initialCandidates: AudioCandidate[] = []) {
     }
     if (url.startsWith("/api/audio-candidates?")) {
       const query = new URL(url, "http://localhost").searchParams;
-      return Response.json({ candidates: candidates.filter((item) => item.projectId === query.get("projectId") && item.clipId === query.get("clipId") && item.status === "ready") });
+      return Response.json({ candidates: candidates.filter((item) => item.projectId === query.get("projectId") && (!query.has("clipId") || item.clipId === query.get("clipId")) && item.status === "ready") });
     }
     if (url.startsWith("/api/audio-candidates/")) {
       const id = new URL(url, "http://localhost").pathname.split("/").at(-1)!;
@@ -135,6 +135,22 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("StudioApp voice candidate workflow with simulated HTTP", () => {
+  it("moves a paragraph between unadopted, adopted and pending overview counts after candidate actions", async () => {
+    const project = fixtureProject();
+    const clip = firstVoice(project);
+    clip.generation.status = "asset_pending";
+    clip.asset = { asset_id: null, uri: null, duration: null };
+    seedLibrary(project);
+    mockApi([takeFor(project)]);
+    await mount(project);
+    await screen.findByRole("status", { name: "已采用 1 段，待生成 0 段，已生成未采用 1 段，共 2 段" });
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    await screen.findByRole("status", { name: "已采用 2 段，待生成 0 段，已生成未采用 0 段，共 2 段" });
+    fireEvent.click(screen.getByRole("button", { name: "撤回上次采用" }));
+    await screen.findByRole("status", { name: "已采用 1 段，待生成 0 段，已生成未采用 1 段，共 2 段" });
+    fireEvent.click(screen.getByRole("button", { name: "放弃候选 1" }));
+    await screen.findByRole("status", { name: "已采用 1 段，待生成 1 段，已生成未采用 0 段，共 2 段" });
+  });
   it("defaults newly inserted semantic speech to the sliding generation mode", async () => {
     const project = fixtureProject();
     seedLibrary(project);

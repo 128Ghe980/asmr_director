@@ -2,6 +2,8 @@
 
 Date: 2026-10-01
 
+Later behavior supersedes this initial design's English shared scene and optional continuity checkbox: [concise story backgrounds](2026-10-02-concise-h3-story-backgrounds.md) and [per-paragraph Continuous/New shot modes](2026-10-02-storyboard-reference-modes.md). The original acceptance below is historical.
+
 Status: implementation, automated checks, real text-provider and production-browser verification complete. This extends the existing **Audio Quality V1** work in [ROADMAP](../../ROADMAP.md), without a new top-level stage or H3 video-quality acceptance. [中文说明](2026-10-01-adopted-clip-video-storyboards.zh.md)
 
 ## User workflow

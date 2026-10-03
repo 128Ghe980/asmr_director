@@ -10,6 +10,7 @@ import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, getVoiceCand
 import { flattenClips } from "./view-model";
 import { readGenerationResponse } from "./generation-response";
 import { getVoiceGenerationContext } from "./voice-generation-context";
+import { getLocalStorageError, LocalStorageError } from "./local-storage-error";
 
 export type LocalGenerationBridgeOptions = {
   endpoint?: string;
@@ -41,6 +42,11 @@ function getErrorMessage(payload: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function getResponseError(payload: unknown, fallback: string, status: number): Error {
+  return getLocalStorageError(payload)
+    ?? (status === 507 ? new LocalStorageError() : new Error(getErrorMessage(payload, fallback)));
 }
 
 function getAsset(payload: unknown): GeneratedAssetResult {
@@ -181,7 +187,7 @@ export function createLocalGenerationBridge({
         }));
 
         if (!response.ok) {
-          throw new Error(getErrorMessage(payload, "Generation failed"));
+          throw getResponseError(payload, "Generation failed", response.status);
         }
 
         if (typeof payload === "object" && payload !== null && "candidate" in payload) {
@@ -221,6 +227,7 @@ export function createLocalGenerationBridge({
           asset,
         });
       } catch (error) {
+        const storageError = job.controller.signal.aborted ? undefined : getLocalStorageError(error);
         emit(job, {
           type: "failed",
           job: makeSnapshot(
@@ -231,7 +238,8 @@ export function createLocalGenerationBridge({
             "failed",
             "生成失败",
           ),
-          error: job.controller.signal.aborted ? "生成超时，请重试。" : error instanceof Error ? error.message : "Generation failed",
+          error: job.controller.signal.aborted ? "生成超时，请重试。" : storageError?.message ?? (error instanceof Error ? error.message : "Generation failed"),
+          ...(storageError ? { errorCode: storageError.code } : {}),
         });
       } finally {
         clearTimeout(timer);
@@ -302,7 +310,7 @@ export function createLocalGenerationBridge({
         const payload = (await response.json()) as unknown;
 
         if (!response.ok) {
-          throw new Error(getErrorMessage(payload, "Project mix failed"));
+          throw getResponseError(payload, "Project mix failed", response.status);
         }
 
         const asset = getAsset(payload);
@@ -319,6 +327,7 @@ export function createLocalGenerationBridge({
           asset,
         });
       } catch (error) {
+        const storageError = getLocalStorageError(error);
         emit(job, {
           type: "failed",
           job: makeSnapshot(
@@ -329,8 +338,8 @@ export function createLocalGenerationBridge({
             "failed",
             "Mix failed",
           ),
-          error:
-            error instanceof Error ? error.message : "Project mix failed",
+          error: storageError?.message ?? (error instanceof Error ? error.message : "Project mix failed"),
+          ...(storageError ? { errorCode: storageError.code } : {}),
         });
       } finally {
         inFlightJobs.delete(jobId);

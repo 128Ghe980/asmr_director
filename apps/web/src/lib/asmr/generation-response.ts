@@ -1,6 +1,12 @@
+import { getLocalStorageError, LocalStorageError } from "./local-storage-error";
+
 // A bounded NDJSON reader lets the existing generation job receive real group
 // progress while retaining a single cancelable request and final candidate.
 export async function readGenerationResponse(response: Response, onProgress: (progress: number, message: string) => void): Promise<unknown> {
+  if (response.status === 507) {
+    void response.body?.cancel().catch(() => {});
+    throw new LocalStorageError();
+  }
   if (!response.headers.get("content-type")?.includes("application/x-ndjson")) return response.json();
   if (!response.body) throw new Error("生成响应为空，请重试。");
   const reader = response.body.getReader();
@@ -16,7 +22,7 @@ export async function readGenerationResponse(response: Response, onProgress: (pr
       if (!Number.isFinite(event.progress) || event.progress < 0 || event.progress > 100 || typeof event.message !== "string" || event.message.length > 180) throw new Error("生成进度无效。");
       onProgress(event.progress, event.message);
     } else if (event.type === "result") { if (complete) throw new Error("重复生成结果。"); result = event.result; complete = true; }
-    else if (event.type === "error") throw new Error(typeof event.error === "string" && event.error.length < 500 ? event.error : "长文生成失败，请重试。");
+    else if (event.type === "error") throw getLocalStorageError(event) ?? new Error(typeof event.error === "string" && event.error.length < 500 ? event.error : "长文生成失败，请重试。");
     else if (event.type !== "heartbeat") throw new Error("生成响应无效。");
   };
   try {

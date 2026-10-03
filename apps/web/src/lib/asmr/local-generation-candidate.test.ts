@@ -76,6 +76,17 @@ describe("long-text candidate streaming bridge", () => {
     expect(updates.some((update) => update.type === "succeeded")).toBe(false);
   });
 
+  it.each(["HTTP 507", "NDJSON"] as const)("keeps the storage code on %s candidate failure without delivering or adopting audio", async (format) => {
+    const response = format === "HTTP 507"
+      ? Response.json({ error: "audio save failed", code: "INSUFFICIENT_STORAGE" }, { status: 507 })
+      : ndjson([{ type: "progress", progress: 62, message: "正在保存录音" }, { type: "error", error: "audio save failed", code: "INSUFFICIENT_STORAGE" }]);
+    const updates: GenerationJobUpdate[] = [];
+    await createLocalGenerationBridge({ fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(response) })
+      .generateClip(longRequest, (update) => updates.push(update));
+    expect(updates.at(-1)).toMatchObject({ type: "failed", errorCode: "INSUFFICIENT_STORAGE", error: "音频保存空间不足，请释放存储空间后重试。", job: { status: "failed" } });
+    expect(updates.some((update) => update.type === "candidate" || update.type === "succeeded")).toBe(false);
+  });
+
   it("ignores streamed progress and a late result after user cancellation", async () => {
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
     let signal: AbortSignal | null | undefined;

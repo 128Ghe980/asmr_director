@@ -5,6 +5,7 @@ import { generateLocalClip } from "@/lib/asmr/local-clip-generation";
 import { readGenerationResponse } from "@/lib/asmr/generation-response";
 import { VoxCpm2Error } from "@/lib/asmr/voxcpm2-error";
 import { CandidateCapacityError } from "@/lib/asmr/local-candidate-store";
+import { INSUFFICIENT_STORAGE, LocalStorageError } from "@/lib/asmr/local-storage-error";
 import { POST } from "./route";
 vi.mock("@/lib/asmr/local-clip-generation", () => ({ generateLocalClip: vi.fn() }));
 vi.mock("@/lib/asmr/voice-provider-catalog", () => ({ getVoiceProviderCatalog: vi.fn() }));
@@ -13,6 +14,12 @@ const makeRequest = (body: unknown) => new Request("http://localhost/api/generat
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
 describe("clip generation API", () => {
+  it("reports exhausted asset storage with a safe machine-readable 507 error", async () => {
+    vi.mocked(generateLocalClip).mockRejectedValue(Object.assign(new Error("write private directory failed"), { code: "ENOSPC" }));
+    const response = await POST(makeRequest({ project: demoProject, clipId: "voice_001", voiceOptions: options }));
+    expect(response.status).toBe(507);
+    expect(await response.json()).toEqual({ error: new LocalStorageError().message, code: INSUFFICIENT_STORAGE });
+  });
   it("returns a candidate and forwards only validated options with cancellation", async () => {
     const candidate = makeVoiceCandidateFixture();
     vi.mocked(generateLocalClip).mockResolvedValue({ candidate });
@@ -39,6 +46,13 @@ describe("long-text streaming generation API", () => {
     method: "POST", signal,
     headers: streaming ? { accept: "application/x-ndjson" } : {},
     body: JSON.stringify({ project: demoProject, clipId: "voice_001", reason: "generate", voiceOptions: longOptions }),
+  });
+
+  it("preserves storage error codes after the streaming headers have been sent", async () => {
+    vi.mocked(generateLocalClip).mockRejectedValue(Object.assign(new Error("private audio output failed"), { code: "ENOSPC" }));
+    const response = await POST(longRequest());
+    expect(response.status).toBe(200);
+    await expect(readGenerationResponse(response, vi.fn())).rejects.toMatchObject({ code: INSUFFICIENT_STORAGE, message: new LocalStorageError().message });
   });
 
   it("streams progress and final candidates using a cancelable validated request", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   applyDirectorPreset,
@@ -43,7 +43,7 @@ import { getGenerationView } from "@/lib/asmr/generation-view";
 import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/playback-asset-resolver";
-import { AudioCandidateSchema, type AudioCandidate } from "@/lib/asmr/audio-candidate";
+import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
 import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
 import { getVoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
@@ -84,7 +84,9 @@ import type { PlannerBrief, PlannerDraft } from "@/lib/asmr/planner";
 import { addVoiceClip, deleteVoiceClip, getVoiceGapAfter, mergeVoiceClipWithNext, setVoiceGapAfter, splitVoiceClip } from "@/lib/asmr/voice-segments";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
-import { createClipH3Prompt, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "@/lib/asmr/video-plan";
+import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getClipStoryboardReferenceMode, getPreviousVoiceClip, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
+import { getStudioBatchTargets, runStudioBatchQueue, waitForStudioVoiceGeneration, type StudioBatchAction } from "@/lib/asmr/studio-batch-generation";
+import { getStudioAudioProgress } from "@/lib/asmr/studio-audio-overview";
 
 import { ClipInspector } from "./clip-inspector";
 import { ClipStoryboardEditor } from "./clip-storyboard-editor";
@@ -93,6 +95,7 @@ import { VoiceGenerationPanel } from "./voice-generation-panel";
 import { PlannerPanel } from "./planner-panel";
 import { ProjectWorkspace } from "./project-workspace";
 import { ScriptEditorPanel } from "./script-editor-panel";
+import { StudioBatchActions, type StudioBatchProgress } from "./studio-batch-actions";
 import { TimelinePanel } from "./timeline-panel";
 import { ValidationPanel } from "./validation-panel";
 
@@ -103,6 +106,14 @@ type StudioAppProps = {
 function defaultClipId(project: AsmrProject) {
   const clips = flattenClips(project);
   return (clips.find((clip) => clip.type === "voice") ?? clips[0])?.id;
+}
+
+function batchAudioSource(project: AsmrProject, clipId: string, options: VoiceGenerationOptions) {
+  const clip = flattenClips(project).find((item) => item.id === clipId);
+  if (clip?.type !== "voice") return "";
+  const context = options.provider === "voxcpm2" && options.generationMode === "long_text"
+    ? getVoiceGenerationContext(project, clipId) : undefined;
+  return getVoiceCandidateRequestFingerprint(clip, options, undefined, context);
 }
 
 function exportProjectJson(project: AsmrProject) {
@@ -175,9 +186,22 @@ export function StudioApp({ project }: StudioAppProps) {
   const [voiceCatalogError, setVoiceCatalogError] = useState<string>();
   const [voiceError, setVoiceError] = useState<string>();
   const [voiceCandidates, setVoiceCandidates] = useState<AudioCandidate[]>([]);
-  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidateListState, setCandidateListState] = useState<{ projectId: string; status: "loading" | "ready" | "error" }>();
   const [candidateActionBusy, setCandidateActionBusy] = useState(false);
   const [candidateRefresh, setCandidateRefresh] = useState(0);
+  const [batchProgress, setBatchProgress] = useState<StudioBatchProgress>();
+  const [batchNotice, setBatchNotice] = useState<string>();
+  const batchRunRef = useRef<{ controller: AbortController; projectId: string; jobId?: string } | null>(null);
+  const [singleStoryboardBusy, setSingleStoryboardBusy] = useState(false);
+  const singleStoryboardBusyRef = useRef(false);
+  const storyboardProviderRef = useRef<"api" | "ollama" | null>(null);
+  const handleStoryboardBusyChange = useCallback((busy: boolean) => {
+    singleStoryboardBusyRef.current = busy;
+    setSingleStoryboardBusy(busy);
+  }, []);
+  const handleStoryboardProviderChange = useCallback((provider: "api" | "ollama") => {
+    storyboardProviderRef.current = provider;
+  }, []);
   const candidateJobIdsRef = useRef(new Set<string>());
   const windowedVoiceJobsRef = useRef(new Map<string, { clipId: string; context: string }>());
   const [projectLibrary, setProjectLibrary] = useState(() =>
@@ -231,10 +255,19 @@ export function StudioApp({ project }: StudioAppProps) {
   const currentLibraryEntry = projectLibrary.projects.find(
     (entry) => entry.projectId === editableProject.project_id,
   );
-  const voiceBusy = candidateActionBusy || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const batchCounts = useMemo(() => Object.fromEntries(
+    (["audio_missing", "audio_all", "storyboard_missing", "storyboard_all"] as const)
+      .map((action) => [action, getStudioBatchTargets(editableProject, action).length]),
+  ) as Record<StudioBatchAction, number>, [editableProject]);
   const visibleVoiceCandidates = voiceCandidates.filter((candidate) =>
     candidate.projectId === editableProject.project_id && candidate.clipId === activeClipId,
   );
+  const audioProgress = useMemo(() => getStudioAudioProgress(editableProject, voiceCandidates), [editableProject, voiceCandidates]);
+  const audioOverview = audioProgress.overview;
+  const audioOverviewStatus = hasLoadedStorage && candidateListState?.projectId === editableProject.project_id
+    ? candidateListState.status : "loading";
+  const candidatesLoading = audioOverviewStatus === "loading";
   const isDirty = useMemo(
     () =>
       !currentLibraryEntry ||
@@ -354,23 +387,36 @@ export function StudioApp({ project }: StudioAppProps) {
       if (!controller.signal.aborted) {
         setVoiceError(undefined);
         setVoiceCandidates([]);
-        setCandidatesLoading(Boolean(hasLoadedStorage && activeClipId));
+        setCandidateListState({ projectId, status: "loading" });
       }
     });
-    if (hasLoadedStorage && activeClipId) {
-      const query = new URLSearchParams({ projectId, clipId: activeClipId });
+    if (hasLoadedStorage) {
+      const query = new URLSearchParams({ projectId });
       void fetch(`/api/audio-candidates?${query}`, { signal: controller.signal })
         .then(async (response) => {
           if (!response.ok) throw new Error("候选列表读取失败，请刷新重试。");
           const payload = await response.json() as { candidates: unknown };
           const candidates = AudioCandidateSchema.array().parse(payload.candidates);
-          if (!controller.signal.aborted) setVoiceCandidates(candidates);
+          if (!controller.signal.aborted) {
+            setVoiceCandidates(candidates);
+            setCandidateListState({ projectId, status: "ready" });
+          }
         })
-        .catch(() => { if (!controller.signal.aborted) setVoiceError("候选列表读取失败，请刷新重试。"); })
-        .finally(() => { if (!controller.signal.aborted) setCandidatesLoading(false); });
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setVoiceError("候选列表读取失败，请刷新重试。");
+            setCandidateListState({ projectId, status: "error" });
+          }
+        });
     }
     return () => controller.abort();
-  }, [editableProject.project_id, activeClipId, candidateRefresh, hasLoadedStorage]);
+  }, [editableProject.project_id, candidateRefresh, hasLoadedStorage]);
+
+  useEffect(() => {
+    let current = true;
+    queueMicrotask(() => { if (current) setVoiceError(undefined); });
+    return () => { current = false; };
+  }, [activeClipId]);
 
   function handleVoiceOptionsChange(next: VoiceGenerationOptions) {
     setVoiceOptions(next);
@@ -591,6 +637,8 @@ export function StudioApp({ project }: StudioAppProps) {
   useEffect(() => {
     const windowedJobs = windowedVoiceJobsRef.current;
     return () => {
+      batchRunRef.current?.controller.abort();
+      batchRunRef.current = null;
       generationSessionRef.current += 1;
       const jobIds = new Set([
         ...Object.keys(generationReasonsRef.current),
@@ -615,6 +663,10 @@ export function StudioApp({ project }: StudioAppProps) {
   }, []);
 
   function clearGenerationSession() {
+    batchRunRef.current?.controller.abort();
+    batchRunRef.current = null;
+    setBatchProgress(undefined);
+    setBatchNotice(undefined);
     candidateJobIdsRef.current.clear();
     windowedVoiceJobsRef.current.clear();
     generationSessionRef.current += 1;
@@ -908,6 +960,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function startSelectedClipGeneration(optionsOverride?: VoiceGenerationOptions, longTextRetry?: LongTextRetry, target?: { project: AsmrProject; clipId: string }) {
+    if (batchRunRef.current) return;
     const generationProject = target?.project ?? editableProject;
     const generationClip = target ? flattenClips(generationProject).find((clip) => clip.id === target.clipId) : selectedClip;
     const control = target ? getGenerationView({ project: generationProject, selectedClip: generationClip, runtimeState: generationRuntimeStateRef.current, selectedClipHasValidationIssues: Object.keys(getClipFieldValidationIssues(generationProject, target.clipId, getProjectValidationIssues(generationProject))).length > 0, projectMixFingerprint }).selectedClipControl : generationView.selectedClipControl;
@@ -983,6 +1036,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleCancelSelectedGeneration() {
+    if (batchRunRef.current) { handleCancelBatch(); return; }
     const jobId = generationView.selectedClipControl.jobId;
 
     if (!jobId) {
@@ -999,6 +1053,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleGenerateProjectMix() {
+    if (batchRunRef.current) return;
     if (generationView.projectMixControl.disabled) {
       return;
     }
@@ -1314,16 +1369,186 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function handleVideoSceneChange(sceneDescription: string) {
     const current = editableProjectRef.current;
-    const next = { ...current, videoPlan: { version: 1 as const, sceneDescription, shots: current.videoPlan?.shots ?? {} } };
+    const next = { ...current, videoPlan: { ...current.videoPlan, version: 1 as const, sceneDescription, shots: current.videoPlan?.shots ?? {} } };
     editableProjectRef.current = next;
     setEditableProject(next);
+  }
+
+  function handleStoryboardReferenceModeChange(clipId: string, mode: StoryboardReferenceMode) {
+    if (batchRunRef.current || singleStoryboardBusyRef.current || candidateActionBusy
+      || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
+    const current = editableProjectRef.current;
+    if (!flattenClips(current).some((clip) => clip.id === clipId && clip.type === "voice")) return;
+    const nextMode = getPreviousVoiceClip(current, clipId) ? mode : "new";
+    const next = { ...current, videoPlan: {
+      ...current.videoPlan, version: 1 as const,
+      sceneDescription: current.videoPlan?.sceneDescription ?? current.scene.name,
+      shots: current.videoPlan?.shots ?? {},
+      referenceModes: { ...current.videoPlan?.referenceModes, [clipId]: nextMode },
+    } };
+    editableProjectRef.current = next;
+    setEditableProject(next);
+  }
+
+  function handleCancelBatch() {
+    const run = batchRunRef.current;
+    if (!run) return;
+    run.controller.abort();
+    if (run.jobId) {
+      candidateJobIdsRef.current.delete(run.jobId);
+      windowedVoiceJobsRef.current.delete(run.jobId);
+      delete generationReasonsRef.current[run.jobId];
+      delete generationFingerprintsRef.current[run.jobId];
+      setRuntimeState(clearGenerationJob(generationRuntimeStateRef.current, run.jobId));
+    }
+    setBatchNotice("已停止后续排队，正在取消当前生成。");
+  }
+
+  async function handleRunBatch(action: StudioBatchAction) {
+    if (batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
+      || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
+    const initial = structuredClone(editableProjectRef.current);
+    const clipIds = getStudioBatchTargets(initial, action);
+    if (!clipIds.length) return;
+    const audio = action.startsWith("audio");
+    const options = structuredClone(voiceOptions);
+    const run = { controller: new AbortController(), projectId: initial.project_id, jobId: undefined as string | undefined };
+    batchRunRef.current = run;
+    const signal = run.controller.signal;
+    setBatchNotice(undefined);
+    if (audio) setVoiceError(undefined);
+    setBatchProgress({ action, total: clipIds.length, completed: 0, succeeded: 0, failed: 0, skipped: 0 });
+    const session = generationSessionRef.current;
+    try {
+      if (audio) {
+        const engine = voiceCatalog?.providers.find((item) => item.id === options.provider);
+        if (!engine?.available) throw new Error("当前人声引擎尚未就绪，请先检查声音设置。");
+        if (options.provider === "voxcpm2" && options.generationMode === "long_text" && !engine.longText?.available) {
+          throw new Error(engine.longText?.reason || "长文语音分析尚未就绪。");
+        }
+      } else if (!(initial.videoPlan?.sceneDescription ?? initial.scene.name).trim()) {
+        throw new Error("请先补全工程剧情背景，再批量生成分镜。");
+      }
+      let provider: "api" | "ollama" = "api";
+      if (!audio) {
+        const response = await fetch("/api/planner", { signal });
+        if (!response.ok) throw new Error("暂时无法读取分镜模型配置，请稍后重试。");
+        const catalog = await response.json() as { defaultProvider: "api" | "ollama"; providers: { id: "api" | "ollama"; configured: boolean }[] };
+        provider = storyboardProviderRef.current ?? catalog.defaultProvider;
+        if (!catalog.providers.some((item) => item.id === provider && item.configured)) throw new Error("请先配置可用的分镜模型。");
+      }
+      const sources = new Map(clipIds.map((clipId) => [clipId, audio
+        ? batchAudioSource(initial, clipId, options) : createClipVideoSourceFingerprint(initial, clipId)]));
+      const originalShots = new Map(clipIds.map((clipId) => [clipId, JSON.stringify(initial.videoPlan?.shots[clipId] ?? null)]));
+      const referenceModes = new Map(clipIds.map((clipId) => [clipId, getClipStoryboardReferenceMode(initial, clipId)]));
+      const result = await runStudioBatchQueue({
+        clipIds, signal,
+        onProgress: (progress) => { if (batchRunRef.current === run) setBatchProgress({ action, ...progress }); },
+        onItem: async (clipId) => {
+          const latest = editableProjectRef.current;
+          if (signal.aborted || latest.project_id !== run.projectId) return "skipped";
+          if (!getStudioBatchTargets(latest, action).includes(clipId)) return "skipped";
+          const snapshot = structuredClone(latest);
+          const clip = flattenClips(snapshot).find((item) => item.id === clipId);
+          if (clip?.type !== "voice") return "skipped";
+          if (audio) {
+            if (batchAudioSource(snapshot, clipId, options) !== sources.get(clipId)) return "skipped";
+            if (Object.keys(getClipFieldValidationIssues(snapshot, clipId, getProjectValidationIssues(snapshot))).length) {
+              throw new Error("当前段落存在无效设置，请修正后重新生成。");
+            }
+            if (options.provider === "voxcpm2" && options.generationMode === "long_text" && !clip.semantic_unit
+              && options.analysisProvider === "api" && !voiceCatalog?.providers.find((item) => item.id === "voxcpm2")?.longText?.apiConfigured) {
+              throw new Error("请先配置外部文本分析，或改用本地分析。");
+            }
+            const reason = clip.generation.status === "asset_generated" ? "regenerate" : "generate";
+            const fingerprint = getClipGenerationFingerprint(clip, { ignoreVoiceStart: true });
+            const context = options.provider === "voxcpm2" && options.generationMode === "long_text" ? getVoiceGenerationContext(snapshot, clipId) : undefined;
+            let itemJobId: string | undefined;
+            try {
+              await waitForStudioVoiceGeneration({
+              bridge: getGenerationBridge(), request: { project: snapshot, clipId, reason, voiceOptions: options }, signal,
+              onUpdate: (update) => {
+                if (signal.aborted || batchRunRef.current !== run || session !== generationSessionRef.current) return;
+                itemJobId = update.job.jobId;
+                run.jobId = itemJobId;
+                generationReasonsRef.current[update.job.jobId] = reason;
+                generationFingerprintsRef.current[update.job.jobId] = fingerprint;
+                if (options.provider === "voxcpm2") candidateJobIdsRef.current.add(update.job.jobId);
+                if (context && update.type === "snapshot") windowedVoiceJobsRef.current.set(update.job.jobId, { clipId, context: JSON.stringify(context) });
+                handleGenerationUpdate(update, session);
+                if (update.type !== "snapshot") run.jobId = undefined;
+              },
+              });
+            } finally {
+              if (itemJobId) {
+                const job = generationRuntimeStateRef.current.jobsById[itemJobId];
+                if (job && isActiveGenerationJob(job)) {
+                  void getGenerationBridge().cancelGeneration(itemJobId).catch(() => {});
+                }
+                candidateJobIdsRef.current.delete(itemJobId);
+                windowedVoiceJobsRef.current.delete(itemJobId);
+                delete generationReasonsRef.current[itemJobId];
+                delete generationFingerprintsRef.current[itemJobId];
+                if (batchRunRef.current === run && session === generationSessionRef.current) {
+                  setRuntimeState(clearGenerationJob(generationRuntimeStateRef.current, itemJobId));
+                }
+                if (run.jobId === itemJobId) run.jobId = undefined;
+              }
+            }
+            return batchAudioSource(editableProjectRef.current, clipId, options) === sources.get(clipId) ? "completed" : "skipped";
+          }
+          const fingerprint = createClipVideoSourceFingerprint(snapshot, clipId);
+          const referenceMode = getClipStoryboardReferenceMode(snapshot, clipId);
+          if (fingerprint !== sources.get(clipId)
+            || referenceMode !== referenceModes.get(clipId)
+            || JSON.stringify(snapshot.videoPlan?.shots[clipId] ?? null) !== originalShots.get(clipId)) return "skipped";
+          const referenceContext = getClipStoryboardReferenceContext(snapshot, clipId, referenceMode);
+          const includePrevious = Boolean(referenceContext);
+          if (referenceMode === "continuous" && !referenceContext) throw new Error("连续镜头需要上一段的可用分镜，请先生成或更新上一段。");
+          const response = await fetch("/api/clip-storyboard", {
+            method: "POST", headers: { "content-type": "application/json" }, signal,
+            body: JSON.stringify({ provider, project: snapshot, clipId, includePrevious, referenceMode }),
+          });
+          const body = await response.json();
+          if (signal.aborted || batchRunRef.current !== run) return "skipped";
+          if (!response.ok) throw new Error(body.error || "本段分镜生成失败，请重试。");
+          const shot = ClipVideoStoryboardSchema.parse(body.storyboard);
+          const current = editableProjectRef.current;
+          if (current.project_id !== run.projectId || createClipVideoSourceFingerprint(current, clipId) !== fingerprint
+            || getClipStoryboardReferenceMode(current, clipId) !== referenceMode
+            || JSON.stringify(current.videoPlan?.shots[clipId] ?? null) !== originalShots.get(clipId)
+            || JSON.stringify(getClipStoryboardReferenceContext(current, clipId, referenceMode)) !== JSON.stringify(referenceContext)) return "skipped";
+          if (shot.clipId !== clipId || shot.sourceFingerprint !== fingerprint || shot.audio.assetId !== clip.asset.asset_id
+            || shot.audio.uri !== clip.asset.uri || shot.referenceMode !== referenceMode || Boolean(shot.previousClipId) !== includePrevious
+            || (referenceContext && (shot.previousClipId !== referenceContext.previousClipId || shot.previousPromptFingerprint !== referenceContext.previousPromptFingerprint))) {
+            throw new Error("分镜结果与当前段落或音频不一致，请重新生成。");
+          }
+          if (!handleSaveClipStoryboard(run.projectId, shot)) return "skipped";
+          return "completed";
+        },
+      });
+      if (batchRunRef.current === run) {
+        const details = [`成功 ${result.succeeded}`, ...(result.failed ? [`失败 ${result.failed}`] : []), ...(result.skipped ? [`跳过 ${result.skipped}`] : [])].join(" · ");
+        const outcome = result.state === "cancelled" ? "已取消批量生成" : result.state === "stopped" ? "批量生成已停止" : "批量生成完成";
+        const remaining = result.state === "stopped" ? ` 还有 ${result.total - result.completed} 段未处理。` : "";
+        const failure = result.state === "stopped" ? result.failures[result.failures.length - 1] : result.failures[0];
+        setBatchNotice(`${outcome}：${details}。${remaining}${audio && options.provider === "voxcpm2" && result.succeeded ? "可逐段试听并采用新候选。" : ""}${failure ? ` ${failure.message}` : ""}`);
+      }
+    } catch (error) {
+      if (batchRunRef.current === run) setBatchNotice(signal.aborted ? "已取消批量生成。" : error instanceof Error ? error.message : "批量生成失败，请重试。");
+    } finally {
+      if (batchRunRef.current === run) {
+        batchRunRef.current = null;
+        setBatchProgress(undefined);
+      }
+    }
   }
 
   function handleSaveClipStoryboard(projectId: string, shot: ClipVideoStoryboard): boolean {
     const current = editableProjectRef.current;
     if (current.project_id !== projectId) return false;
     const next = { ...current, videoPlan: {
-      version: 1 as const, sceneDescription: current.videoPlan?.sceneDescription ?? current.scene.name,
+      ...current.videoPlan, version: 1 as const, sceneDescription: current.videoPlan?.sceneDescription ?? current.scene.name,
       shots: { ...current.videoPlan?.shots, [shot.clipId]: shot },
     } };
     if (!isClipVideoStoryboardCurrent(next, shot.clipId)) return false;
@@ -1479,10 +1704,14 @@ export function StudioApp({ project }: StudioAppProps) {
       <EditorPanels activePanel={editorPanel} onPanelChange={setEditorPanel}>
         <div className="h-full min-h-0 min-w-0">
           <ScriptEditorPanel
+            audioStates={audioProgress.byClip} audioStatesStatus={audioOverviewStatus}
             key={editableProject.project_id}
+            batchActions={<StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} disabled={!hasLoadedStorage || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />}
             project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
+            onReferenceModeChange={handleStoryboardReferenceModeChange}
+            referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)}
             busy={voiceBusy}
             canUndo={scriptHistory.length > 0}
             notice={scriptNotice}
@@ -1540,7 +1769,7 @@ export function StudioApp({ project }: StudioAppProps) {
           />
           </div>
           <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} onSceneChange={handleVideoSceneChange} onSave={handleSaveClipStoryboard} onEdit={handleEditClipStoryboard} /> : null}
+            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={handleSaveClipStoryboard} onEdit={handleEditClipStoryboard} /> : null}
           </div>
         </div>
       </EditorPanels>

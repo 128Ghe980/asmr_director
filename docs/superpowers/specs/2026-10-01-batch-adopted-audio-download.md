@@ -2,6 +2,8 @@
 
 Date: 2026-10-01. This extends the existing project export workflow within Audio Quality V1, without adding a roadmap stage. [中文版](2026-10-01-batch-adopted-audio-download.zh.md).
 
+Latest interface extension (2026-10-03): the same **批量下载** entry now offers **音频 / 分镜** tabs. Audio retains the package and processing behavior below; storyboard export writes one existing usable H3 prompt per dialogue to a separate TXT ZIP, retaining original paragraph numbering. See the [storyboard status and batch TXT spec](2026-10-03-storyboard-status-and-batch-txt.md) and [development record](../../records/2026-10-03-audio-quality-v1-storyboard-status-export.md). Both export kinds use the native token download flow documented in the later transport-recovery section.
+
 ## Scope and package
 
 The user requested one attractive batch-download entry that collects all generated and adopted audio into one folder, separated into untreated and post-processed versions.
@@ -24,7 +26,13 @@ The project header has a restrained green download entry and adopted count. Its 
 
 `POST /api/assets/batch-download` validates the project and prepares the complete temporary ZIP before returning a stream, so missing assets or processing failures remain readable JSON errors. Processing is sequential by clip; original bytes stream into a stored ZIP. One package preparation runs at a time per server process. Limits are 2,000 clips, 128 MiB per source, 10 minutes per clip and a 1 GiB archive. Cancellation propagates to asset reads and spatial processing; failed/canceled packages and completed response streams clean up only their generated temporary directory. New scratch follows the existing I-drive spatial-cache configuration, with optional `ASMR_BATCH_DOWNLOAD_TEMP_ROOT` override.
 
-## Verification status
+The UI now sends `Accept: application/json`: POST returns `{ downloadUrl, filename, clipCount, size }`, and the browser downloads the ZIP through `GET /api/assets/batch-download?token=<UUID>` without reading binary data into a JavaScript Blob. Default POST still returns the original ZIP/attachment response. Tokens are opaque, process-local and single-use, expire after five minutes and retain at most two ready archives; no file path is exposed or accepted. GET claims before streaming, opens/stats the file before headers, applies 64 KiB byte backpressure and releases its owned archive once. Failed/abandoned/canceled downloads clean up; restarting invalidates ready links. Existing folder/audio behavior remains unchanged.
+
+## 2026-10-02 transport fix — verified
+
+The server prepared/read the entire 10-clip, 20,982,790-byte ZIP while the IAB binary fetch failed; removing only the attachment header did not resolve it. No specific browser-internal size limit was established. JSON preparation followed by native GET succeeds. The actual browser-saved ZIP has 21 entries and passes every CRC, raw-source SHA and processed PCM/full-duration check. An independent 20-clip fixture reuses one existing asset and verifies a 21,015,839-byte/41-entry package. Two targeted files/27 tests, owned-file ESLint, full TypeScript and production build pass; 138 asset hashes and visible dialogue/timeline are unchanged. No synthesis or user candidate changes. Evidence: `I:/AI/asmr-director-batch-download-recovery/2026-10-02`; see [bug record](../../records/2026-10-02-audio-quality-v1-batch-download-recovery.md) and [latest runtime](../../AI_HANDOFF.md). No commit/push.
+
+## Historical 2026-10-01 verification
 
 Implementation, automated checks, real API download and production-browser verification are complete. Evidence root: `I:/AI/asmr-director-batch-download/2026-10-01`. Full Vitest passes 72 files / 755 tests, with one existing opt-in file/test skipped. Targeted UI passes 3 files / 24 tests, including 6 new download-component tests; targeted backend passes 5 files / 35 tests, including existing mix-DSP tests. Full TypeScript, ESLint and the production Webpack build pass. The final ESLint rerun after adding the new build-directory ignores also passes. Independent backend read review found no required fix.
 

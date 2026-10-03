@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -29,6 +29,24 @@ function makeTimestamp(date: Date): string {
 function assertSafeSegment(value: string, label: string) {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) {
     throw new Error(`Invalid ${label}`);
+  }
+}
+
+async function writeAssetAtomically(assetPath: string, wav: Uint8Array | ArrayBuffer) {
+  await mkdir(path.dirname(assetPath), { recursive: true });
+  const temporary = `${assetPath}.${randomUUID()}.tmp`;
+  let written = false;
+  try {
+    await writeFile(temporary, wav instanceof ArrayBuffer ? new Uint8Array(wav) : wav, { flag: "wx" });
+    written = true;
+    await rename(temporary, assetPath);
+  } catch (error) {
+    // An exclusive-create collision belongs to someone else; all other partial
+    // writes and failed publishes clean only this request's temporary file.
+    if (written || !(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
+    throw error;
   }
 }
 
@@ -95,8 +113,7 @@ export async function saveClipAsset({
   const assetId = makeAssetId(clipId, now);
   const assetPath = resolveClipAssetPath(assetId, config);
 
-  await mkdir(path.dirname(assetPath), { recursive: true });
-  await writeFile(assetPath, wav instanceof ArrayBuffer ? new Uint8Array(wav) : wav);
+  await writeAssetAtomically(assetPath, wav);
 
   return {
     assetId,
@@ -116,8 +133,7 @@ export async function saveMixAsset({
   const assetId = makeMixAssetId(projectId, exportType, now);
   const assetPath = resolveMixAssetPath(assetId, config);
 
-  await mkdir(path.dirname(assetPath), { recursive: true });
-  await writeFile(assetPath, wav instanceof ArrayBuffer ? new Uint8Array(wav) : wav);
+  await writeAssetAtomically(assetPath, wav);
 
   return {
     assetId,

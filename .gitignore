@@ -11,6 +11,7 @@ node_modules/
 .next-h3-storyboard-production/
 .next-clip-storyboard-production/
 .next-concise-h3-production/
+.next-batch-generation-production/
 out/
 dist/
 coverage/

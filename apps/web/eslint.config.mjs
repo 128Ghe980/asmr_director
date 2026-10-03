@@ -18,6 +18,7 @@ const eslintConfig = defineConfig([
     ".next-h3-storyboard-production/**",
     ".next-clip-storyboard-production/**",
     ".next-concise-h3-production/**",
+    ".next-batch-generation-production/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

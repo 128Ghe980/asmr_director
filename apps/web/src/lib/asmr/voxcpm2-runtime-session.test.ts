@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { renameSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,6 +39,54 @@ afterEach(async () => {
 });
 
 describe("VoxCPM2 runtime session reservation", () => {
+  it.each(["empty", "partial"] as const)("removes its own %s initial reservation after ENOSPC and allows the next session", async (kind) => {
+    const { config, lockPath } = await fixture();
+    const operation = vi.fn();
+    const writeOwnerRecord = vi.fn((fd: number, contents: string) => {
+      if (kind === "partial") writeSync(fd, contents.slice(0, 31), 0, "utf8");
+      throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    });
+    await expect(withVoxCpm2RuntimeSession(config, undefined, operation, { writeOwnerRecord }))
+      .rejects.toMatchObject({ code: "INSUFFICIENT_STORAGE", statusCode: 507 });
+    expect(operation).not.toHaveBeenCalled();
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(withVoxCpm2RuntimeSession(config, undefined, async () => "next candidate"))
+      .resolves.toBe("next candidate");
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["malformed contents", "owner token", "inode"] as const)("preserves a foreign initial reservation after write failure when its %s changed", async (changed) => {
+    const { config, lockPath } = await fixture();
+    const foreign = changed === "malformed contents" ? '{"ownerToken":"foreign' : JSON.stringify({ ownerToken: "foreign" });
+    let replacement = foreign;
+    const writeOwnerRecord = (fd: number, contents: string) => {
+      if (changed === "inode") {
+        renameSync(lockPath, path.join(path.dirname(lockPath), "retired.lock"));
+        // Even an exact prefix must not authorize removing a different inode.
+        replacement = contents.slice(0, 31);
+        writeFileSync(lockPath, replacement);
+      } else writeSync(fd, foreign, 0, "utf8");
+      throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    };
+    await expect(withVoxCpm2RuntimeSession(config, undefined, async () => {}, { writeOwnerRecord }))
+      .rejects.toMatchObject({ code: "INSUFFICIENT_STORAGE", statusCode: 507 });
+    const remaining = await readFile(lockPath, "utf8");
+    expect(remaining).toBe(replacement);
+    expect(remaining).not.toBe("");
+    await expect(withVoxCpm2RuntimeSession(config, undefined, async () => {})).rejects.toMatchObject({ statusCode: 409 });
+    expect(await readFile(lockPath, "utf8")).toBe(remaining);
+  });
+
+  it("keeps a pre-existing malformed lock reserved instead of guessing its owner", async () => {
+    const { config, lockPath } = await fixture();
+    await withVoxCpm2RuntimeSession(config, undefined, async () => {});
+    await writeFile(lockPath, "");
+    const operation = vi.fn();
+    await expect(withVoxCpm2RuntimeSession(config, undefined, operation)).rejects.toMatchObject({ statusCode: 409 });
+    expect(operation).not.toHaveBeenCalled();
+    expect(await readFile(lockPath, "utf8")).toBe("");
+  });
+
   it("tracks overlapping TTS and ASR separately and retains a late ASR reservation", async () => {
     const { config, lockPath } = await fixture();
     let session!: VoxCpm2RuntimeSession;

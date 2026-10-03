@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { readGenerationResponse } from "./generation-response";
+import { LocalStorageError } from "./local-storage-error";
 
 const encoder = new TextEncoder();
 const contentType = { "content-type": "application/x-ndjson; charset=utf-8" };
@@ -47,6 +48,22 @@ describe("generation NDJSON reader", () => {
     expect(cancel).toHaveBeenCalledOnce();
     expect(response.body?.locked).toBe(false);
     await expect(readGenerationResponse(streamed([encoder.encode(JSON.stringify({ type: "error", error: "x".repeat(500) }))]), vi.fn())).rejects.toThrow("长文生成失败");
+  });
+
+  it("preserves a storage error code from NDJSON and closes the stream before any later result", async () => {
+    const cancel = vi.fn();
+    const response = streamed([encoder.encode(JSON.stringify({ type: "error", error: "failed to save source.wav", code: "INSUFFICIENT_STORAGE" }) + "\n")], { close: false, cancel });
+    const error = await readGenerationResponse(response, vi.fn()).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(LocalStorageError);
+    expect(error).toMatchObject({ code: "INSUFFICIENT_STORAGE", statusCode: 507, message: "音频保存空间不足，请释放存储空间后重试。" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(response.body?.locked).toBe(false);
+  });
+
+  it("retains the meaning of HTTP 507 even if its body is not valid JSON", async () => {
+    const response = new Response("insufficient storage", { status: 507 });
+    await expect(readGenerationResponse(response, vi.fn())).rejects.toMatchObject({ code: "INSUFFICIENT_STORAGE", statusCode: 507, message: "音频保存空间不足，请释放存储空间后重试。" });
+    expect(response.body?.locked).toBe(false);
   });
 
   it("rejects an EOF or network disconnection without a final candidate", async () => {
