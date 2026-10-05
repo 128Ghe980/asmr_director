@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "seeds": [104729, 130363, 155921],
+  "shortDurationSeconds": 8,
+  "longDurationSeconds": 24,
+  "negativePrompt": "Low quality, speech, voices, singing, music, breathing, loud harsh scraping, loud impacts, electronic tones, steady rhythmic beat, audible loop.",
+  "categories": [
+    {
+      "id": "ear_brushing",
+      "label": "刷耳",
+      "prompt": "A close-miked dry recording of a fluffy cosmetic brush softly brushing a silicone ear. Fine soft bristle rustles, gently changing stroke length, direction and pressure, irregular natural pauses, quiet intimate detail, silent studio background."
+    },
+    {
+      "id": "massage",
+      "label": "按摩",
+      "prompt": "A close-miked dry recording of fingertips gently massaging and rubbing skin. Soft skin friction and subtle kneading, gently changing finger contact and pressure, irregular natural hand movements and pauses, quiet intimate detail, silent studio background."
+    },
+    {
+      "id": "ear_cleaning",
+      "label": "棉签清洁",
+      "prompt": "A close-miked dry recording of a soft cotton swab gently wiping a silicone ear. Delicate cotton friction and tiny soft scrapes, gently changing pressure and direction, irregular natural pauses, quiet intimate detail, silent studio background."
+    },
+    {
+      "id": "spray",
+      "label": "喷雾",
+      "prompt": "A close-miked dry recording of a small fine-mist water spray bottle. Several gentle trigger squeezes, tiny soft trigger clicks and delicate airy water spray, naturally varied squeeze strength and irregular gaps, quiet detail, silent studio background."
+    }
+  ]
+}

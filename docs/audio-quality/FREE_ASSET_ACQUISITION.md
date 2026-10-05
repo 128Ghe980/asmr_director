@@ -1,0 +1,21 @@
+# Real ASMR asset acquisition and audition
+
+Updated: 2026-10-04. [中文记录](FREE_ASSET_ACQUISITION.zh.md).
+
+The production workspace still renders procedural breathing/laughter envelopes, rustling or tapping, and rain. Changing a free-form label does not add a distinct recording.
+
+Six existing Freesound CC0 recordings are complete under `D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/licensed-assets`: blanket, clothing, wood taps, desk taps, window rain and soft rain. Original MP3 hashes and converted WAV timing/channels were verified. All six came from public HQ MP3 previews, not uploaded original WAVs.
+
+The user selected personal care: ear cleaning, ear brushing, massage and spray. This slice prepares seven individually verified CC0 previews: cotton-swab ear cleaning, ear rubbing/tapping, two hand-friction massage actions, spray bottle, and two generic brushing alternatives. The exact authors, source pages, download URLs and preview variant are tracked in [`sources.json`](../../tools/sfx-library/sources.json). Source MP3s, page snapshots, converted 48 kHz stereo PCM16 WAVs and a separate audition catalog live on I:. The existing experimental library, projects and VoxCPM2 manifests remain untouched. New audio receives no gain, fades, trimming, looping or spatial processing; existing WAV copies retain their earlier processing.
+
+Separate `audition.wav` copies adjust gain only toward -30 dBFS RMS, capped at -6 dBFS peak. The page plays these for comparison, shows the actual gain in details and links the unchanged dry `listening.wav`. Some HQ previews are extremely quiet (slow hand rubbing around -79 dBFS RMS; short brushing around -63 dBFS RMS), so their audition copies need substantial amplification. Noise and quantization artifacts still require scrutiny; leveling cannot establish recording quality or adoption.
+
+Actual ear brushing remains a sourcing gap. Generic object/fabric brushing and ear rubbing must retain their accurate labels. Stereo output alone does not establish binaural recording; the two hand-friction sources are mono and duplicating them into stereo adds no spatial information. Ear closeness and ASMR quality still require user audition. Previously researched paper sounds are deferred rather than downloaded after the preference change.
+
+Run `tools/sfx-library/prepare_listening.py --help` with Python 3.9+ for acquisition options. This host uses `C:/Users/Yuki1/AppData/Local/Programs/Python/Python311/python.exe`, with ffmpeg on PATH or supplied through `--ffmpeg`. Use an isolated `--root`, the committed `--sources`, and the existing library `--existing` manifest. `--direct` disables environment proxies for this command only; the host's legacy Anaconda proxy connection failed while direct HTTPS succeeded. Serve the output with `tools/distance-listening/serve.py OUTPUT --port 8768`.
+
+Prefer recorded CC0 material with per-item provenance; future CC-BY imports require attribution handling. [Freesound](https://freesound.org/) covers specific actions and materials; full original downloads require login, and previews must remain clearly identified. The [Owlish Media CC0 pack](https://opengameart.org/content/sound-effects-pack) offers original fabric, paper, breathing/laughter and water files, mixed with unrelated effects. Its full-pack transfer was canceled this round; the task-owned incomplete `.part` is not counted as acquired. [BigSoundBank](https://bigsoundbank.com/) offers another source to inspect individually.
+
+The existing local-AI research choice is [Stable Audio 3 Small SFX](https://huggingface.co/stabilityai/stable-audio-3-small-sfx). Model access requires account-level acceptance of its terms. No working local SFX weights/provider or listening acceptance was found; Windows / RTX 3060 Laptop 6GB behavior must be tested before claiming availability.
+
+All audition results remain pending. Check unwanted voices/music, sharp transients, noise, material/action suitability, masking of dialogue and loop joins. File integrity is not ASMR quality acceptance. Production library selection, adoption/undo, provenance persistence and non-voice spatial processing remain unfinished. Do not write audition records into the voice-only VoxCPM2 candidate format or migrate the dirty prototype worktree wholesale.

@@ -1,8 +1,53 @@
 # Third-Party Runtimes
 
-Last updated: 2026-09-09
+Last updated: 2026-10-05
 
 This file records external runtime projects and model assets used during local experiments or planned provider integration. It is not legal advice; re-check upstream licenses and model terms before redistribution, hosted service launch, commercial release, or publishing generated voice packs.
+
+## AudioLDM2 — isolated personal-care SFX experiment
+
+2026-10-04: user requested independent model-generated friction/care sounds, rather
+than repeated reuse of one recording. This is an Audio Quality V1 experiment with
+no product provider or automatic adoption. See [English protocol](audio-quality/MODEL_SFX_TEST.md)
+and [中文](audio-quality/MODEL_SFX_TEST.zh.md).
+
+- Official weights/model card: <https://huggingface.co/cvssp/audioldm2>, license
+  **CC-BY-NC-SA-4.0**; noncommercial testing only in this project.
+- Local target revision: `c8e7e189d324425c05c4c2f81214041ef4107983`.
+  Download only configs/tokenizers and safetensors, 26 files / 4,480,952,551 bytes.
+  Download completed: all 26 files passed official SHA256/Git-blob checks. Some
+  LFS bytes came from the public `AI-ModelScope/audioldm2` mirror at revision
+  `87e064c5ba53208c9abccd31359dcb2c4c86fce1`, after official size/SHA matching;
+  the receipt preserves each source. Download completion did not establish inference support.
+- Runtime/cache root: `I:/AI/asmr-director-sfx-model-test/runtime`; experiment
+  evidence root: `I:/AI/asmr-director-sfx-model-test/2026-10-04`.
+- Existing read-only CUDA environment: GPT-SoVITS `env-comfyui-clone/python.exe`,
+  Python 3.12.8, torch 2.8.0+cu129, diffusers 0.35.2, transformers 4.50.0,
+  accelerate 1.10.1, NumPy 1.26.4, SciPy 1.16.1. No package changes for this test.
+- Separate actual remote smoke route: public
+  <https://huggingface.co/spaces/fffiloni/audioldm2-text2audio-text2music-API>,
+  source revision `f6cbb14d5e22ada888aa19b6bee08ceadc58811e`. It loads AudioLDM2
+  without pinning the weight revision; remote 200-step DDIM results must not be
+  combined with the pinned local 50-step DPM baseline. Job/SSE receipts preserve
+  real generated outputs. Public quota failures stop the queue.
+- Output: 16 kHz mono. No claim of binaural recording, spatial treatment or
+  listening acceptance. Preserve raw WAVs and explicitly label gain-only copies.
+- Actual result: local 0 outputs after native load/CUDA memory failures;
+  remote 3 brush candidates before quota rejection. On 2026-10-05 the user
+  rejected all three as unusable and paused further model testing. Stable Audio
+  Open was prepared but never executed; other alternatives remain untested.
+  No packages changed or production audio adopted. See the
+  [rejection/publication record](records/2026-10-05-audio-quality-v1-sfx-rejection-release.md).
+- Stable Audio 3 Small-SFX remains a gated future comparison. Public model-card
+  access does not authorize downloading its gated weights; account-holder
+  agreement acceptance must happen before downloading. No gated weights fetched.
+  The separate optimized asset repository reports `gated=false` as checked on
+  2026-10-04; it still carries Stable Audio Community and T5Gemma terms. The
+  Windows LiteRT CPU alternative has not been installed or downloaded. See
+  [alternatives research](audio-quality/MODEL_SFX_ALTERNATIVES.md).
+
+本轮独立测试模型生成护理声音，权重、音频、证据不进 Git，录音库/用户候选保留。
+远端演示、本机实际推理与下载进度分别记录；不把不同哈希或完成下载当成音质通过。
 
 ## GPT-SoVITS
 

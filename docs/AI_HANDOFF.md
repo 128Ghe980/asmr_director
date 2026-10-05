@@ -1,8 +1,38 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-10-03
+Last updated: 2026-10-05
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
+
+## Resume here — 2026-10-05 generated SFX rejected; model tests paused; publication authorized
+
+User listened to the three remote AudioLDM2 8-second brush candidates and said **“相当烂，没法用，先这样吧，记录一下推一版”**. All three are **rejected / unusable**, with no production adoption. Local AudioLDM2 produced 0; remote produced 3; massage failed on quota, and ear cleaning/spray/long takes were not completed. This rejection applies to the generated samples, not the separate 13-item recorded-source library (still listening pending). Stable Audio Open and other alternatives have not been run. Audio Quality V1 remains **in progress**; further model work is **paused by the user**. Do not resume host clarification, inference, downloads, installation or paid calls until the user asks to continue.
+
+Read the [rejection/publication record](records/2026-10-05-audio-quality-v1-sfx-rejection-release.md). Raw audio, weights and logs stay outside Git. The remote manifest, analysis/catalog and audition page now carry the rejection; all 9 raw/copy/audition WAV hashes are unchanged. Source-only publication covers SFX acquisition, isolated generation/analysis, bounded supervision, the unexecuted Open adapter and documentation. Unrelated spatial-workbench changes remain in the working tree and are excluded from this release. Earlier pending/resume/no-push notes below are historical; actual commit/push and remote equality are established by Git and `I:/AI/asmr-director-sfx-release/2026-10-05/release-verification.json`, not preclaimed by this in-commit note.
+
+## Earlier — 2026-10-04 model SFX execution requested; preparation only
+
+At that checkpoint, user said **“开始测试模型生成音频吧”**, superseding the earlier research-only steering. A single bounded Stable Audio Open 1.0 brush test was prepared; the current RTX3060 Laptop6GB and missing 5070 Ti16GB connection details prevented a new run. Host clarification was pending then and is no longer an active task after the 2026-10-05 pause. No new model output, install or download occurred. Read the [resume record](records/2026-10-04-audio-quality-v1-stable-open-resume.md). Future execution, if requested, requires external 300s timeout/cancel and confirmed child cleanup. Preserve existing samples and unrelated spatial-workbench changes.
+
+Preparation at that checkpoint: `run_bounded.py` (6 Windows synthetic lifecycle checks, including exact root/descendant death) and `generate_stable_open.py` (24 stdlib request/preservation checks), with bilingual portable commands. Deadline/cancel are tested, not actual model inference or Codex UI cancellation. External test kit has no weights/audio; host information was pending then and model tests are now paused. Any future user-requested first run must remain one category/seed, not the adapter's whole default matrix.
+
+## Earlier — 2026-10-04 SFX model attempt stopped; research only
+
+Follow-up: user may use another **RTX 5070 Ti 16GB desktop** and asked for other local models. Research remains the scope; that hypothetical statement did not request connection or execution. [Updated bilingual comparison](audio-quality/MODEL_SFX_ALTERNATIVES.zh.md) adds Stable Audio Open 1.0 (simpler first GPU smoke), Stable Audio 3 Medium (long takes; FA2/Blackwell setup), TangoFlux (explicit lower-level seed needed) and AudioGen (16GB official minimum). Earlier CPU advice applies to the current 6GB laptop. No actual 5070 Ti measurements; verify supporting PyTorch/cu128+ and add cancellation/timeout before future execution.
+
+User steering at that checkpoint: **“昨天跑了5个小时，好像卡住了，都没法中断对话，如果内存不够就先调研其他方案吧”**. The attempt produced **local 0 / remote 3** brush candidates, initially listening pending and now rejected on 2026-10-05; AudioLDM2 weights downloaded and hash-verified (26 files / 4,480,952,551 bytes), but native load/CUDA memory failures prevented local output. The public demo exhausted quota on the next massage job. The saved stop/preservation receipt found no owned generation Python and recorded 151 files / changed 0. Root cause is not established as VRAM capacity alone. Preserve all external weights, raw samples and logs.
+
+Read [experiment record](records/2026-10-04-audio-quality-v1-sfx-model-test.md), [alternatives](audio-quality/MODEL_SFX_ALTERNATIVES.md) / [中文](audio-quality/MODEL_SFX_ALTERNATIVES.zh.md). The earlier research proposed Stable Audio 3 Small-SFX through Windows LiteRT CPU; actual RAM/speed/quality remain untested. Optimized assets are separately ungated, unlike original Small-SFX, but model/encoder terms still apply. Paid API options remain deferred. A bounded supervisor was subsequently prepared for the Open route, but no new model ran and all further tests are paused. No conversation cancellation repair is claimed.
+
+Remote audition root `I:/AI/asmr-director-sfx-model-test/2026-10-04/remote/listening`, preview 8769 at verification, keeps 3 raw and 3 gain-only WAVs with actual playback/mobile checks. No long-take matrix completed, no production adoption or new app build, no commit/push. Audio Quality V1 remains in progress. The earlier recorded audition below is preserved.
+
+## Earlier — 2026-10-04 personal-care SFX acquisition
+
+User selected **贴耳护理：掏耳、刷耳、按摩、喷雾** after asking to expand effects. Read [acquisition record](records/2026-10-04-audio-quality-v1-sfx-acquisition.md) and [English](audio-quality/FREE_ASSET_ACQUISITION.md) / [中文](audio-quality/FREE_ASSET_ACQUISITION.zh.md). Main production code remains at procedural SFX; the unchanged old licensed library contains six verified HQ MP3 preview recordings. Seven new CC0 previews now cover cotton-swab cleaning, ear rubbing, hand-friction massage (two), spray and generic brushing (two). Actual ear brushing remains missing; stereo does not prove binaural recording.
+
+Standalone audition root **`I:/AI/asmr-director-sfx-expansion/2026-10-04/listening`** has 13 pending entries and 26 verified dry/audition WAVs. Audition copies adjust volume only (-30 dBFS RMS target, -6 dBFS peak ceiling), with dry links in card details; very quiet sources need noise scrutiny. Old 13 files are SHA/size preserved. Actual Edge decode/playback/single-player/filter and 1280/390/320px checks pass with no final browser errors. Preview **http://127.0.0.1:8768/** / PID6852 at verification; separate from production3001. Reproduce with Python3.11 and `tools/sfx-library/prepare_listening.py`; source definitions live in the repository as metadata, audio remains outside Git. Canceled 5MiB full-pack `.part` sits outside the listening root and is not a valid asset.
+
+No listening acceptance, local SFX model, paid call, product adoption, candidate mutation, app build or commit/push in this slice. Audio Quality V1 stays in progress. Integrate library selection/adoption/undo/provenance only after evaluating recordings; do not insert these into the voice-only VoxCPM2 manifest or wholesale merge the dirty round-one worktree. The next section retains the prior release checkpoint.
 
 ## Resume here — 2026-10-03 authorized batch workflow release and handoff
 

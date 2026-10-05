@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "asset_id": "ear_cleaning_elias79_690078",
+      "category": "ear_cleaning",
+      "label": "棉签清洁耳部",
+      "title": "ASMR cleaning ear.mp3",
+      "author": "Elias79",
+      "source_page_url": "https://freesound.org/people/Elias79/sounds/690078/",
+      "download_url": "https://cdn.freesound.org/previews/690/690078_14301666-hq.mp3",
+      "download_variant": "preview",
+      "license_name": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution_required": false,
+      "redistribution_allowed": true
+    },
+    {
+      "asset_id": "ear_rubbing_elias79_690077",
+      "category": "ear_rubbing",
+      "label": "揉耳 · 摩擦与轻敲",
+      "title": "ASMR Rubbing ear.mp3",
+      "author": "Elias79",
+      "source_page_url": "https://freesound.org/people/Elias79/sounds/690077/",
+      "download_url": "https://cdn.freesound.org/previews/690/690077_14301666-hq.mp3",
+      "download_variant": "preview",
+      "license_name": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution_required": false,
+      "redistribution_allowed": true
+    },
+    {
+      "asset_id": "skin_vrymaa_770121",
+      "category": "skin",
+      "label": "按摩动作 · 手部圆形摩擦",
+      "title": "Body - Hands",
+      "author": "Vrymaa",
+      "source_page_url": "https://freesound.org/people/Vrymaa/sounds/770121/",
+      "download_url": "https://cdn.freesound.org/previews/770/770121_13973196-hq.mp3",
+      "download_variant": "preview",
+      "license_name": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution_required": false,
+      "redistribution_allowed": true
+    },
+    {
+      "asset_id": "skin_lizzbitzz_766063",
+      "category": "skin",
+      "label": "按摩动作 · 慢速搓手",
+      "title": "Hands Rubbing_Slow rubs",
+      "author": "LizzBitzz",
+      "source_page_url": "https://freesound.org/people/LizzBitzz/sounds/766063/",
+      "download_url": "https://cdn.freesound.org/previews/766/766063_15688689-hq.mp3",
+      "download_variant": "preview",
+      "license_name": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution_required": false,
+      "redistribution_allowed": true
+    },
+    {
+      "asset_id": "spray_owlstorm_212178",
+      "category": "spray",
+      "label": "喷雾 · 手动喷瓶",
+      "title": "Spray Bottle",
+      "author": "OwlStorm",
+      "source_page_url": "https://freesound.org/people/OwlStorm/sounds/212178/",
+      "download_url": "https://cdn.freesound.org/previews/212/212178_140737-hq.mp3",
+      "download_variant": "preview",
+      "license_name": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution_required": false,
+      "redistribution_allowed": true
+    },
+    {
+      "asset_id": "brushing_lzmraul_389452",
+      "category": "brushing",
+      "label": "刷擦 · 短动作",
+      "title": "Brushing.wav",
+      "author": "lzmraul",
+      "source_page_url": "https://freesound.org/people/lzmraul/sounds/389452/",
+      "download_url": "https://cdn.freesound.org/previews/389/389452_6060491-hq.mp3",
+      "download_variant": "preview",
+      "license_name": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution_required": false,
+      "redistribution_allowed": true
+    },
+    {
+      "asset_id": "brushing_franckwalden_832225",
+      "category": "brushing",
+      "label": "刷擦 · 织物桌垫",
+      "title": "4 strokes on a fabric desk mat",
+      "author": "franckwalden",
+      "source_page_url": "https://freesound.org/people/franckwalden/sounds/832225/",
+      "download_url": "https://cdn.freesound.org/previews/832/832225_15607250-hq.mp3",
+      "download_variant": "preview",
+      "license_name": "CC0 1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution_required": false,
+      "redistribution_allowed": true
+    }
+  ]
+}
