@@ -7,11 +7,16 @@ import {
   createEmptyPlannerBrief,
   type PlannerBrief,
   type PlannerDraft,
+  type PlannerSource,
 } from "./planner";
 import type { StorageLike } from "./project-persistence";
 import { EditableStoryboardSchema, type PlannerStoryboard } from "./storyboard";
 
 export const PLANNER_DRAFT_STORAGE_KEY = "ai-asmr-studio:v1:planner-draft";
+export const PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY = `${PLANNER_DRAFT_STORAGE_KEY}:legacy-project`;
+export function getPlannerDraftStorageKey(projectId?: string) {
+  return projectId ? `${PLANNER_DRAFT_STORAGE_KEY}:project:${encodeURIComponent(projectId)}` : PLANNER_DRAFT_STORAGE_KEY;
+}
 const MAX_STORED_DRAFT_CHARACTERS = 200000;
 
 // Local work can contain a new/temporarily cleared paragraph. Adoption and model
@@ -68,15 +73,41 @@ export function createEmptyPlannerWorkingState(): PlannerWorkingState {
   };
 }
 
-export function loadPlannerDraft(storage: StorageLike): {
+export function loadPlannerDraft(storage: StorageLike, projectId?: string, source?: PlannerSource): {
   state: PlannerWorkingState;
   restored: boolean;
   error?: string;
+  legacyAvailable?: boolean;
 } {
   try {
-    const stored = storage.getItem(PLANNER_DRAFT_STORAGE_KEY);
+    let stored = storage.getItem(getPlannerDraftStorageKey(projectId));
+    let migrating = false;
+    let legacyAvailable = false;
+    if (projectId) {
+      const owner = storage.getItem(PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY);
+      const legacy = storage.getItem(PLANNER_DRAFT_STORAGE_KEY);
+      legacyAvailable = !owner && Boolean(legacy);
+      if (!stored && legacy) {
+        let matchesSource = false;
+        if (!owner && source && legacy.length <= MAX_STORED_DRAFT_CHARACTERS) {
+          try {
+            const parsed = parseWorkingState(JSON.parse(legacy));
+            const originalBrief = PlannerBriefSchema.safeParse(source.brief);
+            const originalDraft = PlannerDraftSchema.safeParse(source.draft);
+            matchesSource = parsed.success && originalBrief.success && originalDraft.success && Boolean(parsed.data.draft)
+              && JSON.stringify(parsed.data.draftBrief) === JSON.stringify(originalBrief.data)
+              && JSON.stringify(parsed.data.draft) === JSON.stringify(originalDraft.data);
+          } catch { /* An unattributed legacy value stays intact for explicit recovery. */ }
+        }
+        if (owner === projectId || matchesSource) {
+          stored = legacy;
+          migrating = true;
+          legacyAvailable = false;
+        }
+      }
+    }
     if (!stored) {
-      return { state: createEmptyPlannerWorkingState(), restored: false };
+      return { state: createEmptyPlannerWorkingState(), restored: false, ...(legacyAvailable ? { legacyAvailable: true } : {}) };
     }
     if (stored.length > MAX_STORED_DRAFT_CHARACTERS) {
       throw new Error("Stored draft exceeds the size limit.");
@@ -85,7 +116,18 @@ export function loadPlannerDraft(storage: StorageLike): {
     if (!parsed.success) {
       throw new Error("Stored draft is invalid.");
     }
-    return { state: parsed.data, restored: true };
+    if (migrating && projectId) {
+      try {
+        // Keep the legacy bytes intact. Only matching project provenance or an
+        // already recorded owner can claim them automatically.
+        storage.setItem(PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY, projectId);
+        const saved = savePlannerDraft(storage, parsed.data, projectId);
+        if (!saved.success) return { state: parsed.data, restored: true, error: saved.error };
+      } catch {
+        return { state: parsed.data, restored: true, error: "原策划草稿已恢复，但按项目保存失败，请及时下载文案。" };
+      }
+    }
+    return { state: parsed.data, restored: true, ...(legacyAvailable ? { legacyAvailable: true } : {}) };
   } catch {
     return {
       state: createEmptyPlannerWorkingState(),
@@ -98,6 +140,7 @@ export function loadPlannerDraft(storage: StorageLike): {
 export function savePlannerDraft(
   storage: StorageLike,
   state: PlannerWorkingState,
+  projectId?: string,
 ): { success: true } | { success: false; error: string } {
   const parsed = parseWorkingState(state);
   if (!parsed.success) {
@@ -108,7 +151,7 @@ export function savePlannerDraft(
     if (serialized.length > MAX_STORED_DRAFT_CHARACTERS) {
       return { success: false, error: "策划草稿过长，请缩短后再保存。" };
     }
-    storage.setItem(PLANNER_DRAFT_STORAGE_KEY, serialized);
+    storage.setItem(getPlannerDraftStorageKey(projectId), serialized);
     return { success: true };
   } catch {
     return { success: false, error: "策划草稿无法保存到此浏览器，请保留当前页面后重试。" };

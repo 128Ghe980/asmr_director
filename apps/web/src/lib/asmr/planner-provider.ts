@@ -194,6 +194,7 @@ function prompts(request: PlannerRequest, jsonSchema: unknown): ChatMessage[] {
       "根据以下 brief 创作整份策划稿。groups 只用来共享导演与声音属性，同一角色和表演设置写一次，不需要为每条台词重复。id 使用 group_1、group_2 等唯一标识。",
       "每个 group 内的 units 是实际语义短单元，每条仅返回 text 与 pauseAfter；顺序串联所有 groups 的 units 即为完整文案。不要为了凑 group 数量截断同一意思。",
       "标题简短，导演说明和音效建议仅在需要时填写，其他时候写空字符串。",
+      "保持 JSON 紧凑：同一角色与连续相同表演设置共用一个 group，通常 1 至 6 个 group 足够；不要每句都重复导演字段。场景用 1 至 2 句，direction 和 soundSuggestions 各最多 80 字，emotion、style、pace 各用短语。",
       PLANNER_SEMANTIC_GUIDANCE,
       "不要自行设置毫秒或秒数，程序将按短句停顿类别设置自然衔接时间。",
       `目标约 ${request.brief.durationSeconds} 秒，可朗读台词总字数约 ${Math.round(wordTarget * 0.75)} 至 ${Math.round(wordTarget * 1.15)} 字，包含自然留白；这只是创作估计。`,
@@ -275,9 +276,9 @@ async function completion(
       } : {
         model: provider.model, messages, stream: false, temperature: settings?.temperature ?? 0.65,
         max_tokens: settings?.maxTokens ?? 8192, response_format: { type: "json_object" },
-        // Short structural analysis needs its output budget for the JSON. The
-        // provider-specific toggle is not sent to other compatible APIs or the
-        // existing creative Planner, whose reasoning behavior stays unchanged.
+        // Official DeepSeek defaults to thinking; that reasoning shares the
+        // completion budget with the JSON. Structured callers reserve their
+        // bounded budget for the actual output. Other APIs receive no toggle.
         ...(settings?.disableDeepSeekThinking && new URL(provider.url!).hostname === "api.deepseek.com"
           ? { thinking: { type: "disabled" } } : {}),
       }),
@@ -292,7 +293,7 @@ async function completion(
     void response.body?.cancel().catch(() => {});
     throw upstreamError(response.status, provider.id);
   }
-  const text = await readLimitedText(response, MAX_RESPONSE_BYTES, new PlannerError(502, "模型回复过长，请缩短目标时长后重试。"), signal);
+  const text = await readLimitedText(response, MAX_RESPONSE_BYTES, new PlannerError(502, "模型回复过长，本次内容未采用，请重试。"), signal);
   let envelope: { message?: { content?: unknown }; choices?: { message?: { content?: unknown }; finish_reason?: string }[]; done_reason?: string };
   try {
     envelope = JSON.parse(text);
@@ -302,9 +303,9 @@ async function completion(
   }
   const content = provider.id === "ollama" ? envelope.message?.content : envelope.choices?.[0]?.message?.content;
   const finishReason = provider.id === "ollama" ? envelope.done_reason : envelope.choices?.[0]?.finish_reason;
-  if (finishReason === "length") throw new PlannerError(502, "模型回复达到长度上限，请缩短目标时长后重试。");
+  if (finishReason === "length") throw new PlannerError(502, "模型回复达到长度上限，不完整文案未采用，请重试。");
   if (typeof content !== "string" || !content.trim()) throw new InvalidPlannerOutput("模型没有返回可用的 JSON 文案。");
-  if (content.length > MAX_CONTENT_LENGTH) throw new PlannerError(502, "模型回复过长，请缩短目标时长后重试。");
+  if (content.length > MAX_CONTENT_LENGTH) throw new PlannerError(502, "模型回复过长，本次内容未采用，请重试。");
   return content;
 }
 
@@ -376,15 +377,25 @@ export async function runPlanner(
   const onCancel = () => controller.abort(new PlannerError(499, "策划已取消。"));
   options.signal?.addEventListener("abort", onCancel, { once: true });
   if (options.signal?.aborted) onCancel();
-  const timer = setTimeout(() => controller.abort(new PlannerError(504, "策划超时，请缩短目标时长或检查模型服务后重试。")), config.timeoutMs);
+  const timer = setTimeout(() => controller.abort(new PlannerError(504, "策划超时，请检查模型服务或稍后重试。")), config.timeoutMs);
   try {
     const schema = request.action === "generate" ? PlannerGeneratedDraftSchema : request.range ? PlannerReplacementSchema : PlannerSectionSchema;
     const jsonSchema = z.toJSONSchema(schema);
     const messages = prompts(request, jsonSchema);
+    // The configured official DeepSeek model can support these bounded output
+    // limits. Do not guess larger limits for arbitrary compatible providers or
+    // the existing local model. Rewrites retain their separate 8K allowance.
+    const settings = provider.id === "api" && new URL(provider.url!).hostname === "api.deepseek.com" ? {
+      maxTokens: request.action === "rewrite" ? 8192
+        : request.brief.durationSeconds <= 60 ? 4096
+        : request.brief.durationSeconds <= 180 ? 8192
+        : request.brief.durationSeconds <= 300 ? 12288 : 16384,
+      temperature: 0.65, localCpuOnly: false, disableDeepSeekThinking: true,
+    } : undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let content = "";
       try {
-        content = await completion(provider, messages, jsonSchema, options.fetchImpl ?? fetch, controller.signal);
+        content = await completion(provider, messages, jsonSchema, options.fetchImpl ?? fetch, controller.signal, settings);
         if (controller.signal.aborted) throw abortError(controller.signal);
         const output = parseOutput(content, schema);
         if (request.action === "generate") {

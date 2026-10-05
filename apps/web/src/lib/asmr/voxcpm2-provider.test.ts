@@ -276,6 +276,8 @@ describe("VoxCPM2 native provider", () => {
   });
   it.each([
     ["CUDA error: out of memory", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
+    ["CUDA error: CUBLAS_STATUS_NOT_INITIALIZED", "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503],
+    ["CUDA error: initialization error", "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503],
     ["std::bad_alloc", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
     ["write failed: No space left on device", "音频保存空间不足，请释放存储空间后重试。", 507],
     ["write failed: [WinError 112]", "音频保存空间不足，请释放存储空间后重试。", 507],
@@ -293,6 +295,27 @@ describe("VoxCPM2 native provider", () => {
     const [record] = await failureDiagnostics(input);
     expect(record.native.stderrTail).toContain(nativeMessage);
     expect(record.failure.message).not.toMatch(/private-path|input-secret|cpy\.cu/);
+  });
+  it("classifies the imported-reference cuBLAS crash without retrying or changing the reference", async () => {
+    const { input, root } = await fixture();
+    const referencePath = path.join(root, "reference.wav");
+    const referenceBefore = await readFile(referencePath);
+    const spawnImpl = vi.fn(() => {
+      const process = child();
+      setImmediate(() => {
+        process.stderr.write("Loading reference WAV: private-reference.wav\n  Reference: 15.00s, 16000 Hz\nMiniCPMLM: context suspended for low-VRAM reference encoding\nCUDA error: CUBLAS_STATUS_NOT_INITIALIZED\n  current device: 0, in function cublas_handle at private/common.cuh:1476\n  cublasCreate_v2(&cublas_handles[device])\nprivate/ggml-cuda.cu:105: CUDA error\n");
+        process.emit("close", 3221226505, null);
+      });
+      return process;
+    });
+    await expect(generateVoxCpm2(input, { spawnImpl })).rejects.toMatchObject({
+      statusCode: 503,
+      message: "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。",
+    });
+    expect(spawnImpl).toHaveBeenCalledOnce();
+    expect(await readFile(referencePath)).toEqual(referenceBefore);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect(await failureDiagnostics(input)).toMatchObject([{ native: { exitCode: 3221226505, exitConfirmed: true } }]);
   });
   it.each(["ENOSPC", "EDQUOT"])("retains native %s as a typed storage error", async (code) => {
     const { input, root } = await fixture();

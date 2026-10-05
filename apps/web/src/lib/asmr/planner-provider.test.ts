@@ -62,15 +62,45 @@ describe("Planner provider", () => {
     expect(result.draft.sections.map((item) => item.text)).toEqual(units.map((unit) => unit.text));
     expect(result.draft.sections.every((item) => item.direction === direction && item.pauseAfterSeconds === 0.35)).toBe(true);
   });
-  it("preserves the creative Planner's existing thinking behavior and output budget on DeepSeek", async () => {
+  it("reserves the creative Planner's complete JSON budget by explicitly disabling official DeepSeek thinking", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(draft) }, finish_reason: "stop" }] }));
     const result = await runPlanner({ action: "generate", provider: "api", brief }, { env: {
       ASMR_PLANNER_API_URL: "https://api.deepseek.com", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "deepseek-v4-pro",
     }, fetchImpl });
     expect(result).toMatchObject({ draft, provider: "api" });
     const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
-    expect(body.max_tokens).toBe(8192);
-    expect(body).not.toHaveProperty("thinking");
+    expect(body.max_tokens).toBe(12288);
+    expect(body.thinking).toEqual({ type: "disabled" });
+  });
+  it.each([[60, 4096], [180, 8192], [300, 12288], [600, 16384]])("retains the requested %i-second creative brief with a bounded %i-token official DeepSeek budget", async (durationSeconds, maxTokens) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(draft) }, finish_reason: "stop" }] }));
+    const result = await runPlanner({ action: "generate", provider: "api", brief: { ...brief, durationSeconds } }, { env: {
+      ASMR_PLANNER_API_URL: "https://api.deepseek.com/v1", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "deepseek-v4-pro",
+    }, fetchImpl });
+    expect(result).toMatchObject({ draft: normalizePlannerSemanticDraft(draft), provider: "api" });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    expect(body).toMatchObject({ max_tokens: maxTokens, thinking: { type: "disabled" }, response_format: { type: "json_object" } });
+    expect(body.messages[1].content).toContain(`目标约 ${durationSeconds} 秒`);
+    expect(body.messages[1].content).toContain("共用一个 group");
+  });
+  it("preserves the user's three-minute apocalypse birthday brief without reducing duration or replacing the topic", async () => {
+    const theme = "深夜，在外面收集了一天资源回家，并带回来一个精致的机械表给家里的ai机器人作为生日礼物。末世题材";
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(draft) }, finish_reason: "stop" }] }));
+    await runPlanner({ action: "generate", provider: "api", brief: { ...brief, theme, durationSeconds: 180 } }, { env: {
+      ASMR_PLANNER_API_URL: "https://api.deepseek.com", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "deepseek-v4-pro",
+    }, fetchImpl });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    expect(body).toMatchObject({ max_tokens: 8192, thinking: { type: "disabled" } });
+    expect(body.messages[1].content).toContain(theme); expect(body.messages[1].content).toContain('"durationSeconds":180');
+    expect(body.messages[1].content).not.toContain("缩短");
+  });
+  it("keeps the official DeepSeek rewrite budget and range contract independent of overall brief duration", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify({ text: "先坐吧。" }) }, finish_reason: "stop" }] }));
+    await runPlanner({ action: "rewrite", provider: "api", brief: { ...brief, durationSeconds: 600 }, draft, sectionId: section.id, instruction: "简短一点", range: { start: 0, end: 3 } }, { env: {
+      ASMR_PLANNER_API_URL: "https://api.deepseek.com", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "deepseek-v4-pro",
+    }, fetchImpl });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1]?.body as string)).toMatchObject({ max_tokens: 8192, thinking: { type: "disabled" } });
   });
   it("lists local defaults and never exposes secrets or endpoint URLs", () => {
     const catalog = getPlannerProviderCatalog({
@@ -139,6 +169,7 @@ describe("Planner provider", () => {
     expect(JSON.parse(init?.body as string)).toMatchObject({
       model: "configured-model", max_tokens: 8192, response_format: { type: "json_object" }, stream: false,
     });
+    expect(JSON.parse(init?.body as string)).not.toHaveProperty("thinking");
     expect(JSON.stringify(result)).not.toContain("private-key");
   });
 
@@ -260,6 +291,31 @@ describe("Planner provider", () => {
     await expect(runPlanner({ action: "generate", provider: "ollama", brief }, { env: {}, fetchImpl }))
       .rejects.toMatchObject({ status: 502, message: expect.stringContaining("长度上限") });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it("rejects official DeepSeek length termination even when content looks valid, without adopting partial output or retrying automatically", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      choices: [{ message: { content: JSON.stringify(draft), reasoning_content: "private model reasoning" }, finish_reason: "length" }],
+      usage: { completion_tokens: 8192, completion_tokens_details: { reasoning_tokens: 7900 } },
+    }));
+    const error = await runPlanner({ action: "generate", provider: "api", brief: { ...brief, durationSeconds: 180 } }, { env: {
+      ASMR_PLANNER_API_URL: "https://api.deepseek.com", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "deepseek-v4-pro",
+    }, fetchImpl }).catch((value: unknown) => value);
+    expect(error).toMatchObject({ status: 502, message: expect.stringContaining("长度上限") });
+    expect((error as Error).message).not.toContain("缩短"); expect((error as Error).message).not.toContain("private model reasoning");
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+  it("retains the bounded official DeepSeek budget and thinking setting through the single structural repair", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: '{"title":"incomplete"}' }, finish_reason: "stop" }] }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: JSON.stringify(draft) }, finish_reason: "stop" }] }));
+    await runPlanner({ action: "generate", provider: "api", brief: { ...brief, durationSeconds: 600 } }, { env: {
+      ASMR_PLANNER_API_URL: "https://api.deepseek.com", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "deepseek-v4-pro",
+    }, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.map(call => JSON.parse(call[1]?.body as string))).toEqual([
+      expect.objectContaining({ max_tokens: 16384, thinking: { type: "disabled" } }),
+      expect.objectContaining({ max_tokens: 16384, thinking: { type: "disabled" } }),
+    ]);
   });
 
   it("cancels a response stream when the user aborts during body reading", async () => {

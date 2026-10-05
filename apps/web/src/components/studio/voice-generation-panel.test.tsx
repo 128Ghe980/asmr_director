@@ -99,6 +99,31 @@ afterEach(() => {
 });
 
 describe("voice generation panel", () => {
+  it("shows reference upload only for VoxCPM2 and locks selection during import without reporting generation", () => {
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" },
+      onReferenceImported: vi.fn(), onReferenceCatalogRefresh: vi.fn(), onReferenceImportBusyChange: vi.fn() });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect(screen.getByRole("button", { name: "添加参考音频" })).toBeTruthy();
+    view.rerender(<VoiceGenerationPanel {...input} referenceImportBusy />);
+    expect(control("参考声音").disabled).toBe(true); expect(control("人声引擎").disabled).toBe(true);
+    expect(screen.queryByText("正在生成")).toBeNull();
+    view.rerender(<VoiceGenerationPanel {...input} options={options} />);
+    expect(screen.queryByRole("button", { name: "添加参考音频" })).toBeNull();
+    expect(screen.getByText(/添加参考音频请在/)).toBeTruthy();
+  });
+
+  it("previews a selected imported reference and stops the current clip preview when it plays", () => {
+    const take = candidate();
+    const withAudio: VoiceProviderCatalog = { providers: catalog.providers.map((provider) => provider.id === "voxcpm2" ? {
+      ...provider, references: provider.references.map((reference) => reference.id === "soft_zh" ? { ...reference, audioUrl: "/api/voice-references/soft_zh/audio", durationSeconds: 15 } : reference),
+    } : provider) };
+    render(<VoiceGenerationPanel {...props({ catalog: withAudio, options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" }, candidates: [take] })} />);
+    const referenceAudio = screen.getByLabelText("参考声音试听") as HTMLAudioElement;
+    const candidateAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
+    expect(screen.getByText("参考片段 · 15.0 秒")).toBeTruthy();
+    const paused = mockMediaCall(candidateAudio, "pause"); fireEvent.play(referenceAudio); expect(paused).toHaveBeenCalledOnce();
+  });
+
   it("keeps successful source and cropped recognition collapsed beside the existing candidate actions", () => {
     const target = "回来啦？先坐一会儿。";
     const source = `${target}外面下雨了吗？`;

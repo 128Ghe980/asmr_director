@@ -48,6 +48,7 @@ import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate 
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
 import { getVoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
+import type { VoiceReferenceImportResult } from "./voice-reference-import";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
 import {
   adoptPlannerDraft,
@@ -184,6 +185,8 @@ export function StudioApp({ project }: StudioAppProps) {
   });
   const [voiceCatalog, setVoiceCatalog] = useState<VoiceProviderCatalog | null>(null);
   const [voiceCatalogError, setVoiceCatalogError] = useState<string>();
+  const [referenceImportBusy, setReferenceImportBusy] = useState(false);
+  const referenceImportBusyRef = useRef(false);
   const [voiceError, setVoiceError] = useState<string>();
   const [voiceCandidates, setVoiceCandidates] = useState<AudioCandidate[]>([]);
   const [candidateListState, setCandidateListState] = useState<{ projectId: string; status: "loading" | "ready" | "error" }>();
@@ -224,6 +227,15 @@ export function StudioApp({ project }: StudioAppProps) {
   const projectMixJobFingerprintsRef = useRef<Record<string, string>>({});
   const [projectMixFingerprint, setProjectMixFingerprint] = useState<string>();
   const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
+  const handleReferenceImportBusyChange = useCallback((busy: boolean) => {
+    if (busy && (batchRunRef.current || candidateActionBusy || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob))) return false;
+    referenceImportBusyRef.current = busy;
+    setReferenceImportBusy(busy);
+    return true;
+  }, [candidateActionBusy]);
+  const handleReferenceCatalogRefresh = useCallback((catalog: VoiceProviderCatalog) => {
+    setVoiceCatalog(catalog); setVoiceCatalogError(undefined);
+  }, []);
   const [generationRuntimeState, setGenerationRuntimeState] = useState(
     emptyGenerationRuntimeState,
   );
@@ -425,6 +437,12 @@ export function StudioApp({ project }: StudioAppProps) {
     catch { setVoiceError("声音设置未能保存，刷新后需要重新选择。"); }
   }
 
+  function handleReferenceImported({ reference, catalog }: VoiceReferenceImportResult) {
+    setVoiceCatalog(catalog); setVoiceCatalogError(undefined);
+    handleVoiceOptionsChange({ ...voiceOptions, provider: "voxcpm2", voicePackId: reference.id,
+      referenceMode: reference.referenceModes.includes("with_reference_text") ? "with_reference_text" : "reference_only" });
+  }
+
   function commitCandidateLibrary(next: typeof projectLibrary) {
     // Persist first: storage failure must leave the original audible project intact.
     saveProjectLibrary(window.localStorage, next);
@@ -441,7 +459,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   async function handleAdoptVoiceCandidate(candidate: AudioCandidate) {
-    if (voiceBusy) return;
+    if (referenceImportBusyRef.current || voiceBusy) return;
     if (validationIssues.length > 0) { setVoiceError("请先修正片段内容，再采用候选。"); return; }
     const session = generationSessionRef.current;
     const editRevision = editRevisionRef.current;
@@ -465,7 +483,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   async function handleDiscardVoiceCandidate(candidate: AudioCandidate) {
-    if (voiceBusy || selectedClip?.asset.asset_id === candidate.asset.assetId) return;
+    if (referenceImportBusyRef.current || voiceBusy || selectedClip?.asset.asset_id === candidate.asset.assetId) return;
     const session = generationSessionRef.current;
     setCandidateActionBusy(true);
     try {
@@ -478,7 +496,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleUndoVoiceCandidate() {
-    if (voiceBusy) return;
+    if (referenceImportBusyRef.current || voiceBusy) return;
     try {
       const current = updateLibraryProject(projectLibraryRef.current, editableProject);
       const next = undoLastAudioCandidate(current);
@@ -610,6 +628,7 @@ export function StudioApp({ project }: StudioAppProps) {
         return (await response.json()) as { analysis?: AudioAnalysis };
       })
       .then((body) => {
+        if (controller.signal.aborted) return;
         if (!body.analysis) {
           throw new Error("Audio analysis missing");
         }
@@ -784,12 +803,7 @@ export function StudioApp({ project }: StudioAppProps) {
     if (update.type !== "snapshot") windowedVoiceJobsRef.current.delete(update.job.jobId);
 
     if (update.type === "snapshot") {
-      setGenerationRuntimeState((current) => {
-        const next = upsertGenerationJob(current, update.job);
-        generationRuntimeStateRef.current = next;
-
-        return next;
-      });
+      setRuntimeState(upsertGenerationJob(generationRuntimeStateRef.current, update.job));
       return;
     }
 
@@ -951,7 +965,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleRegenerateVoiceGroup(candidate: AudioCandidate, groupIndex: number) {
-    if (voiceBusy || candidate.clipId !== selectedClip?.id || candidate.projectId !== editableProject.project_id) return;
+    if (referenceImportBusyRef.current || voiceBusy || candidate.clipId !== selectedClip?.id || candidate.projectId !== editableProject.project_id) return;
     const options: VoiceGenerationOptions = { provider: "voxcpm2", generationMode: "long_text",
       voicePackId: candidate.provenance.voicePackId, referenceMode: candidate.provenance.referenceMode,
       analysisProvider: voiceOptions.analysisProvider ?? "local" };
@@ -960,7 +974,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function startSelectedClipGeneration(optionsOverride?: VoiceGenerationOptions, longTextRetry?: LongTextRetry, target?: { project: AsmrProject; clipId: string }) {
-    if (batchRunRef.current) return;
+    if (referenceImportBusyRef.current || batchRunRef.current) return;
     const generationProject = target?.project ?? editableProject;
     const generationClip = target ? flattenClips(generationProject).find((clip) => clip.id === target.clipId) : selectedClip;
     const control = target ? getGenerationView({ project: generationProject, selectedClip: generationClip, runtimeState: generationRuntimeStateRef.current, selectedClipHasValidationIssues: Object.keys(getClipFieldValidationIssues(generationProject, target.clipId, getProjectValidationIssues(generationProject))).length > 0, projectMixFingerprint }).selectedClipControl : generationView.selectedClipControl;
@@ -1053,7 +1067,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleGenerateProjectMix() {
-    if (batchRunRef.current) return;
+    if (referenceImportBusyRef.current || batchRunRef.current) return;
     if (generationView.projectMixControl.disabled) {
       return;
     }
@@ -1289,7 +1303,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleSplitVoice(clipId: string, start: number, end: number, generate = false) {
-    if (generate && voiceBusy) return;
+    if (generate && (referenceImportBusyRef.current || voiceBusy)) return;
     const result = splitVoiceClip(editableProjectRef.current, clipId, start, end);
     const targetId = result.selectedClipId ?? clipId;
     commitScriptEdit(result.project, targetId, "已按所选范围分段；各段可独立编辑、生成和设置等待。");
@@ -1405,7 +1419,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   async function handleRunBatch(action: StudioBatchAction) {
-    if (batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
+    if (referenceImportBusyRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
     const initial = structuredClone(editableProjectRef.current);
     const clipIds = getStudioBatchTargets(initial, action);
@@ -1671,7 +1685,7 @@ export function StudioApp({ project }: StudioAppProps) {
       audioAnalysis={audioAnalysis}
       audioAnalysisStatus={audioAnalysisStatus}
       audioAnalysisSourceLabel={audioAnalysisSourceLabel}
-      projectMixControl={generationView.projectMixControl}
+      projectMixControl={referenceImportBusy ? { ...generationView.projectMixControl, disabled: true, disabledReason: "正在处理参考音频" } : generationView.projectMixControl}
       qualityReport={qualityReport}
       revisions={currentLibraryEntry?.revisions ?? []}
       selectedClipPreview={generationView.selectedClipPreview}
@@ -1697,7 +1711,8 @@ export function StudioApp({ project }: StudioAppProps) {
         </div>
       </div>
       <div id="planner-workspace" className="min-h-0 flex-1 overflow-hidden" hidden={workspaceView !== "planner"}>
-        <PlannerPanel source={currentLibraryEntry?.plannerSource} onAdopt={handleAdoptPlanner} />
+        {hasLoadedStorage ? <PlannerPanel projectId={editableProject.project_id}
+          source={currentLibraryEntry?.plannerSource} onAdopt={handleAdoptPlanner} /> : null}
       </div>
       <div id="editor-workspace" className="min-h-0 flex-1 overflow-hidden" hidden={workspaceView !== "editor"}>
       <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_minmax(0,0.42fr)] gap-2">
@@ -1706,13 +1721,13 @@ export function StudioApp({ project }: StudioAppProps) {
           <ScriptEditorPanel
             audioStates={audioProgress.byClip} audioStatesStatus={audioOverviewStatus}
             key={editableProject.project_id}
-            batchActions={<StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} disabled={!hasLoadedStorage || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />}
+            batchActions={<StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />}
             project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
             onReferenceModeChange={handleStoryboardReferenceModeChange}
             referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)}
-            busy={voiceBusy}
+            busy={voiceBusy || referenceImportBusy}
             canUndo={scriptHistory.length > 0}
             notice={scriptNotice}
             onUpdateClip={handleUpdateClip}
@@ -1746,6 +1761,8 @@ export function StudioApp({ project }: StudioAppProps) {
                 generationControl={generationControl}
                 options={voiceOptions} onOptionsChange={handleVoiceOptionsChange}
                 catalog={voiceCatalog} catalogError={voiceCatalogError} busy={voiceBusy}
+                referenceImportBusy={referenceImportBusy} onReferenceImportBusyChange={handleReferenceImportBusyChange}
+                onReferenceImported={handleReferenceImported} onReferenceCatalogRefresh={handleReferenceCatalogRefresh}
                 selectedClip={selectedClip} candidates={visibleVoiceCandidates}
                 onAdopt={handleAdoptVoiceCandidate} onDiscard={handleDiscardVoiceCandidate}
                 onRegenerateGroup={handleRegenerateVoiceGroup}
@@ -1759,7 +1776,7 @@ export function StudioApp({ project }: StudioAppProps) {
             ) : undefined}
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={displaySelectedClip}
-            selectedClipGeneration={generationView.selectedClipControl}
+            selectedClipGeneration={referenceImportBusy ? { ...generationView.selectedClipControl, disabled: true, disabledReason: "正在处理参考音频" } : generationView.selectedClipControl}
             selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}
             onGenerateSelectedClip={handleGenerateSelectedClip}

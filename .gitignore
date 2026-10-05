@@ -4,6 +4,11 @@ node_modules/
 .next/
 .next-spatial/
 .next-spatial-build/
+.next-reference-audio-dev/
+.next-reference-audio-build/
+.next-reference-audio-production/
+.next-project-planner-repair-production/
+.next-reference-asr-repair-production/
 .next-semantic-build/
 .next-batch-build/
 .next-batch-production/

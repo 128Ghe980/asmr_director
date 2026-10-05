@@ -17,14 +17,24 @@ const ProfileFile = z.object({
     promptTextPath: z.string().min(1).nullish(),
     licenseStatus: z.literal("user_confirmed"),
     consentConfirmedAt: z.string().refine((value) => Number.isFinite(Date.parse(value))),
-  })).min(1).max(40),
-});
+    durationSeconds: z.number().positive().optional(),
+  }).passthrough()).min(1).max(40),
+}).passthrough();
+
+/** Validate without stripping server provenance or future profile metadata. */
+export function parseVoxCpm2ProfileFile(value: unknown) {
+  const file = ProfileFile.parse(value);
+  const ids = new Set(file.references.map((item) => item.id));
+  if (ids.size !== file.references.length || !ids.has(file.defaultReferenceId)) throw new Error("Invalid references");
+  return file;
+}
 
 export type VoxCpm2Reference = {
   id: string;
   displayName: string;
   audioPath: string;
   promptText: string | null;
+  durationSeconds?: number;
 };
 
 export type VoxCpm2Profile = {
@@ -58,9 +68,7 @@ export async function loadVoxCpm2Profile(manifestPath: string): Promise<VoxCpm2P
     const root = path.dirname(resolved);
     const raw = await readFile(resolved, "utf8");
     if (raw.length > 100_000) throw new Error("Profile too large");
-    const file = ProfileFile.parse(JSON.parse(raw));
-    const ids = new Set(file.references.map((item) => item.id));
-    if (ids.size !== file.references.length || !ids.has(file.defaultReferenceId)) throw new Error("Invalid references");
+    const file = parseVoxCpm2ProfileFile(JSON.parse(raw));
     const profile: VoxCpm2Profile = {
       manifestPath: resolved,
       cliPath: path.resolve(root, file.cliPath),
@@ -75,7 +83,7 @@ export async function loadVoxCpm2Profile(manifestPath: string): Promise<VoxCpm2P
       await assertFile(audioPath);
       const rawTranscript = ref.promptTextPath ? await readFile(path.resolve(root, ref.promptTextPath), "utf8") : "";
       if (rawTranscript.length > 20_000) throw new Error("Transcript too large");
-      profile.references.push({ id: ref.id, displayName: ref.displayName, audioPath, promptText: normalizeVoxCpm2Transcript(rawTranscript) });
+      profile.references.push({ id: ref.id, displayName: ref.displayName, audioPath, promptText: normalizeVoxCpm2Transcript(rawTranscript), ...(ref.durationSeconds ? { durationSeconds: ref.durationSeconds } : {}) });
     }
     return profile;
   } catch {

@@ -89,6 +89,12 @@ function classifiedNativeFailure(diagnostic: NativeDiagnostic, error?: unknown):
   if (cause?.code === "ENOMEM" || /\bstd::bad_alloc\b|\bCUDA (?:error: )?out of memory\b|\bcannot allocate memory\b|\bENOMEM\b/i.test(output)) {
     return new VoxCpm2Error("语音模型运行内存不足，请关闭占用较大的程序后重试。", 503);
   }
+  // cuBLAS initialization can fail after a valid reference has loaded. This
+  // identifies the GPU stage without assuming memory exhaustion or changing
+  // the selected reference behind the user's back.
+  if (/\bCUBLAS_STATUS_NOT_INITIALIZED\b|\bCUDA_ERROR_INITIALIZATION_ERROR\b|\bcudaErrorInitializationError\b|\bCUDA (?:error: )?initialization error\b/i.test(output)) {
+    return new VoxCpm2Error("显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503);
+  }
   if (/GGML_ASSERT\s*\(\s*grid_y\s*<\s*USHRT_MAX\s*\)\s*failed/i.test(output)) {
     return new VoxCpm2Error("生成音频超出本机解码容量，请缩短生成范围后重试。", 400);
   }

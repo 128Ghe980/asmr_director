@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { PlannerBriefSchema, type PlannerDraft } from "./planner";
 import {
   PLANNER_DRAFT_STORAGE_KEY,
+  PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY,
+  getPlannerDraftStorageKey,
   createEmptyPlannerWorkingState,
   loadPlannerDraft,
   savePlannerDraft,
@@ -75,6 +77,63 @@ function createH3Storyboard(): PlannerStoryboard {
 }
 
 describe("planner working draft persistence", () => {
+  it("isolates each project's editable draft and scene while leaving the legacy workspace intact", () => {
+    const legacy = createPlannerState(); const storage = createStorage(JSON.stringify(legacy));
+    const first = { ...legacy, sceneDescription: "第一个项目的未采用背景" };
+    const second = { ...createEmptyPlannerWorkingState(), brief: { ...legacy.brief, theme: "第二个项目" } };
+    expect(savePlannerDraft(storage, first, "first-project")).toEqual({ success: true });
+    expect(savePlannerDraft(storage, second, "second-project")).toEqual({ success: true });
+    expect(loadPlannerDraft(storage, "first-project").state).toEqual(first);
+    expect(loadPlannerDraft(storage, "second-project").state).toEqual(second);
+    expect(loadPlannerDraft(storage, "new-project")).toMatchObject({ state: createEmptyPlannerWorkingState(), restored: false, legacyAvailable: true });
+    expect(storage.getItem(PLANNER_DRAFT_STORAGE_KEY)).toBe(JSON.stringify(legacy));
+    expect(getPlannerDraftStorageKey("a/b")).not.toBe(getPlannerDraftStorageKey("a%2Fb"));
+  });
+
+  it("migrates a fully matching source once, keeps separately edited brief/background and never shows it in a new project", () => {
+    const legacy = { ...createPlannerState(), sceneDescription: "尚未采用的背景修改" };
+    const raw = JSON.stringify(legacy); const storage = createStorage(raw);
+    const source = { brief: legacy.draftBrief!, draft };
+    expect(loadPlannerDraft(storage, "old-project", source)).toEqual({ state: legacy, restored: true });
+    expect(storage.getItem(PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY)).toBe("old-project");
+    expect(loadPlannerDraft(storage, "old-project").state).toEqual(legacy);
+    expect(loadPlannerDraft(storage, "new-project")).toEqual({ state: createEmptyPlannerWorkingState(), restored: false });
+    expect(storage.getItem(PLANNER_DRAFT_STORAGE_KEY)).toBe(raw);
+  });
+
+  it.each(["text", "title"] as const)("does not claim a same-brief, same-ID legacy draft with different %s", (field) => {
+    const legacy = createPlannerState(); const raw = JSON.stringify(legacy); const storage = createStorage(raw);
+    const regenerated = field === "title" ? { ...draft, title: "相同主题重新生成的新文案" }
+      : { ...draft, sections: draft.sections.map((section, index) => index === 0 ? { ...section, text: "同一个 unit_001 也可能属于另一份新文案。" } : section) };
+    expect(loadPlannerDraft(storage, "another-project", { brief: legacy.draftBrief!, draft: regenerated }))
+      .toMatchObject({ state: createEmptyPlannerWorkingState(), restored: false, legacyAvailable: true });
+    expect(storage.getItem(PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY)).toBeNull();
+    expect(storage.getItem(getPlannerDraftStorageKey("another-project"))).toBeNull();
+    expect(storage.getItem(PLANNER_DRAFT_STORAGE_KEY)).toBe(raw);
+  });
+
+  it("does not attribute legacy drafts to a new or unrelated current project on reload", () => {
+    const legacy = createPlannerState(); const storage = createStorage(JSON.stringify(legacy));
+    const unrelatedBrief = PlannerBriefSchema.parse({ theme: "完全不同的项目" });
+    const unrelatedDraft = { ...draft, sections: draft.sections.map((section) => ({ ...section, id: `other_${section.id}` })) };
+    for (const source of [undefined, { brief: unrelatedBrief, draft }, { brief: legacy.draftBrief!, draft: unrelatedDraft }]) {
+      expect(loadPlannerDraft(storage, "already-created-new-project", source)).toMatchObject({ state: createEmptyPlannerWorkingState(), restored: false, legacyAvailable: true });
+      expect(storage.getItem(getPlannerDraftStorageKey("already-created-new-project"))).toBeNull();
+      expect(storage.getItem(PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY)).toBeNull();
+    }
+    expect(loadPlannerDraft(storage).state).toEqual(legacy);
+  });
+
+  it("prefers project work over a matching older global snapshot and reports failed migration without clearing it", () => {
+    const legacy = createPlannerState(); const storage = createStorage(JSON.stringify(legacy));
+    const latest = { ...legacy, sceneDescription: "较新的项目草稿" };
+    savePlannerDraft(storage, latest, "old-project");
+    expect(loadPlannerDraft(storage, "old-project", { brief: legacy.draftBrief!, draft }).state).toEqual(latest);
+    const blocked = { ...createStorage(JSON.stringify(legacy)), setItem: () => { throw new Error("quota"); } };
+    expect(loadPlannerDraft(blocked, "old-project", { brief: legacy.draftBrief!, draft })).toMatchObject({ state: legacy, restored: true, error: expect.any(String) });
+    expect(blocked.getItem(PLANNER_DRAFT_STORAGE_KEY)).toBe(JSON.stringify(legacy));
+  });
+
   it("persists newly added blank sections and an empty draft while the user edits", () => {
     const storage = createStorage();
     const brief = PlannerBriefSchema.parse({ theme: "书店" });

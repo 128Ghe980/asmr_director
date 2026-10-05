@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, Download, FileText, LoaderCircle, MapPin, Plus, Sparkles, Undo2 } from "lucide-react";
 
 import {
@@ -29,6 +29,7 @@ import { PlannerSceneEditor } from "./planner-scene";
 
 type Provider = { id: "ollama" | "api"; label: string; model: string; configured: boolean };
 type PlannerPanelProps = {
+  projectId?: string;
   source?: PlannerSource;
   onAdopt: (brief: PlannerBrief, draft: PlannerDraft, storyboard?: PlannerStoryboard, sceneDescription?: string) => void;
 };
@@ -75,7 +76,21 @@ function downloadDraft(brief: PlannerBrief, draft: PlannerDraft) {
   downloadText(body, `${draft.title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "ASMR策划稿"}.txt`);
 }
 
-export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
+export function PlannerPanel(props: PlannerPanelProps) {
+  const [sessions, setSessions] = useState<Record<string, PlannerWorkingState>>({});
+  const saveSession = useCallback((scope: string, state: PlannerWorkingState) => {
+    setSessions((current) => ({ ...current, [scope]: state }));
+  }, []);
+  const scope = props.projectId ?? "global-planner";
+  // This boundary owns a project's draft, selection, undo history and requests.
+  // The workspace flushes pending edits before unmounting; saved drafts are scoped.
+  return <PlannerWorkspace key={scope} {...props} cachedState={sessions[scope]} saveSession={saveSession} />;
+}
+
+function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession }: PlannerPanelProps & {
+  cachedState?: PlannerWorkingState;
+  saveSession: (scope: string, state: PlannerWorkingState) => void;
+}) {
   const [working, setWorking] = useState(createEmptyPlannerWorkingState);
   const [loaded, setLoaded] = useState(false);
   const [canPersist, setCanPersist] = useState(false);
@@ -94,10 +109,16 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
   const [briefExpanded, setBriefExpanded] = useState(false);
   const [selection, setSelection] = useState<(PlannerTextRange & { sectionId: string }) | null>(null);
   const [history, setHistory] = useState<PlannerWorkingState[]>([]);
+  const [legacyAvailable, setLegacyAvailable] = useState(false);
   const requestRef = useRef<AbortController | null>(null);
   const loadRef = useRef(false);
   const restoredRef = useRef(false);
   const providerSelectedRef = useRef(false);
+  const initialSource = useRef(source);
+  const initialCache = useRef(cachedState);
+  const persistable = useRef<{ state: PlannerWorkingState; enabled: boolean }>({ state: working, enabled: false });
+
+  useEffect(() => { persistable.current = { state: working, enabled: loaded && canPersist }; }, [working, loaded, canPersist]);
 
   useEffect(() => {
     let canceled = false;
@@ -105,9 +126,17 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
       if (canceled || loadRef.current) return;
       loadRef.current = true;
       try {
-        const result = loadPlannerDraft(window.localStorage);
-        setWorking(result.state);
-        restoredRef.current = result.restored;
+        const result = loadPlannerDraft(window.localStorage, projectId, initialSource.current);
+        const original = initialSource.current;
+        const fromSource = initialCache.current ?? (!result.restored && !result.error && original ? {
+          ...result.state, brief: structuredClone(original.brief), draftBrief: structuredClone(original.brief),
+          draft: structuredClone(original.draft), storyboard: original.storyboard ? structuredClone(original.storyboard) : null,
+          sceneDescription: original.sceneDescription ?? null,
+        } : result.state);
+        setWorking(fromSource);
+        persistable.current = { state: fromSource, enabled: !result.error };
+        setLegacyAvailable(result.legacyAvailable === true);
+        restoredRef.current = result.restored || Boolean(initialCache.current);
         setCanPersist(!result.error);
         if (result.error) setSaveError(result.error);
       } catch {
@@ -116,7 +145,7 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
       setLoaded(true);
     });
     return () => { canceled = true; };
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -130,7 +159,11 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
         setProviders(catalog.providers);
         setConfigError("");
         if (!restoredRef.current && !providerSelectedRef.current) {
-          setWorking((current) => ({ ...current, provider: catalog.defaultProvider }));
+          setWorking((current) => {
+            const next = { ...current, provider: catalog.defaultProvider };
+            persistable.current = { ...persistable.current, state: next };
+            return next;
+          });
         }
       })
       .catch(() => { if (!controller.signal.aborted) setConfigError("暂时无法读取模型配置，请重试。"); });
@@ -141,15 +174,24 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
     if (!loaded || !canPersist) return;
     const timer = window.setTimeout(() => {
       try {
-        const result = savePlannerDraft(window.localStorage, working);
+        const result = savePlannerDraft(window.localStorage, working, projectId);
         setSaveError(result.success ? "" : result.error);
       } catch { setSaveError("本地草稿保存不可用，请及时下载文案。"); }
       setSaving(false);
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [working, loaded, canPersist]);
+  }, [working, loaded, canPersist, projectId]);
 
-  useEffect(() => () => requestRef.current?.abort(), []);
+  useEffect(() => () => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    const snapshot = persistable.current;
+    if (snapshot.enabled) {
+      saveSession(projectId ?? "global-planner", snapshot.state);
+      try { savePlannerDraft(window.localStorage, snapshot.state, projectId); }
+      catch { /* The existing save warning and legacy bytes remain available. */ }
+    }
+  }, [projectId, saveSession]);
 
   const { brief, draft } = working;
   const storyboard = working.storyboard ?? null;
@@ -167,6 +209,7 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
     requestRef.current = null;
     setPending(null);
     setSelection(null);
+    persistable.current = { state: next, enabled: true };
     setWorking(next);
     setCanPersist(true);
     setSaving(true);
@@ -260,7 +303,9 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
         PlannerDraftSchema.parse(nextDraft);
       }
       setHistory((current) => [...current.slice(-29), snapshot]);
-      setWorking({ ...snapshot, draft: nextDraft, draftBrief: input.data });
+      const nextWorking = { ...snapshot, draft: nextDraft, draftBrief: input.data };
+      persistable.current = { state: nextWorking, enabled: true };
+      setWorking(nextWorking);
       setCanPersist(true);
       setSaving(true);
       setNotice(action === "generate" ? "文案已生成。" : range ? "已改写选中文字，其他内容保持不变。" : "已改写所选段落。");
@@ -300,7 +345,9 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
       if (typeof body.sceneDescription !== "string" || !body.sceneDescription.trim() || body.sceneDescription.length > 4000) throw new Error("模型返回的剧情背景不完整，请重试。");
       if (body.sourceFingerprint !== createStoryboardSourceFingerprint(draftValidation.data)) throw new Error("剧情背景与当前文案不一致，请重新生成。");
       setHistory((current) => [...current.slice(-29), snapshot]);
-      setWorking({ ...snapshot, sceneDescription: body.sceneDescription.trim() });
+      const nextWorking = { ...snapshot, sceneDescription: body.sceneDescription.trim() };
+      persistable.current = { state: nextWorking, enabled: true };
+      setWorking(nextWorking);
       setCanPersist(true);
       setSaving(true);
       setNotice("剧情背景已生成，可以继续修改。");
@@ -349,6 +396,11 @@ export function PlannerPanel({ source, onAdopt }: PlannerPanelProps) {
           <button type="button" className={`${primaryClass} min-h-10 w-full`} disabled={busy || !loaded || !provider?.configured || !brief.theme.trim()} onClick={() => void runPlanner("generate")}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{draft ? "重新生成策划稿" : "生成策划稿"}</button>
           <p className="text-[11px] leading-5 text-studio-muted">文案会按完整意思整理为短句，可随时改写、拆分或合并。</p>
           {source ? <details className="text-xs text-studio-muted"><summary className="cursor-pointer">项目原稿</summary><button className={`${buttonClass} mt-2 w-full`} disabled={!loaded} onClick={() => { remember(); changeWorking({ ...working, brief: source.brief, draftBrief: source.brief, draft: structuredClone(source.draft), storyboard: source.storyboard ? structuredClone(source.storyboard) : null, sceneDescription: source.sceneDescription ?? null }); setRewriteId(null); setActiveSectionId(null); setNotice("已载入项目原稿。"); }}>载入当前项目策划稿</button></details> : null}
+          {legacyAvailable ? <details className="text-xs text-studio-muted"><summary className="cursor-pointer">恢复旧版草稿</summary><p className="mt-2 leading-5">旧版草稿尚未归属项目，原保存内容仍保留。可将它恢复到当前策划区。</p><button className={`${buttonClass} mt-2 w-full`} disabled={!loaded} onClick={() => {
+            const previous = loadPlannerDraft(window.localStorage);
+            if (previous.error || !previous.restored) { setError(previous.error || "没有可恢复的旧版草稿。"); return; }
+            remember(); changeWorking(previous.state); setRewriteId(null); setActiveSectionId(null); setNotice("已恢复旧版策划草稿，可撤回恢复。");
+          }}>恢复旧版策划草稿</button></details> : null}
         </div>
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-studio-line bg-studio-panel/70">

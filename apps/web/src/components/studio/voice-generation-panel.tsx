@@ -10,6 +10,7 @@ import type { VoiceGenerationContext } from "@/lib/asmr/voice-generation-context
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import { VoiceGenerationRecordingsSchema, type VoiceGenerationRecording } from "@/lib/asmr/voice-generation-recording";
 import { VoiceRecognitionComparison, VoiceRecordingRecognitionComparison } from "./voice-recognition-comparison";
+import { VoiceReferenceImport, type VoiceReferenceImportResult } from "./voice-reference-import";
 
 export type VoiceGenerationPanelProps = {
   projectId?: string;
@@ -31,6 +32,10 @@ export type VoiceGenerationPanelProps = {
   error?: string;
   loading?: boolean;
   generationControl?: ReactNode;
+  referenceImportBusy?: boolean;
+  onReferenceImportBusyChange?: (busy: boolean) => boolean | void;
+  onReferenceImported?: (result: VoiceReferenceImportResult) => void;
+  onReferenceCatalogRefresh?: (catalog: VoiceProviderCatalog) => void;
 };
 
 type Reference = VoiceProviderCatalog["providers"][number]["references"][number];
@@ -295,6 +300,7 @@ export function VoiceGenerationPanel({
   onAdopt, onDiscard, onUndo, canUndo, hasUndo, error, loading = false,
   generationControl, onRegenerateGroup,
   binaural = false,
+  referenceImportBusy = false, onReferenceImportBusyChange, onReferenceImported, onReferenceCatalogRefresh,
 }: VoiceGenerationPanelProps) {
   const panelRef = useRef<HTMLElement>(null);
   if (selectedClip.type !== "voice") return null;
@@ -307,8 +313,8 @@ export function VoiceGenerationPanel({
   const longTextAvailable = provider?.longText?.available === true;
   const apiConfigured = provider?.longText?.apiConfigured === true;
   const analysisProvider = options.analysisProvider ?? "local";
-  const settingsDisabled = busy || loading || catalog === null;
-  const actionsDisabled = busy || loading;
+  const settingsDisabled = busy || loading || referenceImportBusy || catalog === null;
+  const actionsDisabled = busy || loading || referenceImportBusy;
   const sourceFingerprint = getVoiceCandidateSourceFingerprint(selectedClip);
   const windowedSourceFingerprint = getVoiceCandidateSourceFingerprint(selectedClip, voiceContext);
   const currentAudio = resolveClipPlaybackUri(selectedClip, binaural);
@@ -362,6 +368,17 @@ export function VoiceGenerationPanel({
         {provider?.references.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
     </label>
+
+    {isVox && onReferenceImported && onReferenceCatalogRefresh && onReferenceImportBusyChange ? <VoiceReferenceImport
+      disabled={busy || loading || catalog === null || !provider?.available}
+      onImported={onReferenceImported} onCatalogRefresh={onReferenceCatalogRefresh}
+      onBusyChange={onReferenceImportBusyChange} onPreviewPlay={pauseOtherPreviews}
+    /> : !isVox ? <p className="break-words text-xs leading-5 text-studio-muted">添加参考音频请在“更多生成设置”中选择 VoxCPM2。</p> : null}
+
+    {reference?.audioUrl ? <div className="min-w-0 space-y-2">
+      <p className="text-xs text-studio-muted">参考片段{reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}</p>
+      <VoicePreview key={reference.audioUrl} src={reference.audioUrl} label="参考声音试听" onPreviewPlay={pauseOtherPreviews} />
+    </div> : null}
 
     {generationControl}
 

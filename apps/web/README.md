@@ -10,10 +10,10 @@
 
 ```powershell
 npm.cmd install --prefix apps/web
-npm.cmd run dev --prefix apps/web -- --port 3000 --hostname 127.0.0.1 --webpack
+npm.cmd run dev --prefix apps/web -- --port 3001 --hostname 127.0.0.1 --webpack
 ```
 
-打开 [本地工作台](http://127.0.0.1:3000)。端口被其他项目使用时请换端口。Windows 本环境使用 Webpack；已有 SWC 原生绑定警告可由 WASM 回退处理，以命令退出状态为准。
+打开 [本地工作台](http://127.0.0.1:3001)。本机已有工程使用这个地址；工程库、策划稿和声音选择保存在当前浏览器的 localStorage，按协议、主机名与端口隔离。改为3000或localhost会读到另一份项目库，不会迁移原工程。端口占用时先确认是否已有本平台服务；需要换地址时先从原地址导出工程。Windows 本环境使用 Webpack；已有 SWC 原生绑定警告可由 WASM 回退处理，以命令退出状态为准。
 
 构建目录默认是本项目内的 `.next`；可设置 `ASMR_NEXT_DIST_DIR=.next-spatial` 使用另一个项目内目录。编译产物应留在 `apps/web` 内能解析 `node_modules` 的位置，不要把整个构建目录直接指向无关的外盘路径。磁盘紧张时可将下文的空间音频缓存放到外盘；Next 构建目录如需迁移缓存，只迁移其 `cache` 子目录，保留项目内的 server／static／类型产物。
 
@@ -26,7 +26,7 @@ npm.cmd run dev --prefix apps/web -- --port 3000 --hostname 127.0.0.1 --webpack
 
 当前仅中文，目标时长支持 1、3、5、10 分钟。目标是写作参考，不保证精确成片长度。导演说明不进入朗读台词，音效建议保存为待制作内容，采用时不生成任意音效。表演意图不能保证当前 TTS 完整执行。
 
-草稿在当前浏览器自动保存。修改主题后旧稿仍使用生成时的设定，需重新生成才应用新要求。项目策划来源是采用时的快照，工程内后续台词编辑不反向更新它。Project JSON 仅导出工程；独立保存文案及导演提示请用“下载文案”。
+草稿在当前浏览器按项目分别保存。新项目打开空白策划区，切回旧项目恢复其文案及剧情背景，切换前的最新编辑也会保存。旧版全局稿保留，无法确定归属时可用“恢复旧版草稿”载入并撤回。修改主题后旧稿仍使用生成时的设定，需重新生成才应用新要求。项目策划来源是采用时的快照，工程内后续台词编辑不反向更新它。Project JSON 仅导出工程；独立保存文案及导演提示请用“下载文案”。
 
 ## 文案模型配置
 
@@ -133,6 +133,40 @@ profile 采用以下结构；相对路径以 profile 所在目录解析，CLI �
 ```
 
 参考音频使用 mono / 16 kHz / PCM16 WAV。普通、温柔等声音各自登记准确转录和真实授权信息；上例日期仅展示格式。没有转录时省略 `promptTextPath`，该声音仍可使用“仅参考音频”。“参考音频＋文本”会同时传参考音频与 prompt；适配器把转录标点转为空格并保留一个末尾 ASCII 空格。
+
+### 在网页添加参考音频
+
+在工程的 **声音 → 参考声音** 处选择 VoxCPM2，点击 **添加参考音频**。上传 MP3/WAV，
+填写声音名称、开始秒数和片段长度，试听所选片段后保存。初始使用前 8 秒，每条参考
+可选 1–30 秒，源文件上限 32 MiB；这是平台的导入范围，不是模型硬性时长上限。
+可选择中文、英语、日语或韩语，点击“识别所选片段文字”，试听并校对识别结果，也可
+直接手工填写原话。原话留空时只参考录音，有校对后的原话时可同时参考录音与文字；
+这是“参考模式”，与“当前范围/长文连续生成”的生成方式分别选择。成功后新声音加入目录、选中并保存
+选择；之后仍可切换回旧声音。**刷新参考列表** 可以恢复其他页面已添加或取消等待时
+恰好已保存的声音。GPT-SoVITS 沿用原先的单声音配置。
+
+服务端使用本机 FFmpeg 转换为 16 kHz 单声道 PCM16。可选识别复用本机
+faster-whisper-large-v3 CPU/int8，模型需已存在，识别期间不自动下载；180秒总时限
+包含转换和识别，与VoxCPM2生成共用运行锁。识别只填写原话，不自动添加或生成声音。
+原上传、标准参考和来源 SHA/选取范围保存在仓库外，现有参考与默认项保持；每次
+追加配置前有独立备份，发布原子完成。添加不会生成新候选或替换已采用音频。
+
+```dotenv
+# 不设置时位于 VoxCPM2 profile 旁的 references/imported。
+ASMR_VOICE_REFERENCE_ROOT=I:/AI/asmr-director-voice-references
+# 默认使用 PATH 中的 ffmpeg；其他位置可指定完整可执行文件路径。
+ASMR_VOICE_REFERENCE_FFMPEG=C:/Users/Yuki1/AppData/Local/Programs/Python/Python311/Scripts/ffmpeg.exe
+```
+
+接口为 `POST /api/voice-references` 的文件表单，以及
+`GET /api/voice-references/[referenceId]/audio` 的标准 WAV 试听；浏览器不提交任意本机
+路径。
+
+所选片段识别接口为 `POST /api/voice-references/transcribe`。较长参考会增加模型
+内存开销，本机建议先选3–8秒。原15秒正太参考曾在GPU初始化阶段失败，独立8秒
+参考短句成功；未静默裁短原参考。详见 [识别与诊断契约](../../docs/superpowers/specs/2026-10-05-reference-transcription-and-generation-recovery.zh.md)。
+合同见 [中文说明](../../docs/superpowers/specs/2026-10-05-user-reference-audio.zh.md) /
+[English](../../docs/superpowers/specs/2026-10-05-user-reference-audio.md)。
 
 直接生成和长文分组均为当前片段创建一个完整候选，台词上限 500 字符。服务器固定 CFG 2、timesteps 10、temperature 1、GPU layers 0 并启用 low-VRAM；这个组合仍使用 GPU。每次 CLI 的步数按输入长度设为 120–600，默认超时 5 分钟。达到步数上限或接近静音的有效 WAV 仍交付，提示可能未读完或接近静音。原始文件在格式/质量判断前发布；即使原生进程报错，有已完成文件也保留供试听或下载。无法解码的文件仍可下载检查，不伪装成可采用候选。长文另外逐组做本地 ASR，整体任务上限 30 分钟；技术检查通过也不代替用户听感验收。候选来源记录实际 seed/参数、CLI SHA256、模型文件名/大小/修改时间和参考内容 SHA256。
 

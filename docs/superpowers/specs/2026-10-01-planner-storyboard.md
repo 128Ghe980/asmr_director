@@ -2,6 +2,11 @@
 
 Date: 2026-10-01. This extends the existing first-step Planner within Audio Quality V1, without adding a roadmap stage. [中文版](2026-10-01-planner-storyboard.zh.md).
 
+Later amendment (2026-10-05): the user's project-switching correction now uses a separate
+Planner workspace per project with safe legacy recovery. It supersedes the global-workspace
+switching rule below; historical verification remains historical. See
+[updated contract](2026-10-05-project-planner-state-and-output.md).
+
 ## Scope
 
 The user requested storyboard generation in the existing first-step generation area, with a simple initial prompt that can later be replaced or enhanced using an official skill. The current scope is an editable text storyboard: visual description, character action and camera direction, associated with the current script. Image generation is outside this iteration.
