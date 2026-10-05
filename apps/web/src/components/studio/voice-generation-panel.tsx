@@ -57,10 +57,11 @@ function preferredMode(reference: Reference): VoiceGenerationOptions["referenceM
     : "reference_only";
 }
 
-function VoicePreview({ src, label, onPreviewPlay }: {
+function VoicePreview({ src, label, onPreviewPlay, compact = false }: {
   src: string;
   label: string;
   onPreviewPlay: (audio: HTMLAudioElement) => void;
+  compact?: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const mounted = useRef(true);
@@ -100,7 +101,7 @@ function VoicePreview({ src, label, onPreviewPlay }: {
     });
   }
 
-  return <div className="min-w-0 space-y-2">
+  return <div className={compact ? "w-60 min-w-0 max-w-full flex-none space-y-1" : "min-w-0 space-y-2"}>
     <audio ref={audioRef} aria-label={label} controls preload="none" src={src}
       onPlay={(event) => {
         onPreviewPlay(event.currentTarget);
@@ -115,7 +116,7 @@ function VoicePreview({ src, label, onPreviewPlay }: {
         }
       }}
       onError={(event) => updateStatus(event.currentTarget, "error")}
-      className="h-9 w-full min-w-0 max-w-full" />
+      className={`${compact ? "block h-8" : "h-9"} w-full min-w-0 max-w-full`} />
     {status === "waiting" ? <p role="status" className="text-xs leading-5 text-studio-muted">{spatial ? "正在准备空间试听…" : "正在准备试听…"}</p> : null}
     {status === "error" ? <div className="space-y-2">
       <p role="alert" className="break-words text-xs leading-5 text-amber-100">{spatial ? "空间试听暂不可用。可重试，或关闭双耳空间后试听原声。" : "试听暂不可用，请重试。"}</p>
@@ -360,25 +361,30 @@ export function VoiceGenerationPanel({
     }
   }
 
-  return <section ref={panelRef} aria-label="人声生成设置" className="min-w-0 space-y-3">
-    <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
-      <span>参考声音</span>
-      <select aria-label="参考声音" className={fieldClass} value={options.voicePackId} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeReference(event.target.value)}>
+  const referenceControls = <>
+    <label className="flex min-w-0 items-center gap-2 text-xs text-studio-muted">
+      <span className="flex-none">参考声音</span>
+      <select aria-label="参考声音" className="h-8 w-36 min-w-0 max-w-full rounded-lg border border-studio-line bg-black/20 px-2 py-1 text-xs text-studio-text outline-none focus:border-sky-300/50 disabled:opacity-50" value={options.voicePackId} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeReference(event.target.value)}>
         {!reference ? <option value={options.voicePackId} disabled>参考不可用</option> : null}
         {provider?.references.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
     </label>
+    {reference?.audioUrl ? <div className="order-3 min-w-0 max-w-full @[35rem]/reference:order-none" title={`参考片段${reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}`}>
+      <p className="sr-only">参考片段{reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}</p>
+      <VoicePreview key={reference.audioUrl} src={reference.audioUrl} label="参考声音试听" onPreviewPlay={pauseOtherPreviews} compact />
+    </div> : null}
+  </>;
 
+  return <section ref={panelRef} aria-label="人声生成设置" className="@container/reference min-w-0 space-y-3">
     {isVox && onReferenceImported && onReferenceCatalogRefresh && onReferenceImportBusyChange ? <VoiceReferenceImport
+      toolbarContent={referenceControls} compactToolbar
       disabled={busy || loading || catalog === null || !provider?.available}
       onImported={onReferenceImported} onCatalogRefresh={onReferenceCatalogRefresh}
       onBusyChange={onReferenceImportBusyChange} onPreviewPlay={pauseOtherPreviews}
-    /> : !isVox ? <p className="break-words text-xs leading-5 text-studio-muted">添加参考音频请在“更多生成设置”中选择 VoxCPM2。</p> : null}
-
-    {reference?.audioUrl ? <div className="min-w-0 space-y-2">
-      <p className="text-xs text-studio-muted">参考片段{reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}</p>
-      <VoicePreview key={reference.audioUrl} src={reference.audioUrl} label="参考声音试听" onPreviewPlay={pauseOtherPreviews} />
-    </div> : null}
+    /> : <div className="min-w-0 space-y-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">{referenceControls}</div>
+      {!isVox ? <p className="break-words text-xs leading-5 text-studio-muted">添加参考音频请在“更多生成设置”中选择 VoxCPM2。</p> : null}
+    </div>}
 
     {generationControl}
 

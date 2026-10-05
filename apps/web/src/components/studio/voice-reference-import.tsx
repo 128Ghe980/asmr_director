@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Plus, RefreshCw } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 
@@ -12,6 +13,8 @@ export type VoiceReferenceImportProps = {
   onCatalogRefresh: (catalog: VoiceProviderCatalog) => void;
   onBusyChange: (busy: boolean) => boolean | void;
   onPreviewPlay?: (audio: HTMLAudioElement) => void;
+  toolbarContent?: ReactNode;
+  compactToolbar?: boolean;
 };
 
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -21,6 +24,7 @@ type PendingAction = "import" | "refresh" | "transcribe";
 type ReferenceLanguage = "zh" | "en" | "ja" | "ko";
 const fieldClass = "w-full min-w-0 rounded-lg border border-studio-line bg-black/20 px-2.5 py-2 text-sm text-studio-text outline-none focus:border-sky-300/50 disabled:opacity-50";
 const buttonClass = "min-h-9 rounded-lg border border-studio-line px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-sky-300 disabled:cursor-not-allowed disabled:opacity-40";
+const compactButtonClass = "inline-flex h-8 flex-none items-center justify-center gap-1.5 rounded-lg border border-studio-line px-2 text-xs font-semibold transition-colors hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-sky-300 disabled:cursor-not-allowed disabled:opacity-40";
 
 function validCatalog(value: unknown): value is VoiceProviderCatalog {
   if (!value || typeof value !== "object" || !("providers" in value) || !Array.isArray(value.providers)) return false;
@@ -43,7 +47,7 @@ function validImport(value: unknown): value is VoiceReferenceImportResult {
 
 function timeLabel(seconds: number) { return Number(seconds.toFixed(2)).toString(); }
 
-export function VoiceReferenceImport({ disabled, onImported, onCatalogRefresh, onBusyChange, onPreviewPlay }: VoiceReferenceImportProps) {
+export function VoiceReferenceImport({ disabled, onImported, onCatalogRefresh, onBusyChange, onPreviewPlay, toolbarContent, compactToolbar = false }: VoiceReferenceImportProps) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState<string>();
@@ -219,9 +223,12 @@ export function VoiceReferenceImport({ disabled, onImported, onCatalogRefresh, o
   }
 
   return <div className="min-w-0 space-y-2">
-    <div className="flex flex-wrap gap-2">
-      <button type="button" className={`${buttonClass} text-sky-100`} aria-expanded={open} aria-controls="voice-reference-import-form" disabled={locked} onClick={() => { audioRef.current?.pause(); segmentPlaying.current = false; setOpen(!open); }}>添加参考音频</button>
-      <button type="button" className={`${buttonClass} text-studio-muted`} disabled={locked} onClick={() => void refreshCatalog()}>刷新参考列表</button>
+    <div aria-label="参考声音工具栏" className="flex min-w-0 flex-wrap items-center gap-2">
+      {toolbarContent}
+      <div className={`flex flex-none items-center gap-1.5 ${compactToolbar ? "order-2 ml-auto @[35rem]/reference:order-none" : ""}`}>
+        <button type="button" aria-label="添加参考音频" title="添加参考音频" className={`${compactToolbar ? compactButtonClass : buttonClass} text-sky-100`} aria-expanded={open} aria-controls="voice-reference-import-form" disabled={locked} onClick={() => { audioRef.current?.pause(); segmentPlaying.current = false; setOpen(!open); }}>{compactToolbar ? <><Plus aria-hidden="true" size={14} /><span>添加</span></> : "添加参考音频"}</button>
+        <button type="button" aria-label="刷新参考列表" title="刷新参考列表" className={`${compactToolbar ? compactButtonClass : buttonClass} text-studio-muted`} disabled={locked} onClick={() => void refreshCatalog()}>{compactToolbar ? <RefreshCw aria-hidden="true" size={14} /> : "刷新参考列表"}</button>
+      </div>
     </div>
     {open ? <div id="voice-reference-import-form" aria-label="添加参考音频表单" className="min-w-0 space-y-3 rounded-lg border border-studio-line bg-black/10 p-3">
       <label className="block space-y-1.5 text-xs text-studio-muted"><span>音频文件</span><input ref={fileInputRef} aria-label="参考音频文件" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" disabled={fieldsLocked} onChange={chooseFile} className="block w-full min-w-0 text-xs file:mr-2 file:rounded-md file:border file:border-studio-line file:bg-black/20 file:px-2 file:py-2 file:text-studio-text" /></label>

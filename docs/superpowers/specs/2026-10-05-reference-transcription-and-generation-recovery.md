@@ -8,6 +8,12 @@ a VoxCPM2 failure using the newly imported 正太音. SFX model tests remain pau
 
 ## Workflow
 
+Layout follow-up, 2026-10-06: the 144×32px voice selector, 240×32px saved-reference player,
+add and refresh controls share one toolbar. Below 560px of panel width, selector/management
+share the first row and preview wraps below. Duration remains in the player and its title/
+accessible description. The upload form expands below the toolbar; other recording previews
+and all recognition/generation behavior keep their existing design.
+
 Keep MP3/WAV upload, selected interval and preview, with an 8s default for new files. Add Chinese(default), English, Japanese
 and Korean selection plus an explicit recognition action. Recognize only the selected
 1–30s interval; populate the editable transcript. Human review remains necessary.
