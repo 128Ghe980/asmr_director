@@ -140,6 +140,14 @@ export const VoiceRecognitionSchema = z.object({
     anchorText: ComparedText.max(40),
     recognizedPrefix: ComparedText,
   }).strict().optional(),
+  continuationBridge: z.object({
+    kind: z.literal("leading_hmm"),
+    text: z.literal("嗯"),
+    sourceWordIndex: TerminalWordIndex,
+    sourceStartSeconds: z.number().finite().min(0).max(120.1),
+    sourceEndSeconds: z.number().finite().min(0).max(120.1),
+    rightTranscript: z.string().min(1).max(1500),
+  }).strict().optional(),
   apiFallback: z.object({
     status: z.enum(["selected", "declined", "unavailable"]),
     model: z.string().max(160).optional(),
@@ -151,7 +159,20 @@ export const VoiceRecognitionSchema = z.object({
     recognizedPrefix: z.string().max(2000),
     reason: z.string().regex(/^[a-z_]{1,80}$/),
   }).strict().optional(),
-}).strict();
+}).strict().superRefine((recognition, context) => {
+  const bridge = recognition.continuationBridge;
+  if (!bridge) return;
+  const word = recognition.sourceWords?.[bridge.sourceWordIndex];
+  // This is evidence from an independently verified cut, never a fuzzy text
+  // prefix or permission to discard arbitrary intervening speech.
+  if (recognition.stage !== "complete" || recognition.contentComparison?.status !== "matched"
+      || !recognition.followingText?.trim() || recognition.boundaryMatch
+      || bridge.sourceWordIndex < 1 || !word || word.text.replace(/[^\p{L}\p{N}]/gu, "") !== "嗯"
+      || bridge.sourceStartSeconds !== word.start || bridge.sourceEndSeconds !== word.end
+      || bridge.sourceEndSeconds <= bridge.sourceStartSeconds) {
+    context.addIssue({ code: "custom", path: ["continuationBridge"], message: "Continuation bridge requires completed exact-content verification and a separately timed source word" });
+  }
+});
 
 export type VoiceRecognition = z.infer<typeof VoiceRecognitionSchema>;
 export type VoiceContentComparison = z.infer<typeof VoiceContentComparisonSchema>;

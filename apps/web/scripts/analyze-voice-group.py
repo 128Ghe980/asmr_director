@@ -30,6 +30,7 @@ WORD_GUARD = 0.080
 CONTENT_THRESHOLD = 0.90
 MAX_SUBSTITUTIONS = 2
 EDIT_THRESHOLD = 0.85
+INTERNAL_PAUSE_OBSERVATION_MAX_MS = 10_000
 _CONVERTER = OpenCC("t2s")
 
 
@@ -102,6 +103,20 @@ def recognition_snapshot(recognition: dict) -> dict:
         result["boundaryMatch"] = {"method": boundary["method"], "terminalWordIndex": boundary["terminalWordIndex"],
                                    "anchorText": bounded_text(boundary["anchorText"], 40),
                                    "recognizedPrefix": bounded_text(boundary["recognizedPrefix"], 500)}
+    bridge = recognition.get("continuationBridge")
+    if isinstance(bridge, dict) and result["stage"] == "complete":
+        index, start, end = bridge.get("sourceWordIndex"), bridge.get("sourceStartSeconds"), bridge.get("sourceEndSeconds")
+        if (bridge.get("kind") == "leading_hmm" and bridge.get("text") == "嗯"
+                and isinstance(index, int) and not isinstance(index, bool) and 0 <= index < 2000
+                and isinstance(start, (int, float)) and not isinstance(start, bool)
+                and isinstance(end, (int, float)) and not isinstance(end, bool)
+                and math.isfinite(start) and math.isfinite(end) and 0 <= start < end <= 120.1
+                and isinstance(bridge.get("rightTranscript"), str)
+                and result.get("contentComparison", {}).get("status") == "matched"
+                and "boundaryMatch" not in result):
+            result["continuationBridge"] = {"kind": "leading_hmm", "text": "嗯", "sourceWordIndex": index,
+                                            "sourceStartSeconds": start, "sourceEndSeconds": end,
+                                            "rightTranscript": bounded_text(bridge["rightTranscript"], 1500)}
     return result
 
 
@@ -280,6 +295,25 @@ def continuation_matches(following: str, words: list[dict], terminal: int) -> bo
     return bool(anchor and "".join(normalize(word["text"]) for word in words[terminal + 1:]).startswith(anchor))
 
 
+def leading_hmm_continuation(following: str, words: list[dict], terminal: int) -> dict | None:
+    """One independently timestamped 嗯 may precede strict whole-word context."""
+    index = terminal + 1
+    if index >= min(len(words) - 1, 2000) or normalize(words[index]["text"]) != "嗯":
+        return None
+    start, end = float(words[index]["start"]), float(words[index]["end"])
+    if not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end <= 120.1:
+        return None
+    try:
+        following_terminal = index + 1 + align_prefix(following, words[index + 1:])
+    except UnsafeGroup:
+        return None
+    actual = "".join(normalize(word["text"]) for word in words[index + 1:following_terminal + 1])
+    if actual != normalize(following):
+        return None
+    return {"kind": "leading_hmm", "text": "嗯", "sourceWordIndex": index,
+            "sourceStartSeconds": start, "sourceEndSeconds": end}
+
+
 def align_target(expected: str, words: list[dict], following: str,
                  alignment_hint: dict | None = None) -> tuple[int, dict | None]:
     """Locate an opening by content and existing whole-word endpoints, then prove its cut."""
@@ -417,8 +451,9 @@ def retained_verified_tail_ms(start_sample: int, end_sample: int, validation: di
 def verified_opening_cut(model, audio: np.ndarray, expected: str, following: str,
                          words: list[dict], terminal: int, recognition: dict | None = None,
                          checkpoint=None, require_two_sided: bool = False,
-                         allow_edits: bool = False, ending_anchor: str = "") -> tuple[float, dict, dict | None]:
-    if not require_two_sided:
+                         allow_edits: bool = False, ending_anchor: str = "",
+                         continuation_bridge: dict | None = None) -> tuple[float, dict, dict | None]:
+    if not require_two_sided and continuation_bridge is None:
         try:
             return choose_opening_cut(audio, words, terminal), words[terminal], None
         except UnsafeGroup as error:
@@ -429,11 +464,21 @@ def verified_opening_cut(model, audio: np.ndarray, expected: str, following: str
     # recognition on both sides. A one-sided good transcript is insufficient.
     if terminal + 1 >= len(words):
         raise UnsafeGroup("missing_continuation_boundary")
-    following_end = terminal + 1 + align_prefix(following, words[terminal + 1:])
+    following_start = terminal + (2 if continuation_bridge is not None else 1)
+    following_end = following_start + align_prefix(following, words[following_start:])
     duration = audio.size / RATE
     boundary = (float(words[terminal]["end"]) + float(words[terminal + 1]["start"])) / 2
     start = max(0.0, min(float(words[terminal]["end"]), float(words[terminal + 1]["start"])) - .5)
     end = min(duration, max(float(words[terminal]["end"]), float(words[terminal + 1]["start"])) + .65)
+    if continuation_bridge is not None:
+        # Unlike timestamp refinement, this bridge cannot search after 嗯 or
+        # borrow a target substitution. Keep every candidate wholly inside the
+        # measured gap, with word guards before the independent 嗯 starts.
+        if (normalize("".join(word["text"] for word in words[:terminal + 1])) != normalize(expected)
+                or leading_hmm_continuation(following, words, terminal) is None):
+            raise UnsafeGroup("unrecognized_continuation")
+        start = float(words[terminal]["end"]) + WORD_GUARD
+        end = float(words[terminal + 1]["start"]) - WORD_GUARD
     levels, threshold = frame_levels(audio)
     # At least 80 ms of measured deep quiet on EACH side of the cut, not merely
     # an 80 ms interval whose midpoint has only 40 ms protection.
@@ -448,8 +493,17 @@ def verified_opening_cut(model, audio: np.ndarray, expected: str, following: str
             recognition.pop("contentComparison", None)
             update_recognition(recognition, checkpoint)
         cut = candidate["cut"]
+        if continuation_bridge is not None and (candidate["quietStartSeconds"] < start - 1e-8
+                or candidate["quietEndSeconds"] > end + 1e-8
+                or cut - candidate["quietStartSeconds"] < WORD_GUARD - 1e-8
+                or candidate["quietEndSeconds"] - cut < WORD_GUARD - 1e-8):
+            continue
         cut_sample = round(cut * RATE)
-        right_end = min(audio.size, math.ceil((float(words[following_end]["end"]) + .65) * RATE))
+        # Short independent windows can omit 嗯 and misrecognize the context.
+        # The bridge uses the complete existing remainder (input <=120s), not
+        # another generation or a text-length estimate. The crop itself is fixed.
+        right_end = audio.size if continuation_bridge is not None else min(
+            audio.size, math.ceil((float(words[following_end]["end"]) + .65) * RATE))
         if cut_sample <= 0 or right_end <= cut_sample:
             continue
         try:
@@ -457,24 +511,48 @@ def verified_opening_cut(model, audio: np.ndarray, expected: str, following: str
             if recognition is not None:
                 update_recognition(recognition, checkpoint, targetTranscript=left_transcript)
             validate_words(left_words, cut_sample / RATE)
+            if continuation_bridge is not None and normalize(left_transcript) != normalize(expected):
+                raise UnsafeGroup("incomplete_or_unrelated_speech")
             check_target_text(expected, left_transcript, allow_edits, ending_anchor)
             left_word_text = "".join(word["text"] for word in left_words)
+            if continuation_bridge is not None and normalize(left_word_text) != normalize(expected):
+                raise UnsafeGroup("incomplete_or_unrelated_speech")
             check_target_text(expected, left_word_text, allow_edits, ending_anchor)
             if normalize(left_transcript) != normalize(left_word_text):
                 raise UnsafeGroup("inconsistent_recognition")
             right_transcript, right_words = transcribe(model, audio[cut_sample:right_end])
-            right_terminal = align_prefix(following, right_words)
+            right_start = 0
+            if continuation_bridge is not None:
+                if not right_words:
+                    raise UnsafeGroup("uncertain_word_alignment")
+                if normalize(right_words[0]["text"]) == "嗯":
+                    if float(right_words[0]["end"]) <= float(right_words[0]["start"]):
+                        raise UnsafeGroup("uncertain_word_alignment")
+                    right_start = 1
+            right_terminal = right_start + align_prefix(following, right_words[right_start:])
             validate_words(right_words[:right_terminal + 1], (right_end - cut_sample) / RATE)
             # Whole-word prefix alignment rejects a missing first syllable or
             # target-tail speech before the continuation. Check the segment text
             # as well, so disagreeing ASR words cannot conceal a leak.
             anchor = normalize(following)
             right_actual = normalize(right_transcript)
-            content_score(anchor, right_actual[:len(anchor)])
+            if continuation_bridge is not None:
+                # Full-context ASR may omit the source's independent 嗯. Source
+                # timing and quiet/left proof still place it outside the crop.
+                # Accept only exact context from word zero, optionally preceded
+                # by one complete 嗯 word; never scan or split a merged word.
+                right_expected = ("嗯" if right_start else "") + anchor
+                right_prefix = "".join(normalize(word["text"]) for word in right_words[:right_terminal + 1])
+                if right_prefix != right_expected or right_actual[:len(right_expected)] != right_expected:
+                    raise UnsafeGroup("incomplete_or_unrelated_speech")
+            else:
+                content_score(anchor, right_actual[:len(anchor)])
             validation = {key: candidate[key] for key in ("method", "thresholdDbfs", "quietStartSeconds", "quietEndSeconds")}
             if recognition is not None:
                 recognition.pop("alignment", None)
                 update_recognition(recognition, checkpoint)
+            if continuation_bridge is not None:
+                continuation_bridge["rightTranscript"] = bounded_text(right_transcript, 1500)
             return cut, left_words[-1], validation
         except UnsafeGroup as error:
             if recognition is not None and error.alignment:
@@ -598,20 +676,25 @@ def internal_pauses(_audio: np.ndarray, clauses: list[str], words: list[dict],
         # The user-selected class-local recipe measures the adjacent ASR word
         # gap, including a legitimate zero, rounded to 1 ms. Energy thresholds
         # are for safe cuts/retained edge quiet, not a replacement pause recipe.
+        # Record validated long pauses up to the service's metadata bound. The
+        # separate <=1200ms join-sample filter must not reject intact target audio.
         milliseconds = (float(words[terminal + 1]["start"]) - float(words[terminal]["end"])) * 1000
-        if milliseconds < -1e-6 or milliseconds > 1200:
+        if (not math.isfinite(milliseconds) or milliseconds < -1e-6
+                or milliseconds > INTERNAL_PAUSE_OBSERVATION_MAX_MS):
             raise UnsafeGroup("uncertain_internal_pause")
         pauses.append(math.floor(max(0.0, milliseconds) + 0.5))
     return pauses
 
 
 def _analyze(model, audio: np.ndarray, expected: str, following: str, clauses: list[str],
-             recognition: dict, checkpoint, alignment_hint: dict | None = None) -> tuple[np.ndarray, dict]:
+             recognition: dict, checkpoint, alignment_hint: dict | None = None) -> tuple[np.ndarray, dict, dict | None]:
+    recognition.pop("continuationBridge", None)
     update_recognition(recognition, checkpoint, stage="source_transcription")
     transcript, words = transcribe(model, audio)
     update_recognition(recognition, checkpoint, stage="source_alignment", sourceTranscript=transcript, sourceWords=words)
     require_two_sided = False
     boundary_match = None
+    continuation_bridge = None
     if following:
         try:
             terminal, boundary_match = align_target(expected, words, following, alignment_hint)
@@ -633,10 +716,15 @@ def _analyze(model, audio: np.ndarray, expected: str, following: str, clauses: l
         anchor = normalize(following)[:min(6, len(normalize(following)))]
         following_actual = "".join(normalize(word["text"]) for word in following_words)
         if not anchor or not following_actual.startswith(anchor):
-            raise UnsafeGroup("unrecognized_continuation", alignment={
-                "expected": anchor, "recognizedPrefix": bounded_text(following_actual, 2000),
-                "reason": "unrecognized_continuation",
-            })
+            if boundary_match is None and source_comparison["status"] == "matched":
+                continuation_bridge = leading_hmm_continuation(following, words, terminal)
+            if continuation_bridge is None:
+                raise UnsafeGroup("unrecognized_continuation", alignment={
+                    "expected": anchor, "recognizedPrefix": bounded_text(following_actual, 2000),
+                    "reason": "unrecognized_continuation",
+                })
+            validate_words(words[:terminal + 3], audio.size / RATE)
+            require_two_sided = True
     else:
         validate_words(words, audio.size / RATE)
         content_score(expected, transcript, allow_substitutions=True)
@@ -653,7 +741,8 @@ def _analyze(model, audio: np.ndarray, expected: str, following: str, clauses: l
             cut, last_word, cut_validation = verified_opening_cut(
                 model, audio, expected, following, words, terminal,
                 recognition, checkpoint, require_two_sided=require_two_sided,
-                allow_edits=boundary_match is not None, ending_anchor=boundary_match["anchorText"] if boundary_match else "")
+                allow_edits=boundary_match is not None, ending_anchor=boundary_match["anchorText"] if boundary_match else "",
+                continuation_bridge=continuation_bridge)
             excerpt = audio[:round(cut * RATE)].copy()
         else:
             excerpt, last_word = audio.copy(), words[-1]
@@ -671,9 +760,13 @@ def _analyze(model, audio: np.ndarray, expected: str, following: str, clauses: l
         verified_transcript, verified_words = transcribe(model, processed)
         update_recognition(recognition, checkpoint, stage="target_validation", targetTranscript=verified_transcript)
         validate_words(verified_words, processed.size / RATE)
+        if continuation_bridge is not None and normalize(verified_transcript) != normalize(expected):
+            raise UnsafeGroup("incomplete_or_unrelated_speech")
         comparison = check_target_text(expected, verified_transcript, boundary_match is not None,
                                        boundary_match["anchorText"] if boundary_match else "")
         word_text = "".join(word["text"] for word in verified_words)
+        if continuation_bridge is not None and normalize(word_text) != normalize(expected):
+            raise UnsafeGroup("incomplete_or_unrelated_speech")
         check_target_text(expected, word_text, boundary_match is not None,
                           boundary_match["anchorText"] if boundary_match else "")
         if normalize(verified_transcript) != normalize(word_text):
@@ -698,7 +791,7 @@ def _analyze(model, audio: np.ndarray, expected: str, following: str, clauses: l
     }
     if cut_validation:
         result["cutValidation"] = cut_validation
-    return processed, result
+    return processed, result, continuation_bridge
 
 
 def analyze(model, audio: np.ndarray, expected: str, following: str, clauses: list[str],
@@ -707,7 +800,7 @@ def analyze(model, audio: np.ndarray, expected: str, following: str, clauses: li
         recognition = {"stage": "source_transcription", "sourceTranscript": "",
                        "expectedText": expected, "followingText": following}
     try:
-        processed, result = _analyze(model, audio, expected, following, clauses, recognition, checkpoint, alignment_hint)
+        processed, result, continuation_bridge = _analyze(model, audio, expected, following, clauses, recognition, checkpoint, alignment_hint)
     except UnsafeGroup as error:
         if error.alignment:
             update_recognition(recognition, checkpoint, alignment=error.alignment)
@@ -717,7 +810,10 @@ def analyze(model, audio: np.ndarray, expected: str, following: str, clauses: li
         # Keep accumulated ASR while keeping native exception text/paths private.
         raise UnsafeGroup("analysis_failed", recognition=recognition_snapshot(recognition)) from None
     recognition.pop("alignment", None)
-    update_recognition(recognition, checkpoint, stage="complete")
+    completed = {"stage": "complete"}
+    if continuation_bridge is not None:
+        completed["continuationBridge"] = continuation_bridge
+    update_recognition(recognition, checkpoint, **completed)
     result["recognition"] = recognition_snapshot(recognition)
     return processed, result
 

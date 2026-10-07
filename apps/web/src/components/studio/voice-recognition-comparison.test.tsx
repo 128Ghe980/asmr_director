@@ -27,6 +27,59 @@ function group(evidence: VoiceRecognition): VoiceLongTextResult["groups"][number
 }
 
 describe("ending match recognition inspection", () => {
+  it("explains a verified leading hmm cut only from saved independent recognition evidence", () => {
+    const expectedText = "今天是不是又加班了？眼睛都红红的。";
+    const normalized = "今天是不是又加班了眼睛都红红的";
+    const evidence: VoiceRecognition = { stage: "complete", expectedText, sourceTranscript: `${normalized}嗯面快好了`, targetTranscript: normalized,
+      followingText: "面快好了，", contentComparison: { status: "matched", similarity: 1, threshold: .9, substitutionCount: 0, expected: normalized, recognized: normalized },
+      sourceWords: [{ text: normalized, start: .1, end: 3.8 }, { text: "嗯", start: 4, end: 4.2 }, { text: "面快好了", start: 4.3, end: 5 }],
+      continuationBridge: { kind: "leading_hmm", text: "嗯", sourceWordIndex: 1, sourceStartSeconds: 4, sourceEndSeconds: 4.2, rightTranscript: "嗯面快好了" } };
+    const take = group(evidence);
+    const view = render(<VoiceRecognitionComparison groups={[take]} />);
+    expect(screen.getByText("已在“嗯”之前截取；后续台词已独立核对。")).toBeTruthy();
+    expect(screen.getByText("截取位置后的独立识别").nextElementSibling?.textContent).toBe("嗯面快好了");
+    expect(screen.getByText("完整原音识别").nextElementSibling?.textContent).toBe(evidence.sourceTranscript);
+    for (const altered of [ { ...take, checkStatus: "review" as const }, { ...take, checkStatus: undefined },
+      { ...take, recognition: { ...evidence, stage: "continuation_alignment" as const } },
+      { ...take, recognition: { ...evidence, continuationBridge: undefined } },
+      { ...take, recognition: { ...evidence, contentComparison: undefined } } ]) {
+      view.rerender(<VoiceRecognitionComparison groups={[altered]} />);
+      expect(screen.queryByText("已在“嗯”之前截取；后续台词已独立核对。")).toBeNull();
+      expect(screen.queryByText("截取位置后的独立识别")).toBeNull();
+    }
+  });
+
+  it("labels recognition on a reviewed original as an unadopted trial", () => {
+    render(<VoiceRecordingRecognitionComparison expectedText="回来啦？" review recognition={{ stage: "complete", expectedText: "回来啦？",
+      sourceTranscript: "回来啦嗯慢慢来", targetTranscript: "回来啦嗯" }} />);
+    expect(screen.getByText("尝试裁剪后识别（未采用）").nextElementSibling?.textContent).toBe("回来啦嗯");
+    expect(screen.getByText("本条试听与下载均为完整原音。")).toBeTruthy();
+    expect(screen.queryByText("裁剪后识别")).toBeNull();
+  });
+
+  it("explains punctuation-free originals and following context without claiming a verified crop", () => {
+    const expectedText = "今天是不是又加班了？眼睛都红红的。";
+    const evidence: VoiceRecognition = { stage: "continuation_alignment", expectedText, followingText: "面快好了，",
+      sourceTranscript: "今天是不是又加班了眼睛都红红的嗯面快好了",
+      alignment: { expected: "面快好了", recognizedPrefix: "嗯面快好了", reason: "unrecognized_continuation" } };
+    render(<VoiceRecognitionComparison groups={[{ ...group(evidence), checkStatus: "review" }]} />);
+    expect(screen.getByText("完整原音识别").nextElementSibling?.textContent).toBe(evidence.sourceTranscript);
+    expect(screen.getByText("后续台词（定位用）").nextElementSibling?.textContent).toBe("面快好了，");
+    expect(screen.getByText("完整原音可能包含后续台词或生成语境；识别文字可能省略标点。")).toBeTruthy();
+    expect(screen.getByText("后续台词衔接未能定位，暂未采用裁剪。")).toBeTruthy();
+    expect(screen.getByText("保留完整原音，未采用裁剪。")).toBeTruthy();
+    expect(screen.queryByText(/识别文字与源文一致|目标台词存在差异|已提取目标片段/)).toBeNull();
+  });
+
+  it("labels failed cropped recognition as an unadopted attempt even if old evidence says complete", () => {
+    const evidence: VoiceRecognition = { stage: "complete", expectedText: "回来啦？", sourceTranscript: "回来啦嗯慢慢来",
+      targetTranscript: "回来啦嗯", followingText: "慢慢来。" };
+    render(<VoiceRecognitionComparison groups={[{ ...group(evidence), checkStatus: "review", diagnosticCode: "cut_text_mismatch" }]} />);
+    expect(screen.getByText("尝试裁剪后识别（未采用）").nextElementSibling?.textContent).toBe("回来啦嗯");
+    expect(screen.queryByText("裁剪后识别")).toBeNull();
+    expect(screen.getByText("尝试裁剪后的识别文字未通过核对。")).toBeTruthy();
+  });
+
   it("shows the ending anchor and isolated missing/substituted characters in a folded crop inspection", () => {
     render(<VoiceRecognitionComparison groups={[group(recognition)]} />);
     expect(screen.getByText("识别对照").closest("details")?.open).toBe(false);

@@ -581,6 +581,239 @@ class VoiceGroupSafetyTests(unittest.TestCase):
         self.assertAlmostEqual(max(0, 350 - result["trailingQuietMs"]), 100)
 
 
+class InternalPauseObservationTests(unittest.TestCase):
+    def test_validated_word_gaps_are_recorded_without_the_join_sample_limit(self):
+        for milliseconds in (0, 1200, 1201, 1480, 10_000):
+            words = [{"text": "慢慢放松", "start": .1, "end": .25},
+                     {"text": "安静休息", "start": .25 + milliseconds / 1000,
+                      "end": .65 + milliseconds / 1000}]
+            with self.subTest(milliseconds=milliseconds):
+                self.assertEqual(helper.internal_pauses(tone(11), ["慢慢放松", "安静休息"], words), [milliseconds])
+
+    def test_zero_gap_floating_point_noise_keeps_the_original_tolerance(self):
+        for milliseconds in (-1e-9, 0, 1e-9):
+            words = [{"text": "慢慢放松", "start": .1, "end": .25},
+                     {"text": "安静休息", "start": .25 + milliseconds / 1000,
+                      "end": .65 + milliseconds / 1000}]
+            with self.subTest(milliseconds=milliseconds):
+                self.assertEqual(helper.internal_pauses(tone(1), ["慢慢放松", "安静休息"], words), [0])
+
+    def test_invalid_negative_nonfinite_and_above_service_cap_gaps_still_fail(self):
+        for milliseconds in (-1, -1e-4, float("nan"), float("inf"), -float("inf"), 10_000.1):
+            words = [{"text": "慢慢放松", "start": .1, "end": .25},
+                     {"text": "安静休息", "start": .25 + milliseconds / 1000,
+                      "end": .65 + milliseconds / 1000}]
+            with self.subTest(milliseconds=milliseconds):
+                with self.assertRaisesRegex(helper.UnsafeGroup, "^uncertain_internal_pause$"):
+                    helper.internal_pauses(tone(11), ["慢慢放松", "安静休息"], words)
+
+    def test_exact_target_with_real_mode_long_sentence_gap_survives_the_full_analysis(self):
+        clauses = ["今天是不是又加班了？", "眼睛都红红的。"]
+        target_words = [{"text": clauses[0], "start": .6, "end": 2.38},
+                        {"text": clauses[1], "start": 3.86, "end": 5.38}]
+        source_words = target_words + [{"text": "来~~，", "start": 6.02, "end": 6.46}]
+        audio = np.concatenate([np.zeros(round(.6 * helper.RATE)), tone(1.78),
+                                np.zeros(round(1.48 * helper.RATE)), tone(1.52),
+                                np.zeros(round(.64 * helper.RATE)), tone(.44),
+                                np.zeros(round(.24 * helper.RATE))])
+        final_words = [{**word, "start": word["start"] - .52, "end": word["end"] - .52}
+                       for word in target_words]
+        replies = [("".join(word["text"] for word in source_words), source_words),
+                   ("".join(clauses), final_words)]
+        with patch.object(helper, "transcribe", side_effect=replies) as recognize:
+            processed, result = helper.analyze(None, audio, "".join(clauses), "来~~，", clauses)
+        self.assertEqual(recognize.call_count, 2)
+        self.assertLess(processed.size, audio.size)
+        self.assertEqual(result["internalPausesMs"], [1480])
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertEqual(result["recognition"]["contentComparison"]["status"], "matched")
+
+
+class LeadingHmmContinuationTests(unittest.TestCase):
+    expected = "今天是不是又加班了？眼睛都红红的。"
+    following = "面快好了，"
+    clauses = ["今天是不是又加班了？", "眼睛都红红的。"]
+
+    def target_words(self):
+        texts = ["今天", "是不是", "又", "加", "班", "了", "眼", "睛", "都", "红", "红", "的"]
+        ends = [.88, 1.3, 1.7, 1.88, 2.12, 2.3, 3.1, 3.4, 3.54, 3.74, 3.94, 4.14]
+        return [{"text": text, "start": 0 if index == 0 else ends[index - 1], "end": ends[index]}
+                for index, text in enumerate(texts)]
+
+    def source(self, bridge="嗯", hmm_start=4.7):
+        words = self.target_words() + [{"text": bridge, "start": hmm_start, "end": hmm_start + .5},
+                                       {"text": "面", "start": 6.0, "end": 6.5},
+                                       {"text": "快", "start": 6.5, "end": 6.7},
+                                       {"text": "好了", "start": 6.7, "end": 7.04}]
+        return "".join(word["text"] for word in words), words
+
+    def audio(self, hmm_start=4.7):
+        return np.concatenate([tone(4.14), np.zeros(round((hmm_start - 4.14) * helper.RATE)),
+                               tone(.5), np.zeros(round((6 - hmm_start - .5) * helper.RATE)),
+                               tone(1.04), np.zeros(round(.26 * helper.RATE))])
+
+    def target(self, text=None):
+        words = self.target_words()
+        if text is not None:
+            words[0]["text"] = text
+        return "".join(word["text"] for word in words), words
+
+    def right(self):
+        _, words = self.source()
+        words = [{**word, "start": word["start"] - 4.42, "end": word["end"] - 4.42}
+                 for word in words[12:]]
+        return "".join(word["text"] for word in words), words
+
+    def test_single_whole_hmm_requires_two_sided_proof_and_is_discarded(self):
+        source = self.source()
+        checkpoints = []
+        with patch.object(helper, "transcribe", side_effect=[source, self.target(), self.right(), self.target()]) as recognize:
+            processed, result = helper.analyze(None, self.audio(), self.expected, self.following, self.clauses,
+                                               checkpoint=lambda value: checkpoints.append(value.copy()))
+        self.assertEqual(recognize.call_count, 4)
+        self.assertLess(processed.size, self.audio().size)
+        self.assertLessEqual(result["cutEndSeconds"], 4.7 - helper.WORD_GUARD)
+        validation = result["cutValidation"]
+        self.assertGreaterEqual(validation["quietEndSeconds"] - validation["quietStartSeconds"] + 1e-9, .16)
+        self.assertGreaterEqual(4.42 - validation["quietStartSeconds"] + 1e-9, .08)
+        self.assertGreaterEqual(validation["quietEndSeconds"] - 4.42 + 1e-9, .08)
+        recognition = result["recognition"]
+        self.assertEqual(recognition["contentComparison"]["status"], "matched")
+        self.assertNotIn("boundaryMatch", recognition)
+        self.assertEqual(recognition["sourceWords"], source[1])
+        self.assertEqual(recognition["continuationBridge"], {
+            "kind": "leading_hmm", "text": "嗯", "sourceWordIndex": 12,
+            "sourceStartSeconds": 4.7, "sourceEndSeconds": 5.2, "rightTranscript": "嗯面快好了",
+        })
+        self.assertTrue(all("continuationBridge" not in value for value in checkpoints if value["stage"] != "complete"))
+
+    def test_bridge_uses_complete_right_context_before_accepting_the_strict_anchor(self):
+        audio = np.concatenate([self.audio(), tone(.5)])
+        full_right_frames = audio.size - round(4.42 * helper.RATE)
+        right_windows = []
+        calls = 0
+
+        def recognize(_model, window):
+            nonlocal calls
+            call = calls
+            calls += 1
+            if call == 0:
+                return self.source()
+            if call == 2:
+                right_windows.append(window.size)
+                if window.size < full_right_frames:
+                    return "嗯面块好", [{"text": "嗯", "start": .3, "end": .8},
+                                     {"text": "面", "start": 1.6, "end": 2.1},
+                                     {"text": "块", "start": 2.1, "end": 2.3},
+                                     {"text": "好", "start": 2.3, "end": 2.44}]
+                text, words = self.right()
+                return text + "我", words + [{"text": "我", "start": 2.62, "end": 3.1}]
+            return self.target()
+
+        with patch.object(helper, "transcribe", side_effect=recognize):
+            _, result = helper.analyze(None, audio, self.expected, self.following, self.clauses)
+        self.assertEqual(calls, 4)
+        self.assertEqual(right_windows, [full_right_frames])
+        self.assertEqual(result["recognition"]["contentComparison"]["status"], "matched")
+        self.assertEqual(result["recognition"]["continuationBridge"]["rightTranscript"], "嗯面快好了我")
+        self.assertLess(result["cutEndSeconds"], 4.7 - helper.WORD_GUARD)
+
+    def test_full_right_context_may_omit_hmm_only_when_following_is_exact_at_the_start(self):
+        right = ("面快好了", [{"text": "面", "start": 1.5, "end": 2.02},
+                          {"text": "快", "start": 2.02, "end": 2.26},
+                          {"text": "好了", "start": 2.26, "end": 2.64}])
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.target(), right, self.target()]):
+            _, result = helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+        recognition = result["recognition"]
+        self.assertEqual(recognition["contentComparison"]["status"], "matched")
+        self.assertEqual(recognition["continuationBridge"]["rightTranscript"], right[0])
+        self.assertEqual(recognition["continuationBridge"]["sourceWordIndex"], 12)
+        self.assertEqual(recognition["continuationBridge"]["sourceStartSeconds"], 4.7)
+        self.assertLess(result["cutEndSeconds"], 4.7 - helper.WORD_GUARD)
+
+    def test_right_segment_and_whole_word_prefix_must_agree_about_the_optional_hmm(self):
+        text, words = self.right()
+        for right in ((text, words[1:]), ("面快好了", words)):
+            with self.subTest(text=right[0]), patch.object(helper, "transcribe", side_effect=[self.source(), self.target(), right]):
+                with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                    helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+    def test_short_or_missing_quiet_cannot_use_the_bridge(self):
+        for audio, source in ((tone(7.3), self.source()), (self.audio(4.28), self.source(hmm_start=4.28))):
+            with self.subTest(duration=audio.size):
+                with patch.object(helper, "transcribe", return_value=source) as recognize:
+                    with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+                        helper.analyze(None, audio, self.expected, self.following, self.clauses)
+                self.assertEqual(recognize.call_count, 1)
+
+    def test_other_fillers_and_multiple_hmm_are_not_a_general_skip_rule(self):
+        for bridge in ("啊", "唔", "恩", "嗯嗯", "嗯啊"):
+            with self.subTest(bridge=bridge), patch.object(helper, "transcribe", return_value=self.source(bridge)) as recognize:
+                with self.assertRaises(helper.UnsafeGroup):
+                    helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+                self.assertEqual(recognize.call_count, 1)
+
+    def test_source_hmm_merged_with_next_word_has_no_character_time_split(self):
+        text, words = self.source()
+        words[12] = {"text": "嗯面", "start": 4.7, "end": 6.5}
+        del words[13]
+        with patch.object(helper, "transcribe", return_value=(text, words)) as recognize:
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^unrecognized_continuation$"):
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+        self.assertEqual(recognize.call_count, 1)
+
+    def test_source_target_difference_cannot_borrow_the_bridge(self):
+        _, words = self.source()
+        words[0]["text"] = "今夜"
+        with patch.object(helper, "transcribe", return_value=("".join(word["text"] for word in words), words)):
+            with self.assertRaises(helper.UnsafeGroup):
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+    def test_left_target_must_remain_exact_even_within_old_substitution_budget(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.target("今夜")]):
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$") as caught:
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+        self.assertNotIn("continuationBridge", caught.exception.recognition)
+
+    def test_right_hmm_must_also_be_one_independent_word(self):
+        text, words = self.right()
+        words[0] = {"text": "嗯面", "start": .28, "end": 2.08}
+        del words[1]
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.target(), (text, words)]):
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+    def test_right_mismatch_repeat_reordering_leak_and_missing_first_character_fail(self):
+        for text in ("嗯快好了", "嗯快面好了", "嗯的面快好了", "嗯嗯面快好了", "嗯面快坏了",
+                     "快好了", "快面好了", "的面快好了", "啊面快好了", "面块好了"):
+            _, words = self.right()
+            words = [words[0], {"text": text[1:], "start": 1.58, "end": 2.62}] if text.startswith("嗯") else words[1:]
+            with self.subTest(text=text), patch.object(helper, "transcribe", side_effect=[self.source(), self.target(), (text, words)]):
+                with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$") as caught:
+                    helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+                self.assertNotIn("continuationBridge", caught.exception.recognition)
+
+    def test_left_bridge_leak_and_missing_target_end_are_rejected(self):
+        for text in (helper.normalize(self.expected) + "嗯", helper.normalize(self.expected)[:-1]):
+            with self.subTest(text=text), patch.object(helper, "transcribe", side_effect=[self.source(), (text, self.target_words())]):
+                with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                    helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+    def test_final_target_difference_does_not_publish_the_trial_bridge(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.target(), self.right(), self.target("今夜")]):
+            with self.assertRaises(helper.UnsafeGroup) as caught:
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+        self.assertEqual(caught.exception.recognition["stage"], "target_validation")
+        self.assertNotIn("continuationBridge", caught.exception.recognition)
+
+    def test_zero_duration_hmm_cannot_establish_its_discarded_side(self):
+        text, words = self.source()
+        words[12]["end"] = words[12]["start"]
+        with patch.object(helper, "transcribe", return_value=(text, words)):
+            with self.assertRaises(helper.UnsafeGroup):
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+
 class PersistentWorkerTests(unittest.TestCase):
     def test_three_requests_load_one_model_and_preserve_request_identity(self):
         incoming = io.StringIO("".join(json.dumps({"requestPath": name}) + "\n"

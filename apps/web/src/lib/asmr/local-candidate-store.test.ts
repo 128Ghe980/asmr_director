@@ -25,6 +25,21 @@ function candidate(id = "candidate_1", clipId = "voice_1", projectId = "project_
 }
 
 describe("product candidate store", () => {
+  it("checks an unchanged ready source under the manifest lock before publishing a recheck", async () => {
+    const runtime = await config();
+    const source = candidate("source_candidate");
+    await saveAudioCandidate({ config: runtime, candidate: source });
+    await saveAudioCandidate({ config: runtime, candidate: candidate("first_recheck"), sourceCandidate: source });
+    await discardAudioCandidate({ config: runtime, candidateId: source.candidateId, projectId: source.projectId, clipId: source.clipId });
+    const before = await readFile(resolveCandidateManifestPath(runtime), "utf8");
+    await expect(saveAudioCandidate({ config: runtime, candidate: candidate("late_recheck"), sourceCandidate: source })).rejects.toMatchObject({ statusCode: 409 });
+    expect(await readFile(resolveCandidateManifestPath(runtime), "utf8")).toBe(before);
+    expect(await getAudioCandidate({ config: runtime, candidateId: "late_recheck" })).toBeNull();
+    expect(await fileSystem.readdir(path.dirname(resolveCandidateManifestPath(runtime)))).toEqual(["manifest.json"]);
+    // Existing generation calls remain independent of the discarded source.
+    await expect(saveAudioCandidate({ config: runtime, candidate: candidate("ordinary_generation") })).resolves.toEqual(candidate("ordinary_generation"));
+  });
+
   it("cancels a save waiting for another manifest owner without publishing the candidate", async () => {
     const runtime = await config();
     const manifest = resolveCandidateManifestPath(runtime);

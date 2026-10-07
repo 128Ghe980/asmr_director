@@ -15,7 +15,7 @@ const stageLabels: Record<VoiceRecognition["stage"], string> = {
 
 const reasonLabels: Record<string, string> = {
   uncertain_word_alignment: "识别文字未能定位目标句的结束位置。",
-  unrecognized_continuation: "目标句后的识别文字未能对应后续台词。",
+  unrecognized_continuation: "后续台词衔接未能定位，暂未采用裁剪。",
   cut_text_mismatch: "尝试裁剪后的识别文字未通过核对。",
   no_verified_quiet_cut: "没有确认可采用的安静裁剪位置。",
   no_safe_quiet_cut: "没有找到足够安静的裁剪位置。",
@@ -64,24 +64,32 @@ function ContentComparison({ comparison }: { comparison: VoiceContentComparison 
   </div>;
 }
 
-function RecognitionEvidence({ recognition, expectedText, diagnosticCode }: {
+function RecognitionEvidence({ recognition, expectedText, diagnosticCode, review = false, verifiedCrop = false }: {
   recognition?: VoiceRecognition;
   expectedText: string;
   diagnosticCode?: string;
+  review?: boolean;
+  verifiedCrop?: boolean;
 }) {
   const reason = recognition?.alignment?.reason || diagnosticCode;
+  const bridge = verifiedCrop && recognition?.stage === "complete" && recognition.contentComparison?.status === "matched"
+    ? recognition.continuationBridge : undefined;
   return <>
     <dl className="min-w-0 space-y-2">
       <RecognitionText label="目标台词" text={recognition?.expectedText || expectedText} empty="未保存目标台词" />
       {recognition ? <>
-        <RecognitionText label="完整窗口识别" text={recognition.sourceTranscript} />
-        {recognition.targetTranscript !== undefined ? <RecognitionText label="裁剪后识别" text={recognition.targetTranscript} /> : null}
+        <RecognitionText label="完整原音识别" text={recognition.sourceTranscript} />
+        {recognition.followingText ? <RecognitionText label="后续台词（定位用）" text={recognition.followingText} /> : null}
+        {recognition.targetTranscript !== undefined ? <RecognitionText label={review || recognition.stage !== "complete" ? "尝试裁剪后识别（未采用）" : "裁剪后识别"} text={recognition.targetTranscript} /> : null}
+        {bridge ? <RecognitionText label="截取位置后的独立识别" text={bridge.rightTranscript} /> : null}
         {recognition.alignment ? <>
           <RecognitionText label="定位期望文字" text={recognition.alignment.expected} empty="未保存定位期望文字" />
           <RecognitionText label="定位时识别前缀" text={recognition.alignment.recognizedPrefix} />
         </> : null}
       </> : null}
     </dl>
+    {recognition ? <p className="leading-5">完整原音可能包含后续台词或生成语境；识别文字可能省略标点。</p> : null}
+    {bridge ? <p className="leading-5">已在“嗯”之前截取；后续台词已独立核对。</p> : null}
     {recognition?.boundaryMatch ? <p className="break-words leading-5">
       {recognition.boundaryMatch.method === "api" ? "API 辅助定位末尾词" : "末尾词定位"}：「{recognition.boundaryMatch.anchorText}」
     </p> : null}
@@ -93,16 +101,17 @@ function RecognitionEvidence({ recognition, expectedText, diagnosticCode }: {
   </>;
 }
 
-export function VoiceRecordingRecognitionComparison({ recognition, expectedText }: {
+export function VoiceRecordingRecognitionComparison({ recognition, expectedText, review = false }: {
   recognition?: VoiceRecognition;
   expectedText: string;
+  review?: boolean;
 }) {
   return <details className="min-w-0 text-xs text-studio-muted">
     <summary className="cursor-pointer py-1">识别对照</summary>
     <div className="mt-2 max-h-80 space-y-2 overflow-y-auto overscroll-contain">
       <p className="leading-5">本条试听与下载均为完整原音。</p>
       {recognition?.contentComparison?.status === "different" ? <p className="leading-5 text-amber-100">识别文字与源文有差异。</p> : null}
-      <RecognitionEvidence recognition={recognition} expectedText={expectedText} />
+      <RecognitionEvidence recognition={recognition} expectedText={expectedText} review={review} verifiedCrop={!review && recognition?.stage === "complete"} />
     </div>
   </details>;
 }
@@ -122,7 +131,7 @@ export function VoiceRecognitionComparison({ groups }: { groups?: VoiceLongTextR
               : `${group.checkStatus === "passed" ? "已提取目标片段" : "已存音频范围"}：${group.cutStartSeconds.toFixed(2)}–${group.cutEndSeconds.toFixed(2)} 秒。`}
           </p>
           {extractedWithDifference ? <p className="leading-5">截取范围：{group.cutStartSeconds.toFixed(2)}–{group.cutEndSeconds.toFixed(2)} 秒。</p> : null}
-          <RecognitionEvidence recognition={recognition} expectedText={group.text} diagnosticCode={group.diagnosticCode} />
+          <RecognitionEvidence recognition={recognition} expectedText={group.text} diagnosticCode={group.diagnosticCode} review={review} verifiedCrop={group.checkStatus === "passed"} />
         </li>;
       })}
     </ol>}

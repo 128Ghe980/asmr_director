@@ -38,6 +38,18 @@ async function take(root: string, runId = id, extra: Record<string, unknown> = {
 }
 
 describe("complete original voice recordings", () => {
+  it("diagnoses historical continuation failures without accusing target content or changing source bytes", async () => {
+    const config = await setup();
+    const recognition = { stage: "continuation_alignment", expectedText: text, sourceTranscript: "回来啦外面是不是很冷嗯快进来", followingText: "快进来。" };
+    await take(getVoiceGenerationRoot(config), id, {}, { code: "unrecognized_continuation", recognition });
+    const [recording] = (await listVoiceGenerationRecordings({ config, projectId: "p", clipId: "c", text })).recordings;
+    expect(recording).toMatchObject({ status: "needs_review", recognition });
+    expect(recording.warning).toContain("后续台词衔接未能定位");
+    expect(recording.warning).not.toMatch(/漏读|多读|识别差异/);
+    const source = await resolveVoiceGenerationRecording(config, recording.recordingId);
+    expect(new Uint8Array(await readFile(source.filePath))).toEqual(wav);
+  });
+
   it("uses the external work root when configured", async () => {
     const config = await setup();
     expect(getVoiceGenerationRoot(config)).toBe(path.join(config.runtimeRoot, "voxcpm2-product"));

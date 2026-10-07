@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import { AudioCandidateManifestSchema, AudioCandidateSchema, type AudioCandidate, type AudioCandidateManifest } from "./audio-candidate";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 
@@ -11,6 +12,13 @@ export class CandidateCapacityError extends Error {
   constructor() {
     super("此片段已有 12 个候选，请先放弃不需要的候选。");
     this.name = "CandidateCapacityError";
+  }
+}
+export class CandidateSourceChangedError extends Error {
+  readonly statusCode = 409;
+  constructor() {
+    super("原候选状态已改变，请刷新列表。");
+    this.name = "CandidateSourceChangedError";
   }
 }
 type CandidateStoreConfig = Pick<LocalRuntimeConfig, "runtimeRoot">;
@@ -165,11 +173,12 @@ export async function ensureAudioCandidateCapacity(input: CandidateOwnerInput): 
   assertCapacity(await readManifest(input.config), input);
 }
 
-export async function saveAudioCandidate({ config, candidate: inputCandidate, adoptedAssetId, signal }: {
+export async function saveAudioCandidate({ config, candidate: inputCandidate, adoptedAssetId, signal, sourceCandidate }: {
   config: CandidateStoreConfig;
   candidate: AudioCandidate;
   adoptedAssetId?: string;
   signal?: AbortSignal;
+  sourceCandidate?: AudioCandidate;
 }): Promise<AudioCandidate> {
   const candidate = AudioCandidateSchema.parse(inputCandidate);
   return withManifestLock(config, async () => {
@@ -178,6 +187,10 @@ export async function saveAudioCandidate({ config, candidate: inputCandidate, ad
     if (existing) {
       if (JSON.stringify(existing) === JSON.stringify(candidate)) return existing;
       throw new Error("此候选编号已存在，无法覆盖。");
+    }
+    if (sourceCandidate && (sourceCandidate.status !== "ready" || sourceCandidate.projectId !== candidate.projectId
+      || sourceCandidate.clipId !== candidate.clipId || !isDeepStrictEqual(manifest.candidates.find((item) => item.candidateId === sourceCandidate.candidateId), sourceCandidate))) {
+      throw new CandidateSourceChangedError();
     }
     if (candidate.status === "ready") assertCapacity(manifest, { projectId: candidate.projectId, clipId: candidate.clipId, adoptedAssetId });
     await writeManifest(config, { ...manifest, candidates: [...manifest.candidates, candidate] }, signal);

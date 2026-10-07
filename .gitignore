@@ -9,6 +9,7 @@ node_modules/
 .next-reference-audio-production/
 .next-project-planner-repair-production/
 .next-reference-asr-repair-production/
+.next-candidate-recheck-production/
 .next-semantic-build/
 .next-batch-build/
 .next-batch-production/

@@ -155,6 +155,25 @@ describe("long-text PCM assembly", () => {
 });
 
 describe("long-text generation orchestration with injected engine and alignment", () => {
+  it("diagnoses unrecognized continuation separately while preserving the original and raw recognition", async () => {
+    const { root, input, waves, deps } = await fixture();
+    const expectedText = "今天是不是又加班了？眼睛都红红的。", followingText = "面快好了，";
+    const recognition = { stage: "continuation_alignment" as const, expectedText, followingText,
+      sourceTranscript: "今天是不是又加班了眼睛都红红的嗯面快好了",
+      alignment: { expected: "面快好了", recognizedPrefix: "嗯面快好了", reason: "unrecognized_continuation" } };
+    deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockRejectedValue(new VoiceGroupAnalysisError("Unrecognized continuation", 422, "unrecognized_continuation", recognition));
+    const result = await generateVoiceLongText({ ...input, text: expectedText,
+      context: { version: 1, followingClauses: [followingText], isFinal: false } }, deps);
+    expect(result.qualityWarnings.join("")).toContain("后续台词衔接未能定位");
+    expect(result.qualityWarnings.join("")).not.toContain("识别文字与目标台词存在差异");
+    expect(result.provenance.longText!.groups[0]).toMatchObject({ recognition, checkStatus: "review", diagnosticCode: "unrecognized_continuation", attempts: 1 });
+    expect(deps.generate).toHaveBeenCalledOnce();
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    expect(new Uint8Array(await readFile(path.join(root, "voxcpm2-product", "long-text", run, "group-1-take-1-source.wav")))).toEqual(waves[0]);
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(result.provenance.longText!.groups[0].asset.assetId, input.config)))).toEqual(waves[0]);
+  });
+
   it("generates one selected semantic unit using future text as context without producing future groups", async () => {
     const { input, waves, deps } = await fixture();
     const context = { version: 1 as const, followingClauses: ["后面再慢慢呼吸。", "安心休息。"], isFinal: false };
@@ -220,8 +239,11 @@ describe("long-text generation orchestration with injected engine and alignment"
   it("keeps successful source and cropped transcripts distinct in the persisted result", async () => {
     const { root, input, waves, deps } = await fixture();
     const expectedText = "请坐近一点。", followingText = "慢慢呼吸。";
-    const recognition = { stage: "complete" as const, sourceTranscript: expectedText + followingText,
-      targetTranscript: expectedText, expectedText, followingText, sourceWords: [{ text: "请坐近一点", start: .1, end: .2 }] };
+    const recognition = { stage: "complete" as const, sourceTranscript: expectedText + "嗯" + followingText,
+      targetTranscript: expectedText, expectedText, followingText,
+      sourceWords: [{ text: "请坐近一点", start: .01, end: .06 }, { text: "嗯", start: .08, end: .1 }, { text: "慢慢呼吸", start: .12, end: .16 }],
+      contentComparison: { status: "matched" as const, similarity: 1, threshold: .9 as const, substitutionCount: 0, expected: "请坐近一点", recognized: "请坐近一点" },
+      continuationBridge: { kind: "leading_hmm" as const, text: "嗯" as const, sourceWordIndex: 1, sourceStartSeconds: .08, sourceEndSeconds: .1, rightTranscript: "嗯慢慢呼吸" } };
     deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
     deps.analyze.mockImplementation(async () => ({ ...analysis(waves[0], expectedText), internalPausesMs: [], recognition }));
     const result = await generateVoiceLongText({ ...input, text: expectedText,

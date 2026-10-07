@@ -16,6 +16,7 @@ import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { VoiceGenerationContextSchema, type VoiceGenerationContext } from "./voice-generation-context";
 import { VoiceRecognitionSchema, type VoiceContentComparison, type VoiceRecognition } from "./voice-recognition";
 import { getLocalStorageError } from "./local-storage-error";
+import { getVoiceReviewWarning as reviewMessage } from "./voice-review-warning";
 
 export type VoiceGenerationProgress = { progress: number; message: string };
 type GroupAudio = { wav: Uint8Array; leadingQuietMs: number; trailingQuietMs: number };
@@ -73,17 +74,6 @@ type Dependencies = {
 };
 
 const FULL_SOURCE_REVIEW_WARNING = "本候选保留了待确认组的完整原音，可能包含后续台词、补句或重复内容；各次完整原音都可单独试听、下载，请听后决定是否采用。";
-
-function reviewMessage(index: number, text: string, code?: string, reasonOverride?: string) {
-  const characters = Array.from(text.replace(/\s+/gu, " ").trim());
-  const excerpt = characters.slice(0, 28).join("") + (characters.length > 28 ? "…" : "");
-  const reason = reasonOverride ?? (code === "uncertain_word_alignment" ? "识别文字未能定位目标句的结束位置"
-    : code === "cut_text_mismatch" ? "截取后的识别文字与目标台词存在差异"
-    : ["missing_speech", "incomplete_or_unrelated_speech", "missing_or_extra_speech", "repeated_speech", "unrecognized_continuation"].includes(code ?? "") ? "识别文字与目标台词存在差异"
-    : ["no_safe_quiet_cut", "no_verified_quiet_cut", "missing_continuation_boundary", "uncertain_boundary_timestamps", "invalid_word_timestamps", "invalid_quiet_crop", "missing_internal_boundary", "uncertain_internal_pause"].includes(code ?? "") ? "分段位置未能确认"
-    : "录音检查未完成");
-  return `第 ${index + 1} 段“${excerpt}”：${reason}，已保留完整原音供试听，没有因此重新生成或丢弃录音。`;
-}
 
 function contentDifferenceMessage(index: number, comparison: VoiceContentComparison) {
   return `第 ${index + 1} 段：已截取目标片段；识别结果与源文有差异（相似度 ${(comparison.similarity * 100).toFixed(1)}%），请试听确认。`;

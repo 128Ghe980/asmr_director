@@ -159,3 +159,37 @@ describe("bounded ending-location evidence", () => {
     ]) expect(VoiceRecognitionSchema.safeParse(invalid).success).toBe(false);
   });
 });
+
+describe("verified continuation interjection evidence", () => {
+  const bridge = { kind: "leading_hmm", text: "嗯", sourceWordIndex: 1,
+    sourceStartSeconds: 1.5, sourceEndSeconds: 1.7, rightTranscript: "嗯，面快好了。" };
+  const evidence = { stage: "complete", expectedText: "今天是不是又加班了？眼睛都红红的。",
+    sourceTranscript: "今天是不是又加班了眼睛都红红的嗯面快好了", followingText: "面快好了，",
+    sourceWords: [{ text: "今天是不是又加班了眼睛都红红的", start: 0, end: 1 },
+      { text: "嗯", start: 1.5, end: 1.7 }, { text: "面快好了", start: 2, end: 2.5 }],
+    contentComparison: { status: "matched", similarity: 1, threshold: .9, substitutionCount: 0,
+      expected: "今天是不是又加班了眼睛都红红的", recognized: "今天是不是又加班了眼睛都红红的" },
+    continuationBridge: bridge };
+
+  it("accepts a separately timed interjection only in a completed exact-content check", () => {
+    expect(VoiceRecognitionSchema.parse(evidence)).toEqual(evidence);
+  });
+
+  it("rejects incomplete, approximate, missing, merged or contradictory interjection evidence", () => {
+    for (const invalid of [
+      { ...evidence, stage: "boundary_check" },
+      { ...evidence, contentComparison: undefined },
+      { ...evidence, contentComparison: different },
+      { ...evidence, followingText: "" },
+      { ...evidence, sourceWords: undefined },
+      { ...evidence, sourceWords: [{ text: "目标", start: 0, end: 1 }, { text: "嗯面", start: 1.5, end: 1.7 }] },
+      { ...evidence, continuationBridge: { ...bridge, sourceWordIndex: 0 } },
+      { ...evidence, continuationBridge: { ...bridge, sourceWordIndex: 2000 } },
+      { ...evidence, continuationBridge: { ...bridge, sourceStartSeconds: 1.4 } },
+      { ...evidence, continuationBridge: { ...bridge, sourceEndSeconds: 1.5 } },
+      { ...evidence, continuationBridge: { ...bridge, text: "啊" } },
+      { ...evidence, continuationBridge: { ...bridge, rightTranscript: "x".repeat(1501) } },
+      { ...evidence, continuationBridge: { ...bridge, privatePath: "D:/private" } },
+    ]) expect(VoiceRecognitionSchema.safeParse(invalid).success).toBe(false);
+  });
+});

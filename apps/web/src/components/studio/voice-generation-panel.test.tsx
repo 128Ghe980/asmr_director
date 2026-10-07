@@ -99,6 +99,64 @@ afterEach(() => {
 });
 
 describe("voice generation panel", () => {
+  it("offers re-recognition beside adoption without regenerating and allows an adopted long-text take", () => {
+    if (selectedClip.type !== "voice") throw new Error("Voice fixture required");
+    const take = recognitionCandidate({ text: selectedClip.text, inputText: selectedClip.text, internalPausesMs: [], internalPauseClasses: [] });
+    take.provenance.longText.plan = { clauses: [selectedClip.text], groups: [{ start: 0, end: 0, text: selectedClip.text, pauseAfter: "medium" }], clausePauseClasses: [], provider: "rules", warnings: [] };
+    const onRecheck = vi.fn();
+    const input = props({ candidates: [take], onRecheck });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    const recheck = screen.getByRole("button", { name: "重新识别候选 1" });
+    expect(recheck.parentElement).toBe(screen.getByRole("button", { name: "采用候选 1" }).parentElement);
+    fireEvent.click(recheck);
+    expect(onRecheck).toHaveBeenCalledWith(take);
+    expect(input.onAdopt).not.toHaveBeenCalled();
+    view.rerender(<VoiceGenerationPanel {...input} selectedClip={{ ...selectedClip, asset: { asset_id: take.asset.assetId, uri: take.asset.uri, duration: take.asset.duration } }} />);
+    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(false);
+    for (const locked of [{ busy: true }, { referenceImportBusy: true }, { loading: true },
+      { candidates: [{ ...take, sourceFingerprint: "stale" }] }]) {
+      view.rerender(<VoiceGenerationPanel {...input} {...locked} />);
+      expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    const onCancelRecheck = vi.fn();
+    view.rerender(<VoiceGenerationPanel {...input} busy recheckingCandidateId={take.candidateId} onCancelRecheck={onCancelRecheck} />);
+    expect(screen.getByRole("button", { name: "重新识别候选 1" }).textContent).toBe("重新识别中…");
+    fireEvent.click(screen.getByRole("button", { name: "取消重新识别" }));
+    expect(onCancelRecheck).toHaveBeenCalledOnce();
+    view.rerender(<VoiceGenerationPanel {...input} candidates={[candidate()]} />);
+    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("未保存分组原音，暂不能重新识别。")).toBeTruthy();
+    const legacy = recognitionCandidate({});
+    view.rerender(<VoiceGenerationPanel {...input} candidates={[legacy]} />);
+    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("corrects only the exact legacy continuation warning for the same review group without mutating its candidate", () => {
+    const text = "今天是不是又加班了？眼睛都红红的。";
+    const legacy = `第 1 段“${text}”：识别文字与目标台词存在差异，已保留完整原音供试听，没有因此重新生成或丢弃录音。`;
+    const unrelated = "识别文字与目标台词存在差异，请检查其他录音。";
+    const take = recognitionCandidate({ text, checkStatus: "review", diagnosticCode: "unrecognized_continuation",
+      recognition: { stage: "continuation_alignment", expectedText: text, sourceTranscript: "今天是不是又加班了眼睛都红红的嗯面快好了", followingText: "面快好了，" } });
+    take.qualityWarnings = [legacy, unrelated];
+    const before = JSON.stringify(take);
+    const input = props({ candidates: [take] });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect(screen.queryByText(legacy)).toBeNull();
+    expect(screen.getAllByRole("alert")[0].textContent).toContain("后续台词衔接未能定位");
+    expect(screen.getByText(unrelated)).toBeTruthy();
+    expect(JSON.stringify(take)).toBe(before);
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take);
+    for (const group of [ { ...take.provenance.longText.groups[0], checkStatus: "passed" as const },
+      { ...take.provenance.longText.groups[0], checkStatus: undefined },
+      { ...take.provenance.longText.groups[0], diagnosticCode: "cut_text_mismatch" } ]) {
+      view.rerender(<VoiceGenerationPanel {...input} candidates={[{ ...take, provenance: { ...take.provenance,
+        longText: { ...take.provenance.longText, groups: [group] } } }]} />);
+      expect(screen.getByText(legacy)).toBeTruthy();
+      expect(screen.getByText(unrelated)).toBeTruthy();
+    }
+  });
+
   it("shows reference upload only for VoxCPM2 and locks selection during import without reporting generation", () => {
     const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" },
       onReferenceImported: vi.fn(), onReferenceCatalogRefresh: vi.fn(), onReferenceImportBusyChange: vi.fn() });
@@ -137,7 +195,7 @@ describe("voice generation panel", () => {
     expect(screen.getByLabelText("候选 1 试听")).toBeTruthy();
     fireEvent.click(screen.getByText("识别对照"));
     expect(disclosure.open).toBe(true);
-    expect(within(disclosure).getByText("完整窗口识别").nextElementSibling?.textContent).toBe(source);
+    expect(within(disclosure).getByText("完整原音识别").nextElementSibling?.textContent).toBe(source);
     expect(within(disclosure).getByText("目标台词").nextElementSibling?.textContent).toBe(target);
     expect(within(disclosure).getByText("裁剪后识别").nextElementSibling?.textContent).toBe(target);
     expect(within(disclosure).getByText("已提取目标片段：0.12–3.45 秒。")).toBeTruthy();
@@ -199,7 +257,7 @@ describe("voice generation panel", () => {
     render(<VoiceGenerationPanel {...props({ candidates: [take] })} />);
     const disclosure = screen.getByText("识别对照").closest("details")!;
     fireEvent.click(screen.getByText("识别对照"));
-    expect(within(disclosure).getByText("裁剪后识别").nextElementSibling?.textContent).toBe("回来了");
+    expect(within(disclosure).getByText("尝试裁剪后识别（未采用）").nextElementSibling?.textContent).toBe("回来了");
     expect(within(disclosure).getByText("尝试裁剪后的识别文字未通过核对。")).toBeTruthy();
     expect(within(disclosure).getByText("保留完整原音，未采用裁剪。")).toBeTruthy();
   });
@@ -218,7 +276,7 @@ describe("voice generation panel", () => {
     view.rerender(<VoiceGenerationPanel {...input} candidates={[legacy]} />);
     disclosure = screen.getByText("识别对照").closest("details")!;
     expect(within(disclosure).getByText("未保存识别文本")).toBeTruthy();
-    expect(within(disclosure).queryByText("完整窗口识别")).toBeNull();
+    expect(within(disclosure).queryByText("完整原音识别")).toBeNull();
     expect(within(disclosure).queryByText("旧字段不等于完整窗口识别")).toBeNull();
     view.rerender(<VoiceGenerationPanel {...input} candidates={[candidate()]} />);
     expect(within(screen.getByText("识别对照").closest("details")!).getByText("未保存识别文本")).toBeTruthy();
@@ -284,7 +342,7 @@ describe("voice generation panel", () => {
     expect(disclosure.open).toBe(false);
     fireEvent.click(within(original).getByText("识别对照"));
     expect(disclosure.open).toBe(true);
-    expect(within(disclosure).getByText("完整窗口识别").nextElementSibling?.textContent).toBe(sourceTranscript);
+    expect(within(disclosure).getByText("完整原音识别").nextElementSibling?.textContent).toBe(sourceTranscript);
     expect(within(disclosure).getByText("目标台词").nextElementSibling?.textContent).toBe(expectedText);
     expect(within(disclosure).getByText("本条试听与下载均为完整原音。")).toBeTruthy();
     expect(within(disclosure).queryByText(/已提取目标片段/)).toBeNull();

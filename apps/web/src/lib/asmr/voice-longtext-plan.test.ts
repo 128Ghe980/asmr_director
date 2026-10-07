@@ -134,6 +134,15 @@ describe("accepted long-input construction", () => {
 });
 
 describe("class-local group pauses", () => {
+  it("preserves long recorded pauses while excluding them from the unchanged join recipe", () => {
+    const groups = [
+      { internalPausesMs: [1480, 0, 400], internalPauseClasses: ["long", "medium", "medium"] as const, pauseAfter: "medium" as const },
+      { internalPausesMs: [400], internalPauseClasses: ["medium"] as const, pauseAfter: "long" as const },
+    ].map((group) => ({ ...group, internalPauseClasses: [...group.internalPauseClasses] }));
+    expect(chooseGroupPauses(groups)[0]).toEqual({ durationMs: 300, source: "adjacent", category: "medium" });
+    expect(groups.map((group) => group.internalPausesMs)).toEqual([[1480, 0, 400], [400]]);
+  });
+
   it("reproduces the recorded 350 / 350 / 350 / 440 / 290 ms decisions", () => {
     const groups = [520, 0, 0, 400, 480, 100].map((value) => ({ internalPausesMs: [value], internalPauseClasses: ["short" as const], pauseAfter: "medium" as const }));
     const result = chooseGroupPauses(groups);

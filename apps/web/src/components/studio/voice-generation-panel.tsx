@@ -10,6 +10,7 @@ import type { VoiceGenerationContext } from "@/lib/asmr/voice-generation-context
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import { VoiceGenerationRecordingsSchema, type VoiceGenerationRecording } from "@/lib/asmr/voice-generation-recording";
 import { VoiceRecognitionComparison, VoiceRecordingRecognitionComparison } from "./voice-recognition-comparison";
+import { getVoiceReviewWarningForDisplay } from "@/lib/asmr/voice-review-warning";
 import { VoiceReferenceImport, type VoiceReferenceImportResult } from "./voice-reference-import";
 
 export type VoiceGenerationPanelProps = {
@@ -25,6 +26,9 @@ export type VoiceGenerationPanelProps = {
   selectedClip: TimelineClip;
   onAdopt: (candidate: AudioCandidate) => void;
   onDiscard: (candidate: AudioCandidate) => void;
+  onRecheck?: (candidate: AudioCandidate) => void;
+  recheckingCandidateId?: string;
+  onCancelRecheck?: () => void;
   onRegenerateGroup?: (candidate: AudioCandidate, groupIndex: number) => void;
   onUndo: () => void;
   canUndo: boolean;
@@ -226,7 +230,7 @@ function OriginalVoiceRecordings({ projectId, clipId, text, busy, onPreviewPlay 
               <a className={`${buttonClass} inline-flex items-center text-studio-text`} href={`${recording.audioUrl}?download=1`} download>下载完整原音</a>
               <span className="text-xs text-studio-muted">{new Date(recording.createdAt).toLocaleString("zh-CN")}</span>
             </div>
-            <VoiceRecordingRecognitionComparison recognition={recording.recognition} expectedText={recording.expectedText} />
+            <VoiceRecordingRecognitionComparison recognition={recording.recognition} expectedText={recording.expectedText} review={recording.status === "needs_review"} />
             <details className="text-xs leading-5 text-studio-muted">
               <summary className="cursor-pointer">查看本次模型朗读文案</summary>
               <p className="mt-1 break-words">{recording.inputText}</p>
@@ -299,7 +303,7 @@ export function VoiceGenerationPanel({
   voiceContext,
   options, onOptionsChange, catalog, catalogError, busy, candidates, selectedClip,
   onAdopt, onDiscard, onUndo, canUndo, hasUndo, error, loading = false,
-  generationControl, onRegenerateGroup,
+  generationControl, onRegenerateGroup, onRecheck, recheckingCandidateId, onCancelRecheck,
   binaural = false,
   referenceImportBusy = false, onReferenceImportBusyChange, onReferenceImported, onReferenceCatalogRefresh,
 }: VoiceGenerationPanelProps) {
@@ -398,6 +402,8 @@ export function VoiceGenerationPanel({
     {visibleCandidates.length > 0 ? <div aria-label="生成候选" className="max-h-80 min-w-0 space-y-3 overflow-y-auto">
       {visibleCandidates.map((candidate, index) => {
         const adopted = candidate.asset.assetId === selectedClip.asset.asset_id;
+        const recheckAvailable = candidate.provenance.generationMode === "long_text" && Boolean(candidate.provenance.longText?.plan);
+        const rechecking = recheckingCandidateId === candidate.candidateId;
         const stale = candidate.sourceFingerprint !== (candidate.provenance.generationMode === "long_text" ? windowedSourceFingerprint : sourceFingerprint);
         const candidateAudio = resolveClipPlaybackUri(selectedClip, binaural, candidate.asset);
         const candidateReference = catalog?.providers.find((item) => item.id === candidate.provenance.provider)?.references.find((item) => item.id === candidate.provenance.voicePackId);
@@ -409,11 +415,17 @@ export function VoiceGenerationPanel({
           </div>
           {candidateAudio ? <VoicePreview key={candidateAudio} src={candidateAudio} label={`候选 ${index + 1} 试听`} onPreviewPlay={pauseOtherPreviews} /> : null}
           {stale && !adopted ? <p className="break-words text-xs leading-5 text-amber-100">文案或后续上下文已修改，请重新生成。</p> : null}
-          {candidate.qualityWarnings.map((warning, warningIndex) => <p key={warningIndex} role="alert" className="break-words text-xs leading-5 text-amber-100">{warning}</p>)}
+          {candidate.qualityWarnings.map((warning, warningIndex) => <p key={warningIndex} role="alert" className="break-words text-xs leading-5 text-amber-100">{getVoiceReviewWarningForDisplay(warning, candidate.provenance.longText?.groups)}</p>)}
           <div className="flex flex-wrap gap-2">
             <button type="button" aria-label={`采用候选 ${index + 1}`} className={`${buttonClass} border-sky-300/30 bg-sky-300/10 text-sky-100`} disabled={actionsDisabled || adopted || stale} onClick={() => onAdopt(candidate)}>采用</button>
             {!adopted ? <button type="button" aria-label={`放弃候选 ${index + 1}`} className={`${buttonClass} text-studio-muted`} disabled={actionsDisabled} onClick={() => onDiscard(candidate)}>放弃</button> : null}
+            {onRecheck ? <button type="button" aria-label={`重新识别候选 ${index + 1}`} className={`${buttonClass} text-studio-muted`}
+              disabled={actionsDisabled || stale || !recheckAvailable || rechecking}
+              title={recheckAvailable ? stale ? "文案或后续上下文已修改，暂不能重新识别此候选。" : "只重新识别已保存的完整原音，结果新增为候选。" : "此候选未保存可核对的分组原音，暂不能重新识别。"}
+              onClick={() => onRecheck(candidate)}>{rechecking ? "重新识别中…" : "重新识别"}</button> : null}
+            {rechecking && onCancelRecheck ? <button type="button" aria-label="取消重新识别" className={`${buttonClass} text-studio-muted`} onClick={onCancelRecheck}>取消识别</button> : null}
           </div>
+          {onRecheck && !recheckAvailable ? <p className="text-xs leading-5 text-studio-muted">未保存分组原音，暂不能重新识别。</p> : null}
           <VoiceRecognitionComparison groups={candidate.provenance.longText?.groups} />
           <CandidateDetails candidate={candidate} candidateNumber={index + 1} referenceLabel={candidateReference?.label}
             regenerationDisabled={actionsDisabled || stale || candidate.status !== "ready" || !provider?.available || !longTextAvailable}

@@ -95,6 +95,46 @@ function sequenceSpawn(wav: Uint8Array, responses: unknown[]) {
 }
 
 describe("local voice-group verification", () => {
+  it("retains a natural clause pause above the join-sampling limit within the recording bound", async () => {
+    const { input, readinessImpl } = await fixture();
+    const expectedText = "慢慢放松。安静休息。";
+    const wav = writePcm16MonoWav(new Float32Array(48_000 * 3).fill(.05), 48_000);
+    const request = { ...input, wav, expectedText, clauses: ["慢慢放松。", "安静休息。"] };
+    const response = { ...validResult, transcript: "慢慢放松安静休息", internalPausesMs: [1480], cutEndSeconds: 3 };
+    await expect(analyzeVoiceGroup(request, { readinessImpl,
+      spawnImpl: successfulSpawn(wav, response, expectedText) })).resolves.toMatchObject({
+      internalPausesMs: [1480], wav,
+    });
+    await expect(analyzeVoiceGroup(request, { readinessImpl,
+      spawnImpl: successfulSpawn(wav, { ...response, internalPausesMs: [10_001] }, expectedText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("requires quiet proof before the interjection for a verified continuation bridge", async () => {
+    const { input, readinessImpl } = await fixture();
+    const expectedText = "今天是不是又加班了？眼睛都红红的。", followingText = "面快好了，";
+    const normalized = "今天是不是又加班了眼睛都红红的";
+    const evidence = { stage: "complete", expectedText, followingText,
+      sourceTranscript: normalized + "嗯面快好了", targetTranscript: normalized,
+      sourceWords: [{ text: normalized, start: .1, end: .6 }, { text: "嗯", start: 1.3, end: 1.5 },
+        { text: "面快好了", start: 1.8, end: 2.4 }],
+      contentComparison: { status: "matched", similarity: 1, threshold: .9, substitutionCount: 0, expected: normalized, recognized: normalized },
+      continuationBridge: { kind: "leading_hmm", text: "嗯", sourceWordIndex: 1,
+        sourceStartSeconds: 1.3, sourceEndSeconds: 1.5, rightTranscript: "嗯，面快好了。" } };
+    const source = writePcm16MonoWav(new Float32Array(48_000 * 3).fill(.05), 48_000);
+    const request = { ...input, wav: source, expectedText, followingText, clauses: [expectedText] };
+    const response = { ...validResult, transcript: normalized, recognition: evidence,
+      cutValidation: { method: "two_sided", thresholdDbfs: -68, quietStartSeconds: .8, quietEndSeconds: 1.2 } };
+    await expect(analyzeVoiceGroup(request, { readinessImpl,
+      spawnImpl: successfulSpawn(input.wav, response, expectedText, followingText) })).resolves.toMatchObject({ recognition: evidence });
+    for (const invalid of [
+      { ...response, cutValidation: undefined },
+      { ...response, cutValidation: { ...response.cutValidation, quietEndSeconds: 1.4 } },
+      { ...response, cutEndSeconds: 1.3 },
+      { ...response, recognition: { ...evidence, followingText: "完全不同的后文" } },
+    ]) await expect(analyzeVoiceGroup(request, { readinessImpl,
+      spawnImpl: successfulSpawn(input.wav, invalid, expectedText, followingText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+
   it("shares the initial readiness probe with analysis after the global cache lifetime and registers cleanup once", async () => {
     const { input, readinessImpl } = await fixture();
     const readiness = vi.fn(readinessImpl);

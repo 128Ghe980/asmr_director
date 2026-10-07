@@ -43,7 +43,7 @@ import { getGenerationView } from "@/lib/asmr/generation-view";
 import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/playback-asset-resolver";
-import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
+import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
 import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
 import { getVoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
@@ -191,6 +191,16 @@ export function StudioApp({ project }: StudioAppProps) {
   const [voiceCandidates, setVoiceCandidates] = useState<AudioCandidate[]>([]);
   const [candidateListState, setCandidateListState] = useState<{ projectId: string; status: "loading" | "ready" | "error" }>();
   const [candidateActionBusy, setCandidateActionBusy] = useState(false);
+  const [recheckingCandidateId, setRecheckingCandidateId] = useState<string>();
+  const candidateRecheckRunRef = useRef<{ controller: AbortController; projectId: string; clipId: string } | null>(null);
+  const handleCancelCandidateRecheck = useCallback((notify = true) => {
+    const run = candidateRecheckRunRef.current;
+    if (!run) return;
+    candidateRecheckRunRef.current = null;
+    run.controller.abort();
+    setRecheckingCandidateId(undefined);
+    if (notify) setVoiceError("已取消重新识别，原候选已保留。");
+  }, []);
   const [candidateRefresh, setCandidateRefresh] = useState(0);
   const [batchProgress, setBatchProgress] = useState<StudioBatchProgress>();
   const [batchNotice, setBatchNotice] = useState<string>();
@@ -228,7 +238,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const [projectMixFingerprint, setProjectMixFingerprint] = useState<string>();
   const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
   const handleReferenceImportBusyChange = useCallback((busy: boolean) => {
-    if (busy && (batchRunRef.current || candidateActionBusy || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob))) return false;
+    if (busy && (batchRunRef.current || candidateRecheckRunRef.current || candidateActionBusy || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob))) return false;
     referenceImportBusyRef.current = busy;
     setReferenceImportBusy(busy);
     return true;
@@ -267,7 +277,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const currentLibraryEntry = projectLibrary.projects.find(
     (entry) => entry.projectId === editableProject.project_id,
   );
-  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Boolean(recheckingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
   const batchCounts = useMemo(() => Object.fromEntries(
     (["audio_missing", "audio_all", "storyboard_missing", "storyboard_all"] as const)
       .map((action) => [action, getStudioBatchTargets(editableProject, action).length]),
@@ -366,6 +376,10 @@ export function StudioApp({ project }: StudioAppProps) {
 
   useEffect(() => { editableProjectRef.current = editableProject; }, [editableProject]);
 
+  useEffect(() => () => {
+    handleCancelCandidateRecheck(false);
+  }, [editableProject.project_id, activeClipId, handleCancelCandidateRecheck]);
+
   useEffect(() => {
     const controller = new AbortController();
     void fetch("/api/generation/clip", { signal: controller.signal })
@@ -459,7 +473,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   async function handleAdoptVoiceCandidate(candidate: AudioCandidate) {
-    if (referenceImportBusyRef.current || voiceBusy) return;
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy) return;
     if (validationIssues.length > 0) { setVoiceError("请先修正片段内容，再采用候选。"); return; }
     const session = generationSessionRef.current;
     const editRevision = editRevisionRef.current;
@@ -483,7 +497,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   async function handleDiscardVoiceCandidate(candidate: AudioCandidate) {
-    if (referenceImportBusyRef.current || voiceBusy || selectedClip?.asset.asset_id === candidate.asset.assetId) return;
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy || selectedClip?.asset.asset_id === candidate.asset.assetId) return;
     const session = generationSessionRef.current;
     setCandidateActionBusy(true);
     try {
@@ -496,13 +510,74 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleUndoVoiceCandidate() {
-    if (referenceImportBusyRef.current || voiceBusy) return;
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy) return;
     try {
       const current = updateLibraryProject(projectLibraryRef.current, editableProject);
       const next = undoLastAudioCandidate(current);
       try { commitCandidateLibrary(next); }
       catch { setStorageAvailable(false); throw new Error("撤回未保存，请检查本地存储后重试。"); }
     } catch (error) { setVoiceError(error instanceof Error ? error.message : "未能撤回采用。"); }
+  }
+
+  async function handleRecheckVoiceCandidate(candidate: AudioCandidate) {
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy || singleStoryboardBusyRef.current || candidatesLoading) return;
+    const projectSnapshot = structuredClone(editableProjectRef.current);
+    const clip = flattenClips(projectSnapshot).find((item) => item.id === activeClipId);
+    if (!clip || clip.type !== "voice" || candidate.status !== "ready" || candidate.projectId !== projectSnapshot.project_id || candidate.clipId !== clip.id) return;
+    if (candidate.provenance.generationMode !== "long_text" || !candidate.provenance.longText?.plan) {
+      setVoiceError("此候选未保存可核对的分组原音，暂不能重新识别。"); return;
+    }
+    const context = getVoiceGenerationContext(projectSnapshot, clip.id);
+    const sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, context);
+    if (candidate.sourceFingerprint !== sourceFingerprint) {
+      setVoiceError("文案或后续上下文已修改，暂不能重新识别此候选。"); return;
+    }
+    const run = { controller: new AbortController(), projectId: projectSnapshot.project_id, clipId: clip.id };
+    candidateRecheckRunRef.current = run;
+    const session = generationSessionRef.current;
+    const savedContext = JSON.stringify(candidate.provenance.longText.context);
+    let failureMessage = "重新识别失败，原候选已保留，请重试。";
+    setRecheckingCandidateId(candidate.candidateId);
+    setVoiceError(undefined);
+    try {
+      const response = await fetch(`/api/audio-candidates/${encodeURIComponent(candidate.candidateId)}/recheck`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: projectSnapshot, clipId: clip.id }), signal: run.controller.signal,
+      });
+      const rawPayload: unknown = await response.json();
+      if (candidateRecheckRunRef.current !== run || run.controller.signal.aborted || session !== generationSessionRef.current) return;
+      if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) throw new Error(failureMessage);
+      const payload = rawPayload as { candidate?: unknown; error?: unknown };
+      if (!response.ok) {
+        failureMessage = typeof payload.error === "string" && payload.error.trim() ? payload.error : failureMessage;
+        throw new Error(failureMessage);
+      }
+      const latest = editableProjectRef.current;
+      const latestClip = flattenClips(latest).find((item) => item.id === clip.id);
+      if (latest.project_id !== run.projectId || !latestClip || latestClip.type !== "voice"
+          || getVoiceCandidateSourceFingerprint(latestClip, getVoiceGenerationContext(latest, clip.id)) !== sourceFingerprint) {
+        failureMessage = "文案或后续上下文已修改，重新识别结果未加入；原候选已保留。";
+        throw new Error(failureMessage);
+      }
+      const parsed = AudioCandidateSchema.safeParse(payload.candidate);
+      if (!parsed.success || parsed.data.projectId !== run.projectId || parsed.data.clipId !== run.clipId || parsed.data.status !== "ready"
+          || parsed.data.sourceFingerprint !== sourceFingerprint || parsed.data.candidateId === candidate.candidateId
+          || voiceCandidates.some((item) => item.candidateId === parsed.data.candidateId)
+          || parsed.data.provenance.generationMode !== "long_text"
+          || JSON.stringify(parsed.data.provenance.longText?.context) !== savedContext) {
+        failureMessage = "重新识别结果与当前片段不一致，原候选已保留。";
+        throw new Error(failureMessage);
+      }
+      setVoiceCandidates((current) => [parsed.data, ...current]);
+    } catch {
+      if (candidateRecheckRunRef.current === run && !run.controller.signal.aborted && session === generationSessionRef.current) {
+        setVoiceError(failureMessage);
+      }
+    } finally {
+      if (candidateRecheckRunRef.current === run) {
+        candidateRecheckRunRef.current = null;
+        setRecheckingCandidateId(undefined);
+      }
+    }
   }
 
   function getGenerationBridge() {
@@ -682,6 +757,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }, []);
 
   function clearGenerationSession() {
+    handleCancelCandidateRecheck(false);
     batchRunRef.current?.controller.abort();
     batchRunRef.current = null;
     setBatchProgress(undefined);
@@ -974,7 +1050,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function startSelectedClipGeneration(optionsOverride?: VoiceGenerationOptions, longTextRetry?: LongTextRetry, target?: { project: AsmrProject; clipId: string }) {
-    if (referenceImportBusyRef.current || batchRunRef.current) return;
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current) return;
     const generationProject = target?.project ?? editableProject;
     const generationClip = target ? flattenClips(generationProject).find((clip) => clip.id === target.clipId) : selectedClip;
     const control = target ? getGenerationView({ project: generationProject, selectedClip: generationClip, runtimeState: generationRuntimeStateRef.current, selectedClipHasValidationIssues: Object.keys(getClipFieldValidationIssues(generationProject, target.clipId, getProjectValidationIssues(generationProject))).length > 0, projectMixFingerprint }).selectedClipControl : generationView.selectedClipControl;
@@ -1067,7 +1143,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleGenerateProjectMix() {
-    if (referenceImportBusyRef.current || batchRunRef.current) return;
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current) return;
     if (generationView.projectMixControl.disabled) {
       return;
     }
@@ -1389,7 +1465,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleStoryboardReferenceModeChange(clipId: string, mode: StoryboardReferenceMode) {
-    if (batchRunRef.current || singleStoryboardBusyRef.current || candidateActionBusy
+    if (batchRunRef.current || candidateRecheckRunRef.current || singleStoryboardBusyRef.current || candidateActionBusy
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
     const current = editableProjectRef.current;
     if (!flattenClips(current).some((clip) => clip.id === clipId && clip.type === "voice")) return;
@@ -1419,7 +1495,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   async function handleRunBatch(action: StudioBatchAction) {
-    if (referenceImportBusyRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
     const initial = structuredClone(editableProjectRef.current);
     const clipIds = getStudioBatchTargets(initial, action);
@@ -1760,12 +1836,13 @@ export function StudioApp({ project }: StudioAppProps) {
                 binaural={editableProject.timeline.mixing.binaural}
                 generationControl={generationControl}
                 options={voiceOptions} onOptionsChange={handleVoiceOptionsChange}
-                catalog={voiceCatalog} catalogError={voiceCatalogError} busy={voiceBusy}
+                catalog={voiceCatalog} catalogError={voiceCatalogError} busy={voiceBusy || singleStoryboardBusy}
                 referenceImportBusy={referenceImportBusy} onReferenceImportBusyChange={handleReferenceImportBusyChange}
                 onReferenceImported={handleReferenceImported} onReferenceCatalogRefresh={handleReferenceCatalogRefresh}
                 selectedClip={selectedClip} candidates={visibleVoiceCandidates}
                 onAdopt={handleAdoptVoiceCandidate} onDiscard={handleDiscardVoiceCandidate}
                 onRegenerateGroup={handleRegenerateVoiceGroup}
+                onRecheck={handleRecheckVoiceCandidate} recheckingCandidateId={recheckingCandidateId} onCancelRecheck={() => handleCancelCandidateRecheck()}
                 onUndo={handleUndoVoiceCandidate}
                 canUndo={canUndoLastAudioCandidate({ ...projectLibrary, projects: projectLibrary.projects.map((entry) =>
                   entry.projectId === editableProject.project_id ? { ...entry, project: editableProject } : entry,
@@ -1776,7 +1853,7 @@ export function StudioApp({ project }: StudioAppProps) {
             ) : undefined}
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={displaySelectedClip}
-            selectedClipGeneration={referenceImportBusy ? { ...generationView.selectedClipControl, disabled: true, disabledReason: "正在处理参考音频" } : generationView.selectedClipControl}
+            selectedClipGeneration={referenceImportBusy || recheckingCandidateId ? { ...generationView.selectedClipControl, disabled: true, disabledReason: recheckingCandidateId ? "正在重新识别已保存的原音" : "正在处理参考音频" } : generationView.selectedClipControl}
             selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}
             onGenerateSelectedClip={handleGenerateSelectedClip}
@@ -1786,7 +1863,7 @@ export function StudioApp({ project }: StudioAppProps) {
           />
           </div>
           <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={handleSaveClipStoryboard} onEdit={handleEditClipStoryboard} /> : null}
+            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress) || Boolean(recheckingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={handleSaveClipStoryboard} onEdit={handleEditClipStoryboard} /> : null}
           </div>
         </div>
       </EditorPanels>

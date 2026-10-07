@@ -94,7 +94,8 @@ function checkWarning(failure: Record<string, unknown> | undefined, checked: boo
   if (failure) {
     const code = failure.code;
     if (code === "uncertain_word_alignment") return "识别文字未能定位目标句的结束位置；请展开识别对照，并试听完整原音。";
-    if (["uncertain_word_alignment", "cut_text_mismatch", "missing_speech", "incomplete_or_unrelated_speech", "missing_or_extra_speech", "repeated_speech", "unrecognized_continuation"].includes(String(code))) {
+    if (code === "unrecognized_continuation") return "后续台词衔接未能定位，暂未采用裁剪；请展开识别对照，并试听完整原音。";
+    if (["cut_text_mismatch", "missing_speech", "incomplete_or_unrelated_speech", "missing_or_extra_speech", "repeated_speech"].includes(String(code))) {
       return "台词核对有疑问，可能是识别差异或漏读、多读。请直接试听这条完整录音。";
     }
     if (["no_safe_quiet_cut", "no_verified_quiet_cut", "missing_internal_boundary", "uncertain_internal_pause", "uncertain_boundary_timestamps", "invalid_quiet_crop"].includes(String(code))) {

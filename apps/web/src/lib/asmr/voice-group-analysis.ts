@@ -327,10 +327,18 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
     const boundarySafe = result.success && Boolean(input.followingText?.trim())
       && Boolean(verifiedRecognition?.boundaryMatch) && Boolean(result.data.cutValidation);
     const boundedEditSafe = boundedEditEvidence && boundarySafe;
+    const bridge = result.success ? result.data.recognition?.continuationBridge : undefined;
+    const bridgeSafe = result.success && verifiedRecognition?.continuationBridge
+      && result.data.coverage === 1 && result.data.cutValidation
+      && result.data.cutValidation.quietEndSeconds <= bridge!.sourceStartSeconds - .08 + .001
+      && result.data.cutEndSeconds <= bridge!.sourceStartSeconds - .08 + .001
+      && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
+      && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001;
     if (!result.success || result.data.cutEndSeconds <= result.data.cutStartSeconds || result.data.cutEndSeconds > sourceDuration + 0.001
         || (result.data.cutValidation && result.data.cutValidation.quietEndSeconds > sourceDuration + .001)
         || (result.data.coverage < .9 && !boundedEditSafe) || (boundedEditEvidence && !boundedEditSafe)
         || (result.data.recognition?.boundaryMatch && !boundarySafe)
+        || (bridge && !bridgeSafe)
         || (result.data.recognition?.contentComparison && Math.abs(result.data.coverage - result.data.recognition.contentComparison.similarity) > .000001)
         || (alignmentHint && (!boundarySafe || result.data.recognition?.boundaryMatch?.method !== "api"
           || result.data.recognition.boundaryMatch.terminalWordIndex !== alignmentHint.terminalWordIndex
