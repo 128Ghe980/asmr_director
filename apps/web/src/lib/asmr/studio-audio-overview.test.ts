@@ -7,6 +7,9 @@ import type { AsmrProject, VoiceClip } from "./schema";
 import { getStudioAudioOverview, getStudioAudioProgress } from "./studio-audio-overview";
 import { makeSemanticVoiceLongTextResultFixture, makeVoiceCandidateFixture, makeVoiceLongTextResultFixture } from "./voice-candidate-fixture";
 import { getVoiceGenerationContext } from "./voice-generation-context";
+import { getVoiceParagraphContext } from "./voice-paragraph-context";
+import { ShortSentenceReviewSchema, VoiceRecognitionSchema } from "./voice-recognition";
+import { ensureSpeechWorkspaces, switchSpeechWorkspace } from "./speech-workspace";
 
 function makeProject(ids = ["a", "b", "c"]): AsmrProject {
   const project = structuredClone(demoProject);
@@ -48,6 +51,32 @@ function adopt(clip: VoiceClip): void {
 }
 
 describe("studio audio overview", () => {
+  it("counts safe text-review paragraph audio only after listening confirmation and while its source stays current", () => {
+    const initial = makeProject(["a"]);
+    voices(initial)[0].text = "回来啦。";
+    const project = switchSpeechWorkspace(ensureSpeechWorkspaces(initial), "paragraph");
+    const context = getVoiceParagraphContext(project, "a")!;
+    const textReview = ShortSentenceReviewSchema.parse({ status: "needs_confirmation", reason: "missing_final_particle",
+      expected: "回来啦", sourcePrefix: "回来了", expectedPinyin: "la5", sourcePinyin: "le5", similarity: .666667,
+      final: { transcript: "回来", words: [{ text: "回来", start: .2, end: .6 }], durationSeconds: 1 } });
+    const recognition = VoiceRecognitionSchema.parse({ stage: "complete", expectedText: "回来啦。", sourceTranscript: "回来了",
+      sourceWords: [{ text: "回来了", start: .2, end: .6 }], targetTranscript: "回来", shortSentenceReview: textReview });
+    const base = candidate(project);
+    const asset = { assetId: "review_slice", uri: "asset://clip/review_slice", duration: 1 };
+    const take = AudioCandidateSchema.parse({ ...base, asset,
+      sourceFingerprint: getVoiceCandidateSourceFingerprint(voices(project)[0], undefined, context),
+      provenance: { ...base.provenance, generationMode: "paragraph", paragraph: { version: 1, groupId: context.groupId,
+        text: "回来啦。", clipIds: ["a"], sourceAsset: { assetId: "review_source", uri: "asset://clip/review_source", duration: 1 },
+        checkStatus: "needs_confirmation", segments: [{ clipId: "a", text: "回来啦。", asset,
+          cutStartSeconds: 0, cutEndSeconds: 1, recognition, textReview }] } } });
+    expect(getStudioAudioOverview(project, [take])).toEqual({ adopted: 0, pending: 1, unadopted: 0, total: 1 });
+    take.provenance.paragraph!.manualTextConfirmation = { sourceCandidateId: take.candidateId,
+      confirmedClipIds: ["a"], confirmedAt: "2026-10-14T13:00:00.000Z" };
+    expect(getStudioAudioOverview(project, [take])).toEqual({ adopted: 0, pending: 0, unadopted: 1, total: 1 });
+    voices(project)[0].text = "我回来啦。";
+    expect(getStudioAudioOverview(project, [take])).toEqual({ adopted: 0, pending: 1, unadopted: 0, total: 1 });
+  });
+
   it("counts mutually exclusive paragraphs, giving adopted audio priority over multiple ready takes", () => {
     const project = makeProject();
     adopt(voices(project)[0]);

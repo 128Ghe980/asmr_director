@@ -41,6 +41,8 @@ export type GenerateVoxCpm2Input = {
 
 // These controls are server/test dependencies; the HTTP route never accepts them.
 type ProviderDependencies = {
+  // Internal paragraph recipe only; keeps the established clip route intact.
+  paragraphMode?: boolean;
   runtimeSession?: VoxCpm2RuntimeSession;
   spawnImpl?: VoxCpm2Spawn;
   seed?: number;
@@ -85,6 +87,9 @@ function classifiedNativeFailure(diagnostic: NativeDiagnostic, error?: unknown):
   const output = `${diagnostic.stdoutTail}\n${diagnostic.stderrTail}\n${cause?.message ?? ""}`;
   if (getLocalStorageError(cause) || /\bENOSPC\b|\bEDQUOT\b|No space left on device|There is not enough space on the disk|\bdisk (?:is )?full\b|\[WinError 112\]/i.test(output)) {
     return new LocalStorageError();
+  }
+  if (/\bcudaMalloc(?:Async)?\b[^\r\n]{0,120}\bfailed:[ \t]*out of memory\b/i.test(output)) {
+    return new VoxCpm2Error("语音模型可用显存不足，请关闭占用显卡的程序后重试。", 503);
   }
   if (cause?.code === "ENOMEM" || /\bstd::bad_alloc\b|\bCUDA (?:error: )?out of memory\b|\bcannot allocate memory\b|\bENOMEM\b/i.test(output)) {
     return new VoxCpm2Error("语音模型运行内存不足，请关闭占用较大的程序后重试。", 503);
@@ -207,16 +212,17 @@ export async function generateVoxCpm2(
   if (referenceMode !== "reference_only" && referenceMode !== "with_reference_text") {
     throw new VoxCpm2Error("请选择受支持的参考模式。", 400);
   }
-  const maxSteps = dependencies.maxSteps ?? Math.min(600, Math.max(120, Array.from(normalizedText).length * 5 + 60));
+  const maxSteps = dependencies.maxSteps ?? (dependencies.paragraphMode ? 800 : Math.min(600, Math.max(120, Array.from(normalizedText).length * 5 + 60)));
   const timeoutMs = dependencies.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const exitWaitMs = dependencies.exitWaitMs ?? 5_000;
   const seed = dependencies.seed ?? randomInt(1, 2_147_483_647);
-  if (!Number.isInteger(maxSteps) || maxSteps < 120 || maxSteps > 600 || !Number.isInteger(seed) || seed < 1 || seed > 2_147_483_646 || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000 || !Number.isInteger(exitWaitMs) || exitWaitMs < 1 || exitWaitMs > 30_000) {
+  if (!Number.isInteger(maxSteps) || maxSteps < 120 || maxSteps > (dependencies.paragraphMode ? 800 : 600) || !Number.isInteger(seed) || seed < 1 || seed > 2_147_483_646 || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000 || !Number.isInteger(exitWaitMs) || exitWaitMs < 1 || exitWaitMs > 30_000) {
     throw new VoxCpm2Error("VoxCPM2 运行参数无效。", 503);
   }
-  const profile = await loadVoxCpm2Profile(resolveVoxCpm2ProfilePath(config)).catch(() => {
+  const profile = await loadVoxCpm2Profile(resolveVoxCpm2ProfilePath(config), { naturalReferenceText: dependencies.paragraphMode }).catch(() => {
     throw new VoxCpm2Error("VoxCPM2 配置不可用，请检查本机模型与参考声音配置。", 503);
   });
+  if (dependencies.paragraphMode && config.voxcpm2ParagraphCliPath) profile.cliPath = path.resolve(config.voxcpm2ParagraphCliPath);
   const reference = (() => {
     try { return selectVoxCpm2Reference(profile, voicePackId); }
     catch { throw new VoxCpm2Error("参考声音不可用，请重新选择。", 400); }

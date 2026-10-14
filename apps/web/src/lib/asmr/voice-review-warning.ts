@@ -1,4 +1,12 @@
 import type { VoiceLongTextResult } from "./voice-longtext-result";
+import type { VoiceContentComparison } from "./voice-recognition";
+
+export function getVoiceContentDifferenceWarning(index: number, comparison: VoiceContentComparison) {
+  if (comparison.mode === "phonetic_substitutions") {
+    return `第 ${index + 1} 段：已截取目标片段；拼音容错通过（文字 ${(comparison.similarity * 100).toFixed(1)}%，拼音得分 ${(comparison.phoneticSimilarity * 100).toFixed(1)}%），仍有识别字差，请试听确认。`;
+  }
+  return `第 ${index + 1} 段：已截取目标片段；识别结果与源文有差异（相似度 ${(comparison.similarity * 100).toFixed(1)}%），请试听确认。`;
+}
 
 export function getVoiceReviewWarning(index: number, text: string, code?: string, reasonOverride?: string) {
   const characters = Array.from(text.replace(/\s+/gu, " ").trim());

@@ -9,7 +9,7 @@ export const VoiceGenerationOptionsSchema = z.object({
   provider: z.enum(["gpt-sovits", "voxcpm2"]),
   voicePackId: z.string().min(1).max(100).regex(/^[A-Za-z0-9_-]+$/),
   referenceMode: VoiceReferenceModeSchema,
-  generationMode: z.enum(["clip", "long_text"]),
+  generationMode: z.enum(["clip", "long_text", "paragraph"]),
   analysisProvider: z.enum(["local", "api"]).optional(),
 }).strict();
 

@@ -156,7 +156,8 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     seedLibrary(project);
     mockApi();
     await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "下方插入" }));
+    fireEvent.click(screen.getByLabelText("本段更多操作"));
+    fireEvent.click(screen.getByRole("button", { name: "下方插入台词" }));
     await waitFor(() => expect(currentProject().timeline.tracks.find((track) => track.track_type === "voice")!.clips[1].semantic_unit).toBe(true));
     const savedOptions = JSON.parse(window.localStorage.getItem("ai-asmr-studio:v1:voice-options")!);
     expect(savedOptions.generationMode).toBe("long_text");

@@ -3,7 +3,7 @@ import { listAudioCandidates } from "@/lib/asmr/local-candidate-store";
 import { getLocalRuntimeConfig } from "@/lib/asmr/local-runtime-config";
 
 export const runtime = "nodejs";
-const QuerySchema = z.object({ projectId: z.string().min(1).max(240), clipId: z.string().min(1).max(240).optional() });
+const QuerySchema = z.object({ projectId: z.string().min(1).max(240), clipId: z.string().min(1).max(240).optional(), workspaceMode: z.enum(["short", "paragraph"]).optional() });
 
 export async function GET(request: Request) {
   const query = QuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));

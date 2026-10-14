@@ -116,6 +116,802 @@ class BoundedContentMatchingTests(unittest.TestCase):
                     helper.resolve_clause_boundaries(expected, clauses, words)
 
 
+class PhoneticContentMatchingTests(unittest.TestCase):
+    expected = "来~~，面来啦！汤也喝一点，暖胃。"
+    source = "来,面来了,汤也喝一点,暖胃。"
+    actual = "来,面来了,糖也喝一点,暖胃。"
+    clauses = ["来~~，", "面来啦！", "汤也喝一点，", "暖胃。"]
+
+    def compare(self, expected=None, actual=None, source=None, clauses=None):
+        return helper.content_comparison(expected or self.expected, actual or self.actual,
+            allow_phonetic=True, source_prefix=self.source if source is None else source,
+            clauses=self.clauses if clauses is None else clauses)
+
+    def test_current_eleven_character_example_retains_literal_score_and_traceable_evidence(self):
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.content_comparison(self.expected, self.actual)
+        self.assertEqual(self.compare(), {
+            "mode": "phonetic_substitutions", "status": "different", "similarity": .818182,
+            "threshold": .9, "phoneticSimilarity": .954545, "phoneticThreshold": .95,
+            "substitutionCount": 2, "expected": "来面来啦汤也喝一点暖胃",
+            "recognized": "来面来了糖也喝一点暖胃", "sourcePrefix": "来面来了汤也喝一点暖胃",
+            "differences": [
+                {"index": 3, "expected": "啦", "recognized": "了", "expectedPinyin": "la5",
+                 "recognizedPinyin": "le5", "rule": "sentence_particle", "clauseEnd": True},
+                {"index": 4, "expected": "汤", "recognized": "糖", "expectedPinyin": "tang1",
+                 "recognizedPinyin": "tang2", "rule": "source_supported_tone", "sourceCharacter": "汤"},
+            ],
+        })
+
+    def test_primary_exact_substitution_and_bounded_edit_paths_keep_original_metadata(self):
+        for expected, actual, edits in (("安静地休息。", "安靜的休息", False),
+                ("回来啦？外面是不是很冷？", "回来了外面是不是很冷", False),
+                ("abcdefghijklmn", "abcfghijklmn", True)):
+            with self.subTest(expected=expected):
+                self.assertEqual(helper.content_comparison(expected, actual, allow_edits=edits,
+                    allow_phonetic=True, source_prefix=actual, clauses=[expected]),
+                    helper.content_comparison(expected, actual, allow_edits=edits))
+
+    def test_exact_tone_homophones_can_pass_without_faking_literal_correctness(self):
+        expected, actual = "带好手表再慢慢坐下来", "戴好首表再慢慢坐下来"
+        comparison = self.compare(expected, actual, expected, [expected])
+        self.assertEqual(comparison["similarity"], .8)
+        self.assertEqual(comparison["phoneticSimilarity"], 1)
+        self.assertEqual([difference["rule"] for difference in comparison["differences"]], ["same_tone", "same_tone"])
+        self.assertEqual(comparison["status"], "different")
+
+    def test_weighted_threshold_accepts_exact_point_ninety_five_at_ten_characters(self):
+        expected, actual, source = "来面来啦汤也喝点暖胃", "来面来了糖也喝点暖胃", "来面来了汤也喝点暖胃"
+        comparison = self.compare(expected, actual, source, ["来", "面来啦", "汤也喝点", "暖胃"])
+        self.assertEqual(comparison["phoneticSimilarity"], .95)
+        self.assertEqual(comparison["similarity"], .8)
+
+    def test_missing_pypinyin_fails_closed_without_affecting_primary_matching(self):
+        with patch.object(helper, "_lazy_pinyin", None):
+            with self.assertRaises(helper.UnsafeGroup):
+                self.compare()
+            self.assertEqual(helper.content_comparison("今天慢慢休息", "今天慢慢休息")["status"], "matched")
+
+    def test_tone_difference_requires_exact_source_character_at_the_same_position(self):
+        for source in ("", self.actual, "来面来了糖也喝一点暖胃", "来面来了汤也喝一点暖胃多字"):
+            with self.subTest(source=source):
+                with self.assertRaises(helper.UnsafeGroup):
+                    self.compare(source=source)
+
+    def test_two_tone_changes_do_not_borrow_two_source_supported_positions(self):
+        expected, actual = "汤也喝一点再看看眼睛", "糖也喝一点再看看烟睛"
+        with self.assertRaises(helper.UnsafeGroup):
+            self.compare(expected, actual, expected, [expected])
+
+    def test_particle_pair_requires_the_actual_original_clause_ending(self):
+        expected, actual, source = "来面啦了汤也喝一点暖胃", "来面了了糖也喝一点暖胃", "来面啦了汤也喝一点暖胃"
+        with self.assertRaises(helper.UnsafeGroup):
+            self.compare(expected, actual, source, ["来面啦了", "汤也喝一点", "暖胃"])
+        with self.assertRaises(helper.UnsafeGroup):
+            self.compare(clauses=["来", "面来啦汤也喝一点", "暖胃"])
+        # A clause-final 了 pronounced liao3 is not the neutral sentence particle.
+        expected, actual = "这件事情没完没了汤也暖胃", "这件事情没完没啦糖也暖胃"
+        with self.assertRaises(helper.UnsafeGroup):
+            self.compare(expected, actual, expected, ["这件事情没完没了", "汤也暖胃"])
+
+    def test_fallback_rejects_digits_negations_near_initials_finals_and_non_chinese(self):
+        for expected, actual in (("不要再慢慢说今天很难", "布要再慢慢说今天很南"),
+                ("一起来看看今天很难啊", "衣起来看看今天很南啊"),
+                ("来面来啦汤也喝一点暖胃", "来面来了汤也喝一点软胃"),
+                ("来面来啦汤也喝一点暖胃", "来面来了滩也喝一点暖胃"),
+                ("abcdefghij", "xbcdefghiy")):
+            with self.subTest(expected=expected, actual=actual):
+                with self.assertRaises(helper.UnsafeGroup):
+                    self.compare(expected, actual, expected, [expected])
+
+    def test_fallback_rejects_short_targets_insertions_deletions_moves_repeats_and_three_changes(self):
+        for expected, actual in (("回来啦喝汤", "回来了喝糖"),
+                ("来面来啦汤也喝一点暖胃", "来面来了也喝一点暖胃"),
+                ("来面来啦汤也喝一点暖胃", "来面来了糖也喝一点点暖胃"),
+                ("手首再慢慢看看今天外面", "首手再慢慢看看今天外面"),
+                ("abcdefabcdxfuvwxyz0123456789", "abcdefabcdefuvwxyz0123456789"),
+                ("带好手表再慢慢坐下来喝汤", "戴好首表再慢慢坐下来喝糖")):
+            with self.subTest(expected=expected, actual=actual):
+                with self.assertRaises(helper.UnsafeGroup):
+                    self.compare(expected, actual, expected, [expected])
+
+    def test_optional_dictionary_failures_and_unknown_syllables_fail_closed(self):
+        with patch.object(helper, "_lazy_pinyin", side_effect=RuntimeError("dictionary unavailable")):
+            with self.assertRaises(helper.UnsafeGroup):
+                self.compare()
+        with patch.object(helper, "_lazy_pinyin", return_value=["unknown"] * 11):
+            with self.assertRaises(helper.UnsafeGroup):
+                self.compare()
+
+
+class PhoneticCutVerificationTests(unittest.TestCase):
+    expected = PhoneticContentMatchingTests.expected
+    actual = PhoneticContentMatchingTests.actual
+    source_text = PhoneticContentMatchingTests.source
+    clauses = PhoneticContentMatchingTests.clauses
+    following = "一会儿再洗个澡，"
+
+    def words(self, *, source=False, cropped=False):
+        offset = .12 if cropped else 0
+        return [{"text": text, "start": start - offset, "end": end - offset}
+                for text, start, end in (("来,", .2, .4), ("面来了,", .55, .95),
+                    ("汤也喝一点," if source else "糖也喝一点,", 1.1, 1.8), ("暖胃。", 1.95, 2.3))]
+
+    def source(self, *, literal_exact=False):
+        words = self.words(source=True)
+        if literal_exact:
+            words[1]["text"] = "面来啦,"
+        following = {"text": self.following, "start": 2.9, "end": 3.3}
+        return (self.expected if literal_exact else self.source_text) + self.following, words + [following]
+
+    def right(self, text=None):
+        return text or self.following, [{"text": text or self.following, "start": .3, "end": .7}]
+
+    def audio(self):
+        audio = np.zeros(round(3.5 * helper.RATE))
+        for word in self.source()[1]:
+            start, end = round(word["start"] * helper.RATE), round(word["end"] * helper.RATE)
+            audio[start:end] = tone((end - start) / helper.RATE)
+        return audio
+
+    def test_current_example_requires_two_sided_and_final_recognition_and_publishes_literal_score(self):
+        replies = [self.source(), (self.actual, self.words()), self.right(),
+                   (self.actual, self.words(cropped=True))]
+        before = self.audio().copy()
+        with patch.object(helper, "transcribe", side_effect=replies) as recognize:
+            processed, result = helper.analyze(None, before, self.expected, self.following, self.clauses)
+        self.assertEqual(recognize.call_count, 4)
+        self.assertLess(processed.size, before.size)
+        self.assertTrue(np.array_equal(before, self.audio()))
+        self.assertEqual(result["coverage"], .818182)
+        comparison = result["recognition"]["contentComparison"]
+        self.assertEqual(comparison["mode"], "phonetic_substitutions")
+        self.assertEqual(comparison["sourcePrefix"], "来面来了汤也喝一点暖胃")
+        self.assertEqual(comparison["phoneticSimilarity"], .954545)
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertIn("cutValidation", result)
+        self.assertEqual(result["internalPausesMs"], [150, 150, 150])
+
+    def test_exact_source_fast_cut_cannot_publish_phonetic_crop_without_second_two_sided_pass(self):
+        replies = [self.source(literal_exact=True), (self.actual, self.words(cropped=True)),
+                   (self.actual, self.words()), self.right(), (self.actual, self.words(cropped=True))]
+        with patch.object(helper, "transcribe", side_effect=replies) as recognize:
+            _, result = helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+        self.assertEqual(recognize.call_count, 5)
+        self.assertIn("cutValidation", result)
+        self.assertEqual(result["recognition"]["contentComparison"]["mode"], "phonetic_substitutions")
+
+    def test_word_text_disagreement_missing_boundary_or_bad_following_still_rejects(self):
+        for failure in ("word_disagreement", "missing_boundary", "bad_following"):
+            final_words = self.words(cropped=True)
+            left_words = self.words()
+            if failure == "word_disagreement":
+                left_words[2]["text"] = "汤也喝一点,"
+            if failure == "missing_boundary":
+                final_words[:2] = [{"text": "来面来了", "start": .08, "end": .83}]
+            right = self.right("快进来休息" if failure == "bad_following" else None)
+            replies = [self.source()] + [(self.actual, left_words), right] * 3 + [(self.actual, final_words)]
+            if failure == "missing_boundary":
+                replies = [self.source(), (self.actual, left_words), right, (self.actual, final_words)]
+            with self.subTest(failure=failure), patch.object(helper, "transcribe", side_effect=replies):
+                code = "missing_internal_boundary" if failure == "missing_boundary" else "cut_text_mismatch"
+                with self.assertRaisesRegex(helper.UnsafeGroup, f"^{code}$"):
+                    helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+    def test_source_text_word_disagreement_cannot_claim_tone_support(self):
+        source = self.source()
+        bad_source = (source[0].replace("汤", "糖"), source[1])
+        replies = [bad_source] + [(self.actual, self.words()), self.right()] * 3
+        with patch.object(helper, "transcribe", side_effect=replies):
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+    def test_no_continuation_or_no_real_quiet_does_not_publish_phonetic_crop(self):
+        with patch.object(helper, "transcribe", return_value=self.source()) as recognize:
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+                helper.analyze(None, tone(3.5), self.expected, self.following, self.clauses)
+            self.assertEqual(recognize.call_count, 1)
+        with patch.object(helper, "transcribe", return_value=(self.actual, self.words())):
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^incomplete_or_unrelated_speech$"):
+                helper.analyze(None, self.audio(), self.expected, "", self.clauses)
+
+    def test_public_snapshot_rechecks_source_words_and_syllable_rule_evidence(self):
+        comparison = helper.content_comparison(self.expected, self.actual, allow_phonetic=True,
+            source_prefix=self.source_text, clauses=self.clauses)
+        source_transcript, source_words = self.source()
+        recognition = {"stage": "complete", "expectedText": self.expected, "sourceTranscript": source_transcript,
+                       "sourceWords": source_words, "contentComparison": comparison}
+        self.assertEqual(helper.recognition_snapshot(recognition)["contentComparison"], comparison)
+        for mutation in ("source_transcript", "source_words", "source_prefix", "pinyin", "particle_end", "non_list"):
+            value = json.loads(json.dumps(recognition))
+            if mutation == "source_transcript":
+                value["sourceTranscript"] = value["sourceTranscript"].replace("汤", "糖")
+            elif mutation == "source_words":
+                value["sourceWords"][2]["text"] = "糖也喝一点"
+            elif mutation == "source_prefix":
+                value["contentComparison"]["sourcePrefix"] = "来面来了糖也喝一点暖胃"
+            elif mutation == "pinyin":
+                value["contentComparison"]["differences"][1]["recognizedPinyin"] = "tang1"
+            elif mutation == "particle_end":
+                value["contentComparison"]["differences"][0]["clauseEnd"] = False
+            else:
+                value["contentComparison"]["differences"] = True
+            with self.subTest(mutation=mutation):
+                self.assertNotIn("contentComparison", helper.recognition_snapshot(value))
+
+    def test_phonetic_tolerance_never_relaxes_exact_leading_hmm_bridge(self):
+        source_transcript, source_words = self.source(literal_exact=True)
+        source_words.insert(4, {"text": "嗯", "start": 2.7, "end": 2.8})
+        source_transcript = self.expected + "嗯" + self.following
+        replies = [(source_transcript, source_words)] + [(self.actual, self.words()), self.right()] * 3
+        with patch.object(helper, "transcribe", side_effect=replies):
+            with self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                helper.analyze(None, self.audio(), self.expected, self.following, self.clauses)
+
+
+class ShortSentenceParticleTests(unittest.TestCase):
+    expected = "回来啦。"
+    actual = "回来了。"
+    following = "安静休息。"
+
+    def source(self, actual=None, *, source_exact=False):
+        text = self.expected if source_exact else (actual or self.actual)
+        return text + self.following, [{"text": text, "start": .2, "end": .6},
+                                      {"text": self.following, "start": 1.1, "end": 1.5}]
+
+    def left(self, actual=None, *, cropped=False):
+        text = actual or self.actual
+        offset = .12 if cropped else 0
+        return text, [{"text": text, "start": .2 - offset, "end": .6 - offset}]
+
+    def right(self, text=None):
+        text = text or self.following
+        return text, [{"text": text, "start": .25, "end": .65}]
+
+    def audio(self):
+        return np.concatenate([np.zeros(9600), tone(.4), np.zeros(24000), tone(.4), np.zeros(9600)])
+
+    def one_cut(self):
+        return [{"method": "two_sided", "thresholdDbfs": -68, "quietStartSeconds": .6,
+                 "quietEndSeconds": 1.1, "cut": .85}]
+
+    def compare(self, expected=None, actual=None, source=None):
+        expected, actual = expected or self.expected, actual or self.actual
+        return helper.content_comparison(expected, actual, source_prefix=actual if source is None else source,
+            clauses=[expected], allow_short_sentence_particle=True)
+
+    def analyze(self, *, expected=None, following=None):
+        expected = expected or self.expected
+        return helper.analyze(None, self.audio(), expected, self.following if following is None else following,
+            [expected], require_two_sided=True, allow_short_sentence_particle=True)
+
+    def test_both_directions_keep_real_literal_score_without_fabricating_phonetic_threshold(self):
+        for expected, actual, syllables in ((self.expected, self.actual, ("la5", "le5")),
+                (self.actual, self.expected, ("le5", "la5"))):
+            with self.subTest(expected=expected):
+                result = self.compare(expected, actual)
+                self.assertEqual(result["mode"], "sentence_particle")
+                self.assertEqual(result["similarity"], .666667)
+                self.assertEqual(result["threshold"], .9)
+                self.assertEqual(result["acceptanceRule"], "exact_prefix_final_particle")
+                self.assertEqual(result["differences"], [{"index": 2, "expected": expected[2], "recognized": actual[2],
+                    "expectedPinyin": syllables[0], "recognizedPinyin": syllables[1], "rule": "sentence_particle", "clauseEnd": True}])
+                self.assertNotIn("phoneticSimilarity", result)
+                self.assertNotIn("phoneticThreshold", result)
+
+    def test_short_exception_does_not_change_normal_matching_or_ten_character_phonetic_floor(self):
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.content_comparison(self.expected, self.actual)
+        with self.assertRaises(helper.UnsafeGroup):
+            helper.content_comparison(self.expected, self.actual, allow_phonetic=True,
+                                      source_prefix=self.actual, clauses=[self.expected])
+        expected, actual = "回来啦？外面是不是很冷？", "回来了外面是不是很冷"
+        self.assertEqual(helper.content_comparison(expected, actual, allow_short_sentence_particle=True),
+                         helper.content_comparison(expected, actual))
+        expected = "今天终于慢慢回来啦。"
+        self.assertEqual(self.compare(expected, expected.replace("啦", "了"))["similarity"], .888889)
+        expected = "今天终于能慢慢回来啦。"
+        result = helper.content_comparison(expected, expected.replace("啦", "了"),
+            source_prefix=expected.replace("啦", "了"), clauses=[expected], allow_short_sentence_particle=True)
+        self.assertNotIn("mode", result)
+        self.assertEqual(result["similarity"], .9)
+
+    def test_prefixes_endings_lengths_and_unchanged_numbers_negations_are_not_a_new_edit_budget(self):
+        for expected, actual in (("回来啦。", "会来了"), ("回来啦。", "来了"), ("回来啦。", "快回来了"),
+                ("回来啦。", "回来了了"), ("啦回来。", "了回来"), ("回来啦坐好。", "回来了坐好"),
+                ("好啦。", "好了"), ("回来啦", "回来了"), ("回来啦，", "回来了"),
+                ("不来啦。", "布来了"), ("一碗啦。", "衣碗了"), ("安静地啦。", "安静得了"),
+                ("没完没了。", "没完没啦")):
+            with self.subTest(expected=expected, actual=actual), self.assertRaises(helper.UnsafeGroup):
+                self.compare(expected, actual)
+        self.assertEqual(self.compare("别走啦！", "别走了")["similarity"], .666667)
+        self.assertEqual(self.compare("一碗啦？", "一碗了")["similarity"], .666667)
+        self.assertEqual(self.compare("「回来啦。」", "回来了")["similarity"], .666667)
+
+    def test_source_prefix_and_pinyin_must_establish_the_same_one_particle_rule(self):
+        for source in ("", "回来", "快回来了", "会来了", "回来的"):
+            with self.subTest(source=source), self.assertRaises(helper.UnsafeGroup):
+                self.compare(source=source)
+        for pinyin in (None, ["hui2", "lai2", "liao3"], ["unknown"]):
+            with self.subTest(pinyin=pinyin):
+                context = patch.object(helper, "_lazy_pinyin", None) if pinyin is None else patch.object(helper, "_lazy_pinyin", return_value=pinyin)
+                with context, self.assertRaises(helper.UnsafeGroup):
+                    self.compare()
+        with patch.object(helper, "_lazy_pinyin", side_effect=RuntimeError("private dictionary path")), self.assertRaises(helper.UnsafeGroup):
+            self.compare()
+
+    def test_opening_requires_complete_source_word_exact_next_start_left_right_and_final_asr(self):
+        replies = [self.source(), self.left(), self.right(), self.left(cropped=True)]
+        source_audio = self.audio()
+        with patch.object(helper, "transcribe", side_effect=replies) as transcribe, \
+                patch.object(helper, "choose_opening_cut", side_effect=AssertionError("one-sided crop forbidden")):
+            processed, result = self.analyze()
+        self.assertEqual(transcribe.call_count, 4)
+        self.assertEqual(result["coverage"], .666667)
+        self.assertEqual(result["recognition"]["contentComparison"]["mode"], "sentence_particle")
+        self.assertEqual(result["recognition"]["sourceTranscript"], self.source()[0])
+        self.assertGreaterEqual(result["cutValidation"]["quietEndSeconds"] - result["cutValidation"]["quietStartSeconds"], .16)
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertLess(processed.size, source_audio.size)
+        self.assertTrue(np.array_equal(source_audio, self.audio()))
+
+    def test_reverse_and_exact_source_crop_difference_use_identical_independent_proofs(self):
+        for reverse, exact_source in ((True, False), (False, True)):
+            expected, actual = (self.actual, self.expected) if reverse else (self.expected, self.actual)
+            source = self.source(actual if reverse else None, source_exact=exact_source)
+            replies = [source, self.left(actual), self.right(), self.left(actual, cropped=True)]
+            with self.subTest(reverse=reverse, exact_source=exact_source), patch.object(helper, "transcribe", side_effect=replies) as transcribe:
+                _, result = self.analyze(expected=expected)
+            self.assertEqual(transcribe.call_count, 4)
+            self.assertEqual(result["recognition"]["contentComparison"]["expected"], helper.sentence_particle_text(expected))
+
+    def test_particle_cannot_align_inside_merged_word_or_borrow_a_missing_next_syllable(self):
+        for source in ((self.source()[0], [{"text": self.source()[0], "start": .2, "end": 1.5}]),
+                ("回来了静休息", [self.source()[1][0], {"text": "静休息", "start": 1.1, "end": 1.5}])):
+            with self.subTest(source=source), patch.object(helper, "transcribe", return_value=source), \
+                    self.assertRaisesRegex(helper.UnsafeGroup, "^uncertain_word_alignment$"):
+                self.analyze()
+
+    def test_direct_opt_in_cannot_use_the_ordinary_one_sided_or_api_alignment_path(self):
+        for arguments in ({"require_two_sided": False}, {"require_two_sided": True,
+                "alignment_hint": {"terminalWordIndex": 0, "recognizedPrefix": "回来了"}}):
+            with self.subTest(arguments=arguments), patch.object(helper, "transcribe", side_effect=AssertionError("invalid scope must not transcribe")), \
+                    self.assertRaisesRegex(helper.UnsafeGroup, "^invalid_target$"):
+                helper.analyze(None, self.audio(), self.expected, self.following, [self.expected],
+                               allow_short_sentence_particle=True, **arguments)
+
+    def test_source_transcript_word_disagreement_and_invalid_retained_timing_fail_closed(self):
+        sources = [("回来啦。" + self.following, self.source()[1])]
+        for start, end in ((.6, .2), (.2, .2), (-.1, .6)):
+            words = self.source()[1]
+            words[0] = {**words[0], "start": start, "end": end}
+            sources.append((self.source()[0], words))
+        for source in sources:
+            with self.subTest(source=source), patch.object(helper, "transcribe", return_value=source), self.assertRaises(helper.UnsafeGroup):
+                self.analyze()
+
+    def test_right_recognition_and_real_quiet_still_guard_the_cut(self):
+        for right in (self.right("静休息。"), self.right("啦安静休息。")):
+            replies = [self.source()] + [self.left(), right] * 3
+            with self.subTest(right=right), patch.object(helper, "transcribe", side_effect=replies), \
+                    self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                self.analyze()
+        with patch.object(helper, "transcribe", return_value=self.source()) as transcribe, \
+                self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            helper.analyze(None, tone(1.7), self.expected, self.following, [self.expected],
+                           require_two_sided=True, allow_short_sentence_particle=True)
+        self.assertEqual(transcribe.call_count, 1)
+        right = ("安静休息。接着聊。", [{"text": self.following, "start": .25, "end": .65},
+                                   {"text": "接着聊。", "start": .7, "end": .82}])
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.left(), right, self.left(cropped=True)]):
+            _, result = self.analyze()
+        self.assertTrue(result["success"])
+
+    def test_left_and_final_text_words_must_agree_and_may_not_add_delete_or_replace_the_prefix(self):
+        for failure in ("left_missing", "left_disagrees", "final_prefix", "final_missing", "final_zero_timing"):
+            left, final = self.left(), self.left(cropped=True)
+            if failure == "left_missing":
+                left = self.left("来了")
+            elif failure == "left_disagrees":
+                left = (self.actual, self.left(self.expected)[1])
+            elif failure == "final_prefix":
+                final = self.left("会来了", cropped=True)
+            elif failure == "final_missing":
+                final = self.left("回来", cropped=True)
+            else:
+                final[1][0]["end"] = final[1][0]["start"]
+            replies = [self.source()] + ([left, self.right()] * 3 if failure.startswith("left") else [left, self.right(), final])
+            with self.subTest(failure=failure), patch.object(helper, "transcribe", side_effect=replies), self.assertRaises(helper.UnsafeGroup):
+                self.analyze()
+
+    def test_last_sentence_uses_full_remaining_source_and_independent_final_recognition(self):
+        audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(9600)])
+        with patch.object(helper, "transcribe", side_effect=[self.left(), self.left(cropped=True)]) as transcribe:
+            _, result = helper.analyze(None, audio, self.expected, "", [self.expected],
+                                      require_two_sided=True, allow_short_sentence_particle=True)
+        self.assertEqual(transcribe.call_count, 2)
+        self.assertEqual(result["coverage"], .666667)
+        self.assertEqual(result["recognition"]["contentComparison"]["mode"], "sentence_particle")
+        self.assertNotIn("cutValidation", result)
+        with patch.object(helper, "transcribe", return_value=self.source()), self.assertRaises(helper.UnsafeGroup):
+            helper.analyze(None, self.audio(), self.expected, "", [self.expected],
+                           require_two_sided=True, allow_short_sentence_particle=True)
+
+    def test_missing_final_particle_rechecks_only_quiet_trimmed_same_cut_and_then_all_independent_proofs(self):
+        missing = ("回来", [{"text": "回来", "start": .2, "end": .5}])
+        replies = [self.source(), missing, self.left(cropped=True), self.right(), self.left(cropped=True)]
+        inputs = []
+        def transcribe(_model, audio):
+            inputs.append(audio.copy())
+            return replies[len(inputs) - 1]
+        source_audio = self.audio()
+        with patch.object(helper, "transcribe", side_effect=transcribe):
+            processed, result = self.analyze()
+        self.assertEqual(len(inputs), 5)
+        self.assertEqual(result["coverage"], .666667)
+        self.assertEqual(result["recognition"]["targetTranscript"], self.actual)
+        self.assertIn("cutValidation", result)
+        self.assertLess(inputs[2].size, inputs[1].size)
+        self.assertTrue(np.array_equal(inputs[2], inputs[1][round(.12 * helper.RATE):round(.68 * helper.RATE)]))
+        self.assertTrue(np.array_equal(processed, inputs[2]))
+        self.assertTrue(np.array_equal(source_audio, self.audio()))
+        self.assertAlmostEqual(result["cutEndSeconds"], .68)
+
+    def test_missing_final_particle_after_refinement_is_never_accepted_as_complete_speech(self):
+        missing = self.left("回来")
+        with patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), \
+                patch.object(helper, "transcribe", side_effect=[self.source(), missing, self.left("回来", cropped=True)]) as transcribe, \
+                self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+            self.analyze()
+        self.assertEqual(transcribe.call_count, 3)
+
+    def test_refinement_cannot_hide_a_missing_prefix_changed_character_disagreeing_words_or_invalid_timestamps(self):
+        for refined in (self.left("会来了", cropped=True), self.left("来了", cropped=True),
+                (self.actual, self.left(self.expected, cropped=True)[1]),
+                (self.actual, [{"text": self.actual, "start": .08, "end": .08}]),
+                (self.actual, [{"text": self.actual, "start": .08, "end": 1.5}])):
+            with self.subTest(refined=refined), patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), patch.object(helper, "transcribe",
+                    side_effect=[self.source(), self.left("回来"), refined]) as transcribe, self.assertRaises(helper.UnsafeGroup):
+                self.analyze()
+            self.assertEqual(transcribe.call_count, 3)
+
+    def test_missing_interior_or_multiple_characters_never_requests_the_refinement(self):
+        for transcript in ("回啦", "回", "回来了啦", "会来"):
+            with self.subTest(transcript=transcript), patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), patch.object(helper, "transcribe",
+                    side_effect=[self.source(), self.left(transcript)]) as transcribe, \
+                    self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                self.analyze()
+            self.assertEqual(transcribe.call_count, 2)
+        self.assertFalse(helper.missing_short_particle("没完没了。", "没完没", [{"text": "没完没", "start": .2, "end": .6}], ["没完没了。"]))
+
+    def test_no_changed_quiet_edges_means_no_duplicate_recognition(self):
+        audio = self.audio()
+        audio[:round(.6 * helper.RATE)] = tone(.6)
+        source = (self.source()[0], [{"text": self.actual, "start": 0, "end": .81}, self.source()[1][1]])
+        missing = ("回来", [{"text": "回来", "start": 0, "end": .81}])
+        with patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), \
+                patch.object(helper, "transcribe", side_effect=[source, missing]) as transcribe, \
+                self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+            helper.analyze(None, audio, self.expected, self.following, [self.expected],
+                           require_two_sided=True, allow_short_sentence_particle=True)
+        self.assertEqual(transcribe.call_count, 2)
+
+    def test_quiet_refinement_preserves_activity_at_the_original_edge(self):
+        audio = self.audio()
+        audio[:round(.2 * helper.RATE)] = tone(.2)
+        refined = (self.actual, [{"text": self.actual, "start": 0, "end": .6}])
+        replies = [self.source(), self.left("回来"), refined, self.right(), refined]
+        inputs = []
+        def transcribe(_model, samples):
+            inputs.append(samples.copy())
+            return replies[len(inputs) - 1]
+        with patch.object(helper, "transcribe", side_effect=transcribe):
+            _, result = helper.analyze(None, audio, self.expected, self.following, [self.expected],
+                                      require_two_sided=True, allow_short_sentence_particle=True)
+        self.assertEqual(len(inputs), 5)
+        self.assertTrue(result["success"])
+        self.assertTrue(np.array_equal(inputs[2][:round(.2 * helper.RATE)], audio[:round(.2 * helper.RATE)]))
+
+    def test_only_one_refinement_is_allowed_across_multiple_candidate_cuts(self):
+        candidates = [{"method": "two_sided", "thresholdDbfs": -68,
+                       "quietStartSeconds": .6, "quietEndSeconds": 1.1, "cut": cut} for cut in (.8, .85)]
+        replies = [self.source(), self.left("回来"), self.left("回来", cropped=True), self.left("回来")]
+        with patch.object(helper, "quiet_cut_candidates", return_value=candidates), \
+                patch.object(helper, "transcribe", side_effect=replies) as transcribe, \
+                self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+            self.analyze()
+        self.assertEqual(transcribe.call_count, 4)
+
+    def test_refined_left_cannot_replace_the_independent_right_or_final_checks(self):
+        for failure in ("right", "final"):
+            replies = [self.source(), self.left("回来"), self.left(cropped=True)]
+            replies += [self.right("静休息")] if failure == "right" else [self.right(), self.left("回来", cropped=True)]
+            with self.subTest(failure=failure), patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), \
+                    patch.object(helper, "transcribe", side_effect=replies), self.assertRaises(helper.UnsafeGroup):
+                self.analyze()
+
+    def review_analyze(self, *, expected=None, following=None, audio=None):
+        expected = expected or self.expected
+        return helper.analyze(None, self.audio() if audio is None else audio, expected,
+            self.following if following is None else following, [expected], require_two_sided=True,
+            allow_short_sentence_particle=True, allow_short_sentence_text_review=True)
+
+    def test_safe_boundary_with_only_missing_final_particle_remains_explicit_text_review(self):
+        replies = [self.source(), self.left("回来"), self.left("回来", cropped=True), self.right(), self.left("回来", cropped=True)]
+        with patch.object(helper, "transcribe", side_effect=replies) as transcribe:
+            processed, result = self.review_analyze()
+        self.assertEqual(transcribe.call_count, 5)
+        self.assertEqual(result["coverage"], .666667)
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertNotIn("contentComparison", result["recognition"])
+        review = result["recognition"]["shortSentenceReview"]
+        self.assertEqual(review["status"], "needs_confirmation")
+        self.assertEqual(review["reason"], "missing_final_particle")
+        self.assertEqual(review["sourcePrefix"], "回来了")
+        self.assertEqual(review["expectedPinyin"], "la5")
+        self.assertEqual(review["sourcePinyin"], "le5")
+        self.assertEqual(review["left"]["transcript"], "回来")
+        self.assertEqual(review["right"]["transcript"], self.following)
+        self.assertEqual(review["final"]["transcript"], "回来")
+        self.assertEqual(result["recognition"]["targetTranscript"], "回来")
+        self.assertAlmostEqual(result["cutEndSeconds"], .68)
+        self.assertTrue(np.array_equal(processed, self.audio()[round(.12 * helper.RATE):round(.68 * helper.RATE)]))
+
+    def test_missing_left_still_requires_manual_review_even_if_final_recognition_becomes_exact(self):
+        replies = [self.source(), self.left("回来"), self.left("回来", cropped=True), self.right(), self.left(self.expected, cropped=True)]
+        with patch.object(helper, "transcribe", side_effect=replies):
+            _, result = self.review_analyze()
+        self.assertEqual(result["coverage"], 1)
+        self.assertEqual(result["recognition"]["contentComparison"]["status"], "matched")
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["similarity"], 1)
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["left"]["transcript"], "回来")
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["final"]["transcript"], self.expected)
+
+    def test_final_only_missing_particle_is_reviewed_after_the_complete_left_and_right_checks(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.left(), self.right(), self.left("回来", cropped=True)]) as transcribe:
+            _, result = self.review_analyze()
+        self.assertEqual(transcribe.call_count, 4)
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["left"]["transcript"], self.actual)
+        self.assertNotIn("contentComparison", result["recognition"])
+
+    def test_final_remainder_text_review_never_borrows_unaccounted_source_context(self):
+        audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(9600)])
+        with patch.object(helper, "transcribe", side_effect=[self.left(), self.left("回来", cropped=True)]) as transcribe:
+            _, result = self.review_analyze(following="", audio=audio)
+        self.assertEqual(transcribe.call_count, 2)
+        review = result["recognition"]["shortSentenceReview"]
+        self.assertNotIn("left", review)
+        self.assertNotIn("right", review)
+        self.assertEqual(review["final"]["transcript"], "回来")
+        self.assertEqual(result["coverage"], .666667)
+        with patch.object(helper, "transcribe", return_value=self.left("回来")), self.assertRaises(helper.UnsafeGroup):
+            self.review_analyze(following="", audio=audio)
+
+    def test_review_never_excuses_other_missing_or_changed_characters_invalid_words_or_the_right_context(self):
+        for bad in ("回啦", "会来", "来啦", "回", "回来好", "回来啦啦"):
+            replies = [self.source(), self.left(bad)]
+            with self.subTest(bad=bad), patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), \
+                    patch.object(helper, "transcribe", side_effect=replies), self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+                self.review_analyze()
+        replies = [self.source(), self.left("回来"), self.left("回来", cropped=True), self.right("静休息")]
+        with patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), \
+                patch.object(helper, "transcribe", side_effect=replies), self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+            self.review_analyze()
+        with patch.object(helper, "transcribe", return_value=self.source()), self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            self.review_analyze(audio=tone(1.7))
+
+    def test_review_opt_in_cannot_change_the_old_recipe_or_api_alignment_scope(self):
+        replies = [self.source(), self.left("回来"), self.left("回来", cropped=True)]
+        with patch.object(helper, "quiet_cut_candidates", return_value=self.one_cut()), \
+                patch.object(helper, "transcribe", side_effect=replies), self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+            self.analyze()
+        for scope in ({"require_two_sided": False, "allow_short_sentence_particle": True},
+                {"require_two_sided": True, "allow_short_sentence_particle": False},
+                {"require_two_sided": True, "allow_short_sentence_particle": True,
+                 "alignment_hint": {"terminalWordIndex": 0, "recognizedPrefix": "回来了"}}):
+            with self.subTest(scope=scope), patch.object(helper, "transcribe", side_effect=AssertionError("invalid scope must not transcribe")), \
+                    self.assertRaisesRegex(helper.UnsafeGroup, "^invalid_target$"):
+                helper.analyze(None, self.audio(), self.expected, self.following, [self.expected],
+                               allow_short_sentence_text_review=True, **scope)
+
+    def test_complete_left_and_final_text_are_automatically_checked_without_a_review_marker(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.left(), self.right(), self.left(cropped=True)]):
+            _, result = self.review_analyze()
+        self.assertNotIn("shortSentenceReview", result["recognition"])
+        self.assertEqual(result["recognition"]["contentComparison"]["mode"], "sentence_particle")
+
+    def test_public_review_snapshot_keeps_real_evidence_and_rejects_forged_prefixes_words_scores_or_context(self):
+        replies = [self.source(), self.left("回来"), self.left("回来", cropped=True), self.right(), self.left("回来", cropped=True)]
+        with patch.object(helper, "transcribe", side_effect=replies):
+            _, result = self.review_analyze()
+        original = result["recognition"]
+        self.assertEqual(helper.recognition_snapshot(original), original)
+        for mutation in ("score", "left_prefix", "final_prefix", "right_prefix", "source_missing", "target_changed", "final_timing", "no_right", "source_word_merge"):
+            value = json.loads(json.dumps(original))
+            review = value["shortSentenceReview"]
+            if mutation == "score": review["similarity"] = 1
+            elif mutation == "left_prefix": review["left"]["transcript"] = "会来"
+            elif mutation == "final_prefix": review["final"]["transcript"] = "会来"
+            elif mutation == "right_prefix": review["right"]["transcript"] = "静休息"
+            elif mutation == "source_missing": review["sourcePrefix"] = "回来"
+            elif mutation == "target_changed": value["targetTranscript"] = "回来啦"
+            elif mutation == "final_timing": review["final"]["words"][0]["end"] = review["final"]["words"][0]["start"]
+            elif mutation == "no_right": review.pop("right")
+            else: value["sourceWords"] = [{"text": value["sourceTranscript"], "start": .2, "end": 1.5}]
+            with self.subTest(mutation=mutation):
+                self.assertNotIn("shortSentenceReview", helper.recognition_snapshot(value))
+
+    def test_public_snapshot_rejects_forged_scores_missing_word_endings_and_nonliteral_prefixes(self):
+        recognition = {"stage": "complete", "expectedText": self.expected, "followingText": self.following,
+            "sourceTranscript": self.source()[0], "sourceWords": self.source()[1], "targetTranscript": self.actual,
+            "contentComparison": self.compare()}
+        self.assertEqual(helper.recognition_snapshot(recognition)["contentComparison"], self.compare())
+        for mutation in ("similarity", "pinyin", "prefix", "interior", "merged_word", "zero_timing", "missing_target"):
+            value = json.loads(json.dumps(recognition))
+            if mutation == "similarity": value["contentComparison"]["similarity"] = 1
+            elif mutation == "pinyin": value["contentComparison"]["differences"][0]["recognizedPinyin"] = "liao3"
+            elif mutation == "prefix": value["contentComparison"]["sourcePrefix"] = "会来了"
+            elif mutation == "interior": value["expectedText"] = "回来啦，"
+            elif mutation == "merged_word": value["sourceWords"] = [{"text": value["sourceTranscript"], "start": .2, "end": 1.5}]
+            elif mutation == "zero_timing": value["sourceWords"][0]["end"] = .2
+            else: value.pop("targetTranscript")
+            with self.subTest(mutation=mutation):
+                self.assertNotIn("contentComparison", helper.recognition_snapshot(value))
+        final = {**recognition, "followingText": "", "sourceTranscript": self.actual,
+                 "sourceWords": recognition["sourceWords"][:1]}
+        self.assertEqual(helper.recognition_snapshot(final)["contentComparison"], self.compare())
+        self.assertNotIn("contentComparison", helper.recognition_snapshot({**recognition, "followingText": ""}))
+
+
+class ShortSameToneTextReviewTests(unittest.TestCase):
+    expected = "过来坐，炉子边暖和。"
+    variant = "过来做，炉子边暖和。"
+    following = "慢慢休息。"
+
+    def audio(self):
+        return np.concatenate([np.zeros(9600), tone(.4), np.zeros(24000), tone(.4), np.zeros(9600)])
+
+    def target(self, text=None, *, cropped=False):
+        text = text or self.expected
+        offset = .12 if cropped else 0
+        return text, [{"text": text, "start": .2 - offset, "end": .6 - offset}]
+
+    def source(self, text=None):
+        text = text or self.expected
+        return text + self.following, self.target(text)[1] + [{"text": self.following, "start": 1.1, "end": 1.5}]
+
+    def right(self):
+        return self.following, [{"text": self.following, "start": .25, "end": .65}]
+
+    def analyze(self, *, expected=None, following=None, audio=None):
+        expected = expected or self.expected
+        return helper.analyze(None, self.audio() if audio is None else audio, expected,
+            self.following if following is None else following, [expected], require_two_sided=True,
+            allow_short_sentence_particle=True, allow_short_sentence_text_review=True)
+
+    def test_source_final_and_both_same_tone_variants_remain_manual_with_real_scores(self):
+        audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(9600)])
+        for source, final in ((self.expected, self.variant), (self.variant, self.expected), (self.variant, self.variant)):
+            with self.subTest(source=source, final=final), patch.object(helper, "transcribe",
+                    side_effect=[self.target(source), self.target(final, cropped=True)]) as transcribe:
+                _, result = self.analyze(following="", audio=audio)
+            self.assertEqual(transcribe.call_count, 2)
+            review = result["recognition"]["shortSentenceReview"]
+            self.assertEqual(review["reason"], "same_tone_substitution")
+            self.assertEqual(review["status"], "needs_confirmation")
+            self.assertEqual(review["sourcePrefix"], helper.sentence_particle_text(source))
+            self.assertEqual(review["final"]["transcript"], final)
+            self.assertEqual(review["differences"], [{"index": 2, "expected": "坐", "recognized": "做", "expectedPinyin": "zuo4", "recognizedPinyin": "zuo4", "rule": "same_tone"}])
+            self.assertEqual(result["coverage"], 1 if final == self.expected else .875)
+            if final == self.expected:
+                self.assertEqual(result["recognition"]["contentComparison"]["status"], "matched")
+            else:
+                self.assertNotIn("contentComparison", result["recognition"])
+
+    def test_left_variant_with_complete_final_still_needs_confirmation_and_preserves_cut(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(), self.target(self.variant), self.right(), self.target(cropped=True)]):
+            _, result = self.analyze()
+        self.assertEqual(result["coverage"], 1)
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["left"]["transcript"], self.variant)
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["final"]["transcript"], self.expected)
+        self.assertIn("cutValidation", result)
+
+    def test_source_variant_locates_only_a_whole_word_with_strict_following_context(self):
+        with patch.object(helper, "transcribe", side_effect=[self.source(self.variant), self.target(), self.right(), self.target(cropped=True)]):
+            _, result = self.analyze()
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["sourcePrefix"], "过来做炉子边暖和")
+        with patch.object(helper, "transcribe", return_value=(self.source(self.variant)[0], [{"text": self.source(self.variant)[0], "start": .2, "end": 1.5}])), self.assertRaises(helper.UnsafeGroup):
+            self.analyze()
+
+    def test_tone_changes_two_variants_missing_extra_protected_or_non_chinese_characters_are_not_reviewable(self):
+        for actual in ("过来左炉子边暖和", "过来做炉字边暖和", "过来做炉子边暖", "过来做炉子边暖和啊"):
+            with self.subTest(actual=actual), self.assertRaises(helper.UnsafeGroup):
+                helper.short_same_tone_difference(self.expected, actual)
+        for expected, actual in (("一起来坐下吧。", "衣起来坐下吧"), ("不要再慢慢说。", "布要再慢慢说")):
+            with self.subTest(expected=expected), self.assertRaises(helper.UnsafeGroup):
+                helper.short_same_tone_difference(expected, actual)
+        audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(9600)])
+        with patch.object(helper, "transcribe", side_effect=[self.target(self.variant), self.target("过来座炉子边暖和", cropped=True)]), self.assertRaises(helper.UnsafeGroup):
+            self.analyze(following="", audio=audio)
+
+    def test_following_same_tone_boundary_requires_exact_original_full_sentence_and_independent_words(self):
+        expected, following = "鞋也换了吧，别把寒气带进来。", self.expected
+        source = (expected + following, [{"text": expected, "start": .2, "end": .6}, {"text": following, "start": 1.1, "end": 1.5}])
+        left = (expected, [{"text": expected, "start": .2, "end": .6}])
+        right = (self.variant, [{"text": self.variant, "start": .25, "end": .65}])
+        final = (expected, [{"text": expected, "start": .08, "end": .48}])
+        with patch.object(helper, "transcribe", side_effect=[source, left, right, final]) as transcribe:
+            _, result = self.analyze(expected=expected, following=following)
+        self.assertEqual(transcribe.call_count, 4)
+        self.assertEqual(result["coverage"], 1)
+        self.assertNotIn("shortSentenceReview", result["recognition"])
+        proof = result["recognition"]["followingPhoneticBoundary"]
+        self.assertEqual(proof["expected"], "过来坐炉子边暖和")
+        self.assertEqual(proof["recognized"], "过来做炉子边暖和")
+        self.assertEqual(proof["sourceWordIndex"], 1)
+        self.assertEqual(proof["right"]["transcript"], self.variant)
+        self.assertEqual(proof["difference"]["expectedPinyin"], "zuo4")
+        for mutation in ("source_variant", "right_missing", "right_tone", "right_words", "source_merged", "extra_field"):
+            value = json.loads(json.dumps(result["recognition"]))
+            boundary = value["followingPhoneticBoundary"]
+            if mutation == "source_variant": value["sourceWords"][1]["text"] = self.variant
+            elif mutation == "right_missing": boundary["right"]["transcript"] = "过来做炉子边暖"
+            elif mutation == "right_tone": boundary["difference"]["recognizedPinyin"] = "zuo3"
+            elif mutation == "right_words": boundary["right"]["words"][0]["text"] = self.expected
+            elif mutation == "source_merged": value["sourceWords"] = [{"text": source[0], "start": .2, "end": 1.5}]
+            else: boundary["automaticTextPass"] = True
+            with self.subTest(mutation=mutation):
+                self.assertNotIn("followingPhoneticBoundary", helper.recognition_snapshot(value))
+
+    def test_existing_recipe_still_rejects_the_short_right_homophone_without_the_paragraph_review_opt_in(self):
+        expected, following = "鞋也换了吧，别把寒气带进来。", self.expected
+        source = (expected + following, [{"text": expected, "start": .2, "end": .6}, {"text": following, "start": 1.1, "end": 1.5}])
+        left = (expected, [{"text": expected, "start": .2, "end": .6}])
+        right = (self.variant, [{"text": self.variant, "start": .25, "end": .65}])
+        candidates = [{"method": "two_sided", "thresholdDbfs": -68, "quietStartSeconds": .6, "quietEndSeconds": 1.1, "cut": .85}]
+        with patch.object(helper, "quiet_cut_candidates", return_value=candidates), patch.object(helper, "transcribe", side_effect=[source, left, right]), self.assertRaisesRegex(helper.UnsafeGroup, "^cut_text_mismatch$"):
+            helper.analyze(None, self.audio(), expected, following, [expected], require_two_sided=True)
+
+    def test_same_tone_public_review_recomputes_pinyin_scores_and_only_the_same_original_variant(self):
+        audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(9600)])
+        with patch.object(helper, "transcribe", side_effect=[self.target(), self.target(self.variant, cropped=True)]):
+            _, result = self.analyze(following="", audio=audio)
+        original = result["recognition"]
+        self.assertEqual(helper.recognition_snapshot(original), original)
+        for mutation in ("both_wrong_tones", "extra_diff", "wrong_index", "other_variant", "extra_field", "score", "merged_source", "wrong_window_words"):
+            value = json.loads(json.dumps(original))
+            review = value["shortSentenceReview"]
+            if mutation == "both_wrong_tones":
+                review["differences"][0].update(expectedPinyin="zuo3", recognizedPinyin="zuo3")
+            elif mutation == "extra_diff": review["differences"].append(review["differences"][0].copy())
+            elif mutation == "wrong_index": review["differences"][0]["index"] = 1
+            elif mutation == "other_variant": review["sourcePrefix"] = "过来座炉子边暖和"
+            elif mutation == "extra_field": review["automaticPass"] = True
+            elif mutation == "score": review["similarity"] = 1
+            elif mutation == "merged_source": value["sourceWords"] = [{"text": "过来坐炉子边暖和慢慢休息", "start": .2, "end": .6}]
+            else: review["final"]["words"][0]["text"] = self.expected
+            with self.subTest(mutation=mutation):
+                self.assertNotIn("shortSentenceReview", helper.recognition_snapshot(value))
+
+    def test_following_review_never_accepts_source_extra_words_nonexact_source_or_dictionary_failure(self):
+        expected = "鞋也换了吧，别把寒气带进来。"
+        source_words = [{"text": expected, "start": .2, "end": .6}, {"text": self.expected, "start": 1.1, "end": 1.5}]
+        right_words = [{"text": self.variant, "start": .25, "end": .65}]
+        for actual in (self.variant, self.expected + "啊", "过来坐炉子边暖"):
+            words = [source_words[0], {**source_words[1], "text": actual}]
+            with self.subTest(actual=actual), self.assertRaises(helper.UnsafeGroup):
+                helper.following_phonetic_boundary(expected, self.expected, words, 1, self.variant, right_words, .85)
+        with patch.object(helper, "_lazy_pinyin", None), self.assertRaises(helper.UnsafeGroup):
+            helper.following_phonetic_boundary(expected, self.expected, source_words, 1, self.variant, right_words, .85)
+        with patch.object(helper, "_lazy_pinyin", side_effect=RuntimeError("private dictionary path")), self.assertRaises(helper.UnsafeGroup):
+            helper.following_phonetic_boundary(expected, self.expected, source_words, 1, self.variant, right_words, .85)
+
+    def test_same_tone_review_does_not_relax_the_existing_short_target_validation(self):
+        audio = np.concatenate([np.zeros(9600), tone(.4), np.zeros(9600)])
+        with patch.object(helper, "transcribe", side_effect=[self.target(), self.target(self.variant, cropped=True)]), self.assertRaises(helper.UnsafeGroup):
+            helper.analyze(None, audio, self.expected, "", [self.expected], require_two_sided=True, allow_short_sentence_particle=True)
+
+
 class EndingAnchorContentTests(unittest.TestCase):
     expected = "来~~，面来啦！慢点儿吃，小心烫。汤也喝一点，暖胃。"
     actual = "来,面来了,慢点吃,小心烫,汤也喝一点,暖胃。"
@@ -879,6 +1675,86 @@ class RecognitionDiagnosticsTests(unittest.TestCase):
             "contentComparison": {"status": "matched", "similarity": 1, "threshold": .9,
                                   "substitutionCount": 0, "expected": "慢慢放松", "recognized": "慢慢放松"},
         })
+
+    def test_forced_two_sided_exact_text_bypasses_one_sided_fast_path(self):
+        source = ("慢慢放松，安静休息。", segment_words())
+        left = ("慢慢放松", segment_words()[:1])
+        right = ("安静休息", [{"text": "安静休息", "start": .25, "end": .65}])
+        with patch.object(helper, "transcribe", side_effect=[source, left, right, left]) as recognize, \
+                patch.object(helper, "choose_opening_cut", side_effect=AssertionError("one-sided path must not run")):
+            _, result = helper.analyze(None, self.audio, "慢慢放松", "安静休息", ["慢慢放松"],
+                                       require_two_sided=True)
+        self.assertEqual(recognize.call_count, 4)
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertEqual(result["coverage"], 1)
+        self.assertIn("cutValidation", result)
+        self.assertGreaterEqual(result["cutValidation"]["quietEndSeconds"] - result["cutValidation"]["quietStartSeconds"], .16)
+
+    def test_json_request_enables_forced_two_sided_and_rejects_non_boolean_flag(self):
+        request = json.loads(self.request.read_text(encoding="utf-8"))
+        request["requireTwoSided"] = True
+        self.request.write_text(json.dumps(request), encoding="utf-8")
+        source = ("慢慢放松，安静休息。", segment_words())
+        left = ("慢慢放松", segment_words()[:1])
+        right = ("安静休息", [{"text": "安静休息", "start": .25, "end": .65}])
+        with patch.object(helper, "transcribe", side_effect=[source, left, right, left]), \
+                patch.object(helper, "choose_opening_cut", side_effect=AssertionError("one-sided path must not run")):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        self.assertIn("cutValidation", self.read_result())
+        before = self.output.read_bytes()
+        request["requireTwoSided"] = "true"
+        self.request.write_text(json.dumps(request), encoding="utf-8")
+        with patch.object(helper, "transcribe", side_effect=AssertionError("invalid flag must not load/transcribe")):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 2)
+        self.assertEqual(self.output.read_bytes(), before)
+
+    def test_json_short_particle_flag_requires_boolean_two_sided_and_no_api_hint(self):
+        request = json.loads(self.request.read_text(encoding="utf-8"))
+        request.update(expectedText="回来啦。", followingText="安静休息。", clauses=["回来啦。"],
+                       requireTwoSided=True, allowShortSentenceParticle=True)
+        source = ("回来了。安静休息。", [{"text": "回来了。", "start": .2, "end": .6}, segment_words()[1]])
+        left = ("回来了。", [{"text": "回来了。", "start": .2, "end": .6}])
+        right = ("安静休息。", [{"text": "安静休息。", "start": .25, "end": .65}])
+        final = ("回来了。", [{"text": "回来了。", "start": .08, "end": .48}])
+        self.request.write_text(json.dumps(request), encoding="utf-8")
+        with patch.object(helper, "transcribe", side_effect=[source, left, right, final]):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        self.assertEqual(self.read_result()["recognition"]["contentComparison"]["mode"], "sentence_particle")
+        before = self.output.read_bytes()
+        for invalid in ({**request, "allowShortSentenceParticle": "true"}, {**request, "requireTwoSided": False},
+                {**request, "alignmentHint": {"terminalWordIndex": 0, "recognizedPrefix": "回来了"}}):
+            with self.subTest(invalid=invalid):
+                self.request.write_text(json.dumps(invalid), encoding="utf-8")
+                with patch.object(helper, "transcribe", side_effect=AssertionError("invalid flag must not transcribe")):
+                    self.assertEqual(helper.process_request(str(self.request), lambda _: None), 2)
+                self.assertEqual(self.output.read_bytes(), before)
+
+    def test_json_manual_text_review_is_separate_opt_in_with_real_missing_transcripts_and_unchanged_scope(self):
+        request = json.loads(self.request.read_text(encoding="utf-8"))
+        request.update(expectedText="回来啦。", followingText="安静休息。", clauses=["回来啦。"],
+                       requireTwoSided=True, allowShortSentenceParticle=True, allowShortSentenceTextReview=True)
+        source = ("回来了。安静休息。", [{"text": "回来了。", "start": .2, "end": .6}, segment_words()[1]])
+        missing = ("回来", [{"text": "回来", "start": .2, "end": .6}])
+        refined = ("回来", [{"text": "回来", "start": .08, "end": .48}])
+        right = ("安静休息。", [{"text": "安静休息。", "start": .25, "end": .65}])
+        self.request.write_text(json.dumps(request), encoding="utf-8")
+        with patch.object(helper, "transcribe", side_effect=[source, missing, refined, right, refined]):
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        result = self.read_result()
+        self.assertTrue(result["success"])
+        self.assertEqual(result["coverage"], .666667)
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertEqual(result["recognition"]["shortSentenceReview"]["status"], "needs_confirmation")
+        self.assertEqual(result["recognition"]["targetTranscript"], "回来")
+        self.assertNotIn("contentComparison", result["recognition"])
+        before = self.output.read_bytes()
+        for invalid in ({**request, "allowShortSentenceTextReview": "true"}, {**request, "requireTwoSided": False},
+                {**request, "allowShortSentenceParticle": False}, {**request, "alignmentHint": {"terminalWordIndex": 0, "recognizedPrefix": "回来了"}}):
+            with self.subTest(invalid=invalid):
+                self.request.write_text(json.dumps(invalid), encoding="utf-8")
+                with patch.object(helper, "transcribe", side_effect=AssertionError("invalid scope must not transcribe")):
+                    self.assertEqual(helper.process_request(str(self.request), lambda _: None), 2)
+                self.assertEqual(self.output.read_bytes(), before)
 
     def test_changed_opening_is_accepted_only_with_verified_cut_and_visible_content_difference(self):
         words = greeting_words() + [{"text": "快进来", "start": 1.6, "end": 1.9}]

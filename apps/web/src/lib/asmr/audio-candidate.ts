@@ -3,6 +3,8 @@ import type { TimelineClip } from "./schema";
 import { VoiceGenerationOptionsSchema, VoiceReferenceModeSchema, type VoiceGenerationOptions, type LongTextRetry } from "./voice-generation-options";
 import { VoiceLongTextResultSchema } from "./voice-longtext-result";
 import type { VoiceGenerationContext } from "./voice-generation-context";
+import type { VoiceParagraphContext } from "./voice-paragraph-context";
+import { VoiceParagraphResultSchema } from "./voice-paragraph-result";
 
 const SafeIdSchema = z.string().min(1).max(240).regex(/^[A-Za-z0-9_-]+$/);
 const ScalarSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
@@ -14,15 +16,19 @@ export const AudioCandidateProvenanceSchema = z.object({
   temperature: z.number().min(0).max(2),
   voicePackId: VoiceGenerationOptionsSchema.shape.voicePackId,
   referenceMode: VoiceReferenceModeSchema,
-  generationMode: z.enum(["clip", "long_text"]),
+  generationMode: z.enum(["clip", "long_text", "paragraph"]),
   parameters: z.record(z.string(), ScalarSchema),
   runtimeVersion: z.string().min(1).optional(),
   modelIdentity: z.string().min(1).optional(),
   referenceIdentity: z.string().min(1).optional(),
   longText: VoiceLongTextResultSchema.optional(),
+  paragraph: VoiceParagraphResultSchema.optional(),
 }).strict().superRefine((provenance, context) => {
   if ((provenance.generationMode === "long_text") !== (provenance.longText !== undefined)) {
     context.addIssue({ code: "custom", path: ["longText"], message: "Long-text provenance is required only for long-text generation" });
+  }
+  if ((provenance.generationMode === "paragraph") !== (provenance.paragraph !== undefined)) {
+    context.addIssue({ code: "custom", path: ["paragraph"], message: "Paragraph provenance is required only for paragraph generation" });
   }
 });
 
@@ -50,6 +56,14 @@ export const AudioCandidateSchema = z.object({
   createdAt: z.string().datetime(),
   status: z.enum(["ready", "discarded"]),
 }).strict().superRefine((candidate, context) => {
+  const paragraph = candidate.provenance.paragraph;
+  if (paragraph) {
+    const segment = paragraph.segments.find((segment) => segment.clipId === candidate.clipId);
+    const asset = paragraph.checkStatus !== "review" ? segment?.asset : paragraph.sourceAsset;
+    if (!paragraph.clipIds.includes(candidate.clipId) || !asset || JSON.stringify(asset) !== JSON.stringify(candidate.asset)) {
+      context.addIssue({ code: "custom", path: ["asset"], message: "Paragraph candidate must bind its verified segment or retained full original" });
+    }
+  }
   if (candidate.provenance.longText?.baseCandidateId === candidate.candidateId) {
     context.addIssue({ code: "custom", path: ["provenance", "longText", "baseCandidateId"], message: "A rerolled candidate must refer to a different source candidate" });
   }
@@ -68,15 +82,20 @@ export type AudioCandidateProvenance = z.infer<typeof AudioCandidateProvenanceSc
 export type AudioCandidate = z.infer<typeof AudioCandidateSchema>;
 export type AudioCandidateManifest = z.infer<typeof AudioCandidateManifestSchema>;
 
-export function getVoiceCandidateSourceFingerprint(clip: TimelineClip, context?: VoiceGenerationContext): string {
-  if (clip.type !== "voice") throw new Error("仅人声片段支持声音候选。");
-  // Timing and the previous generated asset may change while comparing takes.
-  return JSON.stringify({ text: clip.text, emotion: clip.emotion, style: clip.style, pace: clip.pace, ...(context ? { context } : {}) });
+export type AudioCandidateWorkspaceMode = "short" | "paragraph";
+export function getAudioCandidateWorkspaceMode(candidate: Pick<AudioCandidate, "provenance">): AudioCandidateWorkspaceMode {
+  return candidate.provenance.generationMode === "paragraph" ? "paragraph" : "short";
 }
 
-export function getVoiceCandidateRequestFingerprint(clip: TimelineClip, options: VoiceGenerationOptions, longTextRetry?: LongTextRetry, context?: VoiceGenerationContext): string {
+export function getVoiceCandidateSourceFingerprint(clip: TimelineClip, context?: VoiceGenerationContext, paragraph?: VoiceParagraphContext): string {
+  if (clip.type !== "voice") throw new Error("仅人声片段支持声音候选。");
+  // Timing and the previous generated asset may change while comparing takes.
+  return JSON.stringify({ text: clip.text, emotion: clip.emotion, style: clip.style, pace: clip.pace, ...(context ? { context } : {}), ...(paragraph ? { paragraph } : {}) });
+}
+
+export function getVoiceCandidateRequestFingerprint(clip: TimelineClip, options: VoiceGenerationOptions, longTextRetry?: LongTextRetry, context?: VoiceGenerationContext, paragraph?: VoiceParagraphContext): string {
   return JSON.stringify({
-    source: getVoiceCandidateSourceFingerprint(clip, options.generationMode === "long_text" ? context : undefined),
+    source: getVoiceCandidateSourceFingerprint(clip, options.generationMode === "long_text" ? context : undefined, options.generationMode === "paragraph" ? paragraph : undefined),
     options: VoiceGenerationOptionsSchema.parse(options),
     requestedSeed: clip.generation.seed,
     requestedTemperature: clip.generation.temperature,

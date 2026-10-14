@@ -49,6 +49,9 @@ export async function generateLocalClip({
   if (!clip) {
     throw new Error("Clip not found");
   }
+  if (clip.type === "voice" && clip.kind === "silent") {
+    throw new Error("无对白镜头不生成语音，请使用视频分镜功能。");
+  }
 
   if (voiceOptions) {
     voiceOptions = VoiceGenerationOptionsSchema.parse(voiceOptions);

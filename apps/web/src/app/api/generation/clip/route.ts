@@ -33,8 +33,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "请选择有效的人声片段。" }, { status: 400 });
   }
   if (voiceOptions?.generationMode === "long_text" && voiceOptions.provider !== "voxcpm2") return Response.json({ error: "长文分组需要选择 VoxCPM2。" }, { status: 400 });
+  if (voiceOptions?.generationMode === "paragraph" && voiceOptions.provider !== "voxcpm2") return Response.json({ error: "整段生成需要选择 VoxCPM2。" }, { status: 400 });
+  if (voiceOptions?.generationMode === "paragraph" && project.speechWorkspace && project.speechWorkspace.activeMode !== "paragraph") {
+    return Response.json({ error: "请切换到整段工作区后生成整段语音。" }, { status: 400 });
+  }
   if (longTextRetry && voiceOptions?.generationMode !== "long_text") return Response.json({ error: "请选择长文候选进行分组重生成。" }, { status: 400 });
-  if (voiceOptions?.generationMode === "long_text" && request.headers.get("accept")?.includes("application/x-ndjson")) {
+  if ((voiceOptions?.generationMode === "long_text" || voiceOptions?.generationMode === "paragraph") && request.headers.get("accept")?.includes("application/x-ndjson")) {
     const abortController = new AbortController();
     const abort = () => abortController.abort();
     request.signal.addEventListener("abort", abort, { once: true });

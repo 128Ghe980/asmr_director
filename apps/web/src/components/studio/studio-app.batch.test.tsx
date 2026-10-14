@@ -138,6 +138,7 @@ function mockBridge(candidates: AudioCandidate[]) {
 
 async function mount(project: AsmrProject) {
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
+  fireEvent.click(screen.getByLabelText("批量更多操作"));
   await waitFor(() => expect((screen.getByRole("button", { name: "音频全部重新生成" }) as HTMLButtonElement).disabled).toBe(false));
   await act(async () => {});
   return view;
@@ -179,7 +180,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     const project = fixtureProject(); seed(project);
     const api = mockApi({ candidateListFails: true }); mockBridge(api.candidates);
     await mount(project);
-    expect((await screen.findByRole("status", { name: "音频总览暂时无法读取" })).textContent).toBe("1/—/—");
+    expect((await screen.findByRole("status", { name: "音频总览暂时无法读取" })).textContent).toBe("已采用 1·待生成 —·未采用 —");
     expect(screen.queryByRole("status", { name: "已采用 1 段，待生成 2 段，已生成未采用 0 段，共 3 段" })).toBeNull();
     expect(storedProject(project)).toEqual(project);
   });
@@ -192,7 +193,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     }));
     await mount(project);
     const summary = await screen.findByRole("status", { name: "已采用 1 段，待生成 1 段，已生成未采用 1 段，共 3 段" });
-    expect(summary.textContent).toBe("1/1/1");
+    expect(summary.textContent).toBe("已采用 1·待生成 1·未采用 1");
     const candidateQueries = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.startsWith("/api/audio-candidates?"));
     const count = candidateQueries().length;
     expect(count).toBeGreaterThan(0);
@@ -202,7 +203,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     expect(candidateQueries()).toHaveLength(count);
     expect(screen.getByRole("status", { name: "已采用 1 段，待生成 1 段，已生成未采用 1 段，共 3 段" })).toBe(summary);
     fireEvent.change(screen.getByRole("textbox", { name: "台词" }), { target: { value: "这段台词现在变了。" } });
-    await waitFor(() => expect(screen.getByRole("status", { name: "已采用 1 段，待生成 2 段，已生成未采用 0 段，共 3 段" }).textContent).toBe("1/2/0"));
+    await waitFor(() => expect(screen.getByRole("status", { name: "已采用 1 段，待生成 2 段，已生成未采用 0 段，共 3 段" }).textContent).toBe("已采用 1·待生成 2·未采用 0"));
     expect(candidateQueries()).toHaveLength(count);
   });
   it("shows the storage failure that stopped the queue after an earlier recoverable model error", async () => {

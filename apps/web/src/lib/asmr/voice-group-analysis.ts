@@ -8,7 +8,7 @@ import { decodePcmWav } from "./pcm-audio";
 import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { VoiceAnalysisWorker, VoiceGroupAnalysisError, type VoiceAnalysisWorkerSpawn } from "./voice-analysis-worker";
-import { VoiceRecognitionSchema, type VoiceRecognition } from "./voice-recognition";
+import { VoiceRecognitionSchema, normalizeVoiceEvidenceText, normalizeVoiceSentenceParticleText, type VoiceRecognition } from "./voice-recognition";
 import { selectVoiceBoundaryWithApi, type VoiceAlignmentHint } from "./voice-boundary-api";
 export { VoiceGroupAnalysisError } from "./voice-analysis-worker";
 
@@ -162,7 +162,9 @@ const AnalysisResultSchema = z.object({
   internalPausesMs: z.array(z.number().finite().min(0).max(10_000)).max(31),
   leadingQuietMs: z.number().finite().min(0).max(120_000),
   trailingQuietMs: z.number().finite().min(0).max(120_000),
-  transcript: z.string().min(1).max(2000), coverage: z.number().finite().min(0.85).max(1),
+  // Three-character particle evidence has literal coverage 2/3; the mode
+  // specific checks below still enforce all original acceptance thresholds.
+  transcript: z.string().min(1).max(2000), coverage: z.number().finite().min(2 / 3).max(1),
   recognition: VoiceRecognitionSchema.optional(),
   cutStartSeconds: z.number().finite().min(0).max(120),
   cutEndSeconds: z.number().finite().positive().max(120),
@@ -204,6 +206,11 @@ async function scriptPath() {
 
 export async function analyzeVoiceGroup(input: {
   wav: Uint8Array; expectedText: string; followingText?: string; clauses: string[];
+  // Paragraph cuts require independent recognition on both sides even when
+  // the source text and coarse timestamps match exactly.
+  requireTwoSided?: boolean;
+  allowShortSentenceParticle?: boolean;
+  allowShortSentenceTextReview?: boolean;
   config: LocalRuntimeConfig; signal?: AbortSignal;
 }, dependencies: Dependencies = {}): Promise<VoiceGroupAnalysis> {
   let originalRecognition: VoiceRecognition | undefined;
@@ -215,7 +222,7 @@ export async function analyzeVoiceGroup(input: {
     } catch (error) {
       if (error instanceof VoiceGroupAnalysisError) originalRecognition = error.recognition;
       checkCancelled(input.signal);
-      if (error instanceof VoiceGroupAnalysisError && error.statusCode === 422
+      if (!input.allowShortSentenceTextReview && error instanceof VoiceGroupAnalysisError && error.statusCode === 422
           && ["uncertain_word_alignment", "ambiguous_ending_anchor"].includes(error.diagnosticCode ?? "")
           && error.recognition?.stage === "source_alignment" && error.recognition.endpointCandidates?.length
           && input.followingText?.trim()) {
@@ -254,7 +261,8 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
   checkCancelled(input.signal);
   if (!input.expectedText.trim() || input.expectedText.length > 500 || (input.followingText?.length ?? 0) > 1500
       || input.clauses.length < 1 || input.clauses.length > 32 || input.clauses.some((clause) => !clause.trim())
-      || input.wav.byteLength > 24 * 1024 * 1024) throw unsafeError();
+      || input.wav.byteLength > 24 * 1024 * 1024 || (input.allowShortSentenceParticle && !input.requireTwoSided)
+      || (input.allowShortSentenceTextReview && (!input.requireTwoSided || !input.allowShortSentenceParticle || alignmentHint))) throw unsafeError();
   let source: ReturnType<typeof decodePcmWav>;
   try { source = decodePcmWav(input.wav); } catch { throw unsafeError(); }
   const sourceDuration = source.samples.length / source.sampleRate;
@@ -277,6 +285,9 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
       version: 1, inputWav: path.join(directory, "input.wav"), outputWav, outputJson,
       modelPath: runtime.modelPath, expectedText: input.expectedText,
       followingText: input.followingText ?? "", clauses: input.clauses,
+      ...(input.requireTwoSided ? { requireTwoSided: true } : {}),
+      ...(input.allowShortSentenceParticle ? { allowShortSentenceParticle: true } : {}),
+      ...(input.allowShortSentenceTextReview ? { allowShortSentenceTextReview: true } : {}),
       ...(alignmentHint ? { alignmentHint } : {}),
     }), "utf8");
     checkCancelled(input.signal);
@@ -327,6 +338,44 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
     const boundarySafe = result.success && Boolean(input.followingText?.trim())
       && Boolean(verifiedRecognition?.boundaryMatch) && Boolean(result.data.cutValidation);
     const boundedEditSafe = boundedEditEvidence && boundarySafe;
+    const phoneticEvidence = result.success && result.data.recognition?.contentComparison?.mode === "phonetic_substitutions";
+    const phoneticComparison = result.success && verifiedRecognition?.contentComparison?.mode === "phonetic_substitutions" ? verifiedRecognition.contentComparison : undefined;
+    let phoneticClauseLength = 0;
+    const phoneticClauseEnds = new Set(input.clauses.map(clause => (phoneticClauseLength += Array.from(normalizeVoiceEvidenceText(clause)).length) - 1));
+    const phoneticSafe = phoneticEvidence && result.success && verifiedRecognition?.stage === "complete"
+      && Boolean(input.followingText?.trim()) && !verifiedRecognition.continuationBridge
+      && phoneticComparison && normalizeVoiceEvidenceText(result.data.transcript) === phoneticComparison.recognized
+      && phoneticComparison.differences.every(difference => difference.rule !== "sentence_particle" || phoneticClauseEnds.has(difference.index))
+      && result.data.cutValidation
+      && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
+      && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001;
+    const particleEvidence = result.success && result.data.recognition?.contentComparison?.mode === "sentence_particle";
+    const particleComparison = verifiedRecognition?.contentComparison?.mode === "sentence_particle" ? verifiedRecognition.contentComparison : undefined;
+    const particleSafe = particleEvidence && result.success && input.allowShortSentenceParticle && input.requireTwoSided
+      && verifiedRecognition?.stage === "complete" && !verifiedRecognition.continuationBridge
+      && particleComparison && normalizeVoiceSentenceParticleText(result.data.transcript) === particleComparison.recognized
+      && (input.followingText?.trim() ? result.data.cutValidation
+        && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
+        && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001
+        : normalizeVoiceSentenceParticleText(verifiedRecognition.sourceTranscript) === particleComparison.sourcePrefix
+          && normalizeVoiceSentenceParticleText(verifiedRecognition.sourceWords?.map((word) => word.text).join("") ?? "") === particleComparison.sourcePrefix);
+    const reviewEvidence = result.success && Boolean(result.data.recognition?.shortSentenceReview);
+    const review = verifiedRecognition?.shortSentenceReview;
+    const reviewSafe = reviewEvidence && result.success && input.allowShortSentenceTextReview && input.allowShortSentenceParticle && input.requireTwoSided
+      && verifiedRecognition?.stage === "complete" && !verifiedRecognition.boundaryMatch && !verifiedRecognition.continuationBridge
+      && input.clauses.length === 1 && normalizeVoiceSentenceParticleText(input.clauses[0]) === review?.expected
+      && review && result.data.transcript === review.final.transcript && Math.abs(result.data.coverage - review.similarity) <= .000001
+      && (input.followingText?.trim() ? result.data.cutValidation
+        && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
+        && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001
+        : !review.left && !review.right);
+    const followingEvidence = result.success && Boolean(result.data.recognition?.followingPhoneticBoundary);
+    const followingBoundary = verifiedRecognition?.followingPhoneticBoundary;
+    const followingSafe = followingEvidence && result.success && input.allowShortSentenceTextReview && input.allowShortSentenceParticle && input.requireTwoSided
+      && followingBoundary && verifiedRecognition?.stage === "complete" && !verifiedRecognition.boundaryMatch && !verifiedRecognition.continuationBridge
+      && result.data.cutValidation && Boolean(input.followingText?.trim())
+      && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
+      && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001;
     const bridge = result.success ? result.data.recognition?.continuationBridge : undefined;
     const bridgeSafe = result.success && verifiedRecognition?.continuationBridge
       && result.data.coverage === 1 && result.data.cutValidation
@@ -335,8 +384,13 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
       && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
       && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001;
     if (!result.success || result.data.cutEndSeconds <= result.data.cutStartSeconds || result.data.cutEndSeconds > sourceDuration + 0.001
+        || (input.requireTwoSided && input.followingText?.trim() && !result.data.cutValidation)
         || (result.data.cutValidation && result.data.cutValidation.quietEndSeconds > sourceDuration + .001)
-        || (result.data.coverage < .9 && !boundedEditSafe) || (boundedEditEvidence && !boundedEditSafe)
+        || (result.data.coverage < .9 && !boundedEditSafe && !phoneticSafe && !particleSafe && !reviewSafe) || (boundedEditEvidence && !boundedEditSafe)
+        || (phoneticEvidence && !phoneticSafe)
+        || (particleEvidence && !particleSafe)
+        || (reviewEvidence && !reviewSafe)
+        || (followingEvidence && !followingSafe)
         || (result.data.recognition?.boundaryMatch && !boundarySafe)
         || (bridge && !bridgeSafe)
         || (result.data.recognition?.contentComparison && Math.abs(result.data.coverage - result.data.recognition.contentComparison.similarity) > .000001)
@@ -353,6 +407,37 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
         || result.data.leadingQuietMs + result.data.trailingQuietMs >= duration * 1000
         || result.data.internalPausesMs.length !== input.clauses.length - 1
         || !decoded.samples.some((sample) => Math.abs(sample) > 1e-5)) throw unsafeError();
+    if (review) {
+      if (Math.abs(review.final.durationSeconds - duration) > .002
+          || (review.left && review.left.durationSeconds > (result.data.cutValidation?.quietEndSeconds ?? 0) + .04)
+          || (review.right && review.right.durationSeconds > sourceDuration - (result.data.cutValidation?.quietStartSeconds ?? sourceDuration) + .04)) throw unsafeError();
+      let sourcePrefix = "", endpoint = -1;
+      for (const [index, word] of (verifiedRecognition?.sourceWords ?? []).entries()) {
+        sourcePrefix += normalizeVoiceSentenceParticleText(word.text);
+        if (sourcePrefix === review.sourcePrefix) { endpoint = index; break; }
+        if (Array.from(sourcePrefix).length >= Array.from(review.sourcePrefix).length) break;
+      }
+      let previous = 0;
+      for (const word of (verifiedRecognition?.sourceWords ?? []).slice(0, endpoint + 1 + (input.followingText?.trim() ? 1 : 0))) {
+        if (word.end <= word.start || word.start < previous - .02 || word.end > sourceDuration + .04) throw unsafeError();
+        previous = word.end;
+      }
+      if (endpoint < 0) throw unsafeError();
+    }
+    if (followingBoundary) {
+      if (followingBoundary.right.durationSeconds > sourceDuration - (result.data.cutValidation?.quietStartSeconds ?? sourceDuration) + .04) throw unsafeError();
+      let followingPrefix = "", terminal = -1;
+      for (let index = followingBoundary.sourceWordIndex; index < (verifiedRecognition?.sourceWords?.length ?? 0); index++) {
+        followingPrefix += normalizeVoiceSentenceParticleText(verifiedRecognition!.sourceWords![index].text);
+        if (Array.from(followingPrefix).length >= Array.from(followingBoundary.expected).length) { terminal = index; break; }
+      }
+      let previous = 0;
+      for (const word of (verifiedRecognition?.sourceWords ?? []).slice(0, terminal + 1)) {
+        if (word.end <= word.start || word.start < previous - .02 || word.end > sourceDuration + .04) throw unsafeError();
+        previous = word.end;
+      }
+      if (terminal < followingBoundary.sourceWordIndex) throw unsafeError();
+    }
     checkCancelled(input.signal);
     const { version: _version, success: _success, ...details } = result.data;
     void _version; void _success;

@@ -12,6 +12,7 @@ import { generateVoxCpm2, VoxCpm2Error } from "./voxcpm2-provider";
 import { generateVoiceLongText, type VoiceGenerationProgress } from "./voice-longtext-generation";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { getVoiceGenerationContext } from "./voice-generation-context";
+import { generateVoiceParagraphCandidates } from "./voice-paragraph-generation";
 
 export async function generateLocalVoiceCandidate({ project, clip, config, voiceOptions, signal, onProgress, longTextRetry, now = new Date() }: {
   project: AsmrProject; clip: Extract<TimelineClip, { type: "voice" }>; config: LocalRuntimeConfig;
@@ -20,6 +21,11 @@ export async function generateLocalVoiceCandidate({ project, clip, config, voice
   longTextRetry?: LongTextRetry;
 }) {
   signal?.throwIfAborted();
+  if (clip.kind === "silent") throw new VoxCpm2Error("无对白镜头不生成语音。", 400);
+  if (voiceOptions.generationMode === "paragraph") {
+    if (longTextRetry) throw new VoxCpm2Error("整段模式需要重新生成整个段落。", 400);
+    return generateVoiceParagraphCandidates({ project, clipId: clip.id, config, voiceOptions, signal, now, onProgress });
+  }
   const context = voiceOptions.generationMode === "long_text" ? getVoiceGenerationContext(project, clip.id) : undefined;
   const sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, context);
   const ownership = { config, projectId: project.project_id, clipId: clip.id, adoptedAssetId: clip.asset.asset_id ?? undefined };

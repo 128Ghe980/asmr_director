@@ -88,7 +88,7 @@ async function mountEditor(project: AsmrProject, clipId = voices(project)[1].id,
 }
 
 function control(label: string) { return screen.getByLabelText(label) as HTMLInputElement | HTMLTextAreaElement; }
-function generationButton() { return screen.getByRole("button", { name: /^(?:重新)?生成本段分镜$/ }) as HTMLButtonElement; }
+function generationButton() { return screen.getByRole("button", { name: /^(?:生成|重做)分镜$/ }) as HTMLButtonElement; }
 function copyButton() { return screen.getByRole("button", { name: /^(?:复制|已复制) H3 提示词$/ }) as HTMLButtonElement; }
 function setClipboard(writeText?: (text: string) => Promise<void>) { Object.defineProperty(navigator, "clipboard", { configurable: true, value: writeText ? { writeText } : undefined }); }
 function readBlob(blob: Blob): Promise<string> {
@@ -102,6 +102,39 @@ afterEach(() => {
 });
 
 describe("ClipStoryboardEditor current-audio workflow", () => {
+  it("keeps reference explanations collapsed while showing a blocking continuity reason directly", async () => {
+    const project = fixture(); mockApi(); await mountEditor(project);
+    const summary = screen.getByText("镜头参考说明"), explanation = summary.closest("details")!;
+    expect(explanation.open).toBe(false);
+    expect(screen.queryByText("从当前音频出发，规划一个自然、连续的画面。")).toBeNull();
+    fireEvent.click(summary);
+    expect(explanation.open).toBe(true);
+    fireEvent.click(summary);
+    fireEvent.click(control("连续镜头"));
+    const reason = screen.getByText(/先生成上一段后再生成连续镜头/);
+    expect(reason.closest("details")).toBeNull();
+    expect(explanation.open).toBe(false);
+    expect(generationButton().disabled).toBe(true);
+    fireEvent.click(control("新镜头"));
+    expect(generationButton().disabled).toBe(false);
+  });
+  it("generates a silent storyboard without an adopted voice and exports no speech instruction", async () => {
+    const project = fixture(), clip = voices(project)[1];
+    clip.kind = "silent"; clip.text = "茶杯落桌，镜头停留。"; clip.duration = 5;
+    clip.generation.status = "asset_pending"; clip.asset = { asset_id: null, uri: null, duration: null };
+    const result: ClipVideoStoryboard = { ...shotFixture(project), kind: "silent", duration: 5, audio: undefined };
+    const api = mockApi(); api.respond(Response.json({ storyboard: result }));
+    const { onSave, update } = await mountEditor(project);
+    expect(generationButton().disabled).toBe(false);
+    expect(screen.getByText("无对白 · 5.0 秒")).toBeTruthy();
+    expect(screen.queryByText(/先生成并采用本段音频/)).toBeNull();
+    fireEvent.click(generationButton());
+    await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, result));
+    const saved = structuredClone(project); saved.videoPlan!.shots[clip.id] = result; update(saved);
+    expect(control("本段 H3 提示词").value).toContain("Silent shot");
+    expect(control("本段 H3 提示词").value).not.toContain("<Audio 1>");
+    expect(screen.queryByRole("link", { name: "下载本段音频" })).toBeNull();
+  });
   it.each(["pending", "wrong URI"])("disables generation until the current clip has adopted audio (%s)", async (kind) => {
     const project = fixture(); const clip = voices(project)[1];
     if (kind === "pending") { clip.generation.status = "asset_pending"; clip.asset = { asset_id: null, uri: null, duration: null }; }
@@ -123,7 +156,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     expect(api.posts).toHaveLength(1);
     expect(api.posts[0].body).toEqual({ provider: "api", project: before, clipId: clip.id, referenceMode: "new", includePrevious: true, instruction: "Keep the cup on the table." });
     expect(api.posts[0].body).not.toHaveProperty("draft");
-    expect(project).toEqual(before); expect(result.audio.duration).toBe(measuredDuration); expect(result.audio.duration).not.toBe(clip.duration);
+    expect(project).toEqual(before); expect(result.audio!.duration).toBe(measuredDuration); expect(result.audio!.duration).not.toBe(clip.duration);
   });
 
   it.each(["valid", "wrong predecessor", "wrong predecessor fingerprint", "missing requested reference", "wrong mode", "missing mode"])("checks requested reference mode and previous-shot metadata (%s)", async (kind) => {
@@ -244,7 +277,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     fireEvent.click(screen.getByText("H3 提示词预览")); const preview = control("本段 H3 提示词") as HTMLTextAreaElement;
     expect(preview.readOnly).toBe(true); expect(preview.value).toBe(createClipH3Prompt(project, clip.id));
     expect(preview.value).toContain(`<d>[Chinese]${clip.text}</d>`); expect(preview.value).not.toContain(previous.text);
-    expect(preview.value).toContain(`${shot.audio.duration} seconds`); expect(preview.value).not.toContain(`${clip.asset.duration} seconds`); expect(preview.value).not.toContain(`${clip.duration} seconds`);
+    expect(preview.value).toContain(`${shot.audio!.duration} seconds`); expect(preview.value).not.toContain(`${clip.asset.duration} seconds`); expect(preview.value).not.toContain(`${clip.duration} seconds`);
     expect(preview.value).toContain("<Audio 1>: fully_copy"); expect(preview.value).toContain("non_diegetic_music: N/A");
     expect(preview.value).toContain(shot.visual); expect(preview.value).toContain(shot.action); expect(preview.value).toContain(shot.camera);
     expect(preview.value).not.toContain(project.videoPlan!.sceneDescription);

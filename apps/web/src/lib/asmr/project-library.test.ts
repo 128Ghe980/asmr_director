@@ -185,7 +185,7 @@ describe("adopting planner drafts", () => {
       : { ...generated.videoPlan!, shots: { [shot.clipId]: { ...shot, clipId: "foreign_clip" } } };
     raw.projects[1].revisions[0].project.videoPlan = {
       ...generated.videoPlan!,
-      shots: { [shot.clipId]: { ...shot, audio: { ...shot.audio, uri: "asset://clip/another_voice" } } },
+      shots: { [shot.clipId]: { ...shot, audio: { ...shot.audio!, uri: "asset://clip/another_voice" } } },
     };
     const storage = createStorage({ [PROJECT_LIBRARY_STORAGE_KEY]: JSON.stringify(raw) });
     const restored = loadProjectLibrary(storage, demoProject, secondTime);

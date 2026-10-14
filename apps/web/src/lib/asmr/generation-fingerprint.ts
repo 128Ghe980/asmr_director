@@ -39,6 +39,8 @@ type ProjectMixFingerprintInput = {
       uri: string | null;
       duration: number | null;
     };
+    stale_voice_source?: Record<string, boolean | string>;
+    silent?: true;
   }>;
 };
 
@@ -132,6 +134,8 @@ function getProjectMixClipFingerprintInput(
       uri: clip.asset.uri,
       duration: clip.asset.duration,
     },
+    ...(clip.type === "voice" && clip.audio_stale ? { stale_voice_source: getTypedFingerprintInput(clip) } : {}),
+    ...(clip.type === "voice" && clip.kind === "silent" ? { silent: true as const } : {}),
   };
 }
 

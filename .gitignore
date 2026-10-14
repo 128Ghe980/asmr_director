@@ -10,6 +10,16 @@ node_modules/
 .next-project-planner-repair-production/
 .next-reference-asr-repair-production/
 .next-candidate-recheck-production/
+.next-accepted-preview-production/
+.next-accepted-preview-final-production/
+.next-phonetic-review-production/
+.next-recheck-connection-production/
+.next-generation-oom-production/
+.next-dual-dev/
+.next-dual-production/
+.next-sentences-production/
+.next-particle-production/
+.next-confirmation-production/
 .next-semantic-build/
 .next-batch-build/
 .next-batch-production/

@@ -8,7 +8,7 @@ import { flattenClips } from "@/lib/asmr/view-model";
 import { VoxCpm2Error } from "@/lib/asmr/voxcpm2-error";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 1800;
 type Context = { params: Promise<{ candidateId: string }> };
 const IdSchema = z.string().min(1).max(240).regex(/^[A-Za-z0-9_-]+$/);
 const RequestSchema = z.object({ project: AsmrProjectSchema, clipId: IdSchema }).strict();

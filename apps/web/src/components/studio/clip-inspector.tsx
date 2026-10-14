@@ -2,6 +2,7 @@
 
 import {
   Clock3,
+  Clapperboard,
   Ear,
   Heart,
   LoaderCircle,
@@ -36,6 +37,7 @@ import { GenerationSlotList } from "./generation-slot-list";
 import { StatusBadge } from "./status-badge";
 
 type ClipInspectorProps = {
+  speechWorkspaceMode?: "short" | "paragraph";
   binaural?: boolean;
   textEditorExternal?: boolean;
   voiceGenerationPanel?: (generationControl: React.ReactNode) => React.ReactNode;
@@ -269,10 +271,12 @@ function GenerationActionPanel({
   control,
   onCancel,
   onGenerate,
+  voice = false,
 }: {
   control: SelectedClipGenerationControl;
   onCancel: () => void;
   onGenerate: () => void;
+  voice?: boolean;
 }) {
   const isCancel = control.action === "cancel";
   const Icon = isCancel
@@ -296,6 +300,7 @@ function GenerationActionPanel({
         </div>
         <button
           type="button"
+          aria-label={control.label}
           disabled={control.disabled}
           onClick={isCancel ? onCancel : onGenerate}
           className="inline-flex h-9 min-w-24 items-center justify-center gap-2 rounded-md border border-sky-300/24 bg-sky-300/12 px-3 text-xs font-semibold text-sky-50 transition hover:bg-sky-300/18 disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.035] disabled:text-studio-muted"
@@ -308,7 +313,7 @@ function GenerationActionPanel({
           ) : (
             <Icon className="h-3.5 w-3.5" aria-hidden="true" />
           )}
-          <span>{control.label}</span>
+          <span>{voice && control.action === "generate" ? "生成音频" : voice && control.action === "regenerate" ? "重生成音频" : voice && control.action === "retry" ? "重试生成音频" : control.label}</span>
         </button>
       </div>
 
@@ -371,6 +376,7 @@ function parseNumericInput(value: string): number {
 }
 
 export function ClipInspector({
+  speechWorkspaceMode = "short",
   binaural = true,
   textEditorExternal = false,
   voiceGenerationPanel,
@@ -440,17 +446,37 @@ export function ClipInspector({
       : {};
   }
 
+  if (selectedClip.type === "voice" && selectedClip.kind === "silent") {
+    return <section aria-label="无对白镜头设置" className="rounded-lg border border-violet-300/15 bg-studio-panel/88">
+      <div className="flex h-12 items-center gap-2 border-b border-studio-line px-4">
+        <Clapperboard className="h-4 w-4 text-violet-200" aria-hidden="true" />
+        <h2 className="text-sm font-semibold">无对白镜头</h2>
+      </div>
+      <div className="space-y-3 px-4 py-4">
+        {textEditorExternal ? <p className="whitespace-pre-wrap break-words text-sm leading-6">{selectedClip.text}</p>
+          : <label className="block space-y-2"><span className="text-xs text-studio-muted">画面描述</span><textarea aria-label="无对白镜头画面描述" value={selectedClip.text}
+            onChange={(event) => updateClip({ text: event.target.value })} className={controlClassName("min-h-24 resize-y leading-6", hasFieldIssues("text"))} {...getFieldControlProps("text")} /></label>}
+        <FieldError id={getFieldErrorId("text")} issues={getFieldIssues("text")} />
+        <label className="flex items-center justify-between gap-3"><span className="text-xs text-studio-muted">镜头时长（秒）</span><input aria-label="无对白镜头时长" type="number" min={0.1} max={600} step={0.1}
+          value={selectedClip.duration} onChange={(event) => updateClip({ duration: parseNumericInput(event.target.value) })}
+          className={controlClassName("max-w-28", hasFieldIssues("duration"))} {...getFieldControlProps("duration")} /></label>
+        <FieldError id={getFieldErrorId("duration")} issues={getFieldIssues("duration")} />
+        <p className="rounded-lg border border-violet-300/10 bg-violet-300/5 px-3 py-2 text-xs leading-6 text-studio-muted">按画面描述与时长生成视频分镜。整体试听会保留这一段静音。</p>
+      </div>
+    </section>;
+  }
+
   return (
     <section className="rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 items-center justify-between border-b border-studio-line px-4">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-studio-text">片段检查</h2>
+          <h2 className="text-sm font-semibold text-studio-text">{speechWorkspaceMode === "paragraph" && selectedClip.type === "voice" ? "整段音频" : "片段检查"}</h2>
         </div>
         <StatusBadge status={selectedClip.generation.status} />
       </div>
 
       <div className="px-4">
-        {selectedClip.type === "voice" && textEditorExternal ? (
+        {selectedClip.type === "voice" && textEditorExternal && speechWorkspaceMode === "short" ? (
           <div className="border-b border-white/[0.06] py-3">
             <p className="text-xs font-semibold text-studio-muted">当前范围</p>
             <p aria-label="当前范围文本" title={selectedClip.text} className="mt-1.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-studio-text">
@@ -461,8 +487,8 @@ export function ClipInspector({
         ) : null}
 
         {selectedClip.type === "voice" && voiceGenerationPanel ? voiceGenerationPanel(
-          <GenerationActionPanel control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />,
-        ) : <GenerationActionPanel control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />}
+          <GenerationActionPanel voice control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />,
+        ) : <GenerationActionPanel voice={selectedClip.type === "voice"} control={selectedClipGeneration} onCancel={onCancelSelectedGeneration} onGenerate={onGenerateSelectedClip} />}
 
         {selectedClip.type === "voice" && !textEditorExternal ? (
           <InspectorField label="台词">

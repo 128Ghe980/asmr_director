@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioLines, Clapperboard, LoaderCircle, X } from "lucide-react";
+import { AudioLines, Clapperboard, LoaderCircle, MoreHorizontal, X } from "lucide-react";
 
 import type { StudioBatchAction } from "@/lib/asmr/studio-batch-generation";
 import type { StudioAudioOverview } from "@/lib/asmr/studio-audio-overview";
@@ -33,8 +33,8 @@ const groups = [
     tone: "border-sky-300/15 bg-sky-300/[0.035] text-sky-100",
     buttonTone: "border-sky-300/20 bg-sky-300/[0.06] hover:bg-sky-300/12 focus-visible:outline-sky-300",
     actions: [
-      { action: "audio_missing", label: "全部生成", accessibleLabel: "音频全部生成", title: "生成尚未采用音频的段落，沿用当前声音设置。" },
-      { action: "audio_all", label: "全部重生成", accessibleLabel: "音频全部重新生成", title: "按当前声音设置重新生成全部音频。" },
+      { action: "audio_missing", label: "生成音频", accessibleLabel: "音频全部生成", title: "生成当前页缺失或待更新的音频，沿用当前声音设置。" },
+      { action: "audio_all", label: "重生成全部音频", accessibleLabel: "音频全部重新生成", title: "按当前页声音设置重新生成全部音频。" },
     ],
   },
   {
@@ -43,8 +43,8 @@ const groups = [
     tone: "border-violet-300/15 bg-violet-300/[0.035] text-violet-100",
     buttonTone: "border-violet-300/20 bg-violet-300/[0.06] hover:bg-violet-300/12 focus-visible:outline-violet-300",
     actions: [
-      { action: "storyboard_missing", label: "全部生成", accessibleLabel: "分镜全部生成", title: "使用已采用音频生成分镜。" },
-      { action: "storyboard_all", label: "全部重生成", accessibleLabel: "分镜全部重新生成", title: "使用已采用音频重新生成全部分镜。" },
+      { action: "storyboard_missing", label: "生成分镜", accessibleLabel: "分镜全部生成", title: "生成当前页缺失或待更新的分镜，包括无对白镜头。" },
+      { action: "storyboard_all", label: "重做全部分镜", accessibleLabel: "分镜全部重新生成", title: "重新生成当前页全部可用分镜。" },
     ],
   },
 ] as const;
@@ -62,29 +62,26 @@ export function StudioBatchActions({ counts, audioOverview, overviewStatus = "re
 
   return <div aria-label="批量生成" role="group" className="@container min-w-0 border-b border-studio-line bg-black/10 px-3 py-2">
     {audioOverview && <div aria-label="音频总览" role="group" className="mb-2 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
-      <span className="text-studio-muted">音频总览</span>
       <span role="status" aria-live="polite" aria-atomic="true"
-        aria-label={overviewStatus === "ready" ? `已采用 ${audioOverview.adopted} 段，待生成 ${audioOverview.pending} 段，已生成未采用 ${audioOverview.unadopted} 段，共 ${audioOverview.total} 段` : overviewStatus === "error" ? "音频总览暂时无法读取" : "正在读取音频总览"}
+        aria-label={overviewStatus === "ready" ? `已采用 ${audioOverview.adopted} 段，待生成 ${audioOverview.pending} 段，已生成未采用 ${audioOverview.unadopted} 段${audioOverview.needsUpdate ? `，待更新 ${audioOverview.needsUpdate} 段` : ""}，共 ${audioOverview.total} 段` : overviewStatus === "error" ? "音频总览暂时无法读取" : "正在读取音频总览"}
         title="按当前文案的段落统计；多个候选只计一段，过期或已放弃候选不计入未采用。"
         className="inline-flex items-center gap-1.5 rounded-md border border-white/5 bg-white/[0.025] px-2 py-0.5 text-[13px] font-semibold tabular-nums">
-        <span className="text-emerald-200">{audioOverview.adopted}</span><span aria-hidden="true" className="font-normal text-studio-muted/50">/</span>
-        <span className="text-studio-text">{overviewStatus === "ready" ? audioOverview.pending : "—"}</span><span aria-hidden="true" className="font-normal text-studio-muted/50">/</span>
-        <span className="text-amber-200">{overviewStatus === "ready" ? audioOverview.unadopted : "—"}</span>
+        <span className="text-emerald-200">已采用 {audioOverview.adopted}</span><span aria-hidden="true" className="font-normal text-studio-muted/50">·</span>
+        <span className="text-studio-muted">待生成 {overviewStatus === "ready" ? audioOverview.pending : "—"}</span><span aria-hidden="true" className="font-normal text-studio-muted/50">·</span>
+        <span className="text-amber-200">未采用 {overviewStatus === "ready" ? audioOverview.unadopted : "—"}</span>
+        {audioOverview.needsUpdate ? <span className="text-amber-200">· 待更新 {audioOverview.needsUpdate}</span> : null}
       </span>
-      <span className="text-[10px] text-studio-muted">已采用 / 待生成 / 已生成未采用</span>
       {overviewStatus === "error" && <span className="text-[10px] text-amber-200/80">统计暂不可用</span>}
     </div>}
-    <div className="grid min-w-0 grid-cols-1 gap-2 @min-[34rem]:grid-cols-2">
-      {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className={`flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 ${group.tone}`}>
-        <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium"><group.icon className="h-3.5 w-3.5" aria-hidden="true" />{group.label}</span>
-        <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
-          {group.actions.map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title}
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className="flex min-w-0 flex-1">
+          {group.actions.slice(0, 1).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title}
             disabled={disabled || active || counts[action] <= 0} onClick={() => onRun(action)}
-            className={`inline-flex min-h-8 min-w-0 items-center justify-center gap-1 rounded-md border px-1.5 text-[11px] font-medium transition-colors focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-35 ${group.buttonTone}`}>
-            <span className="whitespace-nowrap">{label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{counts[action]}</span>
+            className={`inline-flex min-h-8 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-35 ${group.buttonTone}`}>
+            <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{counts[action]}</span>
           </button>)}
-        </div>
       </div>)}
+      <details className="relative"><summary aria-label="批量更多操作" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-studio-line text-studio-muted hover:bg-white/5"><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-30 mt-1 grid w-44 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">{groups.flatMap((group) => group.actions.slice(1).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title} disabled={disabled || active || counts[action] <= 0} onClick={() => onRun(action)} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">{label} · {counts[action]}</button>))}</div></details>
     </div>
     {progress && <div className="mt-2 space-y-1.5">
       <div className="flex min-w-0 items-center justify-between gap-2 text-[11px]">

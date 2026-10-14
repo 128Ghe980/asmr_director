@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { AudioCandidateSchema, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "./audio-candidate";
-import { saveClipAsset } from "./local-asset-store";
-import { CandidateSourceChangedError, ensureAudioCandidateCapacity, getAudioCandidate, saveAudioCandidate } from "./local-candidate-store";
+import { resolveClipAssetPath, saveClipAsset } from "./local-asset-store";
+import { CandidateSourceChangedError, ensureAudioCandidateCapacity, getAudioCandidate, saveAudioCandidate, saveParagraphAudioCandidates } from "./local-candidate-store";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { decodePcmWav } from "./pcm-audio";
 import type { AsmrProject } from "./schema";
@@ -16,10 +16,15 @@ import { assembleVoiceGroups } from "./voice-longtext-generation";
 import { buildLongTextInputs, chooseGroupPauses } from "./voice-longtext-plan";
 import { VoiceLongTextResultSchema, type VoiceLongTextResult } from "./voice-longtext-result";
 import { VoiceRecognitionSchema, type VoiceRecognition } from "./voice-recognition";
-import { getVoiceReviewWarning } from "./voice-review-warning";
+import { getVoiceReviewWarning, getVoiceContentDifferenceWarning } from "./voice-review-warning";
 import { flattenClips } from "./view-model";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getLocalStorageError } from "./local-storage-error";
+import { getParagraphGroup, getSpeechWorkspaceMode } from "./speech-workspace";
+import { getVoiceParagraphContext } from "./voice-paragraph-context";
+import { VoiceParagraphResultSchema, type VoiceParagraphResult } from "./voice-paragraph-result";
+import { paragraphPcmFrames, splitVoiceParagraph, type ParagraphAudioSegment } from "./voice-paragraph-split";
+import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 
 const RUN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -107,7 +112,9 @@ async function findOriginals(input: RecheckInput, candidate: AudioCandidate, che
 }
 
 function differenceWarning(group: VoiceLongTextResult["groups"][number]) {
-  return `第 ${group.index + 1} 段：已截取目标片段；识别结果与源文有差异（相似度 ${((group.recognition?.contentComparison?.similarity ?? 0) * 100).toFixed(1)}%），请试听确认。`;
+  const comparison = group.recognition?.contentComparison;
+  return comparison ? getVoiceContentDifferenceWarning(group.index, comparison)
+    : `第 ${group.index + 1} 段：已截取目标片段；识别结果与源文有差异（相似度 0.0%），请试听确认。`;
 }
 function retainedWarnings(candidate: AudioCandidate) {
   const prior = candidate.provenance.longText!;
@@ -123,23 +130,170 @@ function retainedWarnings(candidate: AudioCandidate) {
   return [...(prior.plan?.warnings ?? []), ...candidate.qualityWarnings.filter((warning) => !analysisWarnings.has(warning))];
 }
 
+const PARAGRAPH_REVIEW_WARNING = "整段已生成，但短句切分未全部通过检查；完整原音可试听、下载，确认安全分段后才能采用到短句。";
+const PARAGRAPH_CONFIRMATION_WARNING = "短句音频已安全切分，部分文字待试听确认；请逐句确认后采用整段。";
+
+/** Reuse only the exact original asset bound by the saved authoritative candidate. */
+async function recheckParagraph(input: RecheckInput, candidate: AudioCandidate, dependencies: Dependencies,
+  signal: AbortSignal, deadline: number, check: () => void, runtimeSession: VoxCpm2RuntimeSession): Promise<{ candidate: AudioCandidate }> {
+  const prior = candidate.provenance.paragraph!;
+  const group = getParagraphGroup(input.project, input.clipId);
+  const context = getVoiceParagraphContext(input.project, input.clipId);
+  const clip = group.find((member) => member.id === input.clipId);
+  if (getSpeechWorkspaceMode(input.project) !== "paragraph") throw new VoiceCandidateRecheckError("请切换到整段工作区后重新识别。", 400);
+  if (!clip || !context || group.some((member) => member.kind === "silent")
+    || context.groupId !== prior.groupId || context.text !== prior.text
+    || !isDeepStrictEqual(group.map((member) => member.id), prior.clipIds)
+    || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(clip, undefined, context)) {
+    throw new VoiceCandidateRecheckError("当前整段台词或短句划分已改变，请重新生成；原候选仍保留。", 409);
+  }
+  const ownership = group.map((member) => ({ config: input.config, projectId: candidate.projectId, clipId: member.id,
+    adoptedAssetId: member.asset.asset_id ?? undefined, workspaceMode: "paragraph" as const }));
+  const checkSourceContext = () => {
+    if (getSpeechWorkspaceMode(input.project) !== "paragraph"
+      || !isDeepStrictEqual(getVoiceParagraphContext(input.project, input.clipId), context)) {
+      throw new VoiceCandidateRecheckError("当前整段台词或短句划分已改变，请重新生成；原候选仍保留。", 409);
+    }
+  };
+  for (const owner of ownership) { check(); await ensureAudioCandidateCapacity(owner); }
+  let wav: Uint8Array;
+  try {
+    const filePath = resolveClipAssetPath(prior.sourceAsset.assetId, input.config);
+    await safeFile(filePath, input.config.clipAssetRoot, MAX_RECORDING_BYTES);
+    wav = new Uint8Array(await readFile(filePath));
+    await safeFile(filePath, input.config.clipAssetRoot, MAX_RECORDING_BYTES);
+    const { frames } = paragraphPcmFrames(wav);
+    if (Math.abs(frames / 48_000 - prior.sourceAsset.duration) > 1 / 48_000
+      || candidate.wav.sampleRate !== 48_000 || candidate.wav.channels !== 1 || candidate.wav.bitsPerSample !== 16) throw sourceUnavailable();
+  } catch { throw sourceUnavailable(); }
+  check();
+  const now = dependencies.now ?? new Date();
+  const traceRoot = path.join(getVoiceGenerationRoot(input.config), "long-text", randomUUID());
+  await mkdir(traceRoot, { recursive: true });
+  const record = (name: string, value: unknown) => writeFile(path.join(traceRoot, name), JSON.stringify(value, null, 2), { flag: "wx" });
+  // A separate trace documents this analysis attempt. The source asset identity,
+  // complete PCM and original native parameters are retained without another TTS.
+  await record("plan.json", { projectId: candidate.projectId, clipId: input.clipId, createdAt: now.toISOString(), generationMode: "paragraph",
+    sourceFingerprint: candidate.sourceFingerprint, paragraph: context, plan: { clauses: group.map((member) => member.text) },
+    targets: [{ expectedText: context.text, text: context.text }], recheckedFromCandidateId: candidate.candidateId,
+    sourceAsset: prior.sourceAsset, generationCalls: 0, recheckCalls: 1, originalNativeParameters: candidate.provenance.parameters });
+  await writeFile(path.join(traceRoot, "group-1-take-1-source.wav"), wav, { flag: "wx" });
+  await record("group-1-take-1-source.json", { ...candidate.provenance, recheckedFromCandidateId: candidate.candidateId,
+    generationCalls: 0, recheckCalls: 1 });
+  try {
+    let cuts: ParagraphAudioSegment[] = [];
+    let diagnosticCode: string | undefined;
+    let failureRecognition: VoiceRecognition | undefined;
+    let failedClipId: string | undefined;
+    let attemptedSentence: { text: string; followingText: string } | undefined;
+    try {
+      const max = candidate.provenance.parameters.maxSteps, generated = candidate.provenance.parameters.generatedSteps;
+      if (typeof max === "number" && typeof generated === "number" && generated >= max - .001) {
+        throw new VoiceGroupAnalysisError("整段录音达到模型长度上限。", 422, "generation_length_limit");
+      }
+      cuts = await splitVoiceParagraph({ wav, targets: group.map((member) => ({ clipId: member.id, text: member.text })), config: input.config, signal },
+        { runtimeSession, analyze: async (analysisInput, analysisDependencies) => {
+          attemptedSentence = { text: analysisInput.expectedText, followingText: analysisInput.followingText ?? "" };
+          return (dependencies.analyze ?? analyzeVoiceGroup)(analysisInput,
+            { ...analysisDependencies, timeoutMs: Math.max(1, deadline - Date.now()) });
+        } });
+      check();
+    } catch (error) {
+      check();
+      if (!(error instanceof VoiceGroupAnalysisError) || error.statusCode !== 422) throw error;
+      diagnosticCode = error.diagnosticCode ?? "paragraph_analysis_unavailable";
+      const evidence = VoiceRecognitionSchema.safeParse(error.recognition);
+      if (evidence.success && evidence.data.expectedText === attemptedSentence?.text
+        && (evidence.data.followingText ?? "") === attemptedSentence.followingText) {
+        const matches = group.filter((member, index) => member.text === evidence.data.expectedText
+          && (evidence.data.followingText ?? "") === group.slice(index + 1).map((later) => later.text).join(""));
+        if (matches.length === 1) { failureRecognition = evidence.data; failedClipId = matches[0].id; }
+      }
+      await record("group-1-take-1-failure.json", { stage: "analyze", code: diagnosticCode, message: error.message,
+        ...(failureRecognition ? { recognition: failureRecognition, failedClipId } : {}), retainedOriginal: true,
+        generationCalls: 0, recheckCalls: 1 });
+    }
+    check();
+    checkSourceContext();
+    if (!isDeepStrictEqual(await getAudioCandidate({ config: input.config, candidateId: candidate.candidateId }), candidate)) {
+      throw new VoiceCandidateRecheckError("原候选状态已改变，请刷新列表。", 409);
+    }
+    for (const owner of ownership) { check(); await ensureAudioCandidateCapacity(owner); }
+    const segments: VoiceParagraphResult["segments"] = [];
+    for (const cut of cuts) {
+      check();
+      const asset = await saveClipAsset({ config: input.config, clipId: cut.clipId, wav: cut.wav, duration: cut.cutEndSeconds - cut.cutStartSeconds, now });
+      segments.push({ clipId: cut.clipId, text: cut.text, asset, cutStartSeconds: cut.cutStartSeconds, cutEndSeconds: cut.cutEndSeconds,
+        ...(cut.recognition ? { recognition: cut.recognition } : {}), ...(cut.textReview ? { textReview: cut.textReview } : {}) });
+    }
+    const paragraph = VoiceParagraphResultSchema.parse({ version: 1, groupId: context.groupId, text: context.text,
+      clipIds: group.map((member) => member.id), sourceAsset: prior.sourceAsset, checkStatus: cuts.length ? (cuts.some((cut) => cut.textReview) ? "needs_confirmation" : "passed") : "review", segments,
+      ...(diagnosticCode ? { diagnosticCode } : {}), ...(failureRecognition ? { failureRecognition, failedClipId } : {}) });
+    const priorWarnings = new Set([PARAGRAPH_REVIEW_WARNING, PARAGRAPH_CONFIRMATION_WARNING,
+      "短句音频已安全切分，但极短句识别漏了句尾语气词；请逐句试听确认后采用整段。",
+      ...prior.segments.filter((segment) => segment.recognition?.contentComparison?.status === "different")
+        .map((segment) => `「${segment.text}」识别文字有差异，请试听确认。`)]);
+    const warnings = [...candidate.qualityWarnings.filter((warning) => !priorWarnings.has(warning)),
+      ...(paragraph.checkStatus === "review" ? [PARAGRAPH_REVIEW_WARNING] : []),
+      ...(paragraph.checkStatus === "needs_confirmation" ? [PARAGRAPH_CONFIRMATION_WARNING] : []),
+      ...segments.filter((segment) => segment.recognition?.contentComparison?.status === "different")
+        .map((segment) => `「${segment.text}」识别文字有差异，请试听确认。`)];
+    const provenance = { ...candidate.provenance, paragraph, parameters: { ...candidate.provenance.parameters,
+      recheckedFromCandidateId: candidate.candidateId, recheckedAt: now.toISOString(), generationCalls: 0, recheckCalls: 1 } };
+    const candidates = (paragraph.checkStatus !== "review" ? group : [clip]).map((member) => {
+      const sourceFingerprint = getVoiceCandidateSourceFingerprint(member, undefined, context);
+      return AudioCandidateSchema.parse({ ...candidate, candidateId: `vox_${randomUUID().replaceAll("-", "")}`, clipId: member.id,
+        sourceFingerprint, requestFingerprint: JSON.stringify({ source: sourceFingerprint,
+          sourceRequestFingerprintHash: createHash("sha256").update(candidate.requestFingerprint).digest("hex"),
+          recheckedFromCandidateId: candidate.candidateId, recheckedAt: now.toISOString() }),
+        asset: segments.find((segment) => segment.clipId === member.id)?.asset ?? prior.sourceAsset, provenance,
+        qualityWarnings: [...new Set(warnings)], createdAt: now.toISOString(), status: "ready" });
+    });
+    await record("group-1-take-1-analysis.json", { checkStatus: paragraph.checkStatus, diagnosticCode, segments,
+      ...(failureRecognition ? { failureRecognition, failedClipId } : {}), generationCalls: 0, recheckCalls: 1 });
+    await record("result.json", paragraph);
+    check();
+    checkSourceContext();
+    await saveParagraphAudioCandidates({ config: input.config, candidates, signal, sourceCandidate: candidate,
+      adoptedAssetIds: Object.fromEntries(ownership.map((owner) => [owner.clipId, owner.adoptedAssetId])) });
+    return { candidate: candidates.find((item) => item.clipId === input.clipId)! };
+  } catch (error) {
+    await record("failure.json", { message: error instanceof Error ? error.message : "重新识别未完成", cancelled: signal.aborted,
+      retainedOriginal: true, generationCalls: 0, recheckCalls: 1 }).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function recheckVoiceCandidate(input: RecheckInput, dependencies: Dependencies = {}): Promise<{ candidate: AudioCandidate }> {
   const controller = new AbortController();
-  const deadline = Date.now() + (dependencies.timeoutMs ?? 300_000);
+  const startedAt = Date.now();
+  let deadline = startedAt + (dependencies.timeoutMs ?? 300_000);
   const cancelled = new VoiceCandidateRecheckError("重新识别已取消，原候选仍保留。", 499);
   const abort = () => controller.abort(cancelled);
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
-  const timeout = setTimeout(() => controller.abort(new VoiceCandidateRecheckError("重新识别超时，原候选仍保留，请稍后重试。", 504)),
-    dependencies.timeoutMs ?? 300_000);
+  const onTimeout = () => controller.abort(new VoiceCandidateRecheckError("重新识别超时，原候选仍保留，请稍后重试。", 504));
+  let timeout = setTimeout(onTimeout, dependencies.timeoutMs ?? 300_000);
   const check = () => { if (controller.signal.aborted) throw controller.signal.reason; };
   try {
     check();
     const candidate = await getAudioCandidate({ config: input.config, candidateId: input.candidateId });
+    check();
     const clip = flattenClips(input.project).find((item) => item.id === input.clipId);
     if (!candidate || candidate.status !== "ready" || candidate.projectId !== input.project.project_id
       || candidate.clipId !== input.clipId || clip?.type !== "voice") {
       throw new VoiceCandidateRecheckError("此候选已不可用或不属于当前片段，请刷新列表。", 404);
+    }
+    if (candidate.provenance.generationMode === "paragraph" && candidate.provenance.paragraph) {
+      // A paragraph verifies every successive sentence and boundary. Select its
+      // larger budget only from the authoritative saved mode, never client hints.
+      if (dependencies.timeoutMs === undefined) {
+        clearTimeout(timeout);
+        deadline = startedAt + 30 * 60 * 1_000;
+        timeout = setTimeout(onTimeout, Math.max(1, deadline - Date.now()));
+      }
+      return await withVoxCpm2RuntimeSession(input.config, controller.signal, (runtimeSession) =>
+        recheckParagraph(input, candidate, dependencies, controller.signal, deadline, check, runtimeSession));
     }
     const prior = candidate.provenance.longText;
     if (candidate.provenance.generationMode !== "long_text" || !prior?.plan) {

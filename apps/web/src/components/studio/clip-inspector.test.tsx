@@ -45,6 +45,40 @@ const panControl = () => screen.getByRole("spinbutton", { name: /^声像/ }) as 
 afterEach(cleanup);
 
 describe("ClipInspector spatial controls", () => {
+  it("names paragraph generation as a whole paragraph and hides the duplicate selected sentence summary", () => {
+    const selectedClip = demoProject.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];
+    const view = render(<ClipInspector speechWorkspaceMode="paragraph" textEditorExternal fieldValidationIssues={{}}
+      selectedClip={selectedClip} selectedClipSlot={undefined}
+      selectedClipGeneration={{ action: "generate", label: "生成", disabled: false, statusLabel: "待生成", tone: "neutral" }}
+      onUpdateClip={() => {}} onGenerateSelectedClip={() => {}} onCancelSelectedGeneration={() => {}}
+      onApplyDirectorPreset={() => {}} onNudgeClipTiming={() => {}} />);
+    expect(screen.getByRole("heading", { name: "整段音频" })).toBeTruthy();
+    expect(screen.queryByLabelText("当前范围文本")).toBeNull();
+    expect(screen.queryByText("当前范围")).toBeNull();
+    view.rerender(<ClipInspector speechWorkspaceMode="short" textEditorExternal fieldValidationIssues={{}}
+      selectedClip={selectedClip} selectedClipSlot={undefined}
+      selectedClipGeneration={{ action: "generate", label: "生成", disabled: false, statusLabel: "待生成", tone: "neutral" }}
+      onUpdateClip={() => {}} onGenerateSelectedClip={() => {}} onCancelSelectedGeneration={() => {}}
+      onApplyDirectorPreset={() => {}} onNudgeClipTiming={() => {}} />);
+    expect(screen.getByRole("heading", { name: "片段检查" })).toBeTruthy();
+    expect(screen.getByLabelText("当前范围文本").textContent).toBe(selectedClip.text);
+  });
+  it("shows visual description and shot duration without speech or spatial controls for a silent beat", () => {
+    const project = structuredClone(demoProject), selectedClip = project.timeline.tracks.find(track => track.track_type === "voice")!.clips[1];
+    selectedClip.kind = "silent"; selectedClip.text = "安静整理桌面。";
+    const onUpdateClip = vi.fn(), onGenerateSelectedClip = vi.fn();
+    render(<ClipInspector fieldValidationIssues={{}} selectedClip={selectedClip} selectedClipSlot={undefined}
+      selectedClipGeneration={{ action: "generate", label: "生成", disabled: false, statusLabel: "待生成", tone: "neutral" }}
+      onUpdateClip={onUpdateClip} onGenerateSelectedClip={onGenerateSelectedClip} onCancelSelectedGeneration={() => {}}
+      onApplyDirectorPreset={() => {}} onNudgeClipTiming={() => {}} />);
+    fireEvent.change(screen.getByLabelText("无对白镜头时长"), { target: { value: "6" } });
+    expect(onUpdateClip).toHaveBeenLastCalledWith(selectedClip.id, { duration: 6 });
+    expect(screen.getByLabelText("无对白镜头画面描述")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "生成" })).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: /^声像/ })).toBeNull();
+    expect(screen.queryByText("表演与导演快捷")).toBeNull();
+    expect(onGenerateSelectedClip).not.toHaveBeenCalled();
+  });
   it("shows a range summary without a duplicate editor when text is edited in the storyboard", () => {
     mountInspector("static", true, true);
     expect(screen.queryByRole("textbox", { name: "台词" })).toBeNull();

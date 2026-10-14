@@ -159,12 +159,18 @@ function getSelectedClipControl({
     };
   }
 
+  if (selectedClip.type === "voice" && selectedClip.kind === "silent") {
+    return { action: "none", label: "无对白", disabled: true, statusLabel: "无对白", tone: "neutral", disabledReason: "无对白镜头无需语音" };
+  }
   if (job && isActiveGenerationJob(job)) {
     return getRuntimeControl(job);
   }
 
   const disabled = selectedClipHasValidationIssues;
   const disabledReason = disabled ? "先修正片段" : undefined;
+  if (selectedClip.type === "voice" && selectedClip.audio_stale && (selectedClip.asset.asset_id || selectedClip.asset.uri)) {
+    return { action: "regenerate", label: "重生成", disabled, disabledReason, statusLabel: "音频待更新", tone: "warn" };
+  }
 
   if (selectedClip.generation.status === "asset_failed") {
     return {
@@ -206,6 +212,7 @@ function getSelectedClipControl({
 function getSelectedClipPreview(
   selectedClip: TimelineClip | undefined,
 ): SelectedClipPreview {
+  if (selectedClip?.type === "voice" && selectedClip.kind === "silent") return { canPlay: false, label: "无对白镜头" };
   if (!selectedClip?.asset.uri) {
     return {
       canPlay: false,

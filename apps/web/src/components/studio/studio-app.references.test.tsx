@@ -80,6 +80,7 @@ async function mount(project: AsmrProject, referenceId = "soft_zh") {
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
   await waitFor(() => expect((screen.getByRole("combobox", { name: "参考声音" }) as HTMLSelectElement).value).toBe(referenceId));
   await waitFor(() => expect((screen.getByRole("button", { name: "音频全部重新生成" }) as HTMLButtonElement).disabled).toBe(false));
+  await waitFor(() => expect((screen.getByRole("button", { name: "添加参考音频" }) as HTMLButtonElement).disabled).toBe(false));
   return view;
 }
 function startImport() {

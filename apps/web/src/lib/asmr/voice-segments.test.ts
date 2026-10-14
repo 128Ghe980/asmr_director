@@ -9,6 +9,7 @@ import {
   deleteVoiceClip,
   getVoiceGapAfter,
   mergeVoiceClipWithNext,
+  moveVoiceClip,
   setVoiceGapAfter,
   splitVoiceClip,
 } from "./voice-segments";
@@ -34,6 +35,115 @@ function projectWithAudio() {
 }
 
 describe("user-controlled voice segments", () => {
+  it("moves complete adopted paragraphs with their waits while preserving identities and other tracks", () => {
+    const project = projectWithAudio();
+    const original = voiceClips(project);
+    original[0].pause_after = 2;
+    original[1].pause_after = 3;
+    const before = structuredClone(project);
+    const result = moveVoiceClip(project, original[1].id, "up");
+    const reordered = voiceClips(result.project);
+
+    expect(reordered.map((voice) => voice.id)).toEqual(["voice_002", "voice_001", "voice_003", "voice_004"]);
+    expect(result.selectedClipId).toBe("voice_002");
+    expect(reordered[0].start).toBe(16);
+    expect(reordered[1].start).toBeCloseTo(27.2);
+    expect(reordered[2].start).toBeCloseTo(36.7);
+    for (const source of original) {
+      const target = reordered.find((voice) => voice.id === source.id)!;
+      expect(target.text).toBe(source.text);
+      expect(target.asset).toBe(source.asset);
+      expect(target.generation).toBe(source.generation);
+      expect(target.position).toBe(source.position);
+    }
+    expect(getVoiceGapAfter(result.project, "voice_002")).toBeCloseTo(3);
+    expect(getVoiceGapAfter(result.project, "voice_001")).toBeCloseTo(2);
+    expect(result.project.timeline.tracks.slice(1)).toEqual(project.timeline.tracks.slice(1));
+    expect(result.project.emotion_curve).toBe(project.emotion_curve);
+    expect(result.project.exports).toBe(project.exports);
+    expect(getProjectMixFingerprint(result.project)).not.toBe(getProjectMixFingerprint(project));
+    expect(AsmrProjectSchema.safeParse(result.project).success).toBe(true);
+    expect(project).toEqual(before);
+  });
+
+  it("reorders by displayed time rather than the stored array and infers waits for older projects", () => {
+    const project = projectWithAudio();
+    const ordered = voiceClips(project);
+    const waits = new Map(ordered.map((voice) => [voice.id, getVoiceGapAfter(project, voice.id) ?? 0]));
+    project.timeline.tracks.find((track) => track.track_type === "voice")!.clips.reverse();
+    const result = moveVoiceClip(project, "voice_002", "down");
+    const reordered = voiceClips(result.project);
+    expect(reordered.map((voice) => voice.id)).toEqual(["voice_001", "voice_003", "voice_002", "voice_004"]);
+    expect(reordered[0]).toBe(ordered.at(-1));
+    expect(reordered[1].start).toBe(58);
+    for (const voice of reordered.slice(1, -1)) expect(getVoiceGapAfter(result.project, voice.id)).toBeCloseTo(waits.get(voice.id)!);
+    expect(AsmrProjectSchema.safeParse(result.project).success).toBe(true);
+  });
+
+  it("uses full saved audio durations and extends project bounds without overlapping speech", () => {
+    const project = projectWithAudio();
+    const original = voiceClips(project);
+    original[1].asset.duration = 180;
+    original[2].asset.duration = 90;
+    original[1].pause_after = 1;
+    original[2].pause_after = 2;
+    const result = moveVoiceClip(project, "voice_003", "up");
+    const reordered = voiceClips(result.project);
+    expect(reordered[0]).toBe(original[0]);
+    expect(reordered[1].duration).toBe(90);
+    expect(reordered[2].duration).toBe(180);
+    expect(reordered[1].asset).toBe(original[2].asset);
+    expect(reordered[2].asset).toBe(original[1].asset);
+    for (let index = 1; index < reordered.length; index++) {
+      expect(reordered[index].start).toBeGreaterThanOrEqual(reordered[index - 1].start + reordered[index - 1].duration);
+    }
+    expect(result.project.duration).toBeGreaterThan(project.duration);
+    expect(AsmrProjectSchema.safeParse(result.project).success).toBe(true);
+  });
+
+  it("keeps the final paragraph movable and preserves its implicit zero following wait", () => {
+    const project = projectWithAudio();
+    const moved = moveVoiceClip(project, "voice_004", "up");
+    const ordered = voiceClips(moved.project);
+    expect(ordered.map((voice) => voice.id)).toEqual(["voice_001", "voice_002", "voice_004", "voice_003"]);
+    expect(getVoiceGapAfter(moved.project, "voice_004")).toBe(0);
+    expect(ordered[2].start).toBe(112);
+    const reversed = moveVoiceClip(moved.project, "voice_004", "down");
+    expect(voiceClips(reversed.project).map((voice) => voice.id)).toEqual(voiceClips(project).map((voice) => voice.id));
+    expect(AsmrProjectSchema.safeParse(reversed.project).success).toBe(true);
+  });
+
+  it("respects an unfitted preceding recording and keeps a moved wait stable after later adoption", () => {
+    const project = projectWithAudio();
+    const original = voiceClips(project);
+    original[0].asset.duration = 80;
+    original[2].asset.duration = 0.5;
+    original[2].fade_out = 1;
+    original[2].pause_after = 2;
+    const moved = moveVoiceClip(project, "voice_003", "up").project;
+    const reordered = voiceClips(moved);
+    expect(reordered[0]).toBe(original[0]);
+    expect(reordered[1].start).toBe(96);
+    expect(reordered[1].duration).toBe(0.5);
+    expect(reordered[1].fade_out).toBe(0.5);
+    expect(getVoiceGapAfter(moved, "voice_003")).toBe(2);
+    const regenerated = commitGenerationSuccess(moved, "voice_003", {
+      assetId: "replacement", uri: "asset://clip/replacement", duration: 10,
+    }, { fitVoiceTiming: true });
+    expect(getVoiceGapAfter(regenerated, "voice_003")).toBe(2);
+    expect(AsmrProjectSchema.safeParse(regenerated).success).toBe(true);
+  });
+
+  it("leaves unavailable moves, missing and non-voice IDs untouched", () => {
+    const project = projectWithAudio();
+    for (const [id, direction] of [["voice_001", "up"], ["voice_004", "down"], ["missing", "up"], ["breath_001", "down"]] as const) {
+      expect(moveVoiceClip(project, id, direction).project).toBe(project);
+    }
+    const empty = structuredClone(project);
+    empty.timeline.tracks.find((track) => track.track_type === "voice")!.clips = [];
+    expect(moveVoiceClip(empty, "voice_001", "down").project).toBe(empty);
+  });
+
   it("isolates exactly the selected text, preserves every character and invalidates only changed speech", () => {
     const project = projectWithAudio();
     const source = voiceClips(project)[0];

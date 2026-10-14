@@ -4,7 +4,7 @@ import { StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getVoiceCandidateSourceFingerprint } from "@/lib/asmr/audio-candidate";
+import { getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
 import { demoProject } from "@/lib/asmr/mock-project";
 import type { TimelineClip } from "@/lib/asmr/schema";
 import { flattenClips } from "@/lib/asmr/view-model";
@@ -13,6 +13,7 @@ import type { VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options
 import type { VoiceLongTextResult } from "@/lib/asmr/voice-longtext-result";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import type { VoiceRecognition } from "@/lib/asmr/voice-recognition";
+import type { VoiceParagraphContext } from "@/lib/asmr/voice-paragraph-context";
 
 import { VoiceGenerationPanel, type VoiceGenerationPanelProps } from "./voice-generation-panel";
 
@@ -34,6 +35,45 @@ const catalog: VoiceProviderCatalog = {
 
 function candidate() {
   return makeVoiceCandidateFixture({ sourceFingerprint: getVoiceCandidateSourceFingerprint(selectedClip) });
+}
+
+function paragraphCandidate(): { take: AudioCandidate; context: VoiceParagraphContext } {
+  const second = flattenClips(demoProject).find((clip) => clip.id === "voice_002")!;
+  if (selectedClip.type !== "voice" || second.type !== "voice") throw new Error("Voice fixture required");
+  const base = candidate();
+  const context = { groupId: "paragraph_1", text: selectedClip.text + second.text,
+    clips: [selectedClip, second].map((clip) => ({ clipId: clip.id, text: clip.text, emotion: clip.emotion, style: clip.style, pace: clip.pace })) };
+  const asset = { assetId: "paragraph_first", uri: "asset://clip/paragraph_first", duration: 3 };
+  const sourceAsset = { assetId: "paragraph_source", uri: "asset://clip/paragraph_source", duration: 5 };
+  const take: AudioCandidate = { ...base, candidateId: "paragraph_candidate", asset,
+    sourceFingerprint: getVoiceCandidateSourceFingerprint(selectedClip, undefined, context),
+    provenance: { ...base.provenance, generationMode: "paragraph", paragraph: { version: 1, groupId: context.groupId,
+      text: context.text, clipIds: context.clips.map((clip) => clip.clipId), sourceAsset, checkStatus: "passed", segments: [
+        { clipId: selectedClip.id, text: selectedClip.text, asset, cutStartSeconds: 0, cutEndSeconds: 3,
+          recognition: { stage: "complete", expectedText: selectedClip.text, followingText: second.text, sourceTranscript: context.text, targetTranscript: selectedClip.text } },
+        { clipId: second.id, text: second.text, asset: { assetId: "paragraph_second", uri: "asset://clip/paragraph_second", duration: 2 }, cutStartSeconds: 3, cutEndSeconds: 5,
+          recognition: { stage: "complete", expectedText: second.text, sourceTranscript: second.text, targetTranscript: second.text } },
+      ] } } };
+  return { take, context };
+}
+
+function manualParagraphCandidate() {
+  const base = paragraphCandidate();
+  if (selectedClip.type !== "voice") throw new Error("Voice fixture required");
+  const clip = { ...selectedClip, text: "回来啦。" };
+  const context = { ...base.context, text: "回来啦。先坐。", clips: base.context.clips.map((item, index) => ({ ...item, text: index ? "先坐。" : "回来啦。" })) };
+  const textReview = { status: "needs_confirmation" as const, reason: "missing_final_particle" as const, expected: "回来啦", sourcePrefix: "回来了",
+    expectedPinyin: "la5" as const, sourcePinyin: "le5" as const, similarity: 2 / 3,
+    left: { transcript: "回来", words: [{ text: "回来", start: .1, end: 1 }], durationSeconds: 3 },
+    right: { transcript: "先坐", words: [{ text: "先坐", start: .1, end: 1 }], durationSeconds: 2 },
+    final: { transcript: "回来", words: [{ text: "回来", start: .1, end: 1 }], durationSeconds: 3 } };
+  const take: AudioCandidate = { ...base.take, sourceFingerprint: getVoiceCandidateSourceFingerprint(clip, undefined, context), provenance: { ...base.take.provenance,
+    paragraph: { ...base.take.provenance.paragraph!, text: context.text, checkStatus: "needs_confirmation",
+      segments: base.take.provenance.paragraph!.segments.map((segment, index) => ({ ...segment, text: context.clips[index].text,
+        recognition: { stage: "complete", expectedText: context.clips[index].text, ...(index ? {} : { followingText: context.clips[1].text, shortSentenceReview: textReview }),
+          sourceTranscript: index ? "先坐" : "回来了先坐", targetTranscript: index ? "先坐" : "回来",
+          sourceWords: index ? [{ text: "先坐", start: .1, end: 1 }] : [{ text: "回来了", start: .1, end: 1 }, { text: "先坐", start: 3.1, end: 4 }] }, ...(index ? {} : { textReview }) })) } } };
+  return { take, context, clip, textReview };
 }
 
 function longTextCandidate() {
@@ -99,6 +139,246 @@ afterEach(() => {
 });
 
 describe("voice generation panel", () => {
+  it("requires an unchecked explicit listen confirmation for every flagged native short slice", () => {
+    const { take, context, clip } = manualParagraphCandidate();
+    const onConfirmText = vi.fn();
+    const input = props({ selectedClip: clip, candidates: [take], onConfirmText, options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+    const view = render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    const checkbox = screen.getByRole("checkbox", { name: "候选 1 短句 1 已听且台词完整" }) as HTMLInputElement;
+    const confirmation = screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement;
+    expect(checkbox.checked).toBe(false);
+    expect(confirmation.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "采用候选 1" })).toBeNull();
+    expect(screen.getByLabelText("候选 1 短句 1 原声试听").getAttribute("src")).toBe("/api/assets/clip/paragraph_first");
+    expect(screen.getByText("裁后识别：回来")).toBeTruthy();
+    fireEvent.click(checkbox);
+    expect(confirmation.disabled).toBe(false);
+    fireEvent.click(confirmation);
+    expect(onConfirmText).toHaveBeenCalledWith(take, [clip.id]);
+    expect(input.onAdopt).not.toHaveBeenCalled();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} busy confirmingCandidateId={take.candidateId} />);
+    expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "确认并采用候选 1" }).textContent).toBe("确认中…");
+    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={{ ...context, text: context.text + "已修改。" }} />);
+    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows saved manual confirmation without claiming automatic text checks passed", () => {
+    const { take, context, clip } = manualParagraphCandidate();
+    const confirmationWarning = "短句音频已安全切分，部分文字待试听确认；请逐句确认后采用整段。";
+    take.qualityWarnings = [confirmationWarning, "完整原音音量较低。"];
+    take.provenance.paragraph!.manualTextConfirmation = { confirmedClipIds: [clip.id], sourceCandidateId: take.candidateId, confirmedAt: "2026-10-14T13:45:00.000Z" };
+    const input = props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(), options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+    render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByText("整段切分 · 台词已试听确认")).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/各短句已通过文字、双侧识别/)).toBeNull();
+    expect(screen.queryByText(/整段已通过 \d+ 个短句/)).toBeNull();
+    expect(screen.getByText("识别文字有差异，已试听确认。")).toBeTruthy();
+    expect(screen.queryByText(confirmationWarning)).toBeNull();
+    expect(screen.getByText("完整原音音量较低。")).toBeTruthy();
+    expect(take.qualityWarnings[0]).toBe(confirmationWarning);
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take);
+  });
+
+  it.each(["final_only", "source_only", "left_only", "both"])("labels a %s same-tone difference at its actual evidence location", (kind) => {
+    const { take, context, clip: initialClip, textReview } = manualParagraphCandidate();
+    const clip = { ...initialClip, text: "过来坐。" };
+    context.clips[0].text = clip.text;
+    context.text = clip.text + context.clips[1].text;
+    take.sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, undefined, context);
+    take.provenance.paragraph!.text = context.text;
+    const first = take.provenance.paragraph!.segments[0];
+    first.text = clip.text;
+    const finalText = kind === "final_only" || kind === "both" ? "过来做" : "过来坐";
+    const sourceText = kind === "source_only" || kind === "both" ? "过来做" : "过来坐";
+    const leftText = kind === "left_only" || kind === "both" ? "过来做" : "过来坐";
+    first.textReview = { status: "needs_confirmation", reason: "same_tone_substitution", expected: "过来坐", sourcePrefix: sourceText, similarity: finalText === "过来坐" ? 1 : 2 / 3,
+      differences: [{ index: 2, expected: "坐", recognized: "做", expectedPinyin: "zuo4", recognizedPinyin: "zuo4", rule: "same_tone" }],
+      left: { transcript: leftText, words: [{ text: leftText, start: .1, end: 1 }], durationSeconds: 3 }, right: textReview.right,
+      final: { transcript: finalText, words: [{ text: finalText, start: .1, end: 1 }], durationSeconds: 3 } };
+    first.recognition = { ...first.recognition!, expectedText: first.text, sourceTranscript: sourceText + "先坐", targetTranscript: finalText,
+      sourceWords: [{ text: sourceText, start: .1, end: 1 }, { text: "先坐", start: 3.1, end: 4 }], shortSentenceReview: first.textReview };
+    const onConfirmText = vi.fn();
+    render(<VoiceGenerationPanel {...props({ selectedClip: clip, candidates: [take], onConfirmText,
+      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByText("同音字待试听确认")).toBeTruthy();
+    expect(screen.getByText(`裁后识别：${finalText}`)).toBeTruthy();
+    expect(screen.getByText("坐 → 做 · 同音同调（zuo4）")).toBeTruthy();
+    if (kind === "source_only") {
+      expect(screen.getByText("源定位识别有同音字差，裁后识别一致。")).toBeTruthy();
+      expect(screen.getByText("源定位识别：过来做")).toBeTruthy();
+      expect(screen.getByText("字差位置：源定位")).toBeTruthy();
+    }
+    if (kind === "left_only") expect(screen.getByText("切点左侧识别有同音字差，裁后识别一致。")).toBeTruthy();
+    if (kind === "final_only") expect(screen.getByText("字差位置：裁后识别")).toBeTruthy();
+    if (kind === "both") expect(screen.getByText("字差位置：源定位、切点左侧、裁后识别")).toBeTruthy();
+    expect(screen.queryByText("句尾语气词待试听确认")).toBeNull();
+    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "确认并采用候选 1" }));
+    expect(onConfirmText).toHaveBeenCalledWith(take, [clip.id]);
+  });
+
+  it("identifies only the missing-particle window when final ASR retained the allowed particle variant", () => {
+    const { take, context, clip, textReview } = manualParagraphCandidate();
+    const first = take.provenance.paragraph!.segments[0];
+    first.textReview = { ...textReview, final: { transcript: "回来了", words: [{ text: "回来了", start: .1, end: 1 }], durationSeconds: 3 } };
+    first.recognition = { ...first.recognition!, targetTranscript: "回来了", shortSentenceReview: first.textReview };
+    render(<VoiceGenerationPanel {...props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(),
+      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByText("切点左侧漏了句尾语气词；裁后识别已保留语气词。")).toBeTruthy();
+    expect(screen.getByText("字差位置：切点左侧")).toBeTruthy();
+    expect(screen.getByText("裁后识别：回来了")).toBeTruthy();
+    expect(screen.getByText("切点左侧识别：回来")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("enables confirmation only after every flagged short sentence is explicitly checked", () => {
+    const { take, context, clip, textReview } = manualParagraphCandidate();
+    context.clips[1].text = "坐下啦。";
+    context.text = "回来啦。坐下啦。";
+    take.sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, undefined, context);
+    const paragraph = take.provenance.paragraph!;
+    paragraph.text = context.text;
+    const first = paragraph.segments[0];
+    const right = { transcript: "坐下啦", words: [{ text: "坐下啦", start: .1, end: 1 }], durationSeconds: 2 };
+    first.textReview = { ...textReview, right };
+    first.recognition = { ...first.recognition!, followingText: context.clips[1].text, sourceTranscript: "回来了坐下啦",
+      sourceWords: [{ text: "回来了", start: .1, end: 1 }, { text: "坐下啦", start: 3.1, end: 4 }], shortSentenceReview: first.textReview };
+    const second = paragraph.segments[1];
+    second.text = context.clips[1].text;
+    second.textReview = { ...textReview, expected: "坐下啦", sourcePrefix: "坐下啦", sourcePinyin: "la5", left: undefined, right: undefined,
+      final: { transcript: "坐下", words: [{ text: "坐下", start: .1, end: 1 }], durationSeconds: 2 } };
+    second.recognition = { stage: "complete", expectedText: second.text, sourceTranscript: "坐下啦", targetTranscript: "坐下",
+      sourceWords: [{ text: "坐下啦", start: .1, end: 1 }], shortSentenceReview: second.textReview };
+    const onConfirmText = vi.fn();
+    render(<VoiceGenerationPanel {...props({ selectedClip: clip, candidates: [take], onConfirmText,
+      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
+    const button = screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement;
+    fireEvent.click(screen.getByRole("checkbox", { name: "候选 1 短句 1 已听且台词完整" }));
+    expect(button.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "候选 1 短句 2 已听且台词完整" }));
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    expect(onConfirmText).toHaveBeenCalledWith(take, context.clips.map((item) => item.clipId));
+  });
+
+  it("keeps the short generation controls and paragraph candidates in their own workspace", () => {
+    const { take, context } = paragraphCandidate();
+    const short = candidate();
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" }, candidates: [short, take] });
+    const view = render(<VoiceGenerationPanel {...input} workspaceMode="short" />);
+    expect(control("生成方式").value).toBe("clip");
+    expect(screen.getByLabelText("候选 1 试听").getAttribute("src")).toContain(short.asset.assetId);
+    expect(screen.queryByLabelText("整段生成文案")).toBeNull();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} options={{ ...input.options, generationMode: "paragraph" }} />);
+    expect(screen.queryByRole("combobox", { name: "生成方式" })).toBeNull();
+    expect(screen.getByLabelText("候选 1 试听").getAttribute("src")).toContain("paragraph_first");
+    expect(screen.getByLabelText("整段生成文案").textContent).toContain(context.text);
+    expect((screen.getByLabelText("整段生成文案") as HTMLDetailsElement).open).toBe(false);
+    expect(screen.getByLabelText("整段生成文案").querySelector("summary")?.textContent).toContain("生成范围");
+    expect(screen.getByText("整段切分 · 2 句")).toBeTruthy();
+    expect(screen.getByLabelText("候选 1 整段完整原音试听").getAttribute("src")).toContain("paragraph_source");
+    expect(screen.getByRole("link", { name: "下载整段原音" }).getAttribute("href")).toContain("paragraph_source?download=1");
+    expect(screen.getByLabelText("整段短句切分").children).toHaveLength(2);
+  });
+  it("invalidates paragraph adoption when another short sentence in the group changes", () => {
+    const { take, context } = paragraphCandidate();
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "paragraph" }, candidates: [take] });
+    const view = render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false);
+    const changed = { ...context, text: context.clips[0].text + "后半句已经修改。", clips: context.clips.map((clip, index) => index ? { ...clip, text: "后半句已经修改。" } : clip) };
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={changed} />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("整段文案已修改，请重新生成。")).toBeTruthy();
+  });
+  it("preserves full originals for review and can recheck them without legacy group regeneration", () => {
+    const { take, context } = paragraphCandidate();
+    const review = { ...take, asset: take.provenance.paragraph!.sourceAsset,
+      provenance: { ...take.provenance, paragraph: { ...take.provenance.paragraph!, checkStatus: "review" as const, segments: [] } } };
+    const onRecheck = vi.fn();
+    render(<VoiceGenerationPanel {...props({ candidates: [review], onRecheck, onRegenerateGroup: vi.fn(),
+      options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("完整原音 · 切分待确认")).toBeTruthy();
+    const recheck = screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement;
+    expect(recheck.disabled).toBe(false);
+    expect(recheck.title).toContain("只检查已保存整段原音，不重新生成语音");
+    fireEvent.click(recheck);
+    expect(onRecheck).toHaveBeenCalledWith(review);
+    expect(screen.queryByText("重生成内部组")).toBeNull();
+    expect(screen.getByRole("link", { name: "下载整段原音" })).toBeTruthy();
+    expect(screen.queryByText("未保存识别文本")).toBeNull();
+  });
+  it("renders one paragraph recognition disclosure using each short target and the successive source scope", () => {
+    const { take, context } = paragraphCandidate();
+    render(<VoiceGenerationPanel {...props({ candidates: [take], options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })}
+      workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getAllByText("识别对照")).toHaveLength(1);
+    const disclosure = screen.getByText("识别对照").closest("details")!;
+    expect(disclosure.open).toBe(false);
+    expect(within(disclosure).getByText("整段原音识别").nextElementSibling?.textContent).toBe(context.text);
+    expect(within(disclosure).getByText("剩余原音识别").nextElementSibling?.textContent).toBe(context.clips[1].text);
+    expect(within(disclosure).getAllByText("目标台词").map((label) => label.nextElementSibling?.textContent)).toEqual(context.clips.map((clip) => clip.text));
+    expect(within(disclosure).queryByText("未保存识别文本")).toBeNull();
+    expect(within(disclosure).queryByText("本条试听与下载均为完整原音。")).toBeNull();
+  });
+  it("shows a saved failed short target on paragraph review candidates and keeps stale rechecks disabled", () => {
+    const { take, context } = paragraphCandidate();
+    const failureRecognition: VoiceRecognition = { stage: "source_alignment", expectedText: context.clips[0].text,
+      followingText: context.clips[1].text, sourceTranscript: "已保存的整段识别文字", alignment: { expected: "回来啦", recognizedPrefix: "回来了", reason: "uncertain_word_alignment" } };
+    const review: AudioCandidate = { ...take, asset: take.provenance.paragraph!.sourceAsset, provenance: { ...take.provenance,
+      paragraph: { ...take.provenance.paragraph!, checkStatus: "review", segments: [], diagnosticCode: "uncertain_word_alignment", failureRecognition, failedClipId: context.clips[0].clipId } } };
+    const input = props({ candidates: [review], onRecheck: vi.fn(), options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+    const view = render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    const disclosure = screen.getByText("识别对照").closest("details")!;
+    expect(within(disclosure).getByText("目标台词").nextElementSibling?.textContent).toBe(context.clips[0].text);
+    expect(within(disclosure).getByText("整段原音识别").nextElementSibling?.textContent).toBe(failureRecognition.sourceTranscript);
+    expect(within(disclosure).getByText("识别文字未能定位目标句的结束位置。")).toBeTruthy();
+    expect(within(disclosure).queryByText("未保存识别文本")).toBeNull();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={{ ...context, text: context.text + "已修改。" }} />);
+    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it("scopes original-recording requests to the active audio workspace and resets on tab changes", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ recordings: [], truncated: false }) });
+    vi.stubGlobal("fetch", fetcher);
+    const input = props({ projectId: "project", options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" } });
+    const view = render(<VoiceGenerationPanel {...input} workspaceMode="short" />);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    expect(new URL(String(fetcher.mock.calls[0][0]), "http://localhost").searchParams.get("workspaceMode")).toBe("short");
+    const { context } = paragraphCandidate();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} options={{ ...input.options, generationMode: "paragraph" }} />);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    expect(new URL(String(fetcher.mock.calls[1][0]), "http://localhost").searchParams.get("workspaceMode")).toBe("paragraph");
+  });
+  it("displays recovered paragraph failure evidence on saved originals without relabelling the first short target", async () => {
+    const { context } = paragraphCandidate();
+    const failureRecognition: VoiceRecognition = { stage: "source_alignment", expectedText: context.clips[0].text,
+      followingText: context.clips[1].text, sourceTranscript: "此前已保存的整段识别结果", alignment: { expected: "回来啦", recognizedPrefix: "回来了", reason: "uncertain_word_alignment" } };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ truncated: false, recordings: [{
+      recordingId: "current_11111111-2222-4333-8444-555555555555_1_1", runId: "11111111-2222-4333-8444-555555555555", group: 1, take: 1,
+      expectedText: context.text, inputText: context.text, createdAt: "2026-10-14T08:20:00.000Z", duration: 5,
+      audioUrl: "/api/voice-generation-recordings/current_11111111-2222-4333-8444-555555555555_1_1", status: "needs_review", historicalMatch: false,
+      warning: "识别文字未能定位目标句的结束位置；请展开识别对照。", paragraphRecognition: { checkStatus: "review", clipIds: context.clips.map((clip) => clip.clipId),
+        segments: [], diagnosticCode: "uncertain_word_alignment", failedClipId: context.clips[0].clipId, failureRecognition },
+    }] }) }));
+    render(<VoiceGenerationPanel {...props({ projectId: "p", options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })}
+      workspaceMode="paragraph" paragraphContext={context} />);
+    await screen.findByLabelText("完整原音 1 试听");
+    const original = screen.getByRole("article", { name: "完整原音 1" });
+    const evidence = within(original).getByText("识别对照").closest("details")!;
+    expect(within(evidence).getByText("本条试听与下载均为完整原音。")).toBeTruthy();
+    expect(within(evidence).getByText("整段台词").nextElementSibling?.textContent).toBe(context.text);
+    expect(within(evidence).getByText("目标台词").nextElementSibling?.textContent).toBe(context.clips[0].text);
+    expect(within(evidence).getByText("整段原音识别").nextElementSibling?.textContent).toBe(failureRecognition.sourceTranscript);
+    expect(within(evidence).queryByText("未保存识别文本")).toBeNull();
+  });
   it("offers re-recognition beside adoption without regenerating and allows an adopted long-text take", () => {
     if (selectedClip.type !== "voice") throw new Error("Voice fixture required");
     const take = recognitionCandidate({ text: selectedClip.text, inputText: selectedClip.text, internalPausesMs: [], internalPauseClasses: [] });

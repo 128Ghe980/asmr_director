@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
-import type { VoiceGenerationRecording } from "./voice-generation-recording";
+import { VoiceParagraphRecordingRecognitionSchema, type VoiceGenerationRecording, type VoiceParagraphRecordingRecognition } from "./voice-generation-recording";
 import { VoiceRecognitionSchema, type VoiceRecognition } from "./voice-recognition";
 
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -27,6 +27,8 @@ const PlanSchema = z.object({
   projectId: z.string().min(1).max(240).optional(),
   clipId: z.string().min(1).max(240).optional(),
   createdAt: z.string().optional(),
+  generationMode: z.string().optional(),
+  paragraph: z.object({ clips: z.array(z.object({ clipId: z.string().min(1).max(240), text: z.string().max(2000) })).min(1).max(32) }).optional(),
   plan: z.object({ clauses: z.array(z.string().max(2000)).min(1).max(500) }),
   targets: z.array(z.object({ expectedText: z.string().max(2000), text: z.string().max(2000).optional(), inputText: z.string().max(2000).optional() })
     .refine((target) => target.text !== undefined || target.inputText !== undefined)).min(1).max(500),
@@ -115,12 +117,66 @@ function checkWarning(failure: Record<string, unknown> | undefined, checked: boo
   return ended ? "这次生成已结束，尚无这条录音的检查结果；可以完整试听。" : "录音已生成，检查结果尚未保存；现在就可以完整试听。";
 }
 
+function readParagraphRecognition(plan: z.infer<typeof PlanSchema>, expectedText: string,
+  analysis: Record<string, unknown> | undefined, failure: Record<string, unknown> | undefined,
+  duration: number | null): VoiceParagraphRecordingRecognition | undefined {
+  const clips = plan.paragraph?.clips;
+  // Evidence belongs to the ordered canonical short sentences, rather than the
+  // initiating clip or the top-level full-paragraph target.
+  if (!clips?.length || new Set(clips.map((clip) => clip.clipId)).size !== clips.length
+      || clips.some((clip) => !clip.text.trim() || clip.text.length > 500)
+      || clips.map((clip) => clip.text).join("") !== expectedText || plan.plan.clauses.join("") !== expectedText) return undefined;
+  const code = failure?.code ?? analysis?.diagnosticCode;
+  const diagnosticCode = typeof code === "string" && /^[a-z0-9_]{1,120}$/.test(code) ? code : undefined;
+  if (failure || analysis?.checkStatus === "review") {
+    let failureRecognition: VoiceRecognition | undefined;
+    let failedClipId: string | undefined;
+    for (const [value, explicitClipId] of [[failure?.recognition, failure?.failedClipId],
+      [analysis?.failureRecognition, analysis?.failedClipId]] as const) {
+      const recognition = VoiceRecognitionSchema.safeParse(value);
+      if (!recognition.success) continue;
+      // Exact suffix binding also identifies repeated sentences without
+      // relabelling a per-short transcript as a full-paragraph recognition.
+      const matches = clips.filter((clip, index) => clip.text === recognition.data.expectedText
+        && (recognition.data.followingText ?? "") === clips.slice(index + 1).map((later) => later.text).join("")
+        && (explicitClipId === undefined || explicitClipId === clip.clipId));
+      if (matches.length === 1) { failureRecognition = recognition.data; failedClipId = matches[0].clipId; break; }
+    }
+    return VoiceParagraphRecordingRecognitionSchema.parse({ checkStatus: "review", clipIds: clips.map((clip) => clip.clipId), segments: [],
+      ...(diagnosticCode ? { diagnosticCode } : {}), ...(failureRecognition ? { failureRecognition, failedClipId } : {}) });
+  }
+  if (!["passed", "needs_confirmation"].includes(String(analysis?.checkStatus)) || !Array.isArray(analysis?.segments)) return undefined;
+  const projected = analysis.segments.map((value) => {
+    const segment = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    return { clipId: segment.clipId, text: segment.text, cutStartSeconds: segment.cutStartSeconds,
+      cutEndSeconds: segment.cutEndSeconds, ...(segment.recognition !== undefined ? { recognition: segment.recognition } : {}),
+      ...(segment.textReview !== undefined ? { textReview: segment.textReview } : {}) };
+  });
+  const parsed = VoiceParagraphRecordingRecognitionSchema.safeParse({ checkStatus: analysis.checkStatus, clipIds: clips.map((clip) => clip.clipId), segments: projected });
+  if (!parsed.success || duration === null || Math.abs((parsed.data.segments.at(-1)?.cutEndSeconds ?? 0) - duration) > 1 / 48_000) return undefined;
+  if (parsed.data.segments.some((segment, index) => segment.text !== clips[index].text
+      || (segment.recognition && (segment.recognition.stage !== "complete" || segment.recognition.expectedText !== clips[index].text
+        || (segment.recognition.followingText ?? "") !== clips.slice(index + 1).map((clip) => clip.text).join(""))))) return undefined;
+  return parsed.data;
+}
+
+function paragraphCheckWarning(evidence: VoiceParagraphRecordingRecognition, failure: Record<string, unknown> | undefined,
+  ended: boolean, analysis?: Record<string, unknown>) {
+  if (evidence.checkStatus === "review") return checkWarning(failure ?? { code: evidence.diagnosticCode }, false, ended, analysis, evidence.failureRecognition);
+  if (evidence.checkStatus === "needs_confirmation") return "短句音频已安全切分，部分文字待试听确认；请在候选中逐句确认后采用。这里保留完整原音与实际识别。";
+  const differences = evidence.segments.filter((segment) => segment.recognition?.contentComparison?.status === "different");
+  if (differences.length) return `整段短句切分检查已完成；其中 ${differences.length} 句存在识别文字差异，请展开逐句对照并试听。这里保留完整原音。`;
+  return `整段已通过 ${evidence.segments.length} 个短句的切分检查。这里保留模型输出的完整原音。`;
+}
+
 export async function listVoiceGenerationRecordings(input: {
   config: Pick<LocalRuntimeConfig, "runtimeRoot">; projectId: string; clipId: string; text: string; cursor?: string;
+  workspaceMode?: "short" | "paragraph";
 }) {
   const recordings: VoiceGenerationRecording[] = [];
   const locations = roots(input.config);
-  const scope = createHash("sha256").update(JSON.stringify([locations, input.projectId, input.clipId, input.text.trim()])).digest("hex").slice(0, 32);
+  const scope = createHash("sha256").update(JSON.stringify([locations, input.projectId, input.clipId, input.text.trim(),
+    ...(input.workspaceMode ? [input.workspaceMode] : [])])).digest("hex").slice(0, 32);
   let cursor: RecordingCursor | undefined;
   if (input.cursor !== undefined) {
     try {
@@ -157,9 +213,12 @@ export async function listVoiceGenerationRecordings(input: {
     try {
       const directory = await runDirectory(run.root, run.runId);
       const plan = PlanSchema.parse(await readJson(path.join(directory, "plan.json"), run.root));
-      if (plan.plan.clauses.join("").trim() !== input.text.trim()) continue;
+      const mode = plan.generationMode === "paragraph" || plan.paragraph ? "paragraph" : "short";
+      if (input.workspaceMode && input.workspaceMode !== mode) continue;
+      const paragraphMember = plan.paragraph?.clips.some((clip) => clip.clipId === input.clipId && clip.text.trim() === input.text.trim());
+      if (plan.plan.clauses.join("").trim() !== input.text.trim() && !paragraphMember) continue;
       const historicalMatch = plan.projectId === undefined && plan.clipId === undefined;
-      if (!historicalMatch && (plan.projectId !== input.projectId || plan.clipId !== input.clipId)) continue;
+      if (!historicalMatch && (plan.projectId !== input.projectId || (plan.clipId !== input.clipId && !paragraphMember))) continue;
       const ended = Boolean(await optionalJson(path.join(directory, "failure.json"), run.root) || await optionalJson(path.join(directory, "result.json"), run.root));
       const entries = await opendir(directory);
       const sources: { name: string; group: number; take: number; order: number }[] = [];
@@ -183,17 +242,21 @@ export async function listVoiceGenerationRecordings(input: {
           const prefix = source.name.replace(/-source\.wav$/, "");
           const failure = await optionalJson(path.join(directory, `${prefix}-failure.json`), run.root);
           const analysis = await optionalJson(path.join(directory, `${prefix}-analysis.json`), run.root);
-          const recognition = [analysis?.recognition, failure?.recognition].map((value) => VoiceRecognitionSchema.safeParse(value))
+          const duration = await wavDuration(filePath, info.size);
+          const paragraphRecognition = mode === "paragraph" ? readParagraphRecognition(plan, target.expectedText, analysis, failure, duration) : undefined;
+          const recognition = mode === "paragraph" ? undefined : [analysis?.recognition, failure?.recognition].map((value) => VoiceRecognitionSchema.safeParse(value))
             .find((value) => value.success && value.data.expectedText === target.expectedText)?.data;
-          const review = failure ?? (analysis?.checkStatus === "review" ? { code: analysis.diagnosticCode } : undefined);
-          const checked = !review && typeof analysis?.transcript === "string" && typeof analysis?.cutEndSeconds === "number";
+          const review = failure ?? (["review", "needs_confirmation"].includes(String(analysis?.checkStatus)) ? { code: analysis?.diagnosticCode } : undefined);
+          const checked = !review && (mode === "paragraph" ? paragraphRecognition?.checkStatus === "passed"
+            : typeof analysis?.transcript === "string" && typeof analysis?.cutEndSeconds === "number");
           const recordingId = `${run.kind}_${run.runId}_${group}_${take}`;
           recordings.push({ recordingId, runId: run.runId, group, take,
             createdAt: plan.createdAt && Number.isFinite(Date.parse(plan.createdAt)) ? plan.createdAt : info.mtime.toISOString(),
-            expectedText: target.expectedText, inputText: target.text ?? target.inputText ?? "", duration: await wavDuration(filePath, info.size),
+            expectedText: target.expectedText, inputText: target.text ?? target.inputText ?? "", duration,
             audioUrl: `/api/voice-generation-recordings/${recordingId}`,
             status: review ? "needs_review" : checked ? "checked" : analysis?.checkStatus === "not_checked" ? "not_checked" : "recorded",
-            warning: checkWarning(review, checked, ended, analysis, recognition), recognition, historicalMatch,
+            warning: paragraphRecognition ? paragraphCheckWarning(paragraphRecognition, review, ended, analysis)
+              : checkWarning(review, Boolean(checked), ended, analysis, recognition), recognition, paragraphRecognition, historicalMatch,
           });
         } catch { /* A partial write or unavailable take must not hide other recordings. */ }
         if (recordings.length >= RECORDINGS_PER_PAGE || inspectedSources >= 100) {

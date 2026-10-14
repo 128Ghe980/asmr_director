@@ -59,7 +59,7 @@ describe("studio storyboard progress", () => {
       shot.sourceFingerprint = createClipVideoSourceFingerprint(project, clip.id);
     }
     if (kind === "unadopted") clip.generation.status = "asset_pending";
-    if (kind === "invalid") shot.audio.duration = 0;
+    if (kind === "invalid") shot.audio!.duration = 0;
     expect(getStudioStoryboardProgress(project).byClip[clip.id]).toBe("needs_update");
     expect(() => createClipH3Prompt(project, clip.id)).toThrow();
   });

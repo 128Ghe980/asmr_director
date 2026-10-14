@@ -9,6 +9,11 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    ".next-dual-dev/**",
+    ".next-dual-production/**",
+    ".next-sentences-production/**",
+    ".next-particle-production/**",
+    ".next-confirmation-production/**",
     ".next-spatial/**",
     ".next-spatial-build/**",
     ".next-reference-audio-dev/**",

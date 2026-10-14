@@ -28,8 +28,11 @@ export function getVoiceGenerationContext(project: AsmrProject, clipId: string):
   const ordered = [...voices].sort((a, b) => a.start - b.start);
   const index = ordered.findIndex((clip) => clip.id === clipId);
   const target = ordered[index];
-  if (!target?.semantic_unit) return undefined;
-  const following = ordered.slice(index + 1).filter((clip) => /[\p{L}\p{N}]/u.test(clip.text));
+  if (!target?.semantic_unit || target.kind === "silent") return undefined;
+  const suffix = ordered.slice(index + 1);
+  const silentBoundary = suffix.findIndex((clip) => clip.kind === "silent");
+  const following = (silentBoundary < 0 ? suffix : suffix.slice(0, silentBoundary))
+    .filter((clip) => /[\p{L}\p{N}]/u.test(clip.text));
   if (!following.length) return { version: 1, followingClauses: [], isFinal: true };
   const readableTarget = prefix(target.text.trim(), 500);
   const targetClauses = /[\p{L}\p{N}]/u.test(readableTarget) ? splitVoiceClauses(readableTarget) : [readableTarget];

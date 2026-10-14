@@ -37,7 +37,7 @@ export function buildGptSovitsRequest(
   clip: TimelineClip,
   voicePack: VoicePack,
 ): GptSovitsRequest {
-  if (clip.type !== "voice") {
+  if (clip.type !== "voice" || clip.kind === "silent") {
     throw new Error("Only voice clips can use GPT-SoVITS generation");
   }
 

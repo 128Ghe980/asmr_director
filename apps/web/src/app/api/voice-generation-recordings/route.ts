@@ -4,6 +4,7 @@ import { listVoiceGenerationRecordings } from "@/lib/asmr/voice-generation-recor
 
 export const runtime = "nodejs";
 const QuerySchema = z.object({ projectId: z.string().min(1).max(240), clipId: z.string().min(1).max(240), text: z.string().trim().min(1).max(500),
+  workspaceMode: z.enum(["short", "paragraph"]).optional(),
   cursor: z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/).optional() }).strict();
 
 export async function GET(request: Request) {

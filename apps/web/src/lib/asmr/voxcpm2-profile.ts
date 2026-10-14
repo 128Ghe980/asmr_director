@@ -62,7 +62,7 @@ async function assertFile(filePath: string) {
   if (!info.isFile() || info.size === 0) throw new Error("Missing runtime file");
 }
 
-export async function loadVoxCpm2Profile(manifestPath: string): Promise<VoxCpm2Profile> {
+export async function loadVoxCpm2Profile(manifestPath: string, options: { naturalReferenceText?: boolean } = {}): Promise<VoxCpm2Profile> {
   try {
     const resolved = path.resolve(manifestPath);
     const root = path.dirname(resolved);
@@ -83,7 +83,9 @@ export async function loadVoxCpm2Profile(manifestPath: string): Promise<VoxCpm2P
       await assertFile(audioPath);
       const rawTranscript = ref.promptTextPath ? await readFile(path.resolve(root, ref.promptTextPath), "utf8") : "";
       if (rawTranscript.length > 20_000) throw new Error("Transcript too large");
-      profile.references.push({ id: ref.id, displayName: ref.displayName, audioPath, promptText: normalizeVoxCpm2Transcript(rawTranscript), ...(ref.durationSeconds ? { durationSeconds: ref.durationSeconds } : {}) });
+      profile.references.push({ id: ref.id, displayName: ref.displayName, audioPath,
+        promptText: options.naturalReferenceText ? rawTranscript.trim() || null : normalizeVoxCpm2Transcript(rawTranscript),
+        ...(ref.durationSeconds ? { durationSeconds: ref.durationSeconds } : {}) });
     }
     return profile;
   } catch {

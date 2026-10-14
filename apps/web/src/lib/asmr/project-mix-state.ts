@@ -21,7 +21,7 @@ const audioBearingTracks = new Set<TimelineClip["track"]>([
 ]);
 
 function isAudioBearingClip(clip: TimelineClip): boolean {
-  return audioBearingTracks.has(clip.track);
+  return !(clip.type === "voice" && clip.kind === "silent") && audioBearingTracks.has(clip.track);
 }
 
 function hasGeneratedLocalClipAsset(clip: TimelineClip): boolean {

@@ -7,6 +7,7 @@ export type LocalRuntimeConfig = {
   clipAssetRoot: string;
   mixAssetRoot: string;
   voxcpm2ProfilePath?: string;
+  voxcpm2ParagraphCliPath?: string;
   voiceReferenceRoot?: string;
   voiceReferenceFfmpegPath?: string;
   voiceAnalysisPythonPath?: string;
@@ -26,6 +27,7 @@ type RuntimeEnv = Partial<
     | "ASMR_CLIP_ASSET_ROOT"
     | "ASMR_MIX_ASSET_ROOT"
     | "ASMR_VOXCPM2_PROFILE_PATH"
+    | "ASMR_VOXCPM2_PARAGRAPH_CLI_PATH"
     | "ASMR_VOICE_REFERENCE_ROOT"
     | "ASMR_VOICE_REFERENCE_FFMPEG"
     | "ASMR_VOICE_ANALYSIS_PYTHON"
@@ -57,6 +59,7 @@ export function getLocalRuntimeConfig(
     voxcpm2ProfilePath:
       env.ASMR_VOXCPM2_PROFILE_PATH ||
       path.join(runtimeRoot, "audio-quality-v1", "voxcpm2", "profile.json"),
+    ...(env.ASMR_VOXCPM2_PARAGRAPH_CLI_PATH ? { voxcpm2ParagraphCliPath: env.ASMR_VOXCPM2_PARAGRAPH_CLI_PATH } : {}),
     voiceAnalysisPythonPath: env.ASMR_VOICE_ANALYSIS_PYTHON || undefined,
     ...(env.ASMR_VOICE_REFERENCE_ROOT ? { voiceReferenceRoot: env.ASMR_VOICE_REFERENCE_ROOT } : {}),
     ...(env.ASMR_VOICE_REFERENCE_FFMPEG ? { voiceReferenceFfmpegPath: env.ASMR_VOICE_REFERENCE_FFMPEG } : {}),

@@ -16,7 +16,7 @@ import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { VoiceGenerationContextSchema, type VoiceGenerationContext } from "./voice-generation-context";
 import { VoiceRecognitionSchema, type VoiceContentComparison, type VoiceRecognition } from "./voice-recognition";
 import { getLocalStorageError } from "./local-storage-error";
-import { getVoiceReviewWarning as reviewMessage } from "./voice-review-warning";
+import { getVoiceReviewWarning as reviewMessage, getVoiceContentDifferenceWarning } from "./voice-review-warning";
 
 export type VoiceGenerationProgress = { progress: number; message: string };
 type GroupAudio = { wav: Uint8Array; leadingQuietMs: number; trailingQuietMs: number };
@@ -76,7 +76,7 @@ type Dependencies = {
 const FULL_SOURCE_REVIEW_WARNING = "本候选保留了待确认组的完整原音，可能包含后续台词、补句或重复内容；各次完整原音都可单独试听、下载，请听后决定是否采用。";
 
 function contentDifferenceMessage(index: number, comparison: VoiceContentComparison) {
-  return `第 ${index + 1} 段：已截取目标片段；识别结果与源文有差异（相似度 ${(comparison.similarity * 100).toFixed(1)}%），请试听确认。`;
+  return getVoiceContentDifferenceWarning(index, comparison);
 }
 
 export async function generateVoiceLongText(input: LongTextInput, deps: Dependencies = {}): Promise<{

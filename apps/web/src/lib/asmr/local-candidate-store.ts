@@ -3,8 +3,9 @@ import { mkdir, readFile, readdir, rename, rmdir, unlink, writeFile } from "node
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
-import { AudioCandidateManifestSchema, AudioCandidateSchema, type AudioCandidate, type AudioCandidateManifest } from "./audio-candidate";
+import { AudioCandidateManifestSchema, AudioCandidateSchema, getAudioCandidateWorkspaceMode, type AudioCandidate, type AudioCandidateManifest, type AudioCandidateWorkspaceMode } from "./audio-candidate";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
+import { getVoiceParagraphReviewClipIds, VoiceParagraphResultSchema } from "./voice-paragraph-result";
 
 export const MAX_UNACCEPTED_CANDIDATES_PER_CLIP = 12;
 export class CandidateCapacityError extends Error {
@@ -22,7 +23,7 @@ export class CandidateSourceChangedError extends Error {
   }
 }
 type CandidateStoreConfig = Pick<LocalRuntimeConfig, "runtimeRoot">;
-type CandidateOwnerInput = { config: CandidateStoreConfig; projectId: string; clipId: string; adoptedAssetId?: string };
+type CandidateOwnerInput = { config: CandidateStoreConfig; projectId: string; clipId: string; adoptedAssetId?: string; workspaceMode?: AudioCandidateWorkspaceMode };
 
 function hasCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
@@ -155,6 +156,7 @@ async function withManifestLock<T>(config: CandidateStoreConfig, action: () => P
 function countReady(manifest: AudioCandidateManifest, input: Omit<CandidateOwnerInput, "config">): number {
   return manifest.candidates.filter((candidate) =>
     candidate.projectId === input.projectId && candidate.clipId === input.clipId &&
+    getAudioCandidateWorkspaceMode(candidate) === (input.workspaceMode ?? "short") &&
     candidate.status === "ready" && candidate.asset.assetId !== input.adoptedAssetId,
   ).length;
 }
@@ -192,18 +194,102 @@ export async function saveAudioCandidate({ config, candidate: inputCandidate, ad
       || sourceCandidate.clipId !== candidate.clipId || !isDeepStrictEqual(manifest.candidates.find((item) => item.candidateId === sourceCandidate.candidateId), sourceCandidate))) {
       throw new CandidateSourceChangedError();
     }
-    if (candidate.status === "ready") assertCapacity(manifest, { projectId: candidate.projectId, clipId: candidate.clipId, adoptedAssetId });
+    if (candidate.status === "ready") assertCapacity(manifest, { projectId: candidate.projectId, clipId: candidate.clipId, adoptedAssetId,
+      workspaceMode: getAudioCandidateWorkspaceMode(candidate) });
     await writeManifest(config, { ...manifest, candidates: [...manifest.candidates, candidate] }, signal);
     return candidate;
   }, signal);
 }
 
-export async function listAudioCandidates({ config, projectId, clipId, includeDiscarded = false }: {
-  config: CandidateStoreConfig; projectId: string; clipId?: string; includeDiscarded?: boolean;
+/** Publish a paragraph take as one manifest revision, never a partial set. */
+export async function saveParagraphAudioCandidates({ config, candidates: inputCandidates, adoptedAssetIds = {}, signal, sourceCandidate }: {
+  config: CandidateStoreConfig; candidates: AudioCandidate[]; adoptedAssetIds?: Record<string, string | undefined>; signal?: AbortSignal;
+  sourceCandidate?: AudioCandidate;
+}): Promise<AudioCandidate[]> {
+  const candidates = inputCandidates.map((candidate) => AudioCandidateSchema.parse(candidate));
+  const first = candidates[0];
+  const paragraph = first?.provenance.paragraph;
+  if (!paragraph || new Set(candidates.map((candidate) => candidate.candidateId)).size !== candidates.length
+      || candidates.some((candidate) => candidate.status !== "ready" || candidate.projectId !== first.projectId
+        || !isDeepStrictEqual(candidate.provenance.paragraph, paragraph))
+      || (paragraph.checkStatus !== "review" && (candidates.length !== paragraph.clipIds.length
+        || paragraph.clipIds.some((clipId) => candidates.filter((candidate) => candidate.clipId === clipId).length !== 1)))
+      || (paragraph.checkStatus === "review" && candidates.length !== 1)) throw new Error("整段候选必须完整且对应同一次生成。");
+  return withManifestLock(config, async () => {
+    const manifest = await readManifest(config);
+    if (sourceCandidate && (sourceCandidate.status !== "ready" || sourceCandidate.projectId !== first.projectId
+      || sourceCandidate.provenance.generationMode !== "paragraph"
+      || sourceCandidate.provenance.paragraph?.groupId !== paragraph.groupId
+      || sourceCandidate.provenance.paragraph.text !== paragraph.text
+      || !isDeepStrictEqual(sourceCandidate.provenance.paragraph.clipIds, paragraph.clipIds)
+      || !isDeepStrictEqual(sourceCandidate.provenance.paragraph.sourceAsset, paragraph.sourceAsset)
+      || !candidates.some((candidate) => candidate.clipId === sourceCandidate.clipId
+        && candidate.sourceFingerprint === sourceCandidate.sourceFingerprint)
+      || !isDeepStrictEqual(manifest.candidates.find((candidate) => candidate.candidateId === sourceCandidate.candidateId), sourceCandidate))) {
+      throw new CandidateSourceChangedError();
+    }
+    const additions: AudioCandidate[] = [];
+    for (const candidate of candidates) {
+      const existing = manifest.candidates.find((item) => item.candidateId === candidate.candidateId);
+      if (existing) {
+        if (!isDeepStrictEqual(existing, candidate)) throw new Error("此候选编号已存在，无法覆盖。");
+      } else {
+        assertCapacity({ ...manifest, candidates: [...manifest.candidates, ...additions] }, { projectId: candidate.projectId, clipId: candidate.clipId,
+          adoptedAssetId: adoptedAssetIds[candidate.clipId], workspaceMode: "paragraph" });
+        additions.push(candidate);
+      }
+    }
+    if (additions.length) await writeManifest(config, { ...manifest, candidates: [...manifest.candidates, ...additions] }, signal);
+    return candidates;
+  }, signal);
+}
+
+export async function listAudioCandidates({ config, projectId, clipId, includeDiscarded = false, workspaceMode }: {
+  config: CandidateStoreConfig; projectId: string; clipId?: string; includeDiscarded?: boolean; workspaceMode?: AudioCandidateWorkspaceMode;
 }): Promise<AudioCandidate[]> {
   return (await readManifest(config)).candidates.filter((candidate) =>
-    candidate.projectId === projectId && (clipId === undefined || candidate.clipId === clipId) && (includeDiscarded || candidate.status === "ready"),
+    candidate.projectId === projectId && (clipId === undefined || candidate.clipId === clipId) && (includeDiscarded || candidate.status === "ready")
+    && (workspaceMode === undefined || getAudioCandidateWorkspaceMode(candidate) === workspaceMode),
   ).sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.candidateId.localeCompare(right.candidateId));
+}
+
+/** Add one human listening receipt to the complete safe take in a single revision. */
+export async function confirmParagraphAudioCandidates({ config, sourceCandidate, sourceCandidates, confirmedClipIds, confirmedAt, signal }: {
+  config: CandidateStoreConfig; sourceCandidate: AudioCandidate; sourceCandidates: AudioCandidate[]; confirmedClipIds: string[]; confirmedAt: string; signal?: AbortSignal;
+}): Promise<AudioCandidate[]> {
+  const parsed = AudioCandidateSchema.parse(sourceCandidate);
+  const paragraph = parsed.provenance.paragraph;
+  if (parsed.status !== "ready" || !paragraph || paragraph.checkStatus !== "needs_confirmation"
+    || sourceCandidates.length !== paragraph.clipIds.length
+    || paragraph.clipIds.some((clipId, index) => sourceCandidates[index]?.clipId !== clipId || sourceCandidates[index]?.status !== "ready"
+      || sourceCandidates[index]?.projectId !== parsed.projectId || !isDeepStrictEqual(sourceCandidates[index]?.provenance.paragraph, paragraph))
+    || !sourceCandidates.some((item) => isDeepStrictEqual(item, parsed))
+    || JSON.stringify(confirmedClipIds) !== JSON.stringify(getVoiceParagraphReviewClipIds(paragraph))) {
+    throw new CandidateSourceChangedError();
+  }
+  return withManifestLock(config, async () => {
+    const manifest = await readManifest(config);
+    if (!isDeepStrictEqual(manifest.candidates.find((item) => item.candidateId === parsed.candidateId), parsed)) throw new CandidateSourceChangedError();
+    if (sourceCandidates.some((item) => !isDeepStrictEqual(manifest.candidates.find((saved) => saved.candidateId === item.candidateId), item))) throw new CandidateSourceChangedError();
+    const siblings = manifest.candidates.filter((item) => item.projectId === parsed.projectId
+      && isDeepStrictEqual(item.provenance.paragraph, paragraph));
+    if (siblings.length !== paragraph.clipIds.length || siblings.some((item) => item.status !== "ready")
+      || paragraph.clipIds.some((clipId) => siblings.filter((item) => item.clipId === clipId).length !== 1)
+      || !siblings.some((item) => item.candidateId === parsed.candidateId)
+      || (paragraph.manualTextConfirmation && !siblings.some((item) => item.candidateId === paragraph.manualTextConfirmation?.sourceCandidateId))) {
+      throw new CandidateSourceChangedError();
+    }
+    const ordered = paragraph.clipIds.map((clipId) => siblings.find((item) => item.clipId === clipId)!);
+    if (paragraph.manualTextConfirmation) return ordered;
+    const confirmedParagraph = VoiceParagraphResultSchema.parse({ ...paragraph, manualTextConfirmation: {
+      sourceCandidateId: parsed.candidateId, confirmedClipIds, confirmedAt,
+    } });
+    const confirmed = ordered.map((item) => AudioCandidateSchema.parse({ ...item,
+      provenance: { ...item.provenance, paragraph: confirmedParagraph } }));
+    const updated = new Map(confirmed.map((item) => [item.candidateId, item]));
+    await writeManifest(config, { ...manifest, candidates: manifest.candidates.map((item) => updated.get(item.candidateId) ?? item) }, signal);
+    return confirmed;
+  }, signal);
 }
 
 export async function getAudioCandidate({ config, candidateId }: {
@@ -223,7 +309,11 @@ export async function discardAudioCandidate({ config, candidateId, projectId, cl
     if (!candidate) throw new Error("找不到此音频候选。");
     if (candidate.projectId !== projectId || candidate.clipId !== clipId) throw new Error("此候选不属于所选工程或所属片段。");
     const discarded: AudioCandidate = { ...candidate, status: "discarded" };
-    await writeManifest(config, { ...manifest, candidates: manifest.candidates.map((item) => item.candidateId === candidateId ? discarded : item) });
+    const paragraph = candidate.provenance.paragraph;
+    const sameTake = (item: AudioCandidate) => item.candidateId === candidateId || Boolean(paragraph
+      && item.projectId === candidate.projectId && item.provenance.paragraph?.groupId === paragraph.groupId
+      && item.provenance.paragraph.sourceAsset.assetId === paragraph.sourceAsset.assetId);
+    await writeManifest(config, { ...manifest, candidates: manifest.candidates.map((item) => sameTake(item) ? { ...item, status: "discarded" as const } : item) });
     // WAVs remain in the shared clip store; projects and revisions may refer to them.
     return discarded;
   });

@@ -1,6 +1,8 @@
 "use client";
 
 import clsx from "clsx";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { useId, useState } from "react";
 
 import { getAssetStatusDisplay } from "@/lib/asmr/generation-summary";
 import type { AsmrProject, TimelineClip, TrackType } from "@/lib/asmr/schema";
@@ -11,6 +13,8 @@ type TimelinePanelProps = {
   project: AsmrProject;
   selectedClipId: string | undefined;
   onSelectClip: (clipId: string) => void;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 };
 
 type ClipTrackType = TimelineClip["track"];
@@ -72,17 +76,43 @@ export function TimelinePanel({
   project,
   selectedClipId,
   onSelectClip,
+  expanded,
+  onExpandedChange,
 }: TimelinePanelProps) {
-  return (
-    <section aria-label="时间线" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-studio-line bg-studio-panel/88">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-studio-line px-3">
-        <h2 className="text-sm font-semibold text-studio-text">时间线</h2>
-        <div className="text-xs tabular-nums text-studio-muted">
-          {formatTimeRange(0, project.duration)}
-        </div>
-      </div>
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const tracksId = useId();
+  const isExpanded = expanded ?? localExpanded;
+  const ToggleIcon = isExpanded ? ChevronUp : ChevronDown;
 
-      <div role="region" aria-label="时间线轨道" tabIndex={0} className="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-300/45">
+  function toggleExpanded() {
+    const nextExpanded = !isExpanded;
+    setLocalExpanded(nextExpanded);
+    onExpandedChange?.(nextExpanded);
+  }
+
+  return (
+    <section aria-label="时间线" className={clsx("flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-studio-line bg-studio-panel/88", isExpanded ? "flex-1" : "shrink-0")}>
+      <h2 className="shrink-0">
+        <button
+          type="button"
+          aria-label={isExpanded ? "收起时间线" : "展开时间线"}
+          aria-expanded={isExpanded}
+          aria-controls={tracksId}
+          onClick={toggleExpanded}
+          className={clsx("flex h-9 w-full items-center justify-between gap-3 px-3 text-left transition-colors hover:bg-white/[0.025] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-300/45", isExpanded && "border-b border-studio-line")}
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-studio-text">
+            <ToggleIcon aria-hidden="true" className="h-3.5 w-3.5 text-studio-muted" />
+            时间线
+          </span>
+          <span className="text-xs font-normal tabular-nums text-studio-muted">
+            {formatTimeRange(0, project.duration)}
+          </span>
+        </button>
+      </h2>
+
+      <div id={tracksId} hidden={!isExpanded} role="region" aria-label="时间线轨道" tabIndex={isExpanded ? 0 : -1} className="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-sky-300/45">
+        {isExpanded ? (
         <div className="min-w-[600px] overflow-hidden rounded-md border border-white/[0.06] bg-black/16 lg:min-w-0">
           {fixedTracks.map(({ type, label }) => {
             const clips =
@@ -106,9 +136,11 @@ export function TimelinePanel({
                   <div className="absolute inset-y-0 left-3/4 w-px bg-white/[0.045]" />
                   {clips.map((clip) => {
                     const isSelected = clip.id === selectedClipId;
+                    const silent = clip.type === "voice" && clip.kind === "silent";
 
                     const timeRange = formatTimeRange(clip.start, clip.duration);
-                    const generationStatus = getAssetStatusDisplay(
+                    const generationStatus = silent ? { statusLabel: "无对白", tone: "neutral" as const }
+                      : clip.type === "voice" && clip.audio_stale ? { statusLabel: "音频待更新", tone: "warn" as const } : getAssetStatusDisplay(
                       clip.generation.status,
                     );
 
@@ -124,7 +156,7 @@ export function TimelinePanel({
                         title={`${getClipLabel(clip)} · ${timeRange} · ${generationStatus.statusLabel}`}
                         className={clsx(
                           "absolute top-1 flex h-7 min-w-0 items-center gap-1.5 overflow-hidden rounded border px-2 text-left text-[11px] font-semibold leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-sky-300/45",
-                          clipTones[clip.track],
+                          silent ? "border-violet-300/40 bg-violet-300/12 text-violet-100" : clipTones[clip.track],
                           isSelected && "ring-2 ring-sky-200/70",
                         )}
                         style={getTimelineStyle(clip, project.duration)}
@@ -147,6 +179,7 @@ export function TimelinePanel({
             );
           })}
         </div>
+        ) : null}
       </div>
     </section>
   );

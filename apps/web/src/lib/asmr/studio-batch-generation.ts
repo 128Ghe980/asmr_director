@@ -1,11 +1,12 @@
 import type { AsmrProject, VoiceClip } from "./schema";
 import type { GenerateClipRequest, GenerationBridge, GenerationJobUpdate } from "./generation-bridge";
 import { getLocalStorageError } from "./local-storage-error";
+import { getParagraphGroup, getSpeechWorkspaceMode } from "./speech-workspace";
 
 export type StudioBatchAction = "audio_missing" | "audio_all" | "storyboard_missing" | "storyboard_all";
 
 function hasAdoptedAudio(clip: VoiceClip): boolean {
-  return clip.generation.status === "asset_generated"
+  return !clip.audio_stale && clip.generation.status === "asset_generated"
     && Boolean(clip.asset.asset_id?.trim()) && Boolean(clip.asset.uri?.trim());
 }
 
@@ -18,19 +19,21 @@ function hasAdoptedLocalAudio(clip: VoiceClip): boolean {
 
 /** Candidates are not adopted audio: only the current timeline asset is considered. */
 export function getStudioBatchTargets(project: AsmrProject, action: StudioBatchAction): string[] {
-  return project.timeline.tracks.flatMap<VoiceClip>((track) => track.track_type === "voice" ? track.clips : [])
+  const targets = project.timeline.tracks.flatMap<VoiceClip>((track) => track.track_type === "voice" ? track.clips : [])
     .map((clip, originalIndex) => ({ clip, originalIndex }))
     .filter(({ clip }) => {
       if (!clip.text.trim()) return false;
-      if (action === "audio_all") return true;
-      if (action === "audio_missing") return !hasAdoptedAudio(clip);
-      if (!hasAdoptedLocalAudio(clip)) return false;
+      if (action === "audio_all") return clip.kind !== "silent";
+      if (action === "audio_missing") return clip.kind !== "silent" && !hasAdoptedAudio(clip);
+      if (clip.kind !== "silent" && !hasAdoptedLocalAudio(clip)) return false;
       // Preserve even stale or incomplete user notes when filling missing storyboards.
       return action === "storyboard_all"
         || !Object.prototype.hasOwnProperty.call(project.videoPlan?.shots ?? {}, clip.id);
     })
     .sort((a, b) => a.clip.start - b.clip.start || a.originalIndex - b.originalIndex)
     .map(({ clip }) => clip.id);
+  if (!action.startsWith("audio") || getSpeechWorkspaceMode(project) !== "paragraph") return targets;
+  return [...new Set(targets.map((clipId) => getParagraphGroup(project, clipId)[0]?.id ?? clipId))];
 }
 
 export type StudioBatchProgress = {

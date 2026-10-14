@@ -5,6 +5,7 @@ import { Check, Clapperboard, Copy, Download, Link2, LoaderCircle, ScanLine, Spa
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { flattenClips } from "@/lib/asmr/view-model";
 import { sanitizeDownloadName } from "@/lib/asmr/batch-download";
+import { getSpeechWorkspaceMode } from "@/lib/asmr/speech-workspace";
 import {
   ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint,
   getPreviousVoiceClip, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent,
@@ -30,6 +31,8 @@ const fieldClass = "w-full min-w-0 resize-none rounded-lg border border-studio-l
 
 export function ClipStoryboardEditor({ project, clipId, batchBusy = false, referenceModeBusy = false, onReferenceModeChange, onBusyChange, onProviderChange, onSceneChange, onSave, onEdit }: Props) {
   const clip = flattenClips(project).find((item) => item.id === clipId && item.type === "voice");
+  const silent = clip?.type === "voice" && clip.kind === "silent";
+  const workspaceMode = getSpeechWorkspaceMode(project);
   const shot = project.videoPlan?.shots[clipId];
   const voices = flattenClips(project).filter((item) => item.type === "voice").sort((a, b) => a.start - b.start);
   const index = voices.findIndex((item) => item.id === clipId);
@@ -81,7 +84,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
   useEffect(() => {
     // A changed line, audio, scene or continuity source cancels the old request.
     return () => { requestRef.current?.abort(); };
-  }, [sourceFingerprint, continuitySource, referenceMode, clipId, project.project_id]);
+  }, [sourceFingerprint, continuitySource, referenceMode, clipId, project.project_id, workspaceMode]);
   useEffect(() => () => { requestRef.current?.abort(); requestRef.current = null; onBusyChange?.(false); }, [onBusyChange]);
 
   function cancel() {
@@ -107,8 +110,10 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
       const result = ClipVideoStoryboardSchema.parse(body.storyboard);
       const latest = latestProject.current;
       if (latest.project_id !== snapshot.project_id || result.clipId !== clipId || result.sourceFingerprint !== sourceFingerprint
+        || getSpeechWorkspaceMode(latest) !== workspaceMode
         || result.referenceMode !== referenceMode || latestReferenceMode.current !== referenceMode
-        || result.audio.assetId !== clip.asset.asset_id || result.audio.uri !== clip.asset.uri
+        || (silent ? result.kind !== "silent" || result.audio !== undefined || result.duration !== clip.duration
+          : result.kind === "silent" || result.audio?.assetId !== clip.asset.asset_id || result.audio?.uri !== clip.asset.uri)
         || createClipVideoSourceFingerprint(latest, clipId) !== sourceFingerprint
         || getPreviousClipPromptFingerprint(latest, clipId) !== previousFingerprint
         || Boolean(result.previousClipId) !== usePrevious
@@ -161,11 +166,11 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
   return <section aria-label="本段视频分镜" className="min-w-0 space-y-4 px-4 py-4">
     <div className="flex items-start gap-3">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-300/10 text-violet-200"><Clapperboard className="h-4 w-4" aria-hidden="true" /></span>
-      <div className="min-w-0"><h2 className="text-sm font-semibold">第 {index + 1} 段 · 视频分镜</h2><p className="mt-1 text-[11px] leading-5 text-studio-muted">用这一段已采用的音频规划画面，台词与口型时序保持对应。</p></div>
+      <div className="min-w-0"><h2 className="text-sm font-semibold">第 {index + 1} 段 · {silent ? "无对白分镜" : "视频分镜"}</h2></div>
     </div>
     <div className="rounded-lg border border-studio-line bg-black/10 px-3 py-2.5">
       <p className="whitespace-pre-wrap break-words text-sm leading-6">{clip.text}</p>
-      {sourceFingerprint ? <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-violet-200/80"><span>已采用音频{clip.asset.duration ? ` · ${(shot?.audio.assetId === clip.asset.asset_id ? shot.audio.duration : clip.asset.duration).toFixed(3)} 秒` : ""}</span><a href={`/api/assets/clip/${encodeURIComponent(clip.asset.asset_id!)}`} download={`第${String(index + 1).padStart(3, "0")}段音频.wav`} className="inline-flex items-center gap-1 hover:text-violet-100"><Download className="h-3 w-3" aria-hidden="true" />下载本段音频</a></div> : <p className="mt-2 text-xs leading-5 text-amber-100">先生成并采用本段音频，再生成对应分镜。</p>}
+      {silent ? <p className="mt-2 text-[11px] text-violet-200">无对白 · {clip.duration.toFixed(1)} 秒</p> : sourceFingerprint ? <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-violet-200/80"><span>已采用音频{clip.asset.duration ? ` · ${(shot?.audio?.assetId === clip.asset.asset_id ? shot.audio!.duration : clip.asset.duration).toFixed(3)} 秒` : ""}</span><a href={`/api/assets/clip/${encodeURIComponent(clip.asset.asset_id!)}`} download={`第${String(index + 1).padStart(3, "0")}段音频.wav`} className="inline-flex items-center gap-1 hover:text-violet-100"><Download className="h-3 w-3" aria-hidden="true" />下载本段音频</a></div> : <p className="mt-2 text-xs leading-5 text-amber-100">先生成并采用本段音频，再生成对应分镜。</p>}
     </div>
     <details className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted">
       <summary className="cursor-pointer hover:text-studio-text">剧情背景 <span className="ml-1 text-studio-muted/55">全工程参考</span></summary>
@@ -181,13 +186,20 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
             {mode === "continuous" ? <Link2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : <ScanLine className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}{mode === "continuous" ? "连续镜头" : "新镜头"}
           </label>)}
         </div>
-        <p className="text-[11px] leading-5 text-studio-muted">{referenceMode === "continuous" ? `接续第 ${index} 段的场景、构图与动作，使用本段台词和独立音频。` : "按剧情背景和本段台词设计新画面；可用的上一段分镜仅作次要剧情参考。"}</p>
-        {!previous ? <p className="text-[11px] leading-5 text-studio-muted">首段从剧情背景开始。</p> : waitingForPrevious ? <p className="text-[11px] leading-5 text-amber-100">上一段尚无可用分镜，先生成上一段后再生成连续镜头。</p> : !previousFingerprint ? <p className="text-[11px] leading-5 text-studio-muted">上一段尚无可用分镜，本次新镜头可仅按剧情背景生成。</p> : null}
-        <p className="text-[11px] leading-5 text-studio-muted">模式用于下次生成，已有分镜与提示词保持原样。</p>
+        {waitingForPrevious ? <p className="text-[11px] leading-5 text-amber-100">上一段尚无可用分镜，先生成上一段后再生成连续镜头。</p> : null}
+        <details className="text-[11px] leading-5 text-studio-muted">
+          <summary className="cursor-pointer hover:text-studio-text">镜头参考说明</summary>
+          <div className="mt-2 space-y-1">
+            <p>{referenceMode === "continuous" ? "接续上一镜的场景、构图与动作。" : "按背景与本段内容设计新画面，上一镜仅作剧情参考。"}</p>
+            {!previous ? <p>首段从剧情背景开始。</p> : !previousFingerprint && !waitingForPrevious ? <p>上一镜尚未就绪，本次新镜头仅参考背景。</p> : null}
+            <p>模式用于下次生成，已有提示词保持原样。</p>
+            <p>{silent ? "使用角色参考图 1，无需上传语音。" : "使用角色参考图 1 和本段音频 1。"}</p>
+          </div>
+        </details>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <select aria-label="分镜模型" value={provider} disabled={busy || batchBusy} onChange={(event) => { const next = event.target.value as "ollama" | "api"; setProvider(next); onProviderChange?.(next); }} className="min-w-0 max-w-40 rounded-md border border-studio-line bg-studio-panel px-2 py-1.5 text-xs text-studio-muted">{providers.length ? providers.map((item) => <option key={item.id} value={item.id} disabled={!item.configured}>{item.label}</option>) : <option value="api">读取模型配置…</option>}</select>
-        {busy ? <button type="button" className={buttonClass} onClick={cancel}><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />取消生成</button> : <button type="button" className={`${buttonClass} bg-violet-300/10`} disabled={batchBusy || waitingForPrevious || !sourceFingerprint || !sceneDescription.trim() || !configured} onClick={() => void generate()}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{shot ? "重新生成本段分镜" : "生成本段分镜"}</button>}
+        {busy ? <button type="button" className={buttonClass} onClick={cancel}><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />取消生成</button> : <button type="button" className={`${buttonClass} bg-violet-300/10`} disabled={batchBusy || waitingForPrevious || !sourceFingerprint || !sceneDescription.trim() || !configured} onClick={() => void generate()}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{shot ? "重做分镜" : "生成分镜"}</button>}
       </div>
       <details className="border-t border-violet-300/10 pt-2 text-[11px] text-studio-muted"><summary className="cursor-pointer">本段偏好 <span className="ml-1 opacity-60">选填</span></summary><textarea aria-label="本段分镜要求" rows={2} value={instruction} maxLength={1200} disabled={busy || batchBusy} onChange={(event) => setInstruction(event.target.value)} className={`${fieldClass} mt-2 text-studio-text`} placeholder="例如：平缓固定机位，轻轻递来水杯。" /></details>
     </div>
@@ -199,7 +211,6 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
       {([['visual', '画面', 800], ['action', '动作', 600], ['camera', '镜头', 400]] as const).map(([field, label, maxLength]) => <label key={field} className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">{label}</span><textarea aria-label={`本段分镜${label}`} disabled={batchBusy} className={fieldClass} value={shot[field]} rows={field === "visual" ? 3 : 2} maxLength={maxLength} onChange={(event) => edit({ [field]: event.target.value })} /></label>)}
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!prompt} onClick={() => void copy()}>{copiedPrompt === prompt && prompt ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}{copiedPrompt === prompt && prompt ? "已复制 H3 提示词" : "复制 H3 提示词"}</button><button type="button" className={buttonClass} disabled={!prompt} onClick={download}><Download className="h-3.5 w-3.5" aria-hidden="true" />下载提示词</button></div>
       <details ref={disclosure} className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted"><summary className="cursor-pointer">H3 提示词预览</summary>{prompt ? <textarea ref={preview} aria-label="本段 H3 提示词" readOnly value={prompt} rows={8} spellCheck={false} className="mt-3 max-h-80 w-full min-w-0 resize-y rounded-lg bg-black/20 px-2 py-2 font-mono text-xs leading-6 outline-none focus:ring-1 focus:ring-violet-300/30" /> : <p className="mt-2 leading-5">补全画面、动作与镜头，并确保分镜对应当前音频。</p>}</details>
-      <p className="text-[11px] leading-5 text-studio-muted">在 H3 中使用角色参考图 1 和下载的本段音频 1。提示词完整复用这条音轨，不添加配乐或音效。</p>
-    </div> : <p className="rounded-lg border border-dashed border-studio-line px-4 py-6 text-center text-xs leading-6 text-studio-muted">从当前音频出发，规划一个自然、连续的画面。</p>}
+    </div> : null}
   </section>;
 }

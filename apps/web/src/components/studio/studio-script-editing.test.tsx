@@ -90,6 +90,11 @@ function selectText(start: number, end: number) {
   fireEvent.select(field);
 }
 
+function openScriptActions() {
+  const summary = screen.getByLabelText("本段更多操作");
+  if (!summary.closest("details")!.open) fireEvent.click(summary);
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   vi.stubEnv("NEXT_PUBLIC_ASMR_GENERATION_MODE", "local");
@@ -158,19 +163,23 @@ describe("StudioApp user-selected script edits with simulated HTTP", () => {
     const original = seed();
     mockApi();
     await mount(original);
-    fireEvent.click(screen.getByRole("button", { name: "下方插入" }));
+    openScriptActions();
+    fireEvent.click(screen.getByRole("button", { name: "下方插入台词" }));
     await waitFor(() => expect(voices(storedProject())).toHaveLength(3));
     fireEvent.change(screen.getByRole("textbox", { name: "台词" }), { target: { value: "插入的新台词。" } });
     await waitFor(() => expect(voices(storedProject())[1].text).toBe("插入的新台词。"));
     expect(voices(storedProject())[0].asset).toEqual(voices(original)[0].asset);
     expect(voices(storedProject())[2].asset).toEqual(voices(original)[1].asset);
+    openScriptActions();
     fireEvent.click(screen.getByRole("button", { name: "合并下一段" }));
     await waitFor(() => expect(voices(storedProject())).toHaveLength(2));
     expect(voices(storedProject())[1].text).toBe("插入的新台词。" + voices(original)[1].text);
     expect(voices(storedProject())[1].asset.uri).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "选择第 1 段" }));
+    openScriptActions();
     fireEvent.click(screen.getByRole("button", { name: "删除本段" }));
     await waitFor(() => expect(voices(storedProject())).toHaveLength(1));
+    openScriptActions();
     fireEvent.click(screen.getByRole("button", { name: "删除本段" }));
     await waitFor(() => expect(voices(storedProject())).toHaveLength(0));
     expect(AsmrProjectSchema.safeParse(storedProject()).success).toBe(true);

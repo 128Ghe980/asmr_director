@@ -70,4 +70,17 @@ describe("GET /api/audio-candidates", () => {
     }
     expect(await readFile(manifestPath, "utf8")).toBe("{broken-private-record");
   });
+  it("filters identical clip IDs by requested audio workspace while preserving the legacy unfiltered query", async () => {
+    const short = candidate("short_take", "voice_1");
+    const source = candidate("paragraph_take", "voice_1");
+    const paragraph: AudioCandidate = { ...source, provenance: { ...source.provenance, generationMode: "paragraph", paragraph: {
+      version: 1, groupId: "group_1", text: "同一条文案。", clipIds: ["voice_1"], checkStatus: "review", sourceAsset: source.asset, segments: [],
+    } } };
+    await saveAudioCandidate({ config: runtime, candidate: short });
+    await saveAudioCandidate({ config: runtime, candidate: paragraph });
+    expect(await (await GET(request("projectId=current_project&clipId=voice_1&workspaceMode=short"))).json()).toEqual({ candidates: [short] });
+    expect(await (await GET(request("projectId=current_project&clipId=voice_1&workspaceMode=paragraph"))).json()).toEqual({ candidates: [paragraph] });
+    expect((await (await GET(request("projectId=current_project&clipId=voice_1"))).json()).candidates).toHaveLength(2);
+    expect((await GET(request("projectId=current_project&workspaceMode=unknown"))).status).toBe(400);
+  });
 });

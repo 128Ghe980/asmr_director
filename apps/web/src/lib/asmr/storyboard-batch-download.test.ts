@@ -68,7 +68,7 @@ describe("storyboard batch download list", () => {
         const shot = project.videoPlan!.shots[clip.id];
         if (kind === "stale") clip.text += "Changed.";
         if (kind === "incomplete") shot.visual = "";
-        if (kind === "invalid") shot.audio.uri = "asset://clip/wrong";
+        if (kind === "invalid") shot.audio!.uri = "asset://clip/wrong";
         if (kind === "unadopted") clip.generation.status = "asset_failed";
       }
       expect(getBatchStoryboardClips(project)).toEqual([]);

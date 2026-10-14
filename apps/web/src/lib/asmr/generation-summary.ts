@@ -82,7 +82,7 @@ export function getProjectPreviewSummary({
   projectMixJob,
   projectMixFingerprint,
 }: ProjectPreviewSummaryInput): ProjectPreviewSummary {
-  const clips = flattenClips(project);
+  const clips = flattenClips(project).filter((clip) => !(clip.type === "voice" && clip.kind === "silent"));
   const pendingClipCount = countClipsByStatus(clips, "asset_pending");
   const generatedClipCount = countClipsByStatus(clips, "asset_generated");
   const generatingClipCount = countClipsByStatus(clips, "asset_generating");
@@ -278,7 +278,7 @@ function buildTrackSlot(
 ): GenerationSlot {
   const clips =
     project.timeline.tracks.find((track) => track.track_type === trackType)
-      ?.clips ?? [];
+      ?.clips.filter((clip) => !(clip.type === "voice" && clip.kind === "silent")) ?? [];
   const display = getAggregateAssetStatusDisplay(clips);
 
   return {
@@ -293,7 +293,9 @@ function buildTrackSlot(
 function buildSelectedClipSlot(
   selectedClip: TimelineClip,
 ): GenerationSlot {
-  const display = getAssetStatusDisplay(selectedClip.generation.status);
+  const display: AssetStatusDisplay = selectedClip.type === "voice" && selectedClip.kind === "silent"
+    ? { statusLabel: "无对白", tone: "neutral" } : selectedClip.type === "voice" && selectedClip.audio_stale
+      ? { statusLabel: "音频待更新", tone: "warn" } : getAssetStatusDisplay(selectedClip.generation.status);
 
   return {
     id: "selected_clip",

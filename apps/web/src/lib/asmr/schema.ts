@@ -78,6 +78,7 @@ const ClipBaseSchema = z.object({
 export const VoiceClipSchema = ClipBaseSchema.extend({
   track: z.literal("voice"),
   type: z.literal("voice"),
+  kind: z.enum(["speech", "silent"]).optional(),
   text: z.string().min(1),
   emotion: z.string().min(1),
   style: z.string().min(1),
@@ -86,6 +87,8 @@ export const VoiceClipSchema = ClipBaseSchema.extend({
   // omit this field and retain their original estimated timing behavior.
   pause_after: z.number().nonnegative().optional(),
   semantic_unit: z.boolean().optional(),
+  // Retain previously adopted audio while shared source edits await a new take.
+  audio_stale: z.boolean().optional(),
 });
 
 export const BreathClipSchema = ClipBaseSchema.extend({
@@ -177,6 +180,39 @@ export const EmotionCurvePointSchema = z
     message: "emotion_curve point end must be greater than start",
   });
 
+export const ProjectExportsSchema = z.array(z.object({
+  type: z.enum(["project_json", "srt", "mp3", "wav", "stems_wav"]),
+  status: z.enum(["not_started", "exporting", "exported", "export_failed"]),
+  uri: z.string().nullable(),
+}));
+
+export const ProjectMixingSchema = z.object({
+  target_lufs: z.number().min(-30).max(-10),
+  binaural: z.boolean(),
+  master_limiter: z.boolean(),
+});
+
+export const SpeechWorkspaceModeSchema = z.enum(["short", "paragraph"]);
+export const SpeechWorkspaceBankSchema = z.object({
+  clips: z.array(VoiceClipSchema),
+  duration: z.number().positive(),
+  supportingTracks: z.array(TimelineTrackSchema).refine((tracks) => tracks.every((track) => track.track_type !== "voice"), {
+    message: "Supporting tracks cannot contain a second voice track",
+  }),
+  emotion_curve: z.array(EmotionCurvePointSchema).min(1),
+  mixing: ProjectMixingSchema,
+  videoPlan: ProjectVideoPlanSchema.optional().catch(undefined),
+  exports: ProjectExportsSchema,
+  mixFingerprint: z.string().optional(),
+});
+export const SpeechWorkspaceSchema = z.object({
+  version: z.literal(1),
+  activeMode: SpeechWorkspaceModeSchema,
+  short: SpeechWorkspaceBankSchema,
+  paragraph: SpeechWorkspaceBankSchema,
+  groups: z.array(z.object({ id: z.string().min(1).max(200), clipIds: z.array(z.string().min(1)).min(1).max(32) })),
+});
+
 export const AsmrProjectSchema = z.object({
   project_id: z.string().min(1),
   status: ProjectStatusSchema,
@@ -196,21 +232,12 @@ export const AsmrProjectSchema = z.object({
   emotion_curve: z.array(EmotionCurvePointSchema).min(1),
   // Damaged optional video metadata must not discard an existing audio project.
   videoPlan: ProjectVideoPlanSchema.optional().catch(undefined),
+  speechWorkspace: SpeechWorkspaceSchema.optional(),
   timeline: z.object({
     tracks: TimelineTracksSchema,
-    mixing: z.object({
-      target_lufs: z.number().min(-30).max(-10),
-      binaural: z.boolean(),
-      master_limiter: z.boolean(),
-    }),
+    mixing: ProjectMixingSchema,
   }),
-  exports: z.array(
-    z.object({
-      type: z.enum(["project_json", "srt", "mp3", "wav", "stems_wav"]),
-      status: z.enum(["not_started", "exporting", "exported", "export_failed"]),
-      uri: z.string().nullable(),
-    }),
-  ),
+  exports: ProjectExportsSchema,
 }).superRefine((project, context) => {
   for (const [pointIndex, point] of project.emotion_curve.entries()) {
     if (point.start > project.duration) {
@@ -265,3 +292,6 @@ export type TimelineClip = z.infer<typeof TimelineClipSchema>;
 export type VoiceClip = z.infer<typeof VoiceClipSchema>;
 export type TimelineTrack = z.infer<typeof TimelineTrackSchema>;
 export type AsmrProject = z.infer<typeof AsmrProjectSchema>;
+export type SpeechWorkspaceMode = z.infer<typeof SpeechWorkspaceModeSchema>;
+export type SpeechWorkspaceBank = z.infer<typeof SpeechWorkspaceBankSchema>;
+export type SpeechWorkspace = z.infer<typeof SpeechWorkspaceSchema>;

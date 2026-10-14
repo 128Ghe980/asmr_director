@@ -15,11 +15,13 @@ export const ClipVideoStoryboardSchema = z.object({
   promptFormat: z.literal("minimax-h3"),
   clipId: z.string().min(1).max(200),
   sourceFingerprint: fingerprintSchema,
+  kind: z.enum(["speech", "silent"]).optional(),
+  duration: z.number().finite().positive().max(600).optional(),
   audio: z.object({
     assetId: assetIdSchema,
     uri: z.string().min(1).max(240),
     duration: z.number().finite().positive(),
-  }).strict(),
+  }).strict().optional(),
   // Editing can temporarily clear these fields. Copying requires complete text.
   title: z.string().max(120),
   visual: z.string().max(800),
@@ -29,7 +31,11 @@ export const ClipVideoStoryboardSchema = z.object({
   previousPromptFingerprint: fingerprintSchema.optional(),
   referenceMode: StoryboardReferenceModeSchema.optional(),
 }).strict().superRefine((shot, context) => {
-  if (shot.audio.uri !== `asset://clip/${shot.audio.assetId}`) {
+  if (shot.kind === "silent") {
+    if (shot.audio !== undefined || shot.duration === undefined) {
+      context.addIssue({ code: "custom", message: "无对白分镜必须保存镜头时长，且不能关联人声音频。", path: ["duration"] });
+    }
+  } else if (!shot.audio || shot.audio.uri !== `asset://clip/${shot.audio.assetId}`) {
     context.addIssue({ code: "custom", message: "视频分镜必须关联一致的本地已采用音频。", path: ["audio", "uri"] });
   }
   if ((shot.previousClipId === undefined) !== (shot.previousPromptFingerprint === undefined)) {
@@ -63,15 +69,15 @@ function effectiveSceneDescription(project: AsmrProject): string {
 }
 
 function isAdoptedVoiceClip(clip: VoiceClip): boolean {
-  return Boolean(clip.text.trim()) && clip.generation.status === "asset_generated"
+  return clip.kind !== "silent" && !clip.audio_stale && Boolean(clip.text.trim()) && clip.generation.status === "asset_generated"
     && assetIdSchema.safeParse(clip.asset.asset_id).success
     && clip.asset.uri === `asset://clip/${clip.asset.asset_id}`;
 }
 
-function adoptedVoiceClip(project: AsmrProject, clipId: string): VoiceClip {
+function storyboardSourceClip(project: AsmrProject, clipId: string): VoiceClip {
   const matches = orderedVoiceClips(project).filter((clip) => clip.id === clipId);
   const clip = matches.length === 1 ? matches[0] : undefined;
-  if (!clip || !isAdoptedVoiceClip(clip)) {
+  if (!clip || !(clip.kind === "silent" ? Boolean(clip.text.trim()) && clip.duration > 0 && clip.duration <= 600 : isAdoptedVoiceClip(clip))) {
     throw new Error("请先生成并采用当前片段的本地人声音频。");
   }
   return clip;
@@ -94,14 +100,15 @@ export function getClipStoryboardReferenceMode(project: AsmrProject, clipId: str
 
 /** Source identity excludes timeline waiting, clip estimates, gain and spatial DSP. */
 export function createClipVideoSourceFingerprint(project: AsmrProject, clipId: string): string {
-  const clip = adoptedVoiceClip(project, clipId);
+  const clip = storyboardSourceClip(project, clipId);
   return sourceFingerprint(project, clip);
 }
 
 function sourceFingerprint(project: AsmrProject, clip: VoiceClip): string {
   return JSON.stringify({
     clipId: clip.id, text: clip.text,
-    asset: { assetId: clip.asset.asset_id, uri: clip.asset.uri, declaredDuration: clip.asset.duration },
+    ...(clip.kind === "silent" ? { kind: "silent", duration: clip.duration }
+      : { asset: { assetId: clip.asset.asset_id, uri: clip.asset.uri, declaredDuration: clip.asset.duration } }),
     scene: project.scene, character: project.character,
     sceneDescription: effectiveSceneDescription(project),
   });
@@ -115,6 +122,7 @@ function previousContentFingerprint(shot: ClipVideoStoryboard): string {
   // No nested previous fingerprints: an iterative validity pass checks the chain.
   return JSON.stringify({
     clipId: shot.clipId, sourceFingerprint: shot.sourceFingerprint, audio: shot.audio,
+    ...(shot.kind === "silent" ? { kind: shot.kind, duration: shot.duration } : {}),
     title: shot.title, visual: shot.visual, action: shot.action, camera: shot.camera,
     ...(shot.referenceMode === undefined ? {} : { referenceMode: shot.referenceMode }),
   });
@@ -130,9 +138,11 @@ function storyboardStates(project: AsmrProject, clips = orderedVoiceClips(projec
     if (!parsed.success) continue;
     const shot = parsed.data;
     // Source lookup/fingerprinting and predecessor checks share one ordered pass.
-    const currentSource = counts.get(clip.id) === 1 && isAdoptedVoiceClip(clip);
+    const currentSource = counts.get(clip.id) === 1 && (clip.kind === "silent"
+      ? Boolean(clip.text.trim()) && clip.duration > 0 && clip.duration <= 600 : isAdoptedVoiceClip(clip));
     let current = currentSource && shot.clipId === clip.id && shot.sourceFingerprint === sourceFingerprint(project, clip)
-      && shot.audio.assetId === clip.asset.asset_id && shot.audio.uri === clip.asset.uri;
+      && (clip.kind === "silent" ? shot.kind === "silent" && shot.duration === clip.duration && !shot.audio
+        : shot.kind !== "silent" && shot.audio?.assetId === clip.asset.asset_id && shot.audio?.uri === clip.asset.uri);
     if (current && shot.previousClipId !== undefined) {
       const previous = clips[index - 1];
       const previousState = previous ? states.get(previous.id) : undefined;
@@ -169,7 +179,7 @@ export function getClipStoryboardReferenceContext(project: AsmrProject, clipId: 
 
 /** One clip, one measured complete TTS track and one continuous video shot. */
 export function createClipH3Prompt(project: AsmrProject, clipId: string): string {
-  const clip = adoptedVoiceClip(project, clipId);
+  const clip = storyboardSourceClip(project, clipId);
   const state = storyboardStates(project).get(clipId);
   if (!state) throw new Error("当前片段还没有视频分镜。");
   if (!state.current) throw new Error("文案、音频、场景或前一镜已更新，请重新生成当前视频分镜。");
@@ -180,7 +190,9 @@ export function createClipH3Prompt(project: AsmrProject, clipId: string): string
 }
 
 function renderClipH3Prompt(clip: VoiceClip, shot: ClipVideoStoryboard): string {
-  return renderConciseH3Prompt({ visual: shot.visual, action: shot.action, camera: shot.camera, dialogue: clip.text, durationSeconds: shot.audio.duration });
+  return renderConciseH3Prompt({ visual: shot.visual, action: shot.action, camera: shot.camera,
+    dialogue: clip.kind === "silent" ? "" : clip.text, silent: clip.kind === "silent",
+    durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration });
 }
 
 /** Evaluate every saved shot once; values are identical to usable single-clip prompts. */

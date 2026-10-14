@@ -48,6 +48,70 @@ function saveShot(project: AsmrProject, clip: VoiceClip, patch: Partial<ClipVide
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+describe("台词上下调整", () => {
+  it("exposes compact controls on every voice row and forwards the displayed clip identity", () => {
+    const input = fixture();
+    input.project.timeline.tracks.find((track) => track.track_type === "voice")!.clips.reverse();
+    const onMoveClip = vi.fn();
+    render(<ScriptEditorPanel {...input} onMoveClip={onMoveClip} />);
+    const voices = flattenClips(input.project).filter((clip) => clip.type === "voice");
+    expect(screen.getAllByRole("button", { name: /^上移第 \d+ 段$/u })).toHaveLength(voices.length);
+    expect(screen.getAllByRole("button", { name: /^下移第 \d+ 段$/u })).toHaveLength(voices.length);
+    const firstUp = screen.getByRole("button", { name: "上移第 1 段" }) as HTMLButtonElement;
+    const lastDown = screen.getByRole("button", { name: `下移第 ${voices.length} 段` }) as HTMLButtonElement;
+    expect(firstUp.disabled).toBe(true);
+    expect(lastDown.disabled).toBe(true);
+    fireEvent.click(firstUp); fireEvent.click(lastDown);
+    expect(onMoveClip).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "下移第 1 段" }));
+    fireEvent.click(screen.getByRole("button", { name: "上移第 3 段" }));
+    expect(onMoveClip).toHaveBeenNthCalledWith(1, voices[0].id, "down");
+    expect(onMoveClip).toHaveBeenNthCalledWith(2, voices[2].id, "up");
+    expect(input.onSelectClip).not.toHaveBeenCalled();
+    expect(input.onUpdateClip).not.toHaveBeenCalled();
+    expect(input.onOpenStoryboard).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "下移第 1 段" }).closest("[data-clip-move-controls]")!.className).toContain("h-8 w-12");
+  });
+
+  it("disables all ordering controls during a busy operation and restores boundary restrictions afterward", () => {
+    const input = fixture();
+    const onMoveClip = vi.fn();
+    const view = render(<ScriptEditorPanel {...input} onMoveClip={onMoveClip} busy />);
+    for (const button of screen.getAllByRole("button", { name: /^(?:上移|下移)第 \d+ 段$/u })) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(button);
+    }
+    expect(onMoveClip).not.toHaveBeenCalled();
+    view.rerender(<ScriptEditorPanel {...input} onMoveClip={onMoveClip} />);
+    expect((screen.getByRole("button", { name: "下移第 1 段" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "上移第 1 段" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("retains the selected text range and leaves storyboard actions available alongside ordering", () => {
+    const input = fixture();
+    const first = flattenClips(input.project).find((clip) => clip.type === "voice")!;
+    input.selectedClipId = first.id;
+    const onMoveClip = vi.fn();
+    render(<ScriptEditorPanel {...input} onMoveClip={onMoveClip} onReferenceModeChange={vi.fn()} />);
+    const field = screen.getByRole("textbox", { name: "台词" }) as HTMLTextAreaElement;
+    field.setSelectionRange(2, 8); fireEvent.select(field);
+    vi.mocked(input.onSelectClip).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "下移第 1 段" }));
+    expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(8);
+    expect(input.onSelectClip).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "选区独立成段" }));
+    expect(input.onSplitClip).toHaveBeenCalledExactlyOnceWith(first.id, 2, 8);
+    fireEvent.click(screen.getByRole("button", { name: "第 1 段视频分镜" }));
+    expect(input.onOpenStoryboard).toHaveBeenCalledExactlyOnceWith(first.id);
+  });
+
+  it("keeps existing callers compatible when no ordering callback is supplied", () => {
+    render(<ScriptEditorPanel {...fixture()} />);
+    expect(screen.queryByRole("button", { name: "上移第 1 段" })).toBeNull();
+    expect(screen.getByRole("button", { name: "第 1 段视频分镜" })).toBeTruthy();
+  });
+});
+
 describe("每段视频分镜入口", () => {
   it("shows independent ready, pending and incomplete storyboard markers inside the existing right-side buttons", () => {
     const input = storyboardFixture();

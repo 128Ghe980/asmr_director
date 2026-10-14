@@ -1,4 +1,5 @@
-import type { AsmrProject } from "./schema";
+import type { AsmrProject, SpeechWorkspaceMode } from "./schema";
+import { ensureSpeechWorkspaces, getSpeechWorkspaceMode, normalizeSpeechSentences } from "./speech-workspace";
 import {
   PlannerSourceSchema,
   compilePlannerDraft,
@@ -34,6 +35,7 @@ export type AudioCandidateAcceptance = {
   beforeProject: AsmrProject;
   beforePlannerSource?: PlannerSource;
   afterFingerprint: string;
+  workspaceMode?: SpeechWorkspaceMode;
 };
 
 export type ProjectLibraryEntry = {
@@ -45,6 +47,7 @@ export type ProjectLibraryEntry = {
   mixFingerprint?: string;
   plannerSource?: PlannerSource;
   candidateAcceptance?: AudioCandidateAcceptance;
+  candidateAcceptances?: Partial<Record<SpeechWorkspaceMode, AudioCandidateAcceptance>>;
 };
 
 export type ProjectLibrary = {
@@ -99,8 +102,12 @@ function makeEntry(
   mixFingerprint?: string,
   plannerSource?: PlannerSource,
   candidateAcceptance?: AudioCandidateAcceptance,
+  candidateAcceptances?: Partial<Record<SpeechWorkspaceMode, AudioCandidateAcceptance>>,
 ): ProjectLibraryEntry {
   const cloned = cloneProject(project);
+  const acceptanceRecords = cloned.speechWorkspace && candidateAcceptance
+    ? { [candidateAcceptance.workspaceMode ?? "short"]: candidateAcceptance, ...candidateAcceptances }
+    : candidateAcceptances;
 
   return {
     projectId: cloned.project_id,
@@ -108,9 +115,11 @@ function makeEntry(
     updatedAt: now.toISOString(),
     project: cloned,
     revisions,
-    mixFingerprint,
+    mixFingerprint: cloned.speechWorkspace ? cloned.speechWorkspace[cloned.speechWorkspace.activeMode].mixFingerprint : mixFingerprint,
     plannerSource: plannerSource ? PlannerSourceSchema.parse(plannerSource) : undefined,
-    candidateAcceptance,
+    candidateAcceptance: cloned.speechWorkspace ? acceptanceRecords?.[getSpeechWorkspaceMode(cloned)]
+      ?? (candidateAcceptance && (candidateAcceptance.workspaceMode ?? "short") === getSpeechWorkspaceMode(cloned) ? candidateAcceptance : undefined) : candidateAcceptance,
+    ...(acceptanceRecords ? { candidateAcceptances: acceptanceRecords } : {}),
   };
 }
 
@@ -132,6 +141,7 @@ function parseCandidateAcceptance(input: unknown, projectId: string): AudioCandi
     version: 1, candidateId: candidate.candidateId, clipId: candidate.clipId,
     adoptedAt: candidate.adoptedAt, beforeProject: project.data,
     beforePlannerSource: source.data, afterFingerprint: candidate.afterFingerprint,
+    ...(candidate.workspaceMode === "short" || candidate.workspaceMode === "paragraph" ? { workspaceMode: candidate.workspaceMode } : {}),
   };
 }
 
@@ -235,6 +245,12 @@ function parseStoredLibrary(
         : undefined,
       PlannerSourceSchema.safeParse(entry.plannerSource).data,
       parseCandidateAcceptance(entry.candidateAcceptance, parsedProject.data.project_id),
+      entry.candidateAcceptances && typeof entry.candidateAcceptances === "object" ? Object.fromEntries(
+        (["short", "paragraph"] as const).flatMap((mode) => {
+          const record = parseCandidateAcceptance((entry.candidateAcceptances as Partial<Record<SpeechWorkspaceMode, unknown>>)[mode], parsedProject.data.project_id);
+          return record && (record.workspaceMode ?? "short") === mode ? [[mode, record]] : [];
+        }),
+      ) : undefined,
     );
 
     if (Number.isNaN(new Date(parsedEntry.updatedAt).getTime())) {
@@ -337,6 +353,7 @@ export function updateLibraryProject(
     existing?.mixFingerprint,
     existing?.plannerSource,
     existing?.candidateAcceptance,
+    existing?.candidateAcceptances,
   );
   const projects = existing
     ? library.projects.map((entry) =>
@@ -375,7 +392,11 @@ export function setLibraryProjectMixFingerprint(
     ...library,
     projects: library.projects.map((entry) =>
       entry.projectId === projectId
-        ? { ...entry, mixFingerprint }
+        ? { ...entry, mixFingerprint, project: entry.project.speechWorkspace ? { ...entry.project, speechWorkspace: {
+          ...entry.project.speechWorkspace, [entry.project.speechWorkspace.activeMode]: {
+            ...entry.project.speechWorkspace[entry.project.speechWorkspace.activeMode], mixFingerprint,
+          },
+        } } : entry.project }
         : entry,
     ),
   };
@@ -404,7 +425,7 @@ export function replaceLibraryProject(
     ...updated,
     projects: updated.projects.map((entry) =>
       entry.projectId === project.project_id
-        ? { ...entry, mixFingerprint: undefined, plannerSource: undefined, candidateAcceptance: undefined }
+        ? { ...entry, mixFingerprint: undefined, plannerSource: undefined, candidateAcceptance: undefined, candidateAcceptances: undefined }
         : entry,
     ),
   };
@@ -414,8 +435,9 @@ function cleanTemplateProject(
   template: AsmrProject,
   projectId: string,
 ): AsmrProject {
-  return cloneProject({
+  const cleaned = cloneProject({
     ...template,
+    speechWorkspace: undefined,
     project_id: projectId,
     title: "未命名项目",
     status: "draft",
@@ -441,6 +463,7 @@ function cleanTemplateProject(
       uri: null,
     })),
   });
+  return template.speechWorkspace ? ensureSpeechWorkspaces(cleaned) : cleaned;
 }
 
 export function createLibraryProject(
@@ -471,10 +494,11 @@ export function adoptPlannerDraft(
   const projectId = makeUniqueId(`asmr_planner_${compactTimestamp(now)}`, usedIds);
   // Compile and validate everything before creating the safety revision. Failures
   // leave the caller's project and planning workspace untouched.
-  const project = compilePlannerDraft(source.brief, source.draft, projectId);
+  const compiled = compilePlannerDraft(source.brief, source.draft, projectId);
   if (source.sceneDescription !== undefined) {
-    project.videoPlan = { version: 1, sceneDescription: source.sceneDescription, shots: {} };
+    compiled.videoPlan = { version: 1, sceneDescription: source.sceneDescription, shots: {} };
   }
+  const project = ensureSpeechWorkspaces(normalizeSpeechSentences(compiled));
   const protectedLibrary = createProjectRevision(
     library,
     library.currentProjectId,
@@ -636,6 +660,7 @@ export function restoreProjectRevision(
           project: restoredProject,
           mixFingerprint: undefined,
           candidateAcceptance: undefined,
+          candidateAcceptances: undefined,
           plannerSource: revision.plannerSource
             ? PlannerSourceSchema.parse(revision.plannerSource)
             : undefined,

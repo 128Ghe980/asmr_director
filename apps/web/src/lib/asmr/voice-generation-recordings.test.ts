@@ -7,6 +7,7 @@ import { getLocalRuntimeConfig } from "./local-runtime-config";
 import { getVoiceGenerationRoot, listVoiceGenerationRecordings, resolveVoiceGenerationRecording } from "./voice-generation-recordings";
 import { GET as audioGET } from "../../app/api/voice-generation-recordings/[recordingId]/route";
 import { GET as listGET } from "../../app/api/voice-generation-recordings/route";
+import { VoiceGenerationRecordingsSchema } from "./voice-generation-recording";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -38,6 +39,96 @@ async function take(root: string, runId = id, extra: Record<string, unknown> = {
 }
 
 describe("complete original voice recordings", () => {
+  it("recovers existing paragraph failure recognition using the exact short target and suffix", async () => {
+    const config = await setup();
+    const clips = [{ clipId: "first", text: "回来啦。" }, { clipId: "second", text: "先坐。" }];
+    const fullText = clips.map((clip) => clip.text).join("");
+    const recognition = { stage: "source_alignment", expectedText: clips[0].text, followingText: clips[1].text, sourceTranscript: "回来了先坐",
+      alignment: { expected: "回来啦", recognizedPrefix: "回来了", reason: "uncertain_word_alignment" } };
+    const directory = await take(getVoiceGenerationRoot(config), id, { projectId: "p", clipId: "second", generationMode: "paragraph",
+      paragraph: { clips }, plan: { clauses: clips.map((clip) => clip.text) }, targets: [{ expectedText: fullText, text: fullText }] },
+    { code: "uncertain_word_alignment", recognition, privatePath: config.runtimeRoot });
+    const query = { config, projectId: "p", clipId: "second", text: clips[1].text, workspaceMode: "paragraph" as const };
+    const [recording] = (await listVoiceGenerationRecordings(query)).recordings;
+    expect(recording).toMatchObject({ status: "needs_review", expectedText: fullText, recognition: undefined,
+      paragraphRecognition: { checkStatus: "review", clipIds: ["first", "second"], segments: [], failedClipId: "first", failureRecognition: recognition } });
+    expect(recording.warning).toContain("目标句的结束位置");
+    expect(recording.paragraphRecognition?.failureRecognition?.expectedText).toBe("回来啦。");
+    expect(JSON.stringify(recording)).not.toContain(config.runtimeRoot);
+    expect(VoiceGenerationRecordingsSchema.safeParse({ recordings: [recording], truncated: false }).success).toBe(true);
+    for (const invalid of [{ ...recognition, expectedText: fullText }, { ...recognition, followingText: "其他后文。" },
+      { ...recognition, privatePath: config.runtimeRoot }]) {
+      await writeFile(path.join(directory, "group-1-take-1-failure.json"), JSON.stringify({ code: "uncertain_word_alignment", recognition: invalid }));
+      const [protectedRecording] = (await listVoiceGenerationRecordings(query)).recordings;
+      expect(protectedRecording.paragraphRecognition?.failureRecognition).toBeUndefined();
+      expect(protectedRecording.recognition).toBeUndefined();
+      expect(protectedRecording.status).toBe("needs_review");
+    }
+    expect(new Uint8Array(await readFile(path.join(directory, "group-1-take-1-source.wav")))).toEqual(wav);
+  });
+
+  it("reads successful paragraph segment checks without requiring legacy top-level transcript fields", async () => {
+    const config = await setup();
+    const clips = [{ clipId: "first", text: "回来啦。" }, { clipId: "second", text: "先坐。" }];
+    const fullText = clips.map((clip) => clip.text).join("");
+    const directory = await take(getVoiceGenerationRoot(config), id, { projectId: "p", clipId: "first", generationMode: "paragraph",
+      paragraph: { clips }, plan: { clauses: clips.map((clip) => clip.text) }, targets: [{ expectedText: fullText, text: fullText }] });
+    const segments = clips.map((clip, index) => ({ ...clip, cutStartSeconds: index * .5, cutEndSeconds: (index + 1) * .5,
+      asset: { assetId: `cut_${index}`, uri: `asset://clip/cut_${index}`, duration: .5 }, privatePath: config.runtimeRoot,
+      recognition: { stage: "complete", expectedText: clip.text, sourceTranscript: clips.slice(index).map((clip) => clip.text).join(""), targetTranscript: clip.text,
+        ...(index === 0 ? { followingText: clips[1].text } : {}) } }));
+    await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ checkStatus: "passed", segments }));
+    const query = { config, projectId: "p", clipId: "second", text: clips[1].text, workspaceMode: "paragraph" as const };
+    const [recording] = (await listVoiceGenerationRecordings(query)).recordings;
+    expect(recording.status).toBe("checked");
+    expect(recording.warning).toContain("2 个短句的切分检查");
+    expect(recording.paragraphRecognition?.segments.map((segment) => segment.recognition?.expectedText)).toEqual(clips.map((clip) => clip.text));
+    expect(recording.recognition).toBeUndefined();
+    expect(JSON.stringify(recording)).not.toContain(config.runtimeRoot);
+    expect(JSON.stringify(recording)).not.toContain("asset://");
+    expect(VoiceGenerationRecordingsSchema.safeParse({ recordings: [recording], truncated: false }).success).toBe(true);
+    for (const badSegments of [[...segments].reverse(), [{ ...segments[0], text: "其他文字。" }, segments[1]],
+      [{ ...segments[0], recognition: { ...segments[0].recognition, expectedText: fullText } }, segments[1]],
+      [{ ...segments[0], recognition: { ...segments[0].recognition, followingText: "错误后文。" } }, segments[1]],
+      [segments[0], { ...segments[1], cutStartSeconds: .6 }], [segments[0], { ...segments[1], cutEndSeconds: .9 }]]) {
+      await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ checkStatus: "passed", segments: badSegments }));
+      const [protectedRecording] = (await listVoiceGenerationRecordings(query)).recordings;
+      expect(protectedRecording.paragraphRecognition).toBeUndefined();
+      expect(protectedRecording.status).toBe("recorded");
+    }
+  });
+
+  it("locates repeated paragraph sentences by remaining suffix and validates an explicit failed clip", async () => {
+    const config = await setup();
+    const clips = [{ clipId: "first", text: "回来啦。" }, { clipId: "second", text: "回来啦。" }];
+    const fullText = clips.map((clip) => clip.text).join("");
+    const directory = await take(getVoiceGenerationRoot(config), id, { projectId: "p", clipId: "first", generationMode: "paragraph",
+      paragraph: { clips }, plan: { clauses: clips.map((clip) => clip.text) }, targets: [{ expectedText: fullText, text: fullText }] });
+    const recognition = { stage: "source_alignment", expectedText: "回来啦。", sourceTranscript: "回来了" };
+    await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ checkStatus: "review", diagnosticCode: "uncertain_word_alignment", failureRecognition: recognition, failedClipId: "second" }));
+    const query = { config, projectId: "p", clipId: "first", text: clips[0].text, workspaceMode: "paragraph" as const };
+    expect((await listVoiceGenerationRecordings(query)).recordings[0].paragraphRecognition).toMatchObject({ failedClipId: "second", failureRecognition: recognition });
+    await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ checkStatus: "review", failureRecognition: recognition, failedClipId: "first" }));
+    expect((await listVoiceGenerationRecordings(query)).recordings[0].paragraphRecognition?.failureRecognition).toBeUndefined();
+    await writeFile(path.join(directory, "plan.json"), JSON.stringify({ projectId: "p", clipId: "first", generationMode: "paragraph", paragraph: { clips },
+      plan: { clauses: [fullText] }, targets: [{ expectedText: "其他完整文案。", text: "其他完整文案。" }] }));
+    expect((await listVoiceGenerationRecordings(query)).recordings[0].paragraphRecognition).toBeUndefined();
+  });
+
+  it("isolates original recordings of identical source IDs by audio workspace", async () => {
+    const config = await setup();
+    await take(getVoiceGenerationRoot(config), id, { projectId: "project", clipId: "clip", generationMode: "clip" });
+    const paragraphId = "22222222-2222-4333-8444-555555555555";
+    await take(getVoiceGenerationRoot(config), paragraphId, { projectId: "project", clipId: "clip", generationMode: "paragraph",
+      paragraph: { clips: [{ clipId: "clip", text }] } });
+    const query = { config, projectId: "project", clipId: "clip", text };
+    expect((await listVoiceGenerationRecordings({ ...query, workspaceMode: "short" })).recordings.map((recording) => recording.runId)).toEqual([id]);
+    expect((await listVoiceGenerationRecordings({ ...query, workspaceMode: "paragraph" })).recordings.map((recording) => recording.runId)).toEqual([paragraphId]);
+    expect((await listVoiceGenerationRecordings(query)).recordings).toHaveLength(2);
+    const response = await listGET(new Request(`http://localhost/api/voice-generation-recordings?projectId=project&clipId=clip&text=${encodeURIComponent(text)}&workspaceMode=paragraph`));
+    expect(response.status).toBe(200);
+    expect((await response.json()).recordings.map((recording: { runId: string }) => recording.runId)).toEqual([paragraphId]);
+  });
   it("diagnoses historical continuation failures without accusing target content or changing source bytes", async () => {
     const config = await setup();
     const recognition = { stage: "continuation_alignment", expectedText: text, sourceTranscript: "回来啦外面是不是很冷嗯快进来", followingText: "快进来。" };

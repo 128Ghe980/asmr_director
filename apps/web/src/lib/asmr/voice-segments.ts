@@ -7,12 +7,15 @@ export type VoiceSegmentEdit = {
   selectedClipId: string | null;
 };
 
+export type VoiceClipMoveDirection = "up" | "down";
+
 function voices(project: AsmrProject): VoiceClip[] {
   const track = project.timeline.tracks.find((track) => track.track_type === "voice");
   return track ? [...track.clips].sort((a, b) => a.start - b.start) : [];
 }
 
 function spokenDuration(clip: VoiceClip): number {
+  if (clip.kind === "silent") return clip.duration;
   const duration = clip.asset.duration;
   return (clip.asset.uri || clip.asset.asset_id) && duration !== null &&
     Number.isFinite(duration) && duration > 0 ? duration : clip.duration;
@@ -109,6 +112,51 @@ export function getVoiceGapAfter(project: AsmrProject, clipId: string): number |
   return Math.max(0, ordered[index + 1].start - ordered[index].start - spokenDuration(ordered[index]));
 }
 
+/** Move a complete paragraph, including its following wait, without replacing
+ * adopted audio. Reflow only the affected voice suffix; absolute-time cues on
+ * other tracks and saved storyboard references stay where the user put them.
+ */
+export function moveVoiceClip(
+  project: AsmrProject,
+  clipId: string,
+  direction: VoiceClipMoveDirection,
+): VoiceSegmentEdit {
+  const ordered = voices(project);
+  const index = ordered.findIndex((clip) => clip.id === clipId);
+  const target = index + (direction === "up" ? -1 : 1);
+  const unchanged = { project, selectedClipId: ordered[index]?.id ?? null };
+  if (index < 0 || target < 0 || target >= ordered.length) return unchanged;
+
+  const waits = new Map(ordered.map((clip, clipIndex) => [clip.id,
+    clip.pause_after ?? (ordered[clipIndex + 1]
+      ? Math.max(0, ordered[clipIndex + 1].start - clip.start - spokenDuration(clip))
+      : 0),
+  ]));
+  const firstChanged = Math.min(index, target);
+  let start = ordered[firstChanged].start;
+  const previous = ordered[firstChanged - 1];
+  if (previous) {
+    start = Math.max(start, previous.start + Math.max(previous.duration, spokenDuration(previous)) + waits.get(previous.id)!);
+  }
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  const reordered = ordered.map((clip, clipIndex): VoiceClip => {
+    if (clipIndex < firstChanged) return clip;
+    const duration = spokenDuration(clip);
+    const pause_after = waits.get(clip.id)!;
+    const updated = {
+      ...clip, start, duration, pause_after,
+      fade_in: Math.min(clip.fade_in, duration),
+      fade_out: Math.min(clip.fade_out, duration),
+    };
+    start += duration + pause_after;
+    return updated;
+  });
+  return {
+    project: fitProjectBounds(replaceVoices(project, reordered)),
+    selectedClipId: clipId,
+  };
+}
+
 /** Keep an explicit pause stable when generated audio is longer OR shorter.
  * The generation state module invokes this only for user-controlled segments.
  */
@@ -174,7 +222,7 @@ export function splitVoiceClip(project: AsmrProject, clipId: string, start: numb
   const ordered = voices(project);
   const voice = ordered.find((clip) => clip.id === clipId);
   const unchanged = { project, selectedClipId: voice?.id ?? null };
-  if (!voice || !validTextBoundary(voice.text, start) || !validTextBoundary(voice.text, end) || end < start) return unchanged;
+  if (!voice || voice.kind === "silent" || !validTextBoundary(voice.text, start) || !validTextBoundary(voice.text, end) || end < start) return unchanged;
   if (start !== end && !voice.text.slice(start, end).trim()) return unchanged;
   if (start !== end) {
     // Keep leading/trailing whitespace with speech rather than creating blank clips.
@@ -232,6 +280,7 @@ export function addVoiceClip(project: AsmrProject, afterClipId?: string): VoiceS
   const added = pendingVoice({
     ...source,
     id: newVoiceId(project), text: "在这里输入台词。", start, duration: 4,
+    kind: "speech", audio_stale: undefined,
     semantic_unit: true,
     pause_after: inheritedPause,
     fade_in: Math.min(source.fade_in, 4), fade_out: Math.min(source.fade_out, 4),
@@ -244,6 +293,30 @@ export function addVoiceClip(project: AsmrProject, afterClipId?: string): VoiceS
     project: fitProjectBounds(replaceVoices(shifted, [...voices(shifted), added].sort((a, b) => a.start - b.start))),
     selectedClipId: added.id,
   };
+}
+
+/** Insert editorial picture time without touching any existing voice asset. */
+export function addSilentClip(project: AsmrProject, afterClipId?: string, options: {
+  description?: string; duration?: number;
+} = {}): VoiceSegmentEdit {
+  const duration = options.duration ?? 4;
+  if (!Number.isFinite(duration) || duration <= 0 || duration > 600) return { project, selectedClipId: null };
+  const edit = addVoiceClip(project, afterClipId);
+  if (!edit.selectedClipId) return edit;
+  const silent = replaceVoices(edit.project, voices(edit.project).map((clip) => clip.id === edit.selectedClipId ? {
+    ...clip, kind: "silent", text: options.description?.trim() || "轻轻放下水杯，镜头停留在桌边。",
+    semantic_unit: false, audio_stale: undefined, fade_in: 0, fade_out: 0,
+  } : clip));
+  return { ...edit, project: fitVoiceSegmentTiming(silent, edit.selectedClipId, duration) };
+}
+
+/** The active projection is synchronized to the other bank by its caller. */
+export function setSilentClipDuration(project: AsmrProject, clipId: string, seconds: number): AsmrProject {
+  const clip = voices(project).find((item) => item.id === clipId);
+  if (clip?.kind !== "silent" || !Number.isFinite(seconds) || seconds <= 0 || seconds > 600 || seconds === clip.duration) return project;
+  const marked = clip.pause_after === undefined ? replaceVoices(project, voices(project).map((item) => item.id === clipId
+    ? { ...item, pause_after: getVoiceGapAfter(project, clipId) ?? 0 } : item)) : project;
+  return fitVoiceSegmentTiming(marked, clipId, seconds);
 }
 
 export function deleteVoiceClip(project: AsmrProject, clipId: string): VoiceSegmentEdit {
@@ -263,7 +336,7 @@ export function mergeVoiceClipWithNext(project: AsmrProject, clipId: string): Vo
   const index = ordered.findIndex((clip) => clip.id === clipId);
   const voice = ordered[index];
   const next = ordered[index + 1];
-  if (!voice || !next) return { project, selectedClipId: voice?.id ?? null };
+  if (!voice || !next || voice.kind === "silent" || next.kind === "silent") return { project, selectedClipId: voice?.id ?? null };
   const duration = Math.max(voice.start + spokenDuration(voice), next.start + spokenDuration(next)) - voice.start;
   const merged = pendingVoice({
     ...voice, text: voice.text + next.text, duration,

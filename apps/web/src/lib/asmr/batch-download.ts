@@ -34,7 +34,7 @@ export type BatchDownloadClip = {
 /** Current generated timeline assets are adopted; candidates/history are not in this list. */
 export function getBatchDownloadClips(project: AsmrProject): BatchDownloadClip[] {
   return project.timeline.tracks.flatMap<TimelineClip>(track => track.clips)
-    .filter(clip => clip.generation.status === "asset_generated"
+    .filter(clip => !(clip.type === "voice" && clip.kind === "silent") && clip.generation.status === "asset_generated"
       && Boolean(clip.asset.asset_id)
       && clip.asset.uri === `${localClipPrefix}${clip.asset.asset_id}`)
     .map((clip, originalIndex) => ({ clip, originalIndex }))

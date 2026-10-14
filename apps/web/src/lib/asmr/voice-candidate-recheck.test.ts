@@ -73,6 +73,7 @@ async function fixture() {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   for (const root of temporaryRoots.splice(0)) {
     const resolved = path.resolve(root);
@@ -84,6 +85,23 @@ afterEach(async () => {
 });
 
 describe("saved voice candidate recognition", () => {
+  it("retains the old long-text five-minute default and preserves the original when it expires", async () => {
+    const data = await fixture(), before = await readFile(resolveCandidateManifestPath(data.config));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    data.analyze.mockImplementationOnce(async (input, dependencies) => {
+      expect(dependencies?.timeoutMs).toBeGreaterThan(290_000);
+      expect(dependencies?.timeoutMs).toBeLessThanOrEqual(300_000);
+      await vi.advanceTimersByTimeAsync(300_001);
+      input.signal?.throwIfAborted();
+      throw new Error("unreachable");
+    });
+    await expect(recheckVoiceCandidate({ project: data.project, clipId: data.clip.id, candidateId: data.candidate.candidateId,
+      config: data.config }, { analyze: data.analyze })).rejects.toMatchObject({ statusCode: 504 });
+    expect(await readFile(resolveCandidateManifestPath(data.config))).toEqual(before);
+    expect(await readFile(path.join(data.trace, "group-1-take-1-source.wav"))).toEqual(Buffer.from(data.originals[0]));
+    expect(await getAudioCandidate({ config: data.config, candidateId: data.candidate.candidateId })).toEqual(data.candidate);
+    expect(await readdir(path.join(data.root, "locks"))).toEqual([]);
+  });
   it("reanalyzes each precisely owned full original locally, saves a new candidate and keeps the old candidate/source", async () => {
     const data = await fixture();
     const oldManifest = await readFile(resolveCandidateManifestPath(data.config), "utf8");

@@ -43,10 +43,12 @@ import { getGenerationView } from "@/lib/asmr/generation-view";
 import { createLocalGenerationBridge } from "@/lib/asmr/local-generation-bridge";
 import { createMockGenerationBridge } from "@/lib/asmr/mock-generation-bridge";
 import { resolvePlayableAssetUri, resolveClipPlaybackUri } from "@/lib/asmr/playback-asset-resolver";
-import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
-import { adoptAudioCandidate, canUndoLastAudioCandidate, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
+import { AudioCandidateSchema, getAudioCandidateWorkspaceMode, getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
+import { adoptAudioCandidate, canUndoLastAudioCandidate, getLastAudioCandidateAcceptance, undoLastAudioCandidate } from "@/lib/asmr/candidate-acceptance";
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
 import { getVoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
+import { getVoiceParagraphContext } from "@/lib/asmr/voice-paragraph-context";
+import { captureSpeechWorkspace, ensureSpeechWorkspaces, getParagraphGroup, getSpeechWorkspaceMode, getSpeechWorkspaceProject, hasSharedSpeechScriptChanges, hasUnsplitSpeechSentences, mergeSpeechWorkspaceProject, normalizeSpeechSentences, replaceParagraphScript, restoreSharedSpeechScript, restoreSpeechWorkspaceArrangement, switchSpeechWorkspace, syncSharedSpeechScript } from "@/lib/asmr/speech-workspace";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import type { VoiceReferenceImportResult } from "./voice-reference-import";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
@@ -80,9 +82,9 @@ import {
   type AudioAnalysisStatus,
 } from "@/lib/asmr/product-quality";
 import { getProjectWorkspaceSummary } from "@/lib/asmr/project-summary";
-import type { AsmrProject } from "@/lib/asmr/schema";
+import type { AsmrProject, SpeechWorkspaceMode } from "@/lib/asmr/schema";
 import type { PlannerBrief, PlannerDraft } from "@/lib/asmr/planner";
-import { addVoiceClip, deleteVoiceClip, getVoiceGapAfter, mergeVoiceClipWithNext, setVoiceGapAfter, splitVoiceClip } from "@/lib/asmr/voice-segments";
+import { addSilentClip, setSilentClipDuration, addVoiceClip, deleteVoiceClip, getVoiceGapAfter, mergeVoiceClipWithNext, moveVoiceClip, setVoiceGapAfter, splitVoiceClip, type VoiceClipMoveDirection } from "@/lib/asmr/voice-segments";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getClipStoryboardReferenceMode, getPreviousVoiceClip, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
@@ -96,9 +98,11 @@ import { VoiceGenerationPanel } from "./voice-generation-panel";
 import { PlannerPanel } from "./planner-panel";
 import { ProjectWorkspace } from "./project-workspace";
 import { ScriptEditorPanel } from "./script-editor-panel";
+import { ParagraphScriptList } from "./paragraph-script-list";
 import { StudioBatchActions, type StudioBatchProgress } from "./studio-batch-actions";
 import { TimelinePanel } from "./timeline-panel";
 import { ValidationPanel } from "./validation-panel";
+import { AcceptedVoicePreview } from "./accepted-voice-preview";
 
 type StudioAppProps = {
   project: AsmrProject;
@@ -114,7 +118,8 @@ function batchAudioSource(project: AsmrProject, clipId: string, options: VoiceGe
   if (clip?.type !== "voice") return "";
   const context = options.provider === "voxcpm2" && options.generationMode === "long_text"
     ? getVoiceGenerationContext(project, clipId) : undefined;
-  return getVoiceCandidateRequestFingerprint(clip, options, undefined, context);
+  const paragraph = options.generationMode === "paragraph" ? getVoiceParagraphContext(project, clipId) : undefined;
+  return getVoiceCandidateRequestFingerprint(clip, options, undefined, context, paragraph);
 }
 
 function exportProjectJson(project: AsmrProject) {
@@ -175,31 +180,39 @@ export function StudioApp({ project }: StudioAppProps) {
   const [workspaceView, setWorkspaceView] = useState<"editor" | "planner">("editor");
   const [inspectorTab, setInspectorTab] = useState<"audio" | "storyboard">("audio");
   const [editorPanel, setEditorPanel] = useState(0);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
+  const inspectorScrollerRef = useRef<HTMLDivElement>(null);
   const [editableProject, setEditableProject] = useState<AsmrProject>(() => project);
   const editableProjectRef = useRef(editableProject);
   const editRevisionRef = useRef(0);
-  const [scriptHistory, setScriptHistory] = useState<{ project: AsmrProject; clipId?: string }[]>([]);
+  const [scriptHistory, setScriptHistory] = useState<{ project: AsmrProject; clipId?: string; mode: SpeechWorkspaceMode }[]>([]);
   const [scriptNotice, setScriptNotice] = useState<string>();
-  const [voiceOptions, setVoiceOptions] = useState<VoiceGenerationOptions>({
+  const [shortVoiceOptions, setVoiceOptions] = useState<VoiceGenerationOptions>({
     provider: "gpt-sovits", voicePackId: "default", referenceMode: "with_reference_text", generationMode: "clip",
   });
+  const [paragraphVoiceOptions, setParagraphVoiceOptions] = useState<VoiceGenerationOptions>();
+  const speechMode = getSpeechWorkspaceMode(editableProject);
+  const voiceOptions = speechMode === "paragraph" ? paragraphVoiceOptions ?? { ...shortVoiceOptions, provider: "voxcpm2" as const, generationMode: "paragraph" as const } : shortVoiceOptions;
   const [voiceCatalog, setVoiceCatalog] = useState<VoiceProviderCatalog | null>(null);
   const [voiceCatalogError, setVoiceCatalogError] = useState<string>();
   const [referenceImportBusy, setReferenceImportBusy] = useState(false);
   const referenceImportBusyRef = useRef(false);
+  const referenceImportModeRef = useRef<SpeechWorkspaceMode>("short");
   const [voiceError, setVoiceError] = useState<string>();
   const [voiceCandidates, setVoiceCandidates] = useState<AudioCandidate[]>([]);
   const [candidateListState, setCandidateListState] = useState<{ projectId: string; status: "loading" | "ready" | "error" }>();
   const [candidateActionBusy, setCandidateActionBusy] = useState(false);
   const [recheckingCandidateId, setRecheckingCandidateId] = useState<string>();
-  const candidateRecheckRunRef = useRef<{ controller: AbortController; projectId: string; clipId: string } | null>(null);
+  const [confirmingCandidateId, setConfirmingCandidateId] = useState<string>();
+  const candidateRecheckRunRef = useRef<{ controller: AbortController; projectId: string; clipId: string; kind?: "confirm" } | null>(null);
   const handleCancelCandidateRecheck = useCallback((notify = true) => {
     const run = candidateRecheckRunRef.current;
     if (!run) return;
     candidateRecheckRunRef.current = null;
     run.controller.abort();
     setRecheckingCandidateId(undefined);
-    if (notify) setVoiceError("已取消重新识别，原候选已保留。");
+    setConfirmingCandidateId(undefined);
+    if (notify) setVoiceError(run.kind === "confirm" ? "已取消采用，当前人声保持；可刷新候选查看试听确认是否已保存。" : "已取消重新识别，原候选已保留。");
   }, []);
   const [candidateRefresh, setCandidateRefresh] = useState(0);
   const [batchProgress, setBatchProgress] = useState<StudioBatchProgress>();
@@ -216,7 +229,8 @@ export function StudioApp({ project }: StudioAppProps) {
     storyboardProviderRef.current = provider;
   }, []);
   const candidateJobIdsRef = useRef(new Set<string>());
-  const windowedVoiceJobsRef = useRef(new Map<string, { clipId: string; context: string }>());
+  const windowedVoiceJobsRef = useRef(new Map<string, { clipId: string; context: string; mode: SpeechWorkspaceMode; paragraph?: boolean }>());
+  const generationWorkspaceRef = useRef(new Map<string, SpeechWorkspaceMode>());
   const [projectLibrary, setProjectLibrary] = useState(() =>
     createInitialProjectLibrary(project, new Date(0)),
   );
@@ -230,15 +244,19 @@ export function StudioApp({ project }: StudioAppProps) {
     useState<AudioAnalysisStatus>("idle");
   const bridgeRef = useRef<GenerationBridge | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const acceptedPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const handlePreviewAudioChange = useCallback((audio: HTMLAudioElement | null) => { acceptedPreviewAudioRef.current = audio; }, []);
   const generationSessionRef = useRef(0);
   const generationReasonsRef = useRef<Record<string, GenerateClipReason>>({});
   const generationFingerprintsRef = useRef<Record<string, string>>({});
   const projectMixReasonsRef = useRef<Record<string, GenerateProjectMixReason>>({});
   const projectMixJobFingerprintsRef = useRef<Record<string, string>>({});
   const [projectMixFingerprint, setProjectMixFingerprint] = useState<string>();
+  const activeMixFingerprint = editableProject.speechWorkspace ? editableProject.speechWorkspace[speechMode].mixFingerprint : projectMixFingerprint;
   const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
   const handleReferenceImportBusyChange = useCallback((busy: boolean) => {
     if (busy && (batchRunRef.current || candidateRecheckRunRef.current || candidateActionBusy || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob))) return false;
+    if (busy) referenceImportModeRef.current = getSpeechWorkspaceMode(editableProjectRef.current);
     referenceImportBusyRef.current = busy;
     setReferenceImportBusy(busy);
     return true;
@@ -257,6 +275,7 @@ export function StudioApp({ project }: StudioAppProps) {
     clips.find((clip) => clip.id === selectedClipId) ?? clips[0];
   const activeClipId = selectedClip?.id;
   const inspectorView = selectedClip?.type === "voice" ? inspectorTab : "audio";
+  useEffect(() => { if (inspectorScrollerRef.current) inspectorScrollerRef.current.scrollTop = 0; }, [speechMode, activeClipId, inspectorView]);
   const validationIssues = useMemo(
     () => getProjectValidationIssues(editableProject),
     [editableProject],
@@ -277,13 +296,13 @@ export function StudioApp({ project }: StudioAppProps) {
   const currentLibraryEntry = projectLibrary.projects.find(
     (entry) => entry.projectId === editableProject.project_id,
   );
-  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Boolean(recheckingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Boolean(recheckingCandidateId) || Boolean(confirmingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
   const batchCounts = useMemo(() => Object.fromEntries(
     (["audio_missing", "audio_all", "storyboard_missing", "storyboard_all"] as const)
       .map((action) => [action, getStudioBatchTargets(editableProject, action).length]),
   ) as Record<StudioBatchAction, number>, [editableProject]);
   const visibleVoiceCandidates = voiceCandidates.filter((candidate) =>
-    candidate.projectId === editableProject.project_id && candidate.clipId === activeClipId,
+    candidate.projectId === editableProject.project_id && candidate.clipId === activeClipId && getAudioCandidateWorkspaceMode(candidate) === speechMode,
   );
   const audioProgress = useMemo(() => getStudioAudioProgress(editableProject, voiceCandidates), [editableProject, voiceCandidates]);
   const audioOverview = audioProgress.overview;
@@ -314,19 +333,22 @@ export function StudioApp({ project }: StudioAppProps) {
       validationIssues.length,
     ],
   );
+  const workspaceRuntime = useMemo(() => Object.values(generationRuntimeState.jobsById)
+    .filter((job) => (generationWorkspaceRef.current.get(job.jobId) ?? "short") === speechMode)
+    .reduce((state, job) => upsertGenerationJob(state, job), emptyGenerationRuntimeState), [generationRuntimeState, speechMode]);
   const generationView = useMemo(
     () =>
       getGenerationView({
         project: editableProject,
         selectedClip,
-        runtimeState: generationRuntimeState,
+        runtimeState: workspaceRuntime,
         selectedClipHasValidationIssues,
-        projectMixFingerprint,
+        projectMixFingerprint: activeMixFingerprint,
       }),
     [
       editableProject,
-      generationRuntimeState,
-      projectMixFingerprint,
+      workspaceRuntime,
+      activeMixFingerprint,
       selectedClip,
       selectedClipHasValidationIssues,
     ],
@@ -378,7 +400,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
   useEffect(() => () => {
     handleCancelCandidateRecheck(false);
-  }, [editableProject.project_id, activeClipId, handleCancelCandidateRecheck]);
+  }, [editableProject.project_id, activeClipId, speechMode, handleCancelCandidateRecheck]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -401,6 +423,10 @@ export function StudioApp({ project }: StudioAppProps) {
           return reference ? { ...preferred, voicePackId: reference.id,
             referenceMode: reference.referenceModes.includes(preferred.referenceMode) ? preferred.referenceMode : reference.referenceModes[0] } : preferred;
         });
+        try {
+          const paragraph = VoiceGenerationOptionsSchema.safeParse(JSON.parse(window.localStorage.getItem("ai-asmr-studio:v1:voice-options-paragraph") || "null"));
+          if (paragraph.success) setParagraphVoiceOptions({ ...paragraph.data, provider: "voxcpm2", generationMode: "paragraph" });
+        } catch { /* Default to the current reference on the first paragraph visit. */ }
       })
       .catch(() => { if (!controller.signal.aborted) setVoiceCatalogError("无法读取人声配置，请刷新重试。"); });
     return () => controller.abort();
@@ -417,7 +443,7 @@ export function StudioApp({ project }: StudioAppProps) {
       }
     });
     if (hasLoadedStorage) {
-      const query = new URLSearchParams({ projectId });
+      const query = new URLSearchParams({ projectId, workspaceMode: speechMode });
       void fetch(`/api/audio-candidates?${query}`, { signal: controller.signal })
         .then(async (response) => {
           if (!response.ok) throw new Error("候选列表读取失败，请刷新重试。");
@@ -436,7 +462,7 @@ export function StudioApp({ project }: StudioAppProps) {
         });
     }
     return () => controller.abort();
-  }, [editableProject.project_id, candidateRefresh, hasLoadedStorage]);
+  }, [editableProject.project_id, candidateRefresh, hasLoadedStorage, speechMode]);
 
   useEffect(() => {
     let current = true;
@@ -444,17 +470,37 @@ export function StudioApp({ project }: StudioAppProps) {
     return () => { current = false; };
   }, [activeClipId]);
 
-  function handleVoiceOptionsChange(next: VoiceGenerationOptions) {
-    setVoiceOptions(next);
+  function handleVoiceOptionsChange(next: VoiceGenerationOptions, mode: SpeechWorkspaceMode = getSpeechWorkspaceMode(editableProjectRef.current)) {
+    const paragraph = mode === "paragraph";
+    const normalized = paragraph ? { ...next, provider: "voxcpm2" as const, generationMode: "paragraph" as const } : next;
+    if (paragraph) setParagraphVoiceOptions(normalized); else setVoiceOptions(normalized);
     setVoiceError(undefined);
-    try { window.localStorage.setItem("ai-asmr-studio:v1:voice-options", JSON.stringify(next)); }
+    try { window.localStorage.setItem(paragraph ? "ai-asmr-studio:v1:voice-options-paragraph" : "ai-asmr-studio:v1:voice-options", JSON.stringify(normalized)); }
     catch { setVoiceError("声音设置未能保存，刷新后需要重新选择。"); }
+  }
+
+  function handleSpeechModeChange(mode: SpeechWorkspaceMode) {
+    const current = editableProjectRef.current;
+    handleCancelCandidateRecheck(false);
+    const next = switchSpeechWorkspace(current, mode, current.speechWorkspace ? {} : { mixFingerprint: projectMixFingerprint });
+    audioRef.current?.pause();
+    acceptedPreviewAudioRef.current?.pause();
+    editableProjectRef.current = next;
+    setEditableProject(next);
+    setProjectMixFingerprint(next.speechWorkspace?.[mode].mixFingerprint);
+    setVoiceError(undefined);
+    setScriptNotice(undefined);
+    setAudioAnalysis(undefined);
+    setAudioAnalysisStatus("idle");
+    setCandidateRefresh((value) => value + 1);
   }
 
   function handleReferenceImported({ reference, catalog }: VoiceReferenceImportResult) {
     setVoiceCatalog(catalog); setVoiceCatalogError(undefined);
-    handleVoiceOptionsChange({ ...voiceOptions, provider: "voxcpm2", voicePackId: reference.id,
-      referenceMode: reference.referenceModes.includes("with_reference_text") ? "with_reference_text" : "reference_only" });
+    const mode = referenceImportModeRef.current;
+    const base = mode === "short" ? shortVoiceOptions : paragraphVoiceOptions ?? { ...shortVoiceOptions, generationMode: "paragraph" as const };
+    handleVoiceOptionsChange({ ...base, provider: "voxcpm2", voicePackId: reference.id,
+      referenceMode: reference.referenceModes.includes("with_reference_text") ? "with_reference_text" : "reference_only" }, mode);
   }
 
   function commitCandidateLibrary(next: typeof projectLibrary) {
@@ -467,7 +513,7 @@ export function StudioApp({ project }: StudioAppProps) {
     const entry = getCurrentLibraryEntry(next);
     editableProjectRef.current = entry.project;
     setEditableProject(entry.project);
-    setProjectMixFingerprint(entry.mixFingerprint);
+    setProjectMixFingerprint(entry.project.speechWorkspace ? entry.project.speechWorkspace[getSpeechWorkspaceMode(entry.project)].mixFingerprint : entry.mixFingerprint);
     setStorageAvailable(true);
     setVoiceError(undefined);
   }
@@ -487,8 +533,15 @@ export function StudioApp({ project }: StudioAppProps) {
       if (session !== generationSessionRef.current) return;
       if (editRevision !== editRevisionRef.current) throw new Error("工程刚刚有修改，请检查后重新采用。");
       const fresh = AudioCandidateSchema.parse(payload.candidate);
-      const latestLibrary = updateLibraryProject(projectLibraryRef.current, editableProjectRef.current);
-      const next = adoptAudioCandidate(latestLibrary, fresh);
+      const current = editableProjectRef.current;
+      const mode = getAudioCandidateWorkspaceMode(fresh);
+      const projection = current.speechWorkspace ? getSpeechWorkspaceProject(current, mode) : current;
+      const latestLibrary = updateLibraryProject(projectLibraryRef.current, projection);
+      let next = adoptAudioCandidate(latestLibrary, fresh);
+      if (current.speechWorkspace) next = { ...next, projects: next.projects.map((entry) => entry.projectId === current.project_id ? {
+        ...entry, project: mergeSpeechWorkspaceProject(current, mode, entry.project),
+        mixFingerprint: mode === getSpeechWorkspaceMode(current) ? undefined : projectMixFingerprint,
+      } : entry) };
       try { commitCandidateLibrary(next); }
       catch { setStorageAvailable(false); throw new Error("采用未保存，原声已保留。请检查本地存储后重试。"); }
     } catch (error) {
@@ -524,25 +577,28 @@ export function StudioApp({ project }: StudioAppProps) {
     const projectSnapshot = structuredClone(editableProjectRef.current);
     const clip = flattenClips(projectSnapshot).find((item) => item.id === activeClipId);
     if (!clip || clip.type !== "voice" || candidate.status !== "ready" || candidate.projectId !== projectSnapshot.project_id || candidate.clipId !== clip.id) return;
-    if (candidate.provenance.generationMode !== "long_text" || !candidate.provenance.longText?.plan) {
+    const paragraphRecheck = candidate.provenance.generationMode === "paragraph" && Boolean(candidate.provenance.paragraph?.sourceAsset);
+    if (!paragraphRecheck && (candidate.provenance.generationMode !== "long_text" || !candidate.provenance.longText?.plan)) {
       setVoiceError("此候选未保存可核对的分组原音，暂不能重新识别。"); return;
     }
-    const context = getVoiceGenerationContext(projectSnapshot, clip.id);
-    const sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, context);
+    const context = paragraphRecheck ? undefined : getVoiceGenerationContext(projectSnapshot, clip.id);
+    const paragraphContext = paragraphRecheck ? getVoiceParagraphContext(projectSnapshot, clip.id) : undefined;
+    const sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, context, paragraphContext);
     if (candidate.sourceFingerprint !== sourceFingerprint) {
       setVoiceError("文案或后续上下文已修改，暂不能重新识别此候选。"); return;
     }
     const run = { controller: new AbortController(), projectId: projectSnapshot.project_id, clipId: clip.id };
     candidateRecheckRunRef.current = run;
     const session = generationSessionRef.current;
-    const savedContext = JSON.stringify(candidate.provenance.longText.context);
-    let failureMessage = "重新识别失败，原候选已保留，请重试。";
+    const savedContext = JSON.stringify(candidate.provenance.longText?.context);
+    let failureMessage = "无法连接本地服务，请确认 3001 服务正在运行后重试；原候选已保留。";
     setRecheckingCandidateId(candidate.candidateId);
     setVoiceError(undefined);
     try {
       const response = await fetch(`/api/audio-candidates/${encodeURIComponent(candidate.candidateId)}/recheck`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: projectSnapshot, clipId: clip.id }), signal: run.controller.signal,
       });
+      failureMessage = "重新识别服务未返回有效结果，请刷新页面后重试；原候选已保留。";
       const rawPayload: unknown = await response.json();
       if (candidateRecheckRunRef.current !== run || run.controller.signal.aborted || session !== generationSessionRef.current) return;
       if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) throw new Error(failureMessage);
@@ -554,7 +610,7 @@ export function StudioApp({ project }: StudioAppProps) {
       const latest = editableProjectRef.current;
       const latestClip = flattenClips(latest).find((item) => item.id === clip.id);
       if (latest.project_id !== run.projectId || !latestClip || latestClip.type !== "voice"
-          || getVoiceCandidateSourceFingerprint(latestClip, getVoiceGenerationContext(latest, clip.id)) !== sourceFingerprint) {
+          || getVoiceCandidateSourceFingerprint(latestClip, paragraphRecheck ? undefined : getVoiceGenerationContext(latest, clip.id), paragraphRecheck ? getVoiceParagraphContext(latest, clip.id) : undefined) !== sourceFingerprint) {
         failureMessage = "文案或后续上下文已修改，重新识别结果未加入；原候选已保留。";
         throw new Error(failureMessage);
       }
@@ -562,12 +618,16 @@ export function StudioApp({ project }: StudioAppProps) {
       if (!parsed.success || parsed.data.projectId !== run.projectId || parsed.data.clipId !== run.clipId || parsed.data.status !== "ready"
           || parsed.data.sourceFingerprint !== sourceFingerprint || parsed.data.candidateId === candidate.candidateId
           || voiceCandidates.some((item) => item.candidateId === parsed.data.candidateId)
-          || parsed.data.provenance.generationMode !== "long_text"
-          || JSON.stringify(parsed.data.provenance.longText?.context) !== savedContext) {
+          || (paragraphRecheck ? parsed.data.provenance.generationMode !== "paragraph"
+            || parsed.data.provenance.paragraph?.sourceAsset.assetId !== candidate.provenance.paragraph?.sourceAsset.assetId
+            || parsed.data.provenance.paragraph?.text !== paragraphContext?.text
+            || parsed.data.provenance.paragraph?.clipIds.join("|") !== paragraphContext?.clips.map((item) => item.clipId).join("|")
+            : parsed.data.provenance.generationMode !== "long_text" || JSON.stringify(parsed.data.provenance.longText?.context) !== savedContext)) {
         failureMessage = "重新识别结果与当前片段不一致，原候选已保留。";
         throw new Error(failureMessage);
       }
       setVoiceCandidates((current) => [parsed.data, ...current]);
+      if (paragraphRecheck) setCandidateRefresh((value) => value + 1);
     } catch {
       if (candidateRecheckRunRef.current === run && !run.controller.signal.aborted && session === generationSessionRef.current) {
         setVoiceError(failureMessage);
@@ -577,6 +637,94 @@ export function StudioApp({ project }: StudioAppProps) {
         candidateRecheckRunRef.current = null;
         setRecheckingCandidateId(undefined);
       }
+    }
+  }
+
+  async function handleConfirmParagraphText(candidate: AudioCandidate, confirmedClipIds: string[]) {
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy || singleStoryboardBusyRef.current || candidatesLoading) return;
+    const projectSnapshot = structuredClone(editableProjectRef.current);
+    const clip = flattenClips(projectSnapshot).find((item) => item.id === activeClipId);
+    const paragraph = candidate.provenance.paragraph;
+    if (getSpeechWorkspaceMode(projectSnapshot) !== "paragraph" || !clip || clip.type !== "voice" || candidate.status !== "ready"
+        || candidate.projectId !== projectSnapshot.project_id || candidate.clipId !== clip.id || paragraph?.checkStatus !== "needs_confirmation" || paragraph.manualTextConfirmation) return;
+    if (validationIssues.length) { setVoiceError("请先修正片段内容，再确认并采用。"); return; }
+    const paragraphContext = getVoiceParagraphContext(projectSnapshot, clip.id);
+    const sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, undefined, paragraphContext);
+    const reviewIds = paragraph.segments.filter((segment) => segment.textReview).map((segment) => segment.clipId);
+    if (candidate.sourceFingerprint !== sourceFingerprint || !reviewIds.length || confirmedClipIds.join("|") !== reviewIds.join("|")) {
+      setVoiceError("文案或试听范围已变化，请重新逐句试听确认。"); return;
+    }
+    const run = { controller: new AbortController(), projectId: projectSnapshot.project_id, clipId: clip.id, kind: "confirm" as const };
+    candidateRecheckRunRef.current = run;
+    const session = generationSessionRef.current;
+    const editRevision = editRevisionRef.current;
+    setConfirmingCandidateId(candidate.candidateId);
+    setVoiceError(undefined);
+    let failureMessage = "无法连接本地服务，试听确认未能核实；当前人声保持。请刷新候选后重试。";
+    try {
+      const response = await fetch(`/api/audio-candidates/${encodeURIComponent(candidate.candidateId)}/confirm-text`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: projectSnapshot, clipId: clip.id, confirmedClipIds }), signal: run.controller.signal,
+      });
+      failureMessage = "试听确认服务未返回有效结果，当前人声保持；请刷新候选后重试。";
+      const rawPayload: unknown = await response.json();
+      if (candidateRecheckRunRef.current !== run || run.controller.signal.aborted || session !== generationSessionRef.current) return;
+      if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) throw new Error(failureMessage);
+      const payload = rawPayload as { candidate?: unknown; candidates?: unknown; error?: unknown };
+      if (!response.ok) {
+        failureMessage = typeof payload.error === "string" && payload.error.trim() ? payload.error : failureMessage;
+        throw new Error(failureMessage);
+      }
+      const latest = editableProjectRef.current;
+      const latestClip = flattenClips(latest).find((item) => item.id === clip.id);
+      if (editRevision !== editRevisionRef.current || latest.project_id !== run.projectId || getSpeechWorkspaceMode(latest) !== "paragraph"
+          || !latestClip || latestClip.type !== "voice" || getVoiceCandidateSourceFingerprint(latestClip, undefined, getVoiceParagraphContext(latest, clip.id)) !== sourceFingerprint) {
+        failureMessage = "工程刚刚有修改，未采用试听确认结果；当前人声保持。";
+        throw new Error(failureMessage);
+      }
+      const parsed = AudioCandidateSchema.safeParse(payload.candidate);
+      const { manualTextConfirmation: priorConfirmation, ...originalParagraph } = paragraph;
+      void priorConfirmation;
+      const confirmedParagraph = parsed.success ? parsed.data.provenance.paragraph : undefined;
+      const { manualTextConfirmation, ...resultParagraph } = confirmedParagraph ?? {};
+      if (!parsed.success || parsed.data.candidateId !== candidate.candidateId || parsed.data.projectId !== run.projectId
+          || parsed.data.clipId !== run.clipId || parsed.data.status !== "ready" || parsed.data.sourceFingerprint !== sourceFingerprint
+          || parsed.data.provenance.generationMode !== "paragraph" || JSON.stringify(parsed.data.asset) !== JSON.stringify(candidate.asset)
+          || JSON.stringify(resultParagraph) !== JSON.stringify(originalParagraph) || manualTextConfirmation?.sourceCandidateId !== candidate.candidateId
+          || manualTextConfirmation?.confirmedClipIds.join("|") !== reviewIds.join("|")) {
+        failureMessage = "试听确认结果与当前整段不一致，当前人声保持。";
+        throw new Error(failureMessage);
+      }
+      const siblings = AudioCandidateSchema.array().safeParse(payload.candidates);
+      const currentParagraphContext = getVoiceParagraphContext(latest, clip.id);
+      const currentMembers = flattenClips(latest);
+      if (!siblings.success || new Set(siblings.data.map((item) => item.candidateId)).size !== siblings.data.length
+          || siblings.data.length !== paragraph.clipIds.length
+          || new Set(siblings.data.map((item) => item.clipId)).size !== paragraph.clipIds.length
+          || paragraph.clipIds.some((id) => !siblings.data.some((item) => item.clipId === id))
+          || !siblings.data.some((item) => JSON.stringify(item) === JSON.stringify(parsed.data))
+          || siblings.data.some((item) => item.projectId !== run.projectId || item.status !== "ready" || item.provenance.generationMode !== "paragraph"
+            || JSON.stringify(item.provenance.paragraph) !== JSON.stringify(confirmedParagraph)
+            || JSON.stringify(item.asset) !== JSON.stringify(confirmedParagraph?.segments.find((segment) => segment.clipId === item.clipId)?.asset)
+            || !currentParagraphContext || !currentMembers.some((member) => member.type === "voice" && member.id === item.clipId
+              && item.sourceFingerprint === getVoiceCandidateSourceFingerprint(member, undefined, currentParagraphContext)))) {
+        failureMessage = "试听确认结果与当前整段不一致，当前人声保持。";
+        throw new Error(failureMessage);
+      }
+      setVoiceCandidates((items) => items.map((item) => siblings.data.find((saved) => saved.candidateId === item.candidateId) ?? item));
+      const projection = getSpeechWorkspaceProject(latest, "paragraph");
+      const latestLibrary = updateLibraryProject(projectLibraryRef.current, projection);
+      failureMessage = "试听确认已保存，但未能采用；当前人声保持。请刷新候选后重试。";
+      const adoptedLibrary = adoptAudioCandidate(latestLibrary, parsed.data);
+      const next = { ...adoptedLibrary, projects: adoptedLibrary.projects.map((entry) => entry.projectId === latest.project_id ? {
+        ...entry, project: mergeSpeechWorkspaceProject(latest, "paragraph", entry.project), mixFingerprint: undefined,
+      } : entry) };
+      try { commitCandidateLibrary(next); }
+      catch { setStorageAvailable(false); failureMessage = "试听确认已保存，但采用未能保存；当前人声保持。请检查本地存储后重试采用。"; throw new Error(failureMessage); }
+    } catch {
+      if (candidateRecheckRunRef.current === run && !run.controller.signal.aborted && session === generationSessionRef.current) setVoiceError(failureMessage);
+    } finally {
+      if (candidateRecheckRunRef.current === run) { candidateRecheckRunRef.current = null; setConfirmingCandidateId(undefined); }
     }
   }
 
@@ -611,7 +759,7 @@ export function StudioApp({ project }: StudioAppProps) {
         projectLibraryRef.current = loadedLibrary;
         setProjectLibrary(loadedLibrary);
         setEditableProject(loadedEntry.project);
-        setProjectMixFingerprint(loadedEntry.mixFingerprint);
+        setProjectMixFingerprint(loadedEntry.project.speechWorkspace ? loadedEntry.project.speechWorkspace[getSpeechWorkspaceMode(loadedEntry.project)].mixFingerprint : loadedEntry.mixFingerprint);
         setRestoreState(
           loadedEntry.projectId === project.project_id &&
             serializeProject(loadedEntry.project) === serializeProject(project)
@@ -651,7 +799,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
       const nextLibrary = updateLibraryProject(
         projectLibraryRef.current,
-        editableProject,
+        editableProject.speechWorkspace ? captureSpeechWorkspace(editableProject, { mixFingerprint: activeMixFingerprint }) : editableProject,
       );
 
       try {
@@ -668,7 +816,7 @@ export function StudioApp({ project }: StudioAppProps) {
     return () => {
       isCancelled = true;
     };
-  }, [editableProject, hasLoadedStorage, validationIssues.length]);
+  }, [editableProject, hasLoadedStorage, validationIssues.length, activeMixFingerprint]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -764,6 +912,7 @@ export function StudioApp({ project }: StudioAppProps) {
     setBatchNotice(undefined);
     candidateJobIdsRef.current.clear();
     windowedVoiceJobsRef.current.clear();
+    generationWorkspaceRef.current.clear();
     generationSessionRef.current += 1;
     const jobIds = new Set([
       ...Object.keys(generationReasonsRef.current),
@@ -812,7 +961,7 @@ export function StudioApp({ project }: StudioAppProps) {
     persistLibrary(nextLibrary);
     editableProjectRef.current = entry.project;
     setEditableProject(entry.project);
-    setProjectMixFingerprint(entry.mixFingerprint);
+    setProjectMixFingerprint(entry.project.speechWorkspace ? entry.project.speechWorkspace[getSpeechWorkspaceMode(entry.project)].mixFingerprint : entry.mixFingerprint);
     setSelectedClipId(defaultClipId(entry.project));
     setInspectorTab("audio");
     setEditorPanel(0);
@@ -825,7 +974,7 @@ export function StudioApp({ project }: StudioAppProps) {
     setGenerationRuntimeState(nextState);
   }
 
-  function cancelGenerationForClip(clipId: string) {
+  function cancelGenerationForClip(clipId: string, mode = getSpeechWorkspaceMode(editableProjectRef.current)) {
     const job = getGenerationJobForClip(
       generationRuntimeStateRef.current,
       clipId,
@@ -834,6 +983,7 @@ export function StudioApp({ project }: StudioAppProps) {
     if (!job || !isActiveGenerationJob(job)) {
       return;
     }
+    if (editableProjectRef.current.speechWorkspace && (generationWorkspaceRef.current.get(job.jobId) ?? "short") !== mode) return;
 
     const next = clearGenerationJob(
       generationRuntimeStateRef.current,
@@ -847,7 +997,7 @@ export function StudioApp({ project }: StudioAppProps) {
     void bridgeRef.current?.cancelGeneration(job.jobId);
   }
 
-  function cancelProjectMixGeneration() {
+  function cancelProjectMixGeneration(mode = getSpeechWorkspaceMode(editableProjectRef.current)) {
     const job = getGenerationJobForProjectMix(
       generationRuntimeStateRef.current,
       "wav",
@@ -856,6 +1006,7 @@ export function StudioApp({ project }: StudioAppProps) {
     if (!job || !isActiveGenerationJob(job)) {
       return;
     }
+    if (editableProjectRef.current.speechWorkspace && (generationWorkspaceRef.current.get(job.jobId) ?? "short") !== mode) return;
 
     const next = clearGenerationJob(
       generationRuntimeStateRef.current,
@@ -868,12 +1019,37 @@ export function StudioApp({ project }: StudioAppProps) {
     void bridgeRef.current?.cancelGeneration(job.jobId);
   }
 
+  function cancelStaleWorkspaceJobs(next: AsmrProject) {
+    cancelChangedVoiceWindows(next);
+    for (const job of Object.values(generationRuntimeStateRef.current.jobsById)) {
+      const mode = generationWorkspaceRef.current.get(job.jobId) ?? "short";
+      const projection = next.speechWorkspace ? getSpeechWorkspaceProject(next, mode) : next;
+      if (job.target?.type === "project_mix") {
+        const fingerprint = projectMixJobFingerprintsRef.current[job.jobId];
+        if (!fingerprint || !isCurrentProjectMixFingerprint(projection, fingerprint)) cancelProjectMixGeneration(mode);
+      } else {
+        const fingerprint = generationFingerprintsRef.current[job.jobId];
+        if (!fingerprint || !isCurrentClipGenerationFingerprint(projection, job.clipId, fingerprint, { ignoreVoiceStart: true })) cancelGenerationForClip(job.clipId, mode);
+      }
+    }
+  }
+
   function handleGenerationUpdate(
     update: GenerationJobUpdate,
     generationSession: number,
   ) {
     if (generationSession !== generationSessionRef.current) {
       return;
+    }
+    const mode = generationWorkspaceRef.current.get(update.job.jobId) ?? "short";
+    function commitWorkspaceResult(updateProject: (project: AsmrProject) => AsmrProject) {
+      setEditableProject((current) => {
+        const projection = current.speechWorkspace ? getSpeechWorkspaceProject(current, mode) : current;
+        const updated = updateProject(projection);
+        const merged = current.speechWorkspace ? mergeSpeechWorkspaceProject(current, mode, updated) : updated;
+        editableProjectRef.current = merged;
+        return merged;
+      });
     }
 
     if (update.type !== "snapshot") windowedVoiceJobsRef.current.delete(update.job.jobId);
@@ -897,7 +1073,7 @@ export function StudioApp({ project }: StudioAppProps) {
       setRuntimeState(clearGenerationJob(generationRuntimeStateRef.current, update.job.jobId));
       delete generationReasonsRef.current[update.job.jobId];
       delete generationFingerprintsRef.current[update.job.jobId];
-      if (update.type === "failed") setVoiceError(update.error);
+      if (update.type === "failed" && getSpeechWorkspaceMode(editableProjectRef.current) === mode) setVoiceError(update.error);
       return;
     }
 
@@ -906,13 +1082,14 @@ export function StudioApp({ project }: StudioAppProps) {
         const fingerprint =
           projectMixJobFingerprintsRef.current[update.job.jobId];
 
-        setEditableProject((currentProject) =>
+        commitWorkspaceResult((currentProject) =>
           fingerprint &&
           isCurrentProjectMixFingerprint(currentProject, fingerprint)
-            ? commitProjectMixSuccess(currentProject, update.asset)
+            ? currentProject.speechWorkspace ? captureSpeechWorkspace(commitProjectMixSuccess(currentProject, update.asset), { mixFingerprint: fingerprint }) : commitProjectMixSuccess(currentProject, update.asset)
             : currentProject,
         );
-        if (fingerprint) {
+        if (fingerprint && getSpeechWorkspaceMode(editableProjectRef.current) === mode
+          && isCurrentProjectMixFingerprint(editableProjectRef.current, fingerprint)) {
           const nextLibrary = setLibraryProjectMixFingerprint(
             projectLibraryRef.current,
             projectLibraryRef.current.currentProjectId,
@@ -935,7 +1112,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
       const fingerprint = generationFingerprintsRef.current[update.job.jobId];
 
-      setEditableProject((currentProject) =>
+      commitWorkspaceResult((currentProject) =>
         fingerprint &&
         isCurrentClipGenerationFingerprint(
           currentProject,
@@ -973,7 +1150,7 @@ export function StudioApp({ project }: StudioAppProps) {
         const fingerprint =
           projectMixJobFingerprintsRef.current[update.job.jobId];
 
-        setEditableProject((currentProject) =>
+        commitWorkspaceResult((currentProject) =>
           fingerprint &&
           isCurrentProjectMixFingerprint(currentProject, fingerprint)
             ? commitProjectMixFailure(currentProject, {
@@ -997,7 +1174,7 @@ export function StudioApp({ project }: StudioAppProps) {
         generationReasonsRef.current[update.job.jobId] ?? "generate";
       const fingerprint = generationFingerprintsRef.current[update.job.jobId];
 
-      setEditableProject((currentProject) =>
+      commitWorkspaceResult((currentProject) =>
         fingerprint &&
         isCurrentClipGenerationFingerprint(
           currentProject,
@@ -1058,7 +1235,8 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
     const options = generationClip.type === "voice" ? optionsOverride ?? voiceOptions : undefined;
-    if (options?.provider === "voxcpm2" && voiceBusy) return;
+    if ((options?.provider === "voxcpm2" && voiceBusy) || (generationClip.type === "voice" && generationClip.kind === "silent")
+      || Object.values(generationRuntimeStateRef.current.jobsById).some((job) => isActiveGenerationJob(job) && job.clipId === generationClip.id)) return;
     if (options?.provider === "voxcpm2" && !voiceCatalog?.providers.find((item) => item.id === "voxcpm2")?.available) {
       setVoiceError("VoxCPM2 尚未就绪，请检查本机配置。");
       return;
@@ -1084,6 +1262,8 @@ export function StudioApp({ project }: StudioAppProps) {
     });
     const voiceContext = options?.provider === "voxcpm2" && options.generationMode === "long_text"
       ? getVoiceGenerationContext(generationProject, generationClip.id) : undefined;
+    const paragraphContext = options?.generationMode === "paragraph" ? getVoiceParagraphContext(generationProject, generationClip.id) : undefined;
+    const mode = getSpeechWorkspaceMode(generationProject);
 
     void getGenerationBridge()
       .generateClip(
@@ -1100,8 +1280,9 @@ export function StudioApp({ project }: StudioAppProps) {
           }
 
           generationReasonsRef.current[update.job.jobId] = reason;
-          if (voiceContext && update.type === "snapshot") windowedVoiceJobsRef.current.set(update.job.jobId, {
-            clipId: generationClip.id, context: JSON.stringify(voiceContext),
+          generationWorkspaceRef.current.set(update.job.jobId, mode);
+          if ((voiceContext || paragraphContext) && update.type === "snapshot") windowedVoiceJobsRef.current.set(update.job.jobId, {
+            clipId: generationClip.id, context: JSON.stringify(paragraphContext ?? voiceContext), mode, paragraph: Boolean(paragraphContext),
           });
           if (options?.provider === "voxcpm2") candidateJobIdsRef.current.add(update.job.jobId);
           generationFingerprintsRef.current[update.job.jobId] = fingerprint;
@@ -1143,7 +1324,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleGenerateProjectMix() {
-    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current) return;
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || voiceBusy) return;
     if (generationView.projectMixControl.disabled) {
       return;
     }
@@ -1174,6 +1355,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
           projectMixReasonsRef.current[update.job.jobId] = reason;
           projectMixJobFingerprintsRef.current[update.job.jobId] = fingerprint;
+          generationWorkspaceRef.current.set(update.job.jobId, speechMode);
           handleGenerationUpdate(update, generationSession);
 
           if (update.type !== "snapshot") {
@@ -1223,6 +1405,7 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
+    acceptedPreviewAudioRef.current?.pause();
     audioRef.current?.pause();
     const audio = new Audio(resolvedUri);
     audioRef.current = audio;
@@ -1248,6 +1431,7 @@ export function StudioApp({ project }: StudioAppProps) {
       return;
     }
 
+    acceptedPreviewAudioRef.current?.pause();
     audioRef.current?.pause();
     const audio = new Audio(resolvedUri);
     audioRef.current = audio;
@@ -1300,14 +1484,15 @@ export function StudioApp({ project }: StudioAppProps) {
         ...item, asset: { asset_id: null, uri: null, duration: null },
         generation: { ...item.generation, status: "asset_pending", error: null },
       } : item);
-      commitScriptEdit(next, clipId, "台词已更新，可以生成这一段的新音频。", Boolean(clip.asset.uri));
+      commitScriptEdit(next, clipId, current.speechWorkspace ? "文案已同步；原音已保留，生成新候选后再采用。" : "台词已更新，可以生成这一段的新音频。", Boolean(clip.asset.uri));
       return;
     }
     editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
-    const updated = syncExplicitWaits(updateClipInProject(current, clipId, patch));
-    cancelChangedVoiceWindows(updated);
+    const raw = syncExplicitWaits(updateClipInProject(current, clipId, patch));
+    const updated = current.speechWorkspace ? syncSharedSpeechScript(current, raw) : raw;
+    if (current.speechWorkspace) cancelStaleWorkspaceJobs(updated); else cancelChangedVoiceWindows(updated);
     editableProjectRef.current = updated;
     setEditableProject(updated);
     setImportError(undefined);
@@ -1324,9 +1509,12 @@ export function StudioApp({ project }: StudioAppProps) {
     editRevisionRef.current += 1;
     cancelGenerationForClip(clipId);
     cancelProjectMixGeneration();
-    setEditableProject((currentProject) =>
-      applyDirectorPreset(currentProject, clipId, preset),
-    );
+    const current = editableProjectRef.current;
+    const raw = applyDirectorPreset(current, clipId, preset);
+    const updated = current.speechWorkspace ? syncSharedSpeechScript(current, raw) : raw;
+    if (current.speechWorkspace) cancelStaleWorkspaceJobs(updated); else cancelChangedVoiceWindows(updated);
+    editableProjectRef.current = updated;
+    setEditableProject(updated);
     setImportError(undefined);
   }
 
@@ -1347,20 +1535,24 @@ export function StudioApp({ project }: StudioAppProps) {
     }) } };
   }
 
-  function commitScriptEdit(next: AsmrProject, clipId?: string, notice?: string, protect = true) {
+  function commitScriptEdit(next: AsmrProject, clipId?: string, notice?: string, protect = true, sourceAlreadySynced = false) {
     const current = editableProjectRef.current;
     if (next === current) return;
-    setScriptHistory((history) => [...history.slice(-29), { project: current, clipId: activeClipId }]);
+    if (current.speechWorkspace && !sourceAlreadySynced) next = syncSharedSpeechScript(current, next);
+    setScriptHistory((history) => [...history.slice(-29), { project: current, clipId: activeClipId, mode: getSpeechWorkspaceMode(current) }]);
     if (protect && getProjectValidationIssues(current).length === 0) {
       persistLibrary(createProjectRevision(updateLibraryProject(projectLibraryRef.current, current), current.project_id, new Date(), "文案编辑前"));
     }
     editRevisionRef.current += 1;
-    cancelChangedVoiceWindows(next);
-    const after = new Map(flattenClips(next).map((clip) => [clip.id, clip]));
-    for (const clip of flattenClips(current)) {
-      if (JSON.stringify(clip) !== JSON.stringify(after.get(clip.id))) cancelGenerationForClip(clip.id);
+    if (current.speechWorkspace) cancelStaleWorkspaceJobs(next);
+    else {
+      cancelChangedVoiceWindows(next);
+      const after = new Map(flattenClips(next).map((clip) => [clip.id, clip]));
+      for (const clip of flattenClips(current)) {
+        if (JSON.stringify(clip) !== JSON.stringify(after.get(clip.id))) cancelGenerationForClip(clip.id);
+      }
+      cancelProjectMixGeneration();
     }
-    cancelProjectMixGeneration();
     audioRef.current?.pause();
     editableProjectRef.current = next;
     setEditableProject(next);
@@ -1371,8 +1563,10 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function cancelChangedVoiceWindows(next: AsmrProject) {
     for (const [jobId, job] of windowedVoiceJobsRef.current) {
-      if (JSON.stringify(getVoiceGenerationContext(next, job.clipId)) !== job.context) {
-        cancelGenerationForClip(job.clipId);
+      const source = next.speechWorkspace ? getSpeechWorkspaceProject(next, job.mode) : next;
+      const context = job.paragraph ? getVoiceParagraphContext(source, job.clipId) : getVoiceGenerationContext(source, job.clipId);
+      if (JSON.stringify(context) !== job.context) {
+        cancelGenerationForClip(job.clipId, job.mode);
         windowedVoiceJobsRef.current.delete(jobId);
       }
     }
@@ -1395,16 +1589,44 @@ export function StudioApp({ project }: StudioAppProps) {
   function handleAddVoice(afterClipId?: string) {
     const result = addVoiceClip(editableProjectRef.current, afterClipId);
     commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已添加一段，直接输入台词即可。");
-    if (voiceOptions.provider === "voxcpm2") handleVoiceOptionsChange({ ...voiceOptions, generationMode: "long_text" });
+    if (speechMode === "short" && voiceOptions.provider === "voxcpm2") handleVoiceOptionsChange({ ...voiceOptions, generationMode: "long_text" });
+  }
+
+  function handleAddSilent(afterClipId?: string) {
+    const result = addSilentClip(editableProjectRef.current, afterClipId);
+    commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已插入无对白镜头，可编辑画面描述并生成分镜。");
+    setInspectorTab("storyboard");
+  }
+
+  function handleSilentDuration(clipId: string, duration: number) {
+    commitScriptEdit(setSilentClipDuration(editableProjectRef.current, clipId, duration), clipId, "无对白镜头时长已同步。");
+  }
+
+  function handleParagraphScript(groupId: string, text: string) {
+    commitScriptEdit(replaceParagraphScript(editableProjectRef.current, groupId, text), activeClipId, "文案与短句已同步；旧音频可从编辑历史恢复。", true, true);
+  }
+
+  function handleNormalizeSentences(clipId?: string) {
+    const current = editableProjectRef.current;
+    const initialized = ensureSpeechWorkspaces(current);
+    const normalized = normalizeSpeechSentences(initialized, clipId);
+    if (normalized === initialized) return;
+    commitScriptEdit(normalized, clipId ?? activeClipId, "已切为短句并同步两页；原长段音频保存在编辑历史。", true, true);
   }
 
   function handleUndoScriptEdit() {
     const previous = scriptHistory.at(-1);
     if (!previous || previous.project.project_id !== editableProject.project_id) return;
     editRevisionRef.current += 1;
-    clearGenerationSession();
-    editableProjectRef.current = previous.project;
-    setEditableProject(previous.project);
+    const current = editableProjectRef.current;
+    let restored = previous.project;
+    if (current.speechWorkspace) {
+      const source = hasSharedSpeechScriptChanges(current, previous.project) ? restoreSharedSpeechScript(current, previous.project) : current;
+      restored = restoreSpeechWorkspaceArrangement(source, previous.project, previous.mode);
+      cancelStaleWorkspaceJobs(restored);
+    } else clearGenerationSession();
+    editableProjectRef.current = restored;
+    setEditableProject(restored);
     setSelectedClipId(previous.clipId);
     setScriptHistory((history) => history.slice(0, -1));
     setScriptNotice("已撤回上一次文案编辑。");
@@ -1464,6 +1686,12 @@ export function StudioApp({ project }: StudioAppProps) {
     setEditableProject(next);
   }
 
+  function handleMoveVoice(clipId: string, direction: VoiceClipMoveDirection) {
+    if (voiceBusy || referenceImportBusyRef.current || singleStoryboardBusyRef.current || batchRunRef.current) return;
+    const result = moveVoiceClip(editableProjectRef.current, clipId, direction);
+    commitScriptEdit(result.project, activeClipId, `已${direction === "up" ? "上移" : "下移"}本段，已采用音频保留，可撤回编辑。`);
+  }
+
   function handleStoryboardReferenceModeChange(clipId: string, mode: StoryboardReferenceMode) {
     if (batchRunRef.current || candidateRecheckRunRef.current || singleStoryboardBusyRef.current || candidateActionBusy
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
@@ -1498,6 +1726,7 @@ export function StudioApp({ project }: StudioAppProps) {
     if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
     const initial = structuredClone(editableProjectRef.current);
+    const mode = getSpeechWorkspaceMode(initial);
     const clipIds = getStudioBatchTargets(initial, action);
     if (!clipIds.length) return;
     const audio = action.startsWith("audio");
@@ -1535,7 +1764,8 @@ export function StudioApp({ project }: StudioAppProps) {
         clipIds, signal,
         onProgress: (progress) => { if (batchRunRef.current === run) setBatchProgress({ action, ...progress }); },
         onItem: async (clipId) => {
-          const latest = editableProjectRef.current;
+          const active = editableProjectRef.current;
+          const latest = active.speechWorkspace ? getSpeechWorkspaceProject(active, mode) : active;
           if (signal.aborted || latest.project_id !== run.projectId) return "skipped";
           if (!getStudioBatchTargets(latest, action).includes(clipId)) return "skipped";
           const snapshot = structuredClone(latest);
@@ -1553,6 +1783,7 @@ export function StudioApp({ project }: StudioAppProps) {
             const reason = clip.generation.status === "asset_generated" ? "regenerate" : "generate";
             const fingerprint = getClipGenerationFingerprint(clip, { ignoreVoiceStart: true });
             const context = options.provider === "voxcpm2" && options.generationMode === "long_text" ? getVoiceGenerationContext(snapshot, clipId) : undefined;
+            const paragraphContext = options.generationMode === "paragraph" ? getVoiceParagraphContext(snapshot, clipId) : undefined;
             let itemJobId: string | undefined;
             try {
               await waitForStudioVoiceGeneration({
@@ -1562,9 +1793,10 @@ export function StudioApp({ project }: StudioAppProps) {
                 itemJobId = update.job.jobId;
                 run.jobId = itemJobId;
                 generationReasonsRef.current[update.job.jobId] = reason;
+                generationWorkspaceRef.current.set(update.job.jobId, mode);
                 generationFingerprintsRef.current[update.job.jobId] = fingerprint;
                 if (options.provider === "voxcpm2") candidateJobIdsRef.current.add(update.job.jobId);
-                if (context && update.type === "snapshot") windowedVoiceJobsRef.current.set(update.job.jobId, { clipId, context: JSON.stringify(context) });
+                if ((context || paragraphContext) && update.type === "snapshot") windowedVoiceJobsRef.current.set(update.job.jobId, { clipId, context: JSON.stringify(paragraphContext ?? context), mode, paragraph: Boolean(paragraphContext) });
                 handleGenerationUpdate(update, session);
                 if (update.type !== "snapshot") run.jobId = undefined;
               },
@@ -1585,7 +1817,7 @@ export function StudioApp({ project }: StudioAppProps) {
                 if (run.jobId === itemJobId) run.jobId = undefined;
               }
             }
-            return batchAudioSource(editableProjectRef.current, clipId, options) === sources.get(clipId) ? "completed" : "skipped";
+            return batchAudioSource(editableProjectRef.current.speechWorkspace ? getSpeechWorkspaceProject(editableProjectRef.current, mode) : editableProjectRef.current, clipId, options) === sources.get(clipId) ? "completed" : "skipped";
           }
           const fingerprint = createClipVideoSourceFingerprint(snapshot, clipId);
           const referenceMode = getClipStoryboardReferenceMode(snapshot, clipId);
@@ -1603,17 +1835,17 @@ export function StudioApp({ project }: StudioAppProps) {
           if (signal.aborted || batchRunRef.current !== run) return "skipped";
           if (!response.ok) throw new Error(body.error || "本段分镜生成失败，请重试。");
           const shot = ClipVideoStoryboardSchema.parse(body.storyboard);
-          const current = editableProjectRef.current;
+          const current = editableProjectRef.current.speechWorkspace ? getSpeechWorkspaceProject(editableProjectRef.current, mode) : editableProjectRef.current;
           if (current.project_id !== run.projectId || createClipVideoSourceFingerprint(current, clipId) !== fingerprint
             || getClipStoryboardReferenceMode(current, clipId) !== referenceMode
             || JSON.stringify(current.videoPlan?.shots[clipId] ?? null) !== originalShots.get(clipId)
             || JSON.stringify(getClipStoryboardReferenceContext(current, clipId, referenceMode)) !== JSON.stringify(referenceContext)) return "skipped";
-          if (shot.clipId !== clipId || shot.sourceFingerprint !== fingerprint || shot.audio.assetId !== clip.asset.asset_id
-            || shot.audio.uri !== clip.asset.uri || shot.referenceMode !== referenceMode || Boolean(shot.previousClipId) !== includePrevious
+          if (shot.clipId !== clipId || shot.sourceFingerprint !== fingerprint || (clip.kind === "silent" ? Boolean(shot.audio) : !shot.audio || shot.audio.assetId !== clip.asset.asset_id
+            || shot.audio.uri !== clip.asset.uri) || shot.referenceMode !== referenceMode || Boolean(shot.previousClipId) !== includePrevious
             || (referenceContext && (shot.previousClipId !== referenceContext.previousClipId || shot.previousPromptFingerprint !== referenceContext.previousPromptFingerprint))) {
             throw new Error("分镜结果与当前段落或音频不一致，请重新生成。");
           }
-          if (!handleSaveClipStoryboard(run.projectId, shot)) return "skipped";
+          if (!handleSaveClipStoryboard(run.projectId, shot, mode)) return "skipped";
           return "completed";
         },
       });
@@ -1634,8 +1866,9 @@ export function StudioApp({ project }: StudioAppProps) {
     }
   }
 
-  function handleSaveClipStoryboard(projectId: string, shot: ClipVideoStoryboard): boolean {
-    const current = editableProjectRef.current;
+  function handleSaveClipStoryboard(projectId: string, shot: ClipVideoStoryboard, mode: SpeechWorkspaceMode = getSpeechWorkspaceMode(editableProjectRef.current)): boolean {
+    const active = editableProjectRef.current;
+    const current = active.speechWorkspace ? getSpeechWorkspaceProject(active, mode) : active;
     if (current.project_id !== projectId) return false;
     const next = { ...current, videoPlan: {
       ...current.videoPlan, version: 1 as const, sceneDescription: current.videoPlan?.sceneDescription ?? current.scene.name,
@@ -1644,8 +1877,9 @@ export function StudioApp({ project }: StudioAppProps) {
     if (!isClipVideoStoryboardCurrent(next, shot.clipId)) return false;
     try { createClipH3Prompt(next, shot.clipId); }
     catch { return false; }
-    editableProjectRef.current = next;
-    setEditableProject(next);
+    const merged = active.speechWorkspace ? mergeSpeechWorkspaceProject(active, mode, next) : next;
+    editableProjectRef.current = merged;
+    setEditableProject(merged);
     return true;
   }
 
@@ -1791,23 +2025,33 @@ export function StudioApp({ project }: StudioAppProps) {
           source={currentLibraryEntry?.plannerSource} onAdopt={handleAdoptPlanner} /> : null}
       </div>
       <div id="editor-workspace" className="min-h-0 flex-1 overflow-hidden" hidden={workspaceView !== "editor"}>
-      <div className="grid h-full min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_minmax(0,0.42fr)] gap-2">
+      <div className={`grid h-full min-h-0 min-w-0 gap-2 ${timelineExpanded ? "grid-rows-[minmax(0,1fr)_minmax(0,0.42fr)]" : "grid-rows-[minmax(0,1fr)_auto]"}`}>
       <EditorPanels activePanel={editorPanel} onPanelChange={setEditorPanel}>
         <div className="h-full min-h-0 min-w-0">
           <ScriptEditorPanel
+            workspaceTabs={<div role="tablist" aria-label="语音生成方式" className="inline-flex rounded-lg bg-black/15 p-0.5">{([['short', '短句'], ['paragraph', '整段']] as const).map(([mode, label]) => <button key={mode} type="button" role="tab" aria-selected={speechMode === mode} aria-label={label} onClick={() => handleSpeechModeChange(mode)} title={mode === "short" ? "原有流程：短句 + 长生成取前部" : "整段一次生成，检查后切成短句"} className={`min-h-8 rounded-md px-4 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-sky-300 ${speechMode === mode ? "bg-sky-300/12 text-sky-100 shadow-sm" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`}>{label}</button>)}</div>}
+            paragraphBody={speechMode === "paragraph" ? <ParagraphScriptList project={editableProject} selectedClipId={activeClipId} onSelectClip={setSelectedClipId} onUpdateParagraph={handleParagraphScript} onUpdateClip={handleUpdateClip} onDurationChange={handleSilentDuration} onOpenStoryboard={(id) => { setSelectedClipId(id); setInspectorTab("storyboard"); setEditorPanel(1); }} onDeleteClip={(id) => { const result = deleteVoiceClip(editableProjectRef.current, id); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除镜头。"); }} /> : undefined}
             audioStates={audioProgress.byClip} audioStatesStatus={audioOverviewStatus}
             key={editableProject.project_id}
-            batchActions={<StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />}
+            batchActions={<>
+              <StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />
+              <AcceptedVoicePreview project={editableProject} disabled={!hasLoadedStorage} onAudioElementChange={handlePreviewAudioChange} onPlaybackStart={() => audioRef.current?.pause()} />
+            </>}
             project={displayProject}
             selectedClipId={activeClipId}
             onSelectClip={setSelectedClipId}
             onReferenceModeChange={handleStoryboardReferenceModeChange}
             referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)}
-            busy={voiceBusy || referenceImportBusy}
+            busy={voiceBusy || referenceImportBusy || singleStoryboardBusy || Boolean(batchProgress)}
             canUndo={scriptHistory.length > 0}
             notice={scriptNotice}
             onUpdateClip={handleUpdateClip}
-            onAddClip={handleAddVoice}
+            onNormalizeSentences={handleNormalizeSentences}
+            canNormalizeSentences={speechMode === "short" && hasUnsplitSpeechSentences(editableProject)}
+            onAddClip={(after) => handleAddVoice(speechMode === "paragraph" && after ? getParagraphGroup(editableProjectRef.current, after).at(-1)?.id ?? after : after)}
+            onAddSilentClip={(after) => handleAddSilent(speechMode === "paragraph" && after ? getParagraphGroup(editableProjectRef.current, after).at(-1)?.id ?? after : after)}
+            onSilentDurationChange={handleSilentDuration}
+            onMoveClip={handleMoveVoice}
             onDeleteClip={(clipId) => { const result = deleteVoiceClip(editableProjectRef.current, clipId); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除片段，可撤回编辑。"); }}
             onSplitClip={handleSplitVoice}
             onMergeClip={(clipId) => { const result = mergeVoiceClipWithNext(editableProjectRef.current, clipId); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已合并，可重新选择修改或生成的范围。"); }}
@@ -1825,12 +2069,15 @@ export function StudioApp({ project }: StudioAppProps) {
           <div role="tablist" aria-label="片段工作内容" className="flex shrink-0 gap-1 border-b border-studio-line px-3 py-2">
             {([['audio', '声音'], ['storyboard', '分镜']] as const).map(([tab, label]) => <button key={tab} type="button" role="tab" id={`clip-inspector-tab-${tab}`} aria-selected={inspectorView === tab} aria-controls={`clip-inspector-${tab}`} tabIndex={inspectorView === tab ? 0 : -1} disabled={tab === "storyboard" && selectedClip?.type !== "voice"} onClick={() => setInspectorTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || selectedClip?.type !== "voice") return; event.preventDefault(); const next = event.key === "Home" ? "audio" : event.key === "End" ? "storyboard" : tab === "audio" ? "storyboard" : "audio"; setInspectorTab(next); document.getElementById(`clip-inspector-tab-${next}`)?.focus(); }} className={`min-h-8 rounded-lg px-4 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 disabled:opacity-35 ${inspectorView === tab ? tab === "storyboard" ? "bg-violet-300/15 text-violet-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5"}`}>{label}</button>)}
           </div>
-          <div id="clip-inspector-audio" role="tabpanel" aria-labelledby="clip-inspector-tab-audio" hidden={inspectorView !== "audio"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [&>section]:border-0">
+          <div ref={inspectorScrollerRef} id="clip-inspector-audio" role="tabpanel" aria-labelledby="clip-inspector-tab-audio" hidden={inspectorView !== "audio"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [&>section]:border-0">
           <ClipInspector
+            speechWorkspaceMode={speechMode}
             textEditorExternal
             binaural={editableProject.timeline.mixing.binaural}
             voiceGenerationPanel={selectedClip?.type === "voice" ? (generationControl) => (
               <VoiceGenerationPanel
+                workspaceMode={speechMode}
+                paragraphContext={speechMode === "paragraph" ? getVoiceParagraphContext(editableProject, selectedClip.id) : undefined}
                 projectId={editableProject.project_id}
                 voiceContext={getVoiceGenerationContext(editableProject, selectedClip.id)}
                 binaural={editableProject.timeline.mixing.binaural}
@@ -1843,17 +2090,18 @@ export function StudioApp({ project }: StudioAppProps) {
                 onAdopt={handleAdoptVoiceCandidate} onDiscard={handleDiscardVoiceCandidate}
                 onRegenerateGroup={handleRegenerateVoiceGroup}
                 onRecheck={handleRecheckVoiceCandidate} recheckingCandidateId={recheckingCandidateId} onCancelRecheck={() => handleCancelCandidateRecheck()}
+                onConfirmText={handleConfirmParagraphText} confirmingCandidateId={confirmingCandidateId} onCancelConfirmation={() => handleCancelCandidateRecheck()}
                 onUndo={handleUndoVoiceCandidate}
                 canUndo={canUndoLastAudioCandidate({ ...projectLibrary, projects: projectLibrary.projects.map((entry) =>
                   entry.projectId === editableProject.project_id ? { ...entry, project: editableProject } : entry,
                 ) })}
-                hasUndo={Boolean(currentLibraryEntry?.candidateAcceptance)}
+                hasUndo={Boolean(currentLibraryEntry && getLastAudioCandidateAcceptance({ ...currentLibraryEntry, project: editableProject }))}
                 error={voiceError} loading={candidatesLoading}
               />
             ) : undefined}
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={displaySelectedClip}
-            selectedClipGeneration={referenceImportBusy || recheckingCandidateId ? { ...generationView.selectedClipControl, disabled: true, disabledReason: recheckingCandidateId ? "正在重新识别已保存的原音" : "正在处理参考音频" } : generationView.selectedClipControl}
+            selectedClipGeneration={referenceImportBusy || recheckingCandidateId || confirmingCandidateId ? { ...generationView.selectedClipControl, disabled: true, disabledReason: confirmingCandidateId ? "正在保存试听确认" : recheckingCandidateId ? "正在重新识别已保存的原音" : "正在处理参考音频" } : generationView.selectedClipControl}
             selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}
             onGenerateSelectedClip={handleGenerateSelectedClip}
@@ -1863,12 +2111,12 @@ export function StudioApp({ project }: StudioAppProps) {
           />
           </div>
           <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress) || Boolean(recheckingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={handleSaveClipStoryboard} onEdit={handleEditClipStoryboard} /> : null}
+            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${speechMode}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress) || Boolean(recheckingCandidateId) || Boolean(confirmingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={(id, shot) => handleSaveClipStoryboard(id, shot, speechMode)} onEdit={handleEditClipStoryboard} /> : null}
           </div>
         </div>
       </EditorPanels>
       <div className="flex min-h-0 min-w-0 flex-col gap-1">
-        <TimelinePanel project={displayProject} selectedClipId={activeClipId} onSelectClip={setSelectedClipId} />
+        <TimelinePanel project={displayProject} selectedClipId={activeClipId} onSelectClip={setSelectedClipId} expanded={timelineExpanded} onExpandedChange={setTimelineExpanded} />
         <details className="relative shrink-0 rounded-md border border-studio-line bg-studio-panel/60 px-3 py-1"><summary className="cursor-pointer text-xs text-studio-muted">情绪与工程检查{validationIssues.length ? ` · ${validationIssues.length} 项待检查` : ""}</summary><div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-[60dvh] space-y-3 overflow-y-auto rounded-lg border border-studio-line bg-studio-panel p-3 shadow-2xl"><EmotionCurve project={editableProject} /><ValidationPanel issues={validationIssues} /></div></details>
       </div>
       </div>

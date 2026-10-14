@@ -87,6 +87,26 @@ describe("VoxCPM2 native provider", () => {
       expect(args[args.indexOf("--prompt-text") + 1]).toBe("欢迎光临 请慢慢放松 ");
     }) });
   });
+  it("uses the paragraph-only corrected decoder, 800-step recipe and original natural reference punctuation", async () => {
+    const { input, output, root } = await fixture();
+    const paragraphCli = path.join(root, "paragraph.exe");
+    await writeFile(paragraphCli, "corrected-decoder-fixture");
+    const config = { ...input.config, voxcpm2ParagraphCliPath: paragraphCli };
+    const spawnImpl = successfulSpawn(output, (args) => {
+      expect(args[args.indexOf("-t") + 1]).toBe("先坐下吧。我替你倒杯茶。");
+      expect(args[args.indexOf("--prompt-text") + 1]).toBe("欢迎光临。请慢慢放松！");
+      expect(args[args.indexOf("--steps") + 1]).toBe("800");
+      expect(args).toEqual(expect.arrayContaining(["--temperature", "1", "--cfg", "2", "--timesteps", "10", "--n-gpu-layers", "0", "--low-vram"]));
+    });
+    const result = await generateVoxCpm2({ ...input, config, text: "先坐下吧。我替你倒杯茶。", referenceMode: "with_reference_text" }, { paragraphMode: true, spawnImpl });
+    expect(spawnImpl).toHaveBeenCalledWith(paragraphCli, expect.any(Array), expect.any(Object));
+    expect(result.provenance.runtimeVersion).toBe(`sha256:${createHash("sha256").update("corrected-decoder-fixture").digest("hex")}`);
+    expect(result.provenance.parameters.maxSteps).toBe(800);
+    const legacySpawn = successfulSpawn(output);
+    await generateVoxCpm2({ ...input, config }, { spawnImpl: legacySpawn });
+    expect(legacySpawn).toHaveBeenCalledWith(path.join(root, "cli.exe"), expect.any(Array), expect.any(Object));
+    await expect(generateVoxCpm2({ ...input, config }, { maxSteps: 800, spawnImpl: vi.fn() })).rejects.toMatchObject({ statusCode: 503 });
+  });
   it("rejects missing transcripts, non-catalog references and invalid text before spawning", async () => {
     const { input } = await fixture();
     const spawnImpl = vi.fn();
@@ -276,6 +296,7 @@ describe("VoxCPM2 native provider", () => {
   });
   it.each([
     ["CUDA error: out of memory", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
+    ["cudaMallocAsync failed: out of memory", "语音模型可用显存不足，请关闭占用显卡的程序后重试。", 503],
     ["CUDA error: CUBLAS_STATUS_NOT_INITIALIZED", "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503],
     ["CUDA error: initialization error", "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503],
     ["std::bad_alloc", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
@@ -295,6 +316,53 @@ describe("VoxCPM2 native provider", () => {
     const [record] = await failureDiagnostics(input);
     expect(record.native.stderrTail).toContain(nativeMessage);
     expect(record.failure.message).not.toMatch(/private-path|input-secret|cpy\.cu/);
+  });
+  it("classifies the reference-encoding CUDA allocator OOM trace without retrying or changing the reference", async () => {
+    const { input, root } = await fixture();
+    const referencePath = path.join(root, "reference.wav");
+    const referenceBefore = await readFile(referencePath);
+    const nativeMessage = "ggml_backend_cuda_buffer_type_alloc_buffer: allocating 757.27 MiB on device 0: cudaMalloc failed: out of memory\n"
+      + "ggml_gallocr_reserve_n_impl: failed to allocate CUDA0 buffer of size 794056192\n"
+      + "VoxCPM2Runtime: failed to reserve AudioVAE encode graph memory\n"
+      + "Combined cloning failed: failed to reserve AudioVAE encode graph memory\n";
+    const spawnImpl = vi.fn(() => {
+      const process = child();
+      setImmediate(() => { process.stderr.write(nativeMessage); process.emit("close", 1, null); });
+      return process;
+    });
+    const reported = await generateVoxCpm2(input, { spawnImpl }).catch((caught: unknown) => caught);
+    expect(reported).toMatchObject({ statusCode: 503, message: "语音模型可用显存不足，请关闭占用显卡的程序后重试。" });
+    expect(String(reported)).not.toMatch(/757\.27|cudaMalloc|AudioVAE|794056192/);
+    expect(spawnImpl).toHaveBeenCalledOnce();
+    expect(await readFile(referencePath)).toEqual(referenceBefore);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
+    const [record] = await failureDiagnostics(input);
+    expect(record.native).toMatchObject({ exitCode: 1, signal: null, exitConfirmed: true, stderrTail: nativeMessage });
+    expect(record.failure).toMatchObject({ statusCode: 503, message: "语音模型可用显存不足，请关闭占用显卡的程序后重试。" });
+  });
+  it.each([
+    { label: "cudaMalloc invalid argument", nativeMessage: "ggml_backend_cuda_buffer_type_alloc_buffer: allocating 757.27 MiB on device 0: cudaMalloc failed: invalid argument", exitCode: 1 },
+    { label: "cudaMallocAsync invalid argument", nativeMessage: "cudaMallocAsync failed: invalid argument", exitCode: 1 },
+    { label: "LF-separated allocation and memory messages", nativeMessage: "cudaMalloc failed:\nout of memory", exitCode: 1 },
+    { label: "CRLF-separated allocation and memory messages", nativeMessage: "cudaMallocAsync failed:\r\nout of memory", exitCode: 1 },
+    { label: "Windows fast-fail without an OOM diagnostic", nativeMessage: "native process terminated unexpectedly", exitCode: 3221226505 },
+  ])("keeps $label as a generic failure rather than inferring GPU memory exhaustion", async ({ nativeMessage, exitCode }) => {
+    const { input, root } = await fixture();
+    const spawnImpl = vi.fn(() => {
+      const process = child();
+      setImmediate(() => { process.stderr.write(nativeMessage + " private-path input-secret"); process.emit("close", exitCode, null); });
+      return process;
+    });
+    const reported = await generateVoxCpm2(input, { spawnImpl }).catch((caught: unknown) => caught);
+    expect(reported).toMatchObject({ statusCode: 502, message: "VoxCPM2 生成失败，请稍后重试。" });
+    expect(String(reported)).not.toMatch(/cudaMalloc|out of memory|private-path|input-secret/);
+    expect(spawnImpl).toHaveBeenCalledOnce();
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    const [record] = await failureDiagnostics(input);
+    expect(record.native).toMatchObject({ exitCode, signal: null, exitConfirmed: true });
+    expect(record.native.stderrTail).toContain(nativeMessage);
+    expect(record.failure.statusCode).toBe(502);
   });
   it("classifies the imported-reference cuBLAS crash without retrying or changing the reference", async () => {
     const { input, root } = await fixture();

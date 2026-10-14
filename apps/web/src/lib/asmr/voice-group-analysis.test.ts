@@ -38,7 +38,7 @@ const recognition = {
   alignment: { expected: "慢慢放松", recognizedPrefix: "慢慢放松后续", reason: "uncertain_word_alignment" },
 };
 
-function successfulSpawn(wav: Uint8Array, response: unknown = validResult, expectedText = "慢慢放松。", followingText = ""): VoiceAnalysisSpawn {
+function successfulSpawn(wav: Uint8Array, response: unknown = validResult, expectedText = "慢慢放松。", followingText = "", requireTwoSided?: boolean): VoiceAnalysisSpawn {
   return vi.fn((_command, args, options) => {
     expect(options).toMatchObject({ shell: false, windowsHide: true, stdio: "ignore", env: { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" } });
     expect(args.slice(-2, -1)).toEqual(["--request"]);
@@ -47,6 +47,7 @@ function successfulSpawn(wav: Uint8Array, response: unknown = validResult, expec
       const request = JSON.parse(await readFile(args.at(-1)!, "utf8"));
       expect(request.expectedText).toBe(expectedText);
       expect(request.followingText).toBe(followingText);
+      if (requireTwoSided !== undefined) expect(request.requireTwoSided).toBe(requireTwoSided);
       await writeFile(request.outputWav, wav);
       await writeFile(request.outputJson, JSON.stringify(response));
       process.emit("close", 0);
@@ -56,6 +57,73 @@ function successfulSpawn(wav: Uint8Array, response: unknown = validResult, expec
 }
 
 afterEach(() => vi.unstubAllEnvs());
+
+describe("paragraph boundary verification contract", () => {
+  it("forwards forced two-sided verification and rejects exact-text results without quiet evidence", async () => {
+    const f = await fixture();
+    await expect(analyzeVoiceGroup({ ...f.input, followingText: "安静休息。", requireTwoSided: true }, {
+      readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.input.wav, validResult, f.input.expectedText, "安静休息。", true),
+    })).rejects.toMatchObject({ statusCode: 422 });
+  });
+  it("accepts a forced result only when the existing quiet boundary evidence is present", async () => {
+    const f = await fixture();
+    const response = { ...validResult, cutValidation: { method: "two_sided", thresholdDbfs: -68, quietStartSeconds: .8, quietEndSeconds: 1 } };
+    const result = await analyzeVoiceGroup({ ...f.input, followingText: "安静休息。", requireTwoSided: true }, {
+      readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.input.wav, response, f.input.expectedText, "安静休息。", true),
+    });
+    expect(result.cutValidation).toEqual(response.cutValidation);
+  });
+});
+
+describe("phonetic results retain independent audio and content guards", () => {
+  const expectedText = "来~~，面来啦！汤也喝一点，暖胃。", followingText = "今天是不是又加班了？";
+  const contentComparison = { mode: "phonetic_substitutions", status: "different", similarity: .818182, threshold: .9,
+    phoneticSimilarity: .954545, phoneticThreshold: .95, substitutionCount: 2,
+    expected: "来面来啦汤也喝一点暖胃", recognized: "来面来了糖也喝一点暖胃", sourcePrefix: "来面来了汤也喝一点暖胃",
+    differences: [{ index: 3, expected: "啦", recognized: "了", expectedPinyin: "la5", recognizedPinyin: "le5", rule: "sentence_particle", clauseEnd: true },
+      { index: 4, expected: "汤", recognized: "糖", expectedPinyin: "tang1", recognizedPinyin: "tang2", rule: "source_supported_tone", sourceCharacter: "汤" }] };
+  const evidence = { stage: "complete", expectedText, followingText, targetTranscript: "来,面来了,糖也喝一点,暖胃",
+    sourceTranscript: "来,面来了,汤也喝一点,暖胃。今天是不是又加班了？",
+    sourceWords: [{ text: "来,面来了,汤也喝一点,暖胃。", start: .05, end: .3 }, { text: followingText, start: .7, end: .95 }], contentComparison };
+  const result = { ...validResult, transcript: evidence.targetTranscript, coverage: .818182, cutEndSeconds: .5,
+    internalPausesMs: [30, 30, 30], recognition: evidence,
+    cutValidation: { method: "two_sided", thresholdDbfs: -90, quietStartSeconds: .35, quietEndSeconds: .65 } };
+  const prepare = async () => {
+    const f = await fixture();
+    const input = { ...f.input, expectedText, followingText, clauses: ["来~~，", "面来啦！", "汤也喝一点，", "暖胃。"] };
+    const cropped = writePcm16MonoWav(new Float32Array(24_000).fill(.05), 48_000);
+    return { ...f, input, cropped };
+  };
+
+  it("accepts bounded pronunciation differences only with matched evidence and a verified quiet cut", async () => {
+    const f = await prepare();
+    const measured = await analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, result, expectedText, followingText) });
+    expect(measured.coverage).toBe(.818182);
+    expect(measured.recognition?.contentComparison).toEqual(contentComparison);
+    expect(measured.cutValidation).toEqual(result.cutValidation);
+  });
+
+  it.each([
+    { ...result, cutValidation: undefined },
+    { ...result, cutValidation: { ...result.cutValidation, quietEndSeconds: .4 } },
+    { ...result, cutValidation: { ...result.cutValidation, quietStartSeconds: .51 } },
+    { ...result, recognition: { ...evidence, stage: "target_validation" } },
+    { ...result, recognition: { ...evidence, sourceWords: undefined } },
+    { ...result, recognition: { ...evidence, followingText: "另一个后文" } },
+    { ...result, recognition: { ...evidence, targetTranscript: "无关内容" } },
+    { ...result, transcript: "没有真的识别这段" },
+    { ...result, coverage: .9 },
+  ])("rejects a phonetic score without the corresponding independent proof %#", async invalid => {
+    const f = await prepare();
+    await expect(analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, invalid, expectedText, followingText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("requires particle evidence to match the actual clauses used in this job", async () => {
+    const f = await prepare();
+    const invalidResult = { ...result, internalPausesMs: [] };
+    await expect(analyzeVoiceGroup({ ...f.input, clauses: [expectedText] }, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, invalidResult, expectedText, followingText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+});
 
 const endpointExpected = "来~~，面来啦！慢点儿吃，小心烫。汤也喝一点，暖胃。";
 const endpointPrefix = "来面来了慢点吃小心烫汤也喝一点暖胃";
@@ -93,6 +161,146 @@ function sequenceSpawn(wav: Uint8Array, responses: unknown[]) {
   });
   return { spawnImpl, requests };
 }
+
+describe("opt-in safe paragraph cuts with unresolved short-sentence text", () => {
+  const expectedText = "回来啦。", followingText = "安静休息。";
+  const window = (transcript: string) => ({ transcript, words: [{ text: transcript, start: .05, end: .3 }], durationSeconds: .5 });
+  const review = { status: "needs_confirmation", reason: "missing_final_particle", expected: "回来啦", sourcePrefix: "回来了",
+    expectedPinyin: "la5", sourcePinyin: "le5", similarity: .666667, left: window("回来"), right: window(followingText), final: window("回来") };
+  const evidence = { stage: "complete", expectedText, followingText, sourceTranscript: "回来了安静休息", targetTranscript: "回来",
+    sourceWords: [{ text: "回来了", start: .05, end: .3 }, { text: followingText, start: .7, end: .95 }], shortSentenceReview: review };
+  const response = { ...validResult, transcript: "回来", coverage: .666667, recognition: evidence, cutEndSeconds: .5,
+    cutValidation: { method: "two_sided", thresholdDbfs: -90, quietStartSeconds: .35, quietEndSeconds: .65 } };
+  const prepare = async () => {
+    const f = await fixture();
+    return { ...f, input: { ...f.input, expectedText, followingText, clauses: [expectedText],
+      requireTwoSided: true, allowShortSentenceParticle: true, allowShortSentenceTextReview: true },
+      cropped: writePcm16MonoWav(new Float32Array(24_000).fill(.05), 48_000) };
+  };
+
+  it("returns only an explicit review with actual transcripts/coverage and forwards the separate opt-in", async () => {
+    const f = await prepare(), sequence = sequenceSpawn(f.cropped, [response]);
+    const result = await analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: sequence.spawnImpl });
+    expect(result.coverage).toBe(.666667);
+    expect(result.transcript).toBe("回来");
+    expect(result.recognition?.contentComparison).toBeUndefined();
+    expect(result.recognition?.shortSentenceReview).toEqual(review);
+    expect(sequence.requests[0]).toMatchObject({ requireTwoSided: true, allowShortSentenceParticle: true, allowShortSentenceTextReview: true });
+  });
+
+  it("does not mistake a complete final transcript for an automatic pass when left text still needs confirmation", async () => {
+    const f = await prepare();
+    const final = window("回来啦。"), complete = { status: "matched", similarity: 1, threshold: .9, substitutionCount: 0, expected: "回来啦", recognized: "回来啦" };
+    const result = { ...response, transcript: final.transcript, coverage: 1, recognition: { ...evidence, targetTranscript: final.transcript,
+      contentComparison: complete, shortSentenceReview: { ...review, final, similarity: 1 } } };
+    await expect(analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, result, expectedText, followingText) }))
+      .resolves.toMatchObject({ coverage: 1, recognition: { shortSentenceReview: { status: "needs_confirmation" } } });
+    await expect(analyzeVoiceGroup({ ...f.input, allowShortSentenceTextReview: false },
+      { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, result, expectedText, followingText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("allows a reviewed final remainder only with complete original-source evidence", async () => {
+    const f = await prepare(), { left: _left, right: _right, ...lastReview } = review;
+    void _left; void _right;
+    const result = { ...response, cutValidation: undefined, recognition: { ...evidence, followingText: "", sourceTranscript: "回来了",
+      sourceWords: evidence.sourceWords.slice(0, 1), shortSentenceReview: lastReview } };
+    await expect(analyzeVoiceGroup({ ...f.input, followingText: undefined }, {
+      readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, result, expectedText),
+    })).resolves.toMatchObject({ coverage: .666667, recognition: { shortSentenceReview: lastReview } });
+  });
+
+  it.each([
+    { ...response, cutValidation: undefined },
+    { ...response, cutValidation: { ...response.cutValidation, quietEndSeconds: .4 } },
+    { ...response, coverage: .9 }, { ...response, transcript: "回来啦" },
+    { ...response, recognition: { ...evidence, stage: "target_validation" } },
+    { ...response, recognition: { ...evidence, shortSentenceReview: { ...review, final: window("回") } } },
+    { ...response, recognition: { ...evidence, shortSentenceReview: { ...review, right: window("静休息") } } },
+    { ...response, recognition: { ...evidence, shortSentenceReview: { ...review, sourcePrefix: "回来" } } },
+    { ...response, recognition: { ...evidence, shortSentenceReview: { ...review, left: undefined } } },
+    { ...response, recognition: { ...evidence, shortSentenceReview: { ...review, final: { ...review.final, durationSeconds: .8 } } } },
+    { ...response, recognition: { ...evidence, shortSentenceReview: { ...review, left: { ...review.left, durationSeconds: .8 } } } },
+    { ...response, recognition: { ...evidence, shortSentenceReview: { ...review, right: { ...review.right, durationSeconds: .8 } } } },
+    { ...response, recognition: { ...evidence, sourceWords: [{ text: "回来了", start: .05, end: 1.5 }, evidence.sourceWords[1]] } },
+    { ...response, recognition: { ...evidence, sourceWords: [evidence.sourceWords[0], { text: followingText, start: .7, end: 1.5 }] } },
+    { ...response, recognition: { ...evidence, contentComparison: { status: "matched", similarity: 1, threshold: .9, substitutionCount: 0, expected: "回来", recognized: "回来" } } },
+  ])("rejects malformed review evidence and retains the original safety gates %#", async invalid => {
+    const f = await prepare();
+    await expect(analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, invalid, expectedText, followingText) }))
+      .rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it.each([{ requireTwoSided: false }, { allowShortSentenceParticle: false }])("requires both original narrow-scope flags before launching analysis %#", async invalid => {
+    const f = await prepare(), spawnImpl = vi.fn();
+    await expect(analyzeVoiceGroup({ ...f.input, ...invalid }, { readinessImpl: f.readinessImpl, spawnImpl })).rejects.toMatchObject({ statusCode: 422 });
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
+
+  it("cannot use manual text confirmation to enable the semantic API fallback", async () => {
+    const f = await fixture(), fetchImpl = vi.fn();
+    await expect(analyzeVoiceGroup({ ...f.input, expectedText: endpointExpected, followingText: endpointFollowing, clauses: [endpointExpected],
+      requireTwoSided: true, allowShortSentenceParticle: true, allowShortSentenceTextReview: true },
+    { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.input.wav, endpointFailure, endpointExpected, endpointFollowing),
+      env: endpointApiEnv, fetchImpl })).rejects.toMatchObject({ diagnosticCode: "uncertain_word_alignment" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("single same-tone short text and independent following-boundary evidence", () => {
+  const expectedText = "过来坐，炉子边暖和。", expected = "过来坐炉子边暖和", variant = "过来做炉子边暖和";
+  const window = (transcript: string) => ({ transcript, words: [{ text: transcript, start: .05, end: .3 }], durationSeconds: .5 });
+  const difference = { index: 2, expected: "坐", recognized: "做", expectedPinyin: "zuo4", recognizedPinyin: "zuo4", rule: "same_tone" };
+  const prepare = async (text = expectedText, followingText?: string) => {
+    const f = await fixture();
+    return { ...f, input: { ...f.input, expectedText: text, followingText, clauses: [text], requireTwoSided: true,
+      allowShortSentenceParticle: true, allowShortSentenceTextReview: true }, cropped: writePcm16MonoWav(new Float32Array(24_000).fill(.05), 48_000) };
+  };
+  it.each([[expected, variant], [variant, expected], [variant, variant]])("keeps source %s / final %s differences pending without rewriting verdicts", async (source, final) => {
+    const f = await prepare();
+    const score = final === expected ? 1 : .875;
+    const recognition = { stage: "complete", expectedText, followingText: "", sourceTranscript: source, sourceWords: [{ text: source, start: .05, end: .3 }],
+      targetTranscript: final, shortSentenceReview: { status: "needs_confirmation", reason: "same_tone_substitution", expected, sourcePrefix: source,
+        similarity: score, differences: [difference], final: window(final) },
+      ...(final === expected ? { contentComparison: { status: "matched", similarity: 1, threshold: .9, substitutionCount: 0, expected, recognized: expected } } : {}) };
+    const response = { ...validResult, cutEndSeconds: .5, transcript: final, coverage: score, recognition };
+    const result = await analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, response, expectedText) });
+    expect(result.recognition?.shortSentenceReview?.status).toBe("needs_confirmation");
+    expect(result.coverage).toBe(score);
+    expect(result.recognition?.shortSentenceReview?.sourcePrefix).toBe(source);
+    if (final !== expected) expect(result.recognition?.contentComparison).toBeUndefined();
+    await expect(analyzeVoiceGroup({ ...f.input, allowShortSentenceTextReview: false },
+      { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, response, expectedText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+  const target = "鞋也换了吧，别把寒气带进来。", targetNormalized = "鞋也换了吧别把寒气带进来";
+  const recognition = { stage: "complete", expectedText: target, followingText: expectedText, sourceTranscript: target + expected,
+    sourceWords: [{ text: target, start: .05, end: .3 }, { text: expected, start: .7, end: .95 }], targetTranscript: target,
+    contentComparison: { status: "matched", similarity: 1, threshold: .9, substitutionCount: 0, expected: targetNormalized, recognized: targetNormalized },
+    followingPhoneticBoundary: { expected, recognized: variant, sourceWordIndex: 1, difference, right: window(variant) } };
+  const response = { ...validResult, transcript: target, cutEndSeconds: .5, recognition,
+    cutValidation: { method: "two_sided", thresholdDbfs: -90, quietStartSeconds: .35, quietEndSeconds: .65 } };
+  it("allows complete same-tone right text only under paragraph opt-in and exact whole original following", async () => {
+    const f = await prepare(target, expectedText);
+    const result = await analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, response, target, expectedText) });
+    expect(result.coverage).toBe(1);
+    expect(result.recognition?.followingPhoneticBoundary).toEqual(recognition.followingPhoneticBoundary);
+    expect(result.recognition?.shortSentenceReview).toBeUndefined();
+    await expect(analyzeVoiceGroup({ ...f.input, allowShortSentenceTextReview: false },
+      { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, response, target, expectedText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+  it.each([
+    { ...response, cutValidation: undefined },
+    { ...response, recognition: { ...recognition, followingPhoneticBoundary: { ...recognition.followingPhoneticBoundary,
+      difference: { ...difference, recognizedPinyin: "zuo3" } } } },
+    { ...response, recognition: { ...recognition, followingPhoneticBoundary: { ...recognition.followingPhoneticBoundary, right: { ...window(variant), durationSeconds: .8 } } } },
+    { ...response, recognition: { ...recognition, sourceWords: [recognition.sourceWords[0], { text: expected, start: .7, end: 1.5 }] } },
+    { ...response, recognition: { ...recognition, sourceWords: [recognition.sourceWords[0], { text: variant, start: .7, end: .95 }] } },
+    { ...response, recognition: { ...recognition, sourceWords: [{ text: target + expected, start: .05, end: .95 }] } },
+    { ...response, recognition: { ...recognition, followingPhoneticBoundary: { ...recognition.followingPhoneticBoundary, sourceWordIndex: 2 } } },
+  ])("rejects unsupported right differences, missing quiet or false native ranges %#", async invalid => {
+    const f = await prepare(target, expectedText);
+    await expect(analyzeVoiceGroup(f.input, { readinessImpl: f.readinessImpl, spawnImpl: successfulSpawn(f.cropped, invalid, target, expectedText) })).rejects.toMatchObject({ statusCode: 422 });
+  });
+});
 
 describe("local voice-group verification", () => {
   it("retains a natural clause pause above the join-sampling limit within the recording bound", async () => {
@@ -224,6 +432,31 @@ describe("local voice-group verification", () => {
     ]) {
       await expect(analyzeVoiceGroup(input, { readinessImpl, spawnImpl: successfulSpawn(input.wav, response) })).rejects.toMatchObject({ statusCode: 422 });
     }
+  });
+  it("accepts the real 2/3 literal score only with opted-in, complete short final-particle and quiet-cut evidence", async () => {
+    const { input, readinessImpl } = await fixture();
+    const expectedText = "回来啦。", followingText = "先坐下来喝茶。";
+    const comparison = { mode: "sentence_particle", status: "different", similarity: .666667, threshold: .9, substitutionCount: 1,
+      expected: "回来啦", recognized: "回来了", sourcePrefix: "回来了", acceptanceRule: "exact_prefix_final_particle",
+      differences: [{ index: 2, expected: "啦", recognized: "了", expectedPinyin: "la5", recognizedPinyin: "le5", rule: "sentence_particle", clauseEnd: true }] };
+    const evidence = { stage: "complete", expectedText, followingText, sourceTranscript: "回来了先坐下来喝茶",
+      sourceWords: [{ text: "回来", start: .1, end: .4 }, { text: "了", start: .4, end: .6 }, { text: "先坐下来喝茶", start: 1.2, end: 1.8 }],
+      targetTranscript: "回来了", contentComparison: comparison };
+    const cutValidation = { method: "two_sided", thresholdDbfs: -60, quietStartSeconds: .9, quietEndSeconds: 1.1 };
+    const response = { ...validResult, transcript: "回来了", coverage: .666667, recognition: evidence, cutValidation };
+    const source = writePcm16MonoWav(new Float32Array(96_000), 48_000);
+    const request = { ...input, wav: source, expectedText, followingText, clauses: [expectedText], requireTwoSided: true, allowShortSentenceParticle: true };
+    await expect(analyzeVoiceGroup(request, { readinessImpl, spawnImpl: successfulSpawn(input.wav, response, expectedText, followingText) }))
+      .resolves.toMatchObject({ coverage: .666667, recognition: { contentComparison: { mode: "sentence_particle", similarity: .666667 } } });
+    for (const invalid of [
+      { ...request, allowShortSentenceParticle: false },
+      { ...request, requireTwoSided: false },
+    ]) await expect(analyzeVoiceGroup(invalid, { readinessImpl, spawnImpl: successfulSpawn(input.wav, response, expectedText, followingText) })).rejects.toMatchObject({ statusCode: 422 });
+    for (const invalid of [
+      { ...response, coverage: .75 }, { ...response, cutValidation: undefined },
+      { ...response, recognition: { ...evidence, sourceWords: undefined } },
+      { ...response, recognition: { ...evidence, contentComparison: { ...comparison, sourcePrefix: "回来吧" } } },
+    ]) await expect(analyzeVoiceGroup(request, { readinessImpl, spawnImpl: successfulSpawn(input.wav, invalid, expectedText, followingText) })).rejects.toMatchObject({ statusCode: 422 });
   });
 
   it("retains bounded quiet-validation metadata for server assembly evidence", async () => {

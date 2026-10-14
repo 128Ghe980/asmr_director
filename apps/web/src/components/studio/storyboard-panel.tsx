@@ -32,7 +32,7 @@ function getClipTitle(clip: TimelineClip): string {
 
 function getClipMetadata(clip: TimelineClip): string {
   return [
-    getTrackLabel(clip.track),
+    clip.type === "voice" && clip.kind === "silent" ? "无对白镜头" : getTrackLabel(clip.track),
     formatTimeRange(clip.start, clip.duration),
   ].join(" · ");
 }
@@ -75,7 +75,7 @@ export function StoryboardPanel({
                   <p className="line-clamp-2 min-w-0 text-sm font-medium leading-5 text-studio-text">
                     {getClipTitle(clip)}
                   </p>
-                  <StatusBadge status={clip.generation.status} />
+                  {clip.type === "voice" && clip.kind === "silent" ? <span className="shrink-0 rounded-md bg-violet-300/10 px-2 py-1 text-[10px] text-violet-200">无对白</span> : <StatusBadge status={clip.generation.status} />}
                 </div>
                 <p className="mt-3 text-xs leading-5 text-studio-muted">
                   {getClipMetadata(clip)}

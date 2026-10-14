@@ -61,7 +61,8 @@ function fixture(semantic = false) {
   return { project, candidate, voice };
 }
 
-type RecheckPost = { url: string; body: { project: AsmrProject; clipId: string }; signal?: AbortSignal | null; resolve: (response: Response) => void };
+type RecheckPost = { url: string; body: { project: AsmrProject; clipId: string }; signal?: AbortSignal | null;
+  resolve: (response: Response) => void; reject: (reason?: unknown) => void };
 function api(candidate: AudioCandidate) {
   const posts: RecheckPost[] = [];
   const fetcher = vi.fn<typeof fetch>(async (input, init) => {
@@ -73,8 +74,8 @@ function api(candidate: AudioCandidate) {
     }
     if (url.startsWith("/api/voice-generation-recordings?")) return Response.json({ recordings: [], nextCursor: null });
     if (url.startsWith("/api/assets/analysis")) return Response.json({ analysis: { bars: [10], duration: 3, sampleRate: 48000, channels: 1, peakDbfs: -12, rmsDbfs: -20, clippedSampleCount: 0 } });
-    if (url.endsWith("/recheck") && init?.method === "POST") return await new Promise<Response>((resolve) => {
-      posts.push({ url, body: JSON.parse(String(init.body)), signal: init.signal, resolve });
+    if (url.endsWith("/recheck") && init?.method === "POST") return await new Promise<Response>((resolve, reject) => {
+      posts.push({ url, body: JSON.parse(String(init.body)), signal: init.signal, resolve, reject });
     });
     throw new Error(`Unexpected re-recognition request: ${url}`);
   });
@@ -130,21 +131,59 @@ describe("StudioApp saved candidate re-recognition", () => {
     expect(bridgeFactory).not.toHaveBeenCalled();
   });
 
-  it("retains all old content when recognition fails", async () => {
+  it.each([
+    { status: 422, error: "完整原音定位失败，请保留原候选。" },
+    { status: 503, error: "本地识别服务暂不可用，请稍后重试；原候选已保留。" },
+  ])("retains old content and the server error for HTTP $status recognition failures", async ({ status, error }) => {
     const { project, candidate } = fixture(); const mock = api(candidate); await mount(project);
     fireEvent.click(screen.getByRole("button", { name: "重新识别候选 1" }));
-    await act(async () => mock.posts[0].resolve(Response.json({ error: "完整原音定位失败，请保留原候选。" }, { status: 422 })));
-    expect(screen.getByText("完整原音定位失败，请保留原候选。")).toBeTruthy();
+    await act(async () => mock.posts[0].resolve(Response.json({ error }, { status })));
+    expect(screen.getByText(error)).toBeTruthy();
     expect(screen.getAllByRole("article", { name: /候选 \d/ })).toHaveLength(1);
     expect(currentProject()).toEqual(project);
     expect(bridgeFactory).not.toHaveBeenCalled();
   });
 
-  it.each(["invalid_json", "null"])("shows a clear retained-original error for a %s protocol failure", async (kind) => {
+  it("keeps the original candidate, project and options after a network rejection and permits retry without TTS", async () => {
+    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project);
+    const originalCandidate = JSON.stringify(candidate);
+    const optionsBefore = window.localStorage.getItem("ai-asmr-studio:v1:voice-options");
+    fireEvent.click(screen.getByRole("button", { name: "重新识别候选 1" }));
+    await act(async () => mock.posts[0].reject(new TypeError("Failed to fetch")));
+    expect(screen.getByText("无法连接本地服务，请确认 3001 服务正在运行后重试；原候选已保留。")).toBeTruthy();
+    expect(screen.queryByText("Failed to fetch")).toBeNull();
+    expect(screen.getAllByRole("article", { name: /候选 \d/ })).toHaveLength(1);
+    expect(screen.getByRole("article", { name: "候选 1" }).textContent).toContain("已采用");
+    expect(screen.getByRole("article", { name: "候选 1" }).querySelector("audio")?.getAttribute("src")).toContain(candidate.asset.assetId);
+    expect(JSON.stringify(candidate)).toBe(originalCandidate);
+    expect(currentProject()).toEqual(project);
+    expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).project).toEqual(project);
+    expect(window.localStorage.getItem("ai-asmr-studio:v1:voice-options")).toBe(optionsBefore);
+    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "添加参考音频" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "取消重新识别" })).toBeNull();
+    expect(bridgeFactory).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "重新识别候选 1" }));
+    expect(mock.posts).toHaveLength(2);
+    expect(mock.posts[1].signal?.aborted).toBe(false);
+    await act(async () => mock.posts[1].resolve(Response.json({ candidate: checked(candidate) })));
+    expect(screen.getAllByRole("article", { name: /候选 \d/ })).toHaveLength(2);
+    expect(screen.queryByText("无法连接本地服务，请确认 3001 服务正在运行后重试；原候选已保留。")).toBeNull();
+    expect(currentProject()).toEqual(project);
+    expect(window.localStorage.getItem("ai-asmr-studio:v1:voice-options")).toBe(optionsBefore);
+    expect(mock.fetcher.mock.calls.some(([input, init]) => String(input) === "/api/generation/clip" && init?.method === "POST")).toBe(false);
+    expect(bridgeFactory).not.toHaveBeenCalled();
+  });
+
+  it.each(["invalid_json", "null", "http502"])("shows a clear retained-original error for a %s protocol failure", async (kind) => {
     const { project, candidate } = fixture(); const mock = api(candidate); await mount(project);
     fireEvent.click(screen.getByRole("button", { name: "重新识别候选 1" }));
-    await act(async () => mock.posts[0].resolve(kind === "null" ? Response.json(null) : new Response("invalid response")));
-    expect(screen.getByText("重新识别失败，原候选已保留，请重试。")).toBeTruthy();
+    const response = kind === "null" ? Response.json(null) : kind === "http502"
+      ? new Response("<html><body>Bad gateway detail</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+      : new Response("invalid response");
+    await act(async () => mock.posts[0].resolve(response));
+    expect(screen.getByText("重新识别服务未返回有效结果，请刷新页面后重试；原候选已保留。")).toBeTruthy();
+    expect(screen.queryByText(/Bad gateway detail|invalid response/)).toBeNull();
     expect(screen.getAllByRole("article", { name: /候选 \d/ })).toHaveLength(1);
     expect(currentProject()).toEqual(project);
     expect(bridgeFactory).not.toHaveBeenCalled();
@@ -226,6 +265,28 @@ describe("StudioApp saved candidate re-recognition", () => {
     expect(mock.posts[0].signal?.aborted).toBe(true);
     await act(async () => mock.posts[0].resolve(Response.json({ candidate: checked(candidate) })));
     if (action === "cancel") { expect(screen.getAllByRole("article", { name: /候选 \d/ })).toHaveLength(1); expect(currentProject()).toEqual(project); }
+    expect(bridgeFactory).not.toHaveBeenCalled();
+  });
+
+  it("ignores a canceled request's late network rejection while protecting the newer recheck", async () => {
+    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project);
+    const optionsBefore = window.localStorage.getItem("ai-asmr-studio:v1:voice-options");
+    fireEvent.click(screen.getByRole("button", { name: "重新识别候选 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消重新识别" }));
+    expect(mock.posts[0].signal?.aborted).toBe(true);
+    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "重新识别候选 1" }));
+    expect(mock.posts).toHaveLength(2);
+    await act(async () => mock.posts[0].reject(new TypeError("Failed to fetch")));
+    expect(screen.queryByText("无法连接本地服务，请确认 3001 服务正在运行后重试；原候选已保留。")).toBeNull();
+    expect(screen.getByRole("button", { name: "重新识别候选 1" }).textContent).toBe("重新识别中…");
+    expect(mock.posts[1].signal?.aborted).toBe(false);
+    expect(screen.getAllByRole("article", { name: /候选 \d/ })).toHaveLength(1);
+    expect(currentProject()).toEqual(project);
+    expect(window.localStorage.getItem("ai-asmr-studio:v1:voice-options")).toBe(optionsBefore);
+    await act(async () => mock.posts[1].resolve(Response.json({ candidate: checked(candidate) })));
+    expect(screen.getAllByRole("article", { name: /候选 \d/ })).toHaveLength(2);
+    expect(currentProject()).toEqual(project);
     expect(bridgeFactory).not.toHaveBeenCalled();
   });
 });

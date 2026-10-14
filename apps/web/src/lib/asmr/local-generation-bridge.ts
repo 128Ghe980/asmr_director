@@ -10,6 +10,7 @@ import { AudioCandidateSchema, getVoiceCandidateRequestFingerprint, getVoiceCand
 import { flattenClips } from "./view-model";
 import { readGenerationResponse } from "./generation-response";
 import { getVoiceGenerationContext } from "./voice-generation-context";
+import { getVoiceParagraphContext } from "./voice-paragraph-context";
 import { getLocalStorageError, LocalStorageError } from "./local-storage-error";
 
 export type LocalGenerationBridgeOptions = {
@@ -146,6 +147,7 @@ export function createLocalGenerationBridge({
 
   return {
     async generateClip(request, onUpdate) {
+      const streamingVoice = request.voiceOptions?.generationMode === "long_text" || request.voiceOptions?.generationMode === "paragraph";
       const jobId = `${jobIdPrefix}_${nextJobNumber}`;
       nextJobNumber += 1;
       const createdAt = nowIso();
@@ -168,17 +170,21 @@ export function createLocalGenerationBridge({
           request,
           jobId,
           createdAt,
-          request.voiceOptions?.generationMode === "long_text" ? 1 : 35,
+          streamingVoice ? 1 : 35,
           "generating",
           "生成中",
         ),
       });
 
-      const timer = setTimeout(() => job.controller.abort(), request.voiceOptions?.generationMode === "long_text" ? Math.max(timeoutMs, 35 * 60 * 1000) : timeoutMs);
+      const timer = setTimeout(() => job.controller.abort(), streamingVoice ? Math.max(timeoutMs, 35 * 60 * 1000) : timeoutMs);
       try {
+        if (request.voiceOptions?.generationMode === "paragraph" && request.project.speechWorkspace
+            && request.project.speechWorkspace.activeMode !== "paragraph") {
+          throw new Error("请切换到整段工作区后生成整段语音。");
+        }
         const response = await fetchImpl(endpoint, {
           method: "POST",
-          headers: { "content-type": "application/json; charset=utf-8", ...(request.voiceOptions?.generationMode === "long_text" ? { accept: "application/x-ndjson" } : {}) },
+          headers: { "content-type": "application/json; charset=utf-8", ...(streamingVoice ? { accept: "application/x-ndjson" } : {}) },
           body: JSON.stringify(request),
           signal: job.controller.signal,
         });
@@ -194,10 +200,11 @@ export function createLocalGenerationBridge({
           const candidate = AudioCandidateSchema.parse(payload.candidate);
           const voice = flattenClips(request.project).find((item) => item.id === request.clipId);
           const context = request.voiceOptions?.generationMode === "long_text" ? getVoiceGenerationContext(request.project, request.clipId) : undefined;
+          const paragraph = request.voiceOptions?.generationMode === "paragraph" ? getVoiceParagraphContext(request.project, request.clipId) : undefined;
           if (candidate.projectId !== request.project.project_id || candidate.clipId !== request.clipId ||
               request.voiceOptions?.provider !== "voxcpm2" || candidate.status !== "ready" ||
-              voice?.type !== "voice" || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(voice, context) ||
-              candidate.requestFingerprint !== getVoiceCandidateRequestFingerprint(voice, request.voiceOptions, request.longTextRetry, context) ||
+              voice?.type !== "voice" || voice.kind === "silent" || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(voice, context, paragraph) ||
+              candidate.requestFingerprint !== getVoiceCandidateRequestFingerprint(voice, request.voiceOptions, request.longTextRetry, context, paragraph) ||
               candidate.provenance.voicePackId !== request.voiceOptions.voicePackId ||
               candidate.provenance.referenceMode !== request.voiceOptions.referenceMode ||
               candidate.provenance.generationMode !== request.voiceOptions.generationMode ||

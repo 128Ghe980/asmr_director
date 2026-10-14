@@ -60,6 +60,7 @@ export function commitGenerationSuccess(
 
   return updateClipGeneration(timedProject, clipId, (clip) => ({
     ...clip,
+    ...(clip.type === "voice" && clip.audio_stale ? { audio_stale: false } : {}),
     generation: {
       ...clip.generation,
       status: "asset_generated",

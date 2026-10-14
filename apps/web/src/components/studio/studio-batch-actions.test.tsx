@@ -22,12 +22,18 @@ function fixture(): Props {
   };
 }
 
+function openMoreActions() {
+  const summary = screen.getByLabelText("批量更多操作");
+  if (!summary.closest("details")!.open) fireEvent.click(summary);
+}
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("studio batch actions", () => {
   it("labels all four actions distinctly, shows their eligible counts, and forwards the selected action", () => {
     const props = fixture();
     render(<StudioBatchActions {...props} />);
+    openMoreActions();
     for (const [index, { action, name }] of actions.entries()) {
       const button = screen.getByRole("button", { name });
       expect(button.textContent).toContain(String(props.counts[action]));
@@ -36,8 +42,8 @@ describe("studio batch actions", () => {
     }
     expect(props.onRun).toHaveBeenCalledTimes(4);
     expect(props.onCancel).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "音频全部生成" }).title).toBe("生成尚未采用音频的段落，沿用当前声音设置。");
-    expect(screen.getByRole("button", { name: "音频全部重新生成" }).title).toBe("按当前声音设置重新生成全部音频。");
+    expect(screen.getByRole("button", { name: "音频全部生成" }).title).toBe("生成当前页缺失或待更新的音频，沿用当前声音设置。");
+    expect(screen.getByRole("button", { name: "音频全部重新生成" }).title).toBe("按当前页声音设置重新生成全部音频。");
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
@@ -46,6 +52,7 @@ describe("studio batch actions", () => {
     props.counts.audio_missing = 0;
     props.counts.storyboard_missing = 0;
     const view = render(<StudioBatchActions {...props} />);
+    openMoreActions();
     for (const { action, name } of actions) {
       const button = screen.getByRole("button", { name }) as HTMLButtonElement;
       expect(button.disabled).toBe(props.counts[action] === 0);
@@ -62,6 +69,7 @@ describe("studio batch actions", () => {
   it("honors an external busy state even when all four counts are positive", () => {
     const props = fixture();
     render(<StudioBatchActions {...props} disabled />);
+    openMoreActions();
     for (const { name } of actions) {
       const button = screen.getByRole("button", { name }) as HTMLButtonElement;
       expect(button.disabled).toBe(true);
@@ -74,6 +82,7 @@ describe("studio batch actions", () => {
   it("reports completed clips and outcomes while preventing another run and allowing cancellation", () => {
     const props = fixture();
     render(<StudioBatchActions {...props} disabled progress={{ action: "audio_all", total: 5, completed: 3, succeeded: 1, failed: 1, skipped: 1, currentClipId: "voice-4" }} />);
+    openMoreActions();
     for (const { name } of actions) {
       const button = screen.getByRole("button", { name }) as HTMLButtonElement;
       expect(button.disabled).toBe(true);
@@ -107,17 +116,23 @@ describe("studio batch actions", () => {
     expect(props.onRun).toHaveBeenCalledExactlyOnceWith("storyboard_missing");
   });
 
-  it("keeps each pair together in a fluid narrow-first layout that can expand within a wider panel", () => {
+  it("keeps primary generation visible and puts both regeneration actions in one expandable menu", () => {
     render(<StudioBatchActions {...fixture()} />);
     const audio = screen.getByRole("group", { name: "批量音频" });
     const storyboard = screen.getByRole("group", { name: "批量分镜" });
-    expect(within(audio).getAllByRole("button")).toHaveLength(2);
-    expect(within(storyboard).getAllByRole("button")).toHaveLength(2);
+    expect(within(audio).getAllByRole("button")).toHaveLength(1);
+    expect(within(storyboard).getAllByRole("button")).toHaveLength(1);
+    const menu = screen.getByLabelText("批量更多操作").closest("details")!;
+    expect(menu.open).toBe(false);
+    openMoreActions();
+    expect(menu.open).toBe(true);
+    expect(screen.getByRole("button", { name: "音频全部重新生成" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "分镜全部重新生成" })).toBeTruthy();
     const layout = audio.parentElement!;
     expect(layout).toBe(storyboard.parentElement);
-    // jsdom cannot measure responsive CSS: preserve the one-column default and a panel-width expansion.
-    expect(layout.classList.contains("grid-cols-1")).toBe(true);
-    expect([...layout.classList].some((name) => name.startsWith("@min-") && name.endsWith(":grid-cols-2"))).toBe(true);
+    // jsdom cannot measure responsive CSS: verify the compact wrapping layout.
+    expect(layout.classList.contains("flex")).toBe(true);
+    expect(layout.classList.contains("flex-wrap")).toBe(true);
     expect(layout.parentElement?.classList.contains("@container")).toBe(true);
   });
 });

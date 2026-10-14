@@ -262,6 +262,7 @@ export async function renderProjectMixWav({
 
   for (const clip of flattenClips(project)) {
     signal?.throwIfAborted();
+    if (clip.type === "voice" && clip.kind === "silent") continue;
     const result = await mixClipIntoOutput(output, clip, sampleRate, loadClipAsset);
     output = result.output;
     hasSpatialAudio ||= result.spatialized;

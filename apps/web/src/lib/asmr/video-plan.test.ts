@@ -197,7 +197,7 @@ describe("clip video source and audio binding", () => {
     expect(prompt.match(/\[Shot 1\]/g)).toHaveLength(1);
     expect(prompt).not.toContain("[Shot 2]");
     expect(prompt).not.toContain("<Audio 2>");
-    expect(prompt).not.toContain(shot.audio.uri);
+    expect(prompt).not.toContain(shot.audio!.uri);
     expect(prompt).not.toContain(firstId);
     expect(project).toEqual(before);
   });
