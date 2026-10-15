@@ -198,6 +198,8 @@ ASR 逐组核对完整目标、重复和后文泄漏；裁切点必须位于有�
 
 ## 验证
 
+视频项目包：在“批量下载 → 视频包”导出当前页全部镜头，每个有对白镜头仅带一份已采用音频；角色图可随包或在生成主机替换。无对白镜头需先生成带环境声描述的分镜，时长不超过5秒。ZIP自带独立Python批跑器和工作流，生成主机用Python3.10+、FFmpeg及已有ComfyUI运行。详见 [批跑器说明](../../tools/comfy-batch/README.zh.md) / [设计](../../docs/superpowers/specs/2026-10-15-comfy-video-batch.zh.md)。部署时确保 `tools/comfy-batch` 可读；分离部署可设置 `ASMR_VIDEO_RUNNER_ROOT` 指向该目录。此功能不执行工程时间线等待、不复制双份音频、不传递DeepSeek密钥。
+
 在仓库根目录执行：
 
 ```powershell

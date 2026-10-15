@@ -1883,7 +1883,7 @@ export function StudioApp({ project }: StudioAppProps) {
     return true;
   }
 
-  function handleEditClipStoryboard(clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera">>) {
+  function handleEditClipStoryboard(clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera" | "ambientSound">>) {
     const current = editableProjectRef.current;
     const plan = current.videoPlan;
     const shot = plan?.shots[clipId];

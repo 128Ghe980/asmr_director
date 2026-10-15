@@ -237,18 +237,20 @@ describe("batch storyboard download", () => {
   it("supports arrow, Home and End tab navigation without moving focus outside the popover", () => {
     render(<BatchAudioDownload project={storyboardProject()} />); open();
     const audio = screen.getByRole("tab", { name: "音频" }); const storyboard = screen.getByRole("tab", { name: "分镜" });
+    const video = screen.getByRole("tab", { name: "视频包" });
     act(() => { audio.focus(); });
     fireEvent.keyDown(audio, { key: "ArrowRight" });
     expect(storyboard.getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(storyboard);
     expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(storyboard.id);
     fireEvent.keyDown(storyboard, { key: "ArrowRight" });
-    expect(audio.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(audio);
-    fireEvent.keyDown(audio, { key: "End" }); expect(document.activeElement).toBe(storyboard);
-    fireEvent.keyDown(storyboard, { key: "Home" }); expect(document.activeElement).toBe(audio);
-    fireEvent.keyDown(audio, { key: "ArrowLeft" }); expect(document.activeElement).toBe(storyboard);
-    fireEvent.keyDown(storyboard, { key: "Escape" });
+    expect(video.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(video);
+    fireEvent.keyDown(video, { key: "ArrowRight" }); expect(document.activeElement).toBe(audio);
+    fireEvent.keyDown(audio, { key: "End" }); expect(document.activeElement).toBe(video);
+    fireEvent.keyDown(video, { key: "Home" }); expect(document.activeElement).toBe(audio);
+    fireEvent.keyDown(audio, { key: "ArrowLeft" }); expect(document.activeElement).toBe(video);
+    fireEvent.keyDown(video, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "批量下载" }));
   });

@@ -51,6 +51,16 @@ function attachPrevious(project: ClipStoryboardRequest["project"], clipId: strin
 }
 
 describe("已采用音频的单片段分镜", () => {
+  it("ignores a model-added ambient sound on speech shots while retaining the existing speech prompt", async () => {
+    const { input, project, voices } = await fixture();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply({ ...generated, ambientSound: "Rain outside." }));
+    const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
+    expect(result.storyboard).not.toHaveProperty("ambientSound");
+    project.videoPlan!.shots[voices[1].id] = result.storyboard;
+    const prompt = createClipH3Prompt(project, voices[1].id);
+    expect(prompt).toContain("<Audio 1>: fully_copy");
+    expect(prompt).not.toContain("Rain outside.");
+  });
   it("measures the real complete WAV duration instead of either declared duration or timeline estimate", async () => {
     const { input, project, voices } = await fixture();
     const before = JSON.stringify(project);

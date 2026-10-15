@@ -20,6 +20,7 @@ node_modules/
 .next-sentences-production/
 .next-particle-production/
 .next-confirmation-production/
+.next-video-batch-build/
 .next-semantic-build/
 .next-batch-build/
 .next-batch-production/

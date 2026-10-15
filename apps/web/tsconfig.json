@@ -44,7 +44,9 @@
     ".next-particle-production/types/**/*.ts",
     ".next-particle-production/dev/types/**/*.ts",
     ".next-confirmation-production/types/**/*.ts",
-    ".next-confirmation-production/dev/types/**/*.ts"
+    ".next-confirmation-production/dev/types/**/*.ts",
+    ".next-video-batch-build/types/**/*.ts",
+    ".next-video-batch-build/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

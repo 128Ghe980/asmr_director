@@ -14,6 +14,7 @@ const eslintConfig = defineConfig([
     ".next-sentences-production/**",
     ".next-particle-production/**",
     ".next-confirmation-production/**",
+    ".next-video-batch-build/**",
     ".next-spatial/**",
     ".next-spatial-build/**",
     ".next-reference-audio-dev/**",

@@ -59,12 +59,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function mockApi(configured = true, localConfigured = false) {
+function mockApi(configured = true, localConfigured = false, defaultProvider: "api" | "ollama" = "api") {
   const responses: Promise<Response>[] = [];
   const posts: { body: Record<string, unknown>; signal?: AbortSignal | null }[] = [];
   vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (input, init) => {
     if (String(input) === "/api/planner" && init?.method !== "POST") return Response.json({
-      providers: [{ id: "api", label: "测试外部模型", model: "fixture-clip", configured }, { id: "ollama", label: "测试本地模型", model: "fixture-local", configured: localConfigured }], defaultProvider: "api",
+      providers: [{ id: "api", label: "测试外部模型", model: "fixture-clip", configured }, { id: "ollama", label: "测试本地模型", model: "fixture-local", configured: localConfigured }], defaultProvider,
     });
     expect(String(input)).toBe("/api/clip-storyboard");
     expect(init?.method).toBe("POST");
@@ -118,22 +118,44 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     fireEvent.click(control("新镜头"));
     expect(generationButton().disabled).toBe(false);
   });
-  it("generates a silent storyboard without an adopted voice and exports no speech instruction", async () => {
+  it("generates and edits an ambient storyboard through API without an adopted voice or speech instruction", async () => {
     const project = fixture(), clip = voices(project)[1];
     clip.kind = "silent"; clip.text = "茶杯落桌，镜头停留。"; clip.duration = 5;
     clip.generation.status = "asset_pending"; clip.asset = { asset_id: null, uri: null, duration: null };
-    const result: ClipVideoStoryboard = { ...shotFixture(project), kind: "silent", duration: 5, audio: undefined };
-    const api = mockApi(); api.respond(Response.json({ storyboard: result }));
-    const { onSave, update } = await mountEditor(project);
+    const result: ClipVideoStoryboard = { ...shotFixture(project), kind: "silent", duration: 5, audio: undefined, ambientSound: "Soft rain outside the window." };
+    const api = mockApi(true, true, "ollama"); api.respond(Response.json({ storyboard: result }));
+    const { onSave, onEdit, update } = await mountEditor(project);
     expect(generationButton().disabled).toBe(false);
     expect(screen.getByText("无对白 · 5.0 秒")).toBeTruthy();
     expect(screen.queryByText(/先生成并采用本段音频/)).toBeNull();
     fireEvent.click(generationButton());
     await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, result));
+    expect(api.posts[0].body.provider).toBe("api");
     const saved = structuredClone(project); saved.videoPlan!.shots[clip.id] = result; update(saved);
-    expect(control("本段 H3 提示词").value).toContain("Silent shot");
+    expect(control("本段 H3 提示词").value).toContain(result.ambientSound);
     expect(control("本段 H3 提示词").value).not.toContain("<Audio 1>");
+    expect(control("本段分镜环境声").value).toBe(result.ambientSound);
+    fireEvent.change(control("本段分镜环境声"), { target: { value: "Faint room tone." } });
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(clip.id, { ambientSound: "Faint room tone." });
     expect(screen.queryByRole("link", { name: "下载本段音频" })).toBeNull();
+  });
+  it("keeps an old long silent shot intact while asking for a duration adjustment before generation", async () => {
+    const project = fixture(), clip = voices(project)[1]; clip.kind = "silent"; clip.duration = 7;
+    clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+    const api = mockApi(); await mountEditor(project);
+    expect(generationButton().disabled).toBe(true);
+    expect(screen.getByText(/请将无对白镜头时长调整为不超过 5 秒/)).toBeTruthy();
+    fireEvent.click(generationButton()); expect(api.posts).toHaveLength(0); expect(clip.duration).toBe(7);
+  });
+  it("retains an old silent storyboard and explicitly requests regeneration for its missing ambient sound", async () => {
+    const project = fixture(), clip = voices(project)[1]; clip.kind = "silent"; clip.duration = 5;
+    clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+    const old = { ...shotFixture(project), kind: "silent" as const, duration: 5, audio: undefined };
+    project.videoPlan!.shots[clip.id] = old;
+    mockApi(); await mountEditor(project);
+    expect(screen.getByText(/旧无对白分镜缺少环境底噪描述，请重新生成分镜/)).toBeTruthy();
+    expect(copyButton().disabled).toBe(true); expect(control("本段分镜环境声").value).toBe("");
+    expect(project.videoPlan!.shots[clip.id]).toEqual(old);
   });
   it.each(["pending", "wrong URI"])("disables generation until the current clip has adopted audio (%s)", async (kind) => {
     const project = fixture(); const clip = voices(project)[1];

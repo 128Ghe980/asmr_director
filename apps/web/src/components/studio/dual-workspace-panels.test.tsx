@@ -60,7 +60,7 @@ describe("dual workspace panels", () => {
     const fingerprint = createClipVideoSourceFingerprint(short, clip.id);
     expect(createClipVideoSourceFingerprint(paragraph, clip.id)).toBe(fingerprint);
     const shot: ClipVideoStoryboard = { version: 1, promptFormat: "minimax-h3", clipId: clip.id, kind: "silent", duration: 4,
-      sourceFingerprint: fingerprint, referenceMode: "new", title: "雨滴", visual: "Rain falls outside the window.", action: "S1 rests beside the window.", camera: "Static view." };
+      sourceFingerprint: fingerprint, referenceMode: "new", title: "雨滴", visual: "Rain falls outside the window.", action: "S1 rests beside the window.", camera: "Static view.", ambientSound: "Soft steady rain outside." };
     let resolveFirst!: (response: Response) => void;
     const first = new Promise<Response>(resolve => { resolveFirst = resolve; });
     const signals: (AbortSignal | null | undefined)[] = [];

@@ -45,7 +45,7 @@ function saveShot(project: AsmrProject, clip: VoiceClip, previous?: VoiceClip) {
   const shot: ClipVideoStoryboard = {
     version: 1, promptFormat: "minimax-h3", clipId: clip.id, sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id),
     title: "茶杯落桌", visual: "Warm light falls on the wooden table.", action: "S1 gently sets down the cup.", camera: "A static close-up of the hands.",
-    ...(clip.kind === "silent" ? { kind: "silent", duration: clip.duration }
+    ...(clip.kind === "silent" ? { kind: "silent", duration: clip.duration, ambientSound: "Faint steady room tone." }
       : { audio: { assetId: clip.asset.asset_id!, uri: clip.asset.uri!, duration: 2 } }),
     ...(previous ? { previousClipId: previous.id, previousPromptFingerprint: getPreviousClipPromptFingerprint(project, clip.id)! } : {}),
   };
@@ -179,22 +179,22 @@ describe("silent editorial shots", () => {
   });
 
   it("generates a silent storyboard using description and declared duration without reading speech assets", async () => {
-    const project = fixture(), clip = voices(project)[1]; silent(clip); clip.duration = 6;
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ message: { content: JSON.stringify({
-      title: "茶杯落桌", visual: "Warm light falls on the table.", action: "S1 sets down a cup.", camera: "Static close-up."
-    }) } }));
-    const result = await generateClipStoryboard({ provider: "ollama", project, clipId: clip.id, referenceMode: "new", includePrevious: false, instruction: "" }, { env: {}, fetchImpl,
+    const project = fixture(), clip = voices(project)[1]; silent(clip); clip.duration = 4;
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify({
+      title: "茶杯落桌", visual: "Warm light falls on the table.", action: "S1 sets down a cup.", camera: "Static close-up.", ambientSound: "Faint steady room tone."
+    }) } }] }));
+    const result = await generateClipStoryboard({ provider: "ollama", project, clipId: clip.id, referenceMode: "new", includePrevious: false, instruction: "" }, {
+      env: { ASMR_PLANNER_API_URL: "https://api.example.test/v1", ASMR_PLANNER_API_KEY: "test-only", ASMR_PLANNER_API_MODEL: "test-model" }, fetchImpl,
       config: { runtimeRoot: "does-not-exist", clipAssetRoot: "does-not-exist", mixAssetRoot: "does-not-exist", gptSovitsBaseUrl: "unused", voicePackPath: "unused" },
     });
-    expect(result.storyboard).toMatchObject({ kind: "silent", duration: 6 });
+    expect(result.storyboard).toMatchObject({ kind: "silent", duration: 4, ambientSound: "Faint steady room tone." });
     expect(result.storyboard.audio).toBeUndefined();
     const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
     expect(body.messages[1].content).toContain('"description":"手部特写，轻轻放下热茶。"');
-    expect(body.messages[1].content).toContain('"durationSeconds":6');
-    expect(body.messages[1].content).not.toContain('"dialogue"');
+    expect(body.messages[1].content).toContain('"durationSeconds":4');
     project.videoPlan!.shots[clip.id] = result.storyboard;
     const prompt = createClipH3Prompt(project, clip.id);
-    expect(prompt).toContain("6 seconds"); expect(prompt).toContain("Silent shot");
+    expect(prompt).toContain("4 seconds"); expect(prompt).toContain("Faint steady room tone.");
     expect(prompt).not.toContain("<Audio 1>"); expect(prompt).not.toContain("<d>");
     expect(prompt).not.toContain(clip.text);
   });

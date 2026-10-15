@@ -6,6 +6,16 @@ Last updated: 2026-10-15
 
 ## 当前优先级
 
+2026-10-15 用户授权记录并推送视频批量生成初版：本次仅发布视频包／空镜环境声／运行器及必要文档，空间工作台／渲染／Qwen改动留本地；共享文件按内容暂存，选定提交树独立验证，Git和仓库外收据记录真实提交推送结果。补充DeepSeek只在分镜准备调用、导出及批跑不调用API的说明，未诊断用户报告的服务异常。3001保持，不新增模型调用或顶层路线。见[发布记录](records/2026-10-15-audio-quality-v1-video-batch-release.md)。
+
+本次40文件的独立发布树核验：1827项Vitest／3跳过、22项Python、类型／源码ESLint／正式构建、真实ZIP→干跑和FFmpeg检查通过；536导出文件与index一致，空间工作台路由及23个本地变化路径排除。开发全树1863项与发布树结果分开记录；真实主机H3／浏览器视觉验收仍待补，不部署3001。
+
+2026-10-15 视频项目包＋独立 ComfyUI 批跑器初版本地实现与验证完成：一镜一音频、角色图可替换、按顺序自动执行，无工程等待／质量依赖链／级联重做；无对白≤5秒，DeepSeek看上下文写环境底噪。1863项Vitest／4跳过、TypeScript、源码ESLint、正式构建、Python运行器测试与实际ZIP→干跑／HTTP下载／FFmpeg验证通过。浏览器工具初始化失败，真实布局及另一台主机H3仍待验收；3001保持原build，未提交推送。父阶段仍进行中／SFX暂停、不新增顶层编号。见 [设计](superpowers/specs/2026-10-15-comfy-video-batch.zh.md) / [开发记录](records/2026-10-15-audio-quality-v1-comfy-video-batch.md)。
+
+2026-10-15 09:33 HKT 会话交接：当前已推送 HEAD 为1f0d6516d5347b70289d13343c387667172767ce，3001只读页面HTTP200/dist为IuS6dk38Xq9OZB0CRWvbQ；缓存清理已完成，不重跑。汇总双工作区不可覆盖约定、待试听人工确认、真实启动配置、另一会话未提交空间工作及精简证据方向。交接/清理文档仍仅本地，未新增推送；不新增顶层路线，Audio Quality V1继续进行中/SFX暂停。下一会话先读 [本次交接](records/2026-10-15-audio-quality-v1-session-handoff.md) 及AI_HANDOFF顶部。
+
+2026-10-15 01:21 HKT按用户明确授权清理旧构建/Node缓存：49精确叶目录、51,968文件，I盘实测释放8.49GiB，可用由5.42升至13.91GiB；所有缓存根/junction保留，当前构建及模型/参考/音频/记录/源码保持。104候选manifest与210资产、关键WAV SHA及3001 HTTP/build核验通过，0模型调用/服务替换/重新构建，未删完整tmp/build/实验根。用户指定planner-repair剩约0.13MiB实际记录。此维护完成，父阶段仍进行中/SFX暂停，文档未提交推送。详见 [旧缓存清理记录](records/2026-10-15-audio-quality-v1-old-cache-cleanup.md)。
+
 2026-10-15 用户授权记录并推一版，发布累计语音工作流与必要依赖，另一个会话的空间工作台/渲染实验/Qwen变更留本地；分别暂存共享文件，并验证实际发布树。真实commit/push以Git与I:/AI/asmr-director-release/2026-10-15/release-verification.json为准。只读盘点4个D前缀根自身25.975GiB、58个I既有根加本次QA共59，逻辑16.2949GiB/128KiB簇估计24.8873GiB；主要是运行环境、逐次实验/验收/音频、缓存和SFX下载分片，没有清理或迁移。既有D assets/tmp已链接到I，避免重复计算。父阶段仍进行中/SFX暂停，不新增路线。见 [发布与目录记录](records/2026-10-15-audio-quality-v1-release-and-directory-audit.md)。
 
 2026-10-14 22:53 HKT：按用户试听结论与方案1实现安全切点/有限文字差异分离、逐句人工确认；保留真实ASR/分数和needs_confirmation，旧短句clip/long_text与独立结果库保持。实际15.36秒原音五片连续完整、拼接PCM等于原音；第一句漏啦和第五句坐/做待试听。1821常规测试/4跳过、Python152、类型/源码ESLint/diff/独立复核/正式构建通过，22:48沿用授权更新3001，build IuS6dk38Xq9OZB0CRWvbQ，快照PID16004/启动器11708；新5pending候选、旧99entries完整/总104、旧205音频与原4采用SHA/HTTP200、新5音频下载字节及录音识别接口通过。无新TTS/自动确认/采用；新音频/工作目录/构建在I，D旧音频保留。没有新截图、未绕过浏览器限制。中文对齐仅完成只读可行性评估，未安装模型。父阶段仍进行中、SFX暂停、无提交推送。见 [安全切点与人工确认记录](records/2026-10-14-safe-cuts-and-manual-text-confirmation.md)。

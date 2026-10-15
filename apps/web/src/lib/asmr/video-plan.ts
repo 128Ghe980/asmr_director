@@ -27,6 +27,7 @@ export const ClipVideoStoryboardSchema = z.object({
   visual: z.string().max(800),
   action: z.string().max(600),
   camera: z.string().max(400),
+  ambientSound: z.string().max(600).optional(),
   previousClipId: z.string().min(1).max(200).optional(),
   previousPromptFingerprint: fingerprintSchema.optional(),
   referenceMode: StoryboardReferenceModeSchema.optional(),
@@ -115,7 +116,8 @@ function sourceFingerprint(project: AsmrProject, clip: VoiceClip): string {
 }
 
 function completeShot(shot: ClipVideoStoryboard): boolean {
-  return [shot.title, shot.visual, shot.action, shot.camera].every((value) => Boolean(value.trim()));
+  return [shot.title, shot.visual, shot.action, shot.camera].every((value) => Boolean(value.trim()))
+    && (shot.kind !== "silent" || Boolean(shot.ambientSound?.trim()) && (shot.duration ?? 0) <= 5);
 }
 
 function previousContentFingerprint(shot: ClipVideoStoryboard): string {
@@ -124,6 +126,7 @@ function previousContentFingerprint(shot: ClipVideoStoryboard): string {
     clipId: shot.clipId, sourceFingerprint: shot.sourceFingerprint, audio: shot.audio,
     ...(shot.kind === "silent" ? { kind: shot.kind, duration: shot.duration } : {}),
     title: shot.title, visual: shot.visual, action: shot.action, camera: shot.camera,
+    ...(shot.ambientSound === undefined ? {} : { ambientSound: shot.ambientSound }),
     ...(shot.referenceMode === undefined ? {} : { referenceMode: shot.referenceMode }),
   });
 }
@@ -183,6 +186,8 @@ export function createClipH3Prompt(project: AsmrProject, clipId: string): string
   const state = storyboardStates(project).get(clipId);
   if (!state) throw new Error("当前片段还没有视频分镜。");
   if (!state.current) throw new Error("文案、音频、场景或前一镜已更新，请重新生成当前视频分镜。");
+  if (clip.kind === "silent" && clip.duration > 5) throw new Error("请将无对白镜头时长调整为不超过 5 秒，再重新生成分镜。");
+  if (clip.kind === "silent" && !state.shot.ambientSound?.trim()) throw new Error("旧无对白分镜缺少环境底噪描述，请重新生成分镜。");
   if (!completeShot(state.shot) || !effectiveSceneDescription(project).trim()) {
     throw new Error("请补全全局场景及当前镜头的标题、画面、动作和镜头说明。");
   }
@@ -192,7 +197,7 @@ export function createClipH3Prompt(project: AsmrProject, clipId: string): string
 function renderClipH3Prompt(clip: VoiceClip, shot: ClipVideoStoryboard): string {
   return renderConciseH3Prompt({ visual: shot.visual, action: shot.action, camera: shot.camera,
     dialogue: clip.kind === "silent" ? "" : clip.text, silent: clip.kind === "silent",
-    durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration });
+    durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration, ambientSound: shot.ambientSound });
 }
 
 /** Evaluate every saved shot once; values are identical to usable single-clip prompts. */

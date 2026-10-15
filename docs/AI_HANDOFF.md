@@ -4,7 +4,41 @@ Last updated: 2026-10-15
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Latest handoff — 2026-10-15 voice release and directory inventory
+## Latest handoff — 2026-10-15 video batch release / 本轮发布
+
+用户明确授权“记录一下，推一版”，发布视频项目包／环境空镜／独立批跑器及必要记录，见[发布记录](records/2026-10-15-audio-quality-v1-video-batch-release.md)。分支codex/voxcpm2-product-generation；提交和远端身份以Git及I:/AI/asmr-director-video-batch/2026-10-15/release/release-verification.json为准。选定提交树单独验证，不能把含未发布空间代码的1863项共享工作树结果当作发布证据。共享README/ignore/ESLint/tsconfig按内容暂存，空间工作台／渲染／Qwen改动留本地；此前仅本地保存的清理与09:33交接记录随索引一并发布，下方“未提交”是其当时快照。DeepSeek仅在准备分镜时调用，H3最终prompt本地拼装；导出包和运行器不调DeepSeek、不带密钥。用户报告API可能异常，尚未在线诊断。3001不更新，无模型调用或私人媒体发布。
+
+本次实际发布范围40文件，另23个内容变化路径留本地；536导出源码blob与暂存树核对一致。独立发布树为1827项Vitest／3跳过、22项Python、完整类型／源码ESLint／正式构建通过，并通过实际ZIP→Python干跑及原音／5秒／128帧预览FFmpeg检查。新完整共享工作树1863项仍只作开发证据。应用及runner子树在补充最终发布文档时保持原验证身份；真实生成主机及浏览器视觉验收继续待补。
+
+## Previous handoff — 2026-10-15 video package implementation / 批量视频
+
+初版本地实现与验证完成，见 [中文设计](superpowers/specs/2026-10-15-comfy-video-batch.zh.md) / [开发记录](records/2026-10-15-audio-quality-v1-comfy-video-batch.md)。入口为批量下载第三个“视频包”标签；随ZIP携带tools/comfy-batch的Python程序／04 API模板／run.bat，生成主机Python3.10+和FFmpeg，无密钥／模型。1863项Vitest／4跳过、类型、源码ESLint、正式构建、Python模拟测试、真实ZIP→干跑／HTTP／FFmpeg验证通过。状态路径相对化，未知任务对账不盲重发，输入暂缺不擦成功回执；单镜输入变化不传播。关键约定：一镜一份实际已采用音频，无全局音色限制或双版本；角色图可替换，爱哥图仅测试；无对白≤5秒、DeepSeek看前后文写环境底噪、使用H3生成环境音；无工程等待／质量链／级联重做。连续只取相邻上一实际输出尾帧，失败退回人物图。浏览器工具初始化失败，无新截图或限制绕过；另一主机真实H3仍待验收。临时3006合成素材服务已停，3001保持IuS6dk38Xq9OZB0CRWvbQ/只读HTTP200，本轮未提交推送或替换生产。共享空间工作及上轮交接文档继续保留，别混为本轮发布。下方是既有运行环境与保护边界。
+
+## Previous handoff — 2026-10-15 session transfer / 原运行环境
+
+This section is the current recovery snapshot. Older sections below are dated history: their “not committed/pushed”, old build/PID, “3001 absent” and pre-cleanup disk totals do not override this snapshot. Product route remains **Audio Quality V1 in progress; SFX paused**. Follow AGENT.md → docs/ROADMAP.md → docs/PROJECT_MANAGEMENT.md, then this section and the [完整交接记录](records/2026-10-15-audio-quality-v1-session-handoff.md).
+
+- **已发布**：branch codex/voxcpm2-product-generation，HEAD **1f0d6516d5347b70289d13343c387667172767ce**，语音功能已提交并推送 origin；129 文件的实际发布树已独立验证：Vitest 1785 passed / 3 skipped、Python 152、类型检查、源码 ESLint、WASM/Webpack 构建通过。不要把含未发布空间代码的 1821 测试结果当作发布树结果。
+- **必须保持的产品约定**：短句页保留原 clip / long_text（短分句＋后文长生成取前部）；整段生成作为另一个页签共存。AI 创意采用时同建两库，共享真正短句源文/ID、双向同步改文，但生成、候选、采用、撤回、时序、分镜和混音独立。旧工程显式「切短句」，不在导航时偷偷迁移。无对白镜头保留分镜、跳过语音；时间线默认可折叠。不得再用整段方式覆盖旧短句方式。
+- **当前服务**：2026-10-15 09:33 HKT 只读检查页面 HTTP200，dist BUILD_ID 为 **IuS6dk38Xq9OZB0CRWvbQ**。启动入口 **I:/AI/asmr-director-dual-workspace/2026-10-14/manual-text-confirmation/qa/start-production.ps1**；它包含 I 盘音频/工作目录、仍在使用的旧 decoder EXE 和必需的 exFAT helper。保持 127.0.0.1:3001 来源以保留浏览器工程库；本轮没有重启。旧 PID 是历史快照，操作前重新检查。
+- **识别实际状态**：15.36s 原音五片已安全切开，拼接 PCM 与原音逐字节相同；首句实际 ASR「回来」漏「啦」、第五句「做/坐」仍须试听确认。用户已听见首句「啦」保留，并选择安全切点与有限文本差异分离的方案。已保存新5候选，文件候选status为ready、整组checkStatus仍needs_confirmation；人工确认时另存receipt，09:36核查尚无生产manualTextConfirmation，没有自动确认/采用。总104、音频210，manifest SHA 与清理保护基线一致。不要重复执行发布脚本或把模拟确认当生产采用。
+- **清理完成**：只清旧缓存49叶目录、51,968文件，根/junction均保留，I盘实测释放 **8.49GiB**，结束时可用13.91GiB；模型、音频、实际实验记录、当前完整构建/运行依赖未删。planner-repair 剩23实际资料约0.13MiB。one-shot journal 已完成，**不要重跑清理脚本**。进一步删除模型/WAV/ZIP/完整实验根不在本次范围。
+- **本地未提交**：清理和本次交接文档，以及另一会话空间工作台/渲染/Qwen及共享配置改动；暂存区为空。不要 git reset/clean、覆盖或顺手提交这些工作。candidate-acceptance.test.ts 虽显示 M，当前无内容 diff，也应保留。准确范围与完整启动配置见交接记录。
+- **证据与磁盘约定**：结论集中在 docs/records，由本入口和 project-archive 索引；I 盘分散目录主要保存原音/日志/构建。后续优先保留配方、结论、少量问题/采用样本和试听反馈，避免为写交接再复制大模型或整套证据包。新大文件放 I；D 仅余约75MB。旧目录名不能证明无用，当前 decoder 仍引用旧实验根。中文 CTC 对齐仅完成可行性评估，未安装/下载，精度和资源峰值未实测。
+
+这次请求只做交接：无新 TTS/ASR、无服务替换、无后续清理、无新截图；既有浏览器限制未绕过。当前没有留给下个会话继续执行的后台清理/发布操作。下一会话先复核 Git、运行身份与本地待提交文档，再按用户新要求和固定路线继续；不要把“可评估中文对齐”当成已授权安装。完整记录含证据索引、已发布/本地边界和继续入口。
+
+## Previous handoff — 2026-10-15 authorized old cache cleanup
+
+After the directory-size discussion, the user explicitly authorized cleaning this kind of old build/temporary cache. At01:19–01:21 HKT, removed contents of49 exact reviewed I:/AI task cache leaves (14Next,4webpack subleaves,31Node),51,968files/2,468,804,418logical bytes. Kept every cache root/junction. I free space increased by9,118,023,680bytes/8.49GiB to14,940,110,848bytes/13.91GiB. Project-planner-repair now retains23record/script/screenshot files totaling133,626bytes; its two caches are empty.
+
+Do not restore these obsolete caches or call missing cache files lost experiment results. Pure cache contents were disposable; model/audio/actual records remain. The complete current manual-text-confirmation root, latest release verification, product assets/runtime-storage/voice-work, decoder-fallback and SFX model tree were protected. Mixed build-cache/tmp roots were not deleted. Old dev configuration JSON and all junctions remain. Exact49 manifest had no reparse/overlap/foreign files; nativePowerShell resolved-path and metadata-signature preflight enforced before clearing.
+
+Postcheck:49 roots retained/empty,104candidate manifest SHA unchanged,210asset names/lengths unchanged, original adopted4WAV+15.36s source SHA unchanged;3001 served buildIuS6dk38Xq9OZB0CRWvbQ and page/catalog/paragraph-candidate HTTP200. No model calls, stops/restarts, build regeneration or source edits. HEAD1f0d651/shared dirty tree remained, then only this cleanup documentation was appended; cleanup docs are not committed/pushed.
+
+Evidence I:/AI/asmr-director-release/2026-10-15/cache-cleanup:final-v2 manifest,execution-preflight,operation-journal/cleanup-result complete,after-verification. Do not blindly rerun the one-shot execution script; journal is intentional. Further model/WAV/ZIP/full-build deletion is outside this authorization. [Cleanup record](records/2026-10-15-audio-quality-v1-old-cache-cleanup.md). AudioQualityV1 remains in progress/SFX paused.
+
+## Previous handoff — 2026-10-15 voice release and directory inventory
 
 The user explicitly asked to record and push a version. Release scope is the accumulated dual speech banks/actual sentences/silent shots/timeline/recognition/manual confirmation plus required accepted-preview/order/phonetic/error support. Preserve the other session's spatial-workbench/render/Qwen changes locally. Shared README/ignore/ESLint/tsconfig are staged by selected content rather than editing away another session's work.
 
