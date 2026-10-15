@@ -76,8 +76,19 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
       expect(payloads[1]._dry_run.targetDurationSeconds).toBeLessThanOrEqual(5);
       expect(payloads[2].prompt["22"].inputs["ref_images.ref_image_1"]).toBeDefined();
       expect(payloads[0].prompt["26"].inputs["format.codec"]).toBe("auto");
+      const multiple = spawnSync(python!, [path.join(extracted, "runner.py"), extracted, "--dry-run", "--candidates", "2", "--output-root", output], {
+        encoding: "utf8", timeout: 20000, env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1" },
+      });
+      expect(multiple.status, multiple.stderr + multiple.stdout).toBe(0);
+      const candidatePayloads = await Promise.all([1, 2, 3].flatMap(order => [1, 2].map(async candidate =>
+        JSON.parse(await readFile(path.join(output, `dry-run/${String(order).padStart(3, "0")}_c${String(candidate).padStart(3, "0")}.json`), "utf8")))));
+      expect(candidatePayloads.map(item => item._dry_run.candidateIndex)).toEqual([1, 2, 1, 2, 1, 2]);
+      expect(new Set(candidatePayloads.map(item => item.prompt["10"].inputs.noise_seed)).size).toBe(6);
+      expect(candidatePayloads.filter(item => item._dry_run.shotId === "smoke_2").every(item => item._dry_run.targetDurationSeconds <= 5)).toBe(true);
+      expect(candidatePayloads[5].prompt["22"].inputs["ref_images.ref_image_1"]).toBeDefined();
       await writeFile(path.join(root, "smoke-evidence.json"), JSON.stringify({ verified: true, syntheticAudio: true, realH3Calls: 0, shots: manifest.shots.length,
-        wavDurations: manifest.shots.map(shot => shot.durationSeconds), dryRun: run.stdout, archiveBytes: archive.size }, null, 2));
+        wavDurations: manifest.shots.map(shot => shot.durationSeconds), dryRun: run.stdout,
+        candidatesPerShot: 2, candidatePayloads: candidatePayloads.length, candidateDryRun: multiple.stdout, archiveBytes: archive.size }, null, 2));
     } finally {
       if (!keep && path.dirname(root) === base) await rm(root, { recursive: true, force: true });
     }

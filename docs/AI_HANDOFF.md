@@ -1,8 +1,28 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-10-15
+Last updated: 2026-10-16
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
+
+## Latest release — 2026-10-16 video candidates / 多候选批跑器发布
+
+用户授权“记录一下，推一版”。本次只发布多候选／后台长等待／断点恢复运行器、测试、双语规格及必要记录，含此前本地清理记录以保持引用完整；空间工作台／渲染／Qwen和共享配置改动留本地。选定索引源码独立验证，真实提交推送身份以Git和I:/AI/asmr-director-video-batch/2026-10-16/release/release-verification.json为准；下方“未提交推送”是其开发时快照。[发布记录](records/2026-10-16-audio-quality-v1-video-candidates-release.md)。不部署／重启服务、不新增模型调用；真实Tk视觉和另一主机H3长跑仍待验收。父阶段仍Audio Quality V1进行中／SFX暂停。
+
+选定15文件的独立导出已通过62 Python、18包／接入（未跳过）、完整类型、改动测试ESLint，以及实际FFmpeg4视频／2预览／离线封装；参考图／音频为合成素材。没有重新构建整站；大证据在I盘，源码小快照在asmr_director_release_verify/2026-10-16-video-candidates。最终仅补充发布文档，已验证app／runner子树保持；排除的本地工作逐文件SHA核对。
+
+## Latest development — 2026-10-15 video candidates / 长等待与多候选
+
+用户确认按方案改一版；[实现与验证记录](records/2026-10-15-audio-quality-v1-video-candidates-and-resume.md)。运行器增加每镜N、稳定独立seed／技术重试沿用／明确重做换seed并保留历史，同号尾帧不可用退角色图；增N补缺、减N保留、不质量审核或级联。schema2自动备份迁入旧c1，RUNNER_VERSION=1输入身份保持，旧成功不重跑。完整raw可离线封装；未知提交仍对账，恢复成功不再追加同输入重做。GUI后台线程、本地计时／有界日志及停止后续提交；默认健康任务不限总时长，HTTP30s／断线300s／心跳15s可配。N1预览旧名、N>1按号独立预览。
+
+62 Python、18包／接入、类型／ESLint及实际FFmpeg4视频＋2预览／离线raw恢复通过；虚拟7201秒健康等待通过，未真实打开GUI或在另一主机长跑H3。输入／seed改回原值时SHA复用历史；seed碰撞自动分配，重做超过全部历史代数，不能复用的旧成片另存不覆盖。三文件更新ZIP在I:/AI/asmr-director-video-batch/2026-10-15/asmr-comfy-batch-runner-update.zip；只覆盖runner.py/run.bat/README，保留workflow/project/素材/outputs。证据candidates-qa/verification.json。637保护音频／JSON SHA、范围外源码保持。当前收尾3001无监听，旧build文件仍IuS6dk38Xq9OZB0CRWvbQ；本轮没有服务操作／部署／模型调用。旧HTTP200为历史，不可当当前在线。父阶段仍进行中／SFX暂停，HEAD6c90c3d，本轮未提交推送。
+
+## Latest maintenance — 2026-10-15 I/D cleanup completed / 两盘清理完成
+
+用户明确批准先清I盘、再清D缓存与旧CosyVoice并记录；见[完整完成记录](records/2026-10-15-audio-quality-v1-i-d-cleanup-completed.md)。I盘253目标／18659文件，实测释放8.708GiB、完成时可用21.199GiB；D盘5350缓存目标＋14个CosyVoice模型包文件，实测释放5.868GiB、完成时可用5.868GiB（原0）。卷空闲是批次快照，原I盘8.43GiB是估计。01:21旧49叶／8.49GiB属于更早批次，不重复计入。
+
+CosyVoice只暂清Fun-CosyVoice3-0.5B-2512中14个权重／配置词表文件（5.0543GiB）；外层环境源／二进制、实验脚本、19个来源记录和全部原音／参考保留。旧Cosy评测再次运行前须按保留下载记录恢复模型；当前产品、启动配置和3001 build无Cosy引用。GPT／Whisper、Vox GGUF／CLI、旧whole-script-compare decoder、当前完整构建、空间环境／HRTF及dirty worktree源码全部保留。
+
+I批核验650保护／553工作文件SHA、40正式模型SHA保持；D批15:39核验143141非候选D文件元数据、40链接、652保护／753工作文件SHA保持，38328精确文件删除、5349缓存根保留。104候选／210音频、3001 HTTP200及IuS6dk38Xq9OZB0CRWvbQ保持；0推理／构建／重启。证据根I:/AI/asmr-director-release/2026-10-15/disk-cleanup-review，approved-i-execution与approved-d-execution两个journal均complete，禁止盲目重跑。先前提案中的blocked／尚未删除及I盘临时“D已满待同步”是历史快照。维护已完成，Audio Quality V1仍进行中／SFX暂停；本次文档未提交推送，既有共享工作与HEAD6c90c3d保持。
 
 ## Latest handoff — 2026-10-15 video batch release / 本轮发布
 
