@@ -144,13 +144,22 @@ async function mount(project: AsmrProject) {
   return view;
 }
 
+async function advanceAudioBatchInterval(calls: readonly unknown[], completedCalls: number) {
+  expect(screen.getByText("任务间隔中（5 秒）")).toBeTruthy();
+  expect(calls).toHaveLength(completedCalls);
+  await act(async () => { await vi.advanceTimersByTimeAsync(4_999); });
+  expect(calls).toHaveLength(completedCalls);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(calls).toHaveLength(completedCalls + 1);
+}
+
 beforeEach(() => {
   window.localStorage.clear(); bridgeFactory.mockReset();
   vi.stubEnv("NEXT_PUBLIC_ASMR_GENERATION_MODE", "local");
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("StudioApp batch generation with simulated bridge and HTTP", () => {
   it("updates storyboard markers from saved prompts and dialogue edits, including the linked next paragraph", async () => {
@@ -210,32 +219,38 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     const project = fixtureProject(); seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     await mount(project);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fireEvent.click(screen.getByRole("button", { name: "音频全部重新生成" }));
-    await waitFor(() => expect(generation.calls).toHaveLength(1));
+    await act(async () => {});
+    expect(generation.calls).toHaveLength(1);
     const first = generation.calls[0];
     await act(async () => { first.onUpdate({ type: "failed", job: { ...first.job, status: "failed" }, error: "模型暂不可用" }); });
-    await waitFor(() => expect(generation.calls).toHaveLength(2));
+    await advanceAudioBatchInterval(generation.calls, 1);
     const second = generation.calls[1];
     await act(async () => { second.onUpdate({ type: "failed", job: { ...second.job, status: "failed" }, error: new LocalStorageError().message, errorCode: INSUFFICIENT_STORAGE }); });
-    await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
     const notice = screen.getByText(/批量生成已停止：成功 0 · 失败 2/).textContent;
     expect(notice).toContain(new LocalStorageError().message);
     expect(notice).not.toContain("模型暂不可用");
     expect(notice).toContain("还有 1 段未处理");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(generation.calls).toHaveLength(2);
   });
   it("stops dispatching after a storage failure and reports unprocessed paragraphs", async () => {
     const project = fixtureProject(); seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     await mount(project);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fireEvent.click(screen.getByRole("button", { name: "音频全部重新生成" }));
-    await waitFor(() => expect(generation.calls).toHaveLength(1));
+    await act(async () => {});
+    expect(generation.calls).toHaveLength(1);
     await act(async () => { generation.finishCandidate(0); });
-    await waitFor(() => expect(generation.calls).toHaveLength(2));
+    await advanceAudioBatchInterval(generation.calls, 1);
     const call = generation.calls[1];
     await act(async () => { call.onUpdate({ type: "failed", job: { ...call.job, status: "failed" }, error: new LocalStorageError().message, errorCode: INSUFFICIENT_STORAGE }); });
-    await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
     expect(screen.getByText(/批量生成已停止：成功 1 · 失败 1/).textContent).toContain("还有 1 段未处理");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(generation.calls).toHaveLength(2);
     expect(storedProject(project)).toEqual(project);
     expect(api.candidates).toHaveLength(1);
@@ -245,21 +260,25 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     const project = fixtureProject(); seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     await mount(project);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fireEvent.click(screen.getByRole("button", { name: "音频全部生成" }));
-    await waitFor(() => expect(generation.calls).toHaveLength(1));
+    await act(async () => {});
+    expect(generation.calls).toHaveLength(1);
     expect(generation.calls[0].request).toMatchObject({ clipId: voices(project)[1].id, reason: "generate", voiceOptions });
     expect(generation.calls[0].request.project).toEqual(project);
     await act(async () => {});
     expect(generation.calls).toHaveLength(1); // Starting the bridge is not a completed clip.
     await act(async () => { generation.finishCandidate(0); });
-    await waitFor(() => expect(generation.calls).toHaveLength(2));
-    await screen.findByRole("status", { name: "已采用 1 段，待生成 1 段，已生成未采用 1 段，共 3 段" });
+    await advanceAudioBatchInterval(generation.calls, 1);
+    expect(screen.getByRole("status", { name: "已采用 1 段，待生成 1 段，已生成未采用 1 段，共 3 段" })).toBeTruthy();
     expect(generation.calls[1].request.clipId).toBe(voices(project)[2].id);
     await act(async () => { generation.finishCandidate(1); });
-    await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(generation.calls).toHaveLength(2);
     expect(storedProject(project)).toEqual(project);
     expect(api.candidates).toHaveLength(2);
-    await screen.findByRole("status", { name: "已采用 1 段，待生成 0 段，已生成未采用 2 段，共 3 段" });
+    expect(screen.getByRole("status", { name: "已采用 1 段，待生成 0 段，已生成未采用 2 段，共 3 段" })).toBeTruthy();
     expect(api.posts).toHaveLength(0);
     expect(generation.bridge.generateProjectMix).not.toHaveBeenCalled();
   });
@@ -268,16 +287,19 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     const project = fixtureProject(); seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     await mount(project);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fireEvent.click(screen.getByRole("button", { name: "音频全部重新生成" }));
-    await waitFor(() => expect(generation.calls).toHaveLength(1));
+    await act(async () => {});
+    expect(generation.calls).toHaveLength(1);
     expect(generation.calls[0].request).toMatchObject({ clipId: voices(project)[0].id, reason: "regenerate", voiceOptions });
     await act(async () => { generation.finishCandidate(0); });
-    await waitFor(() => expect(generation.calls).toHaveLength(2));
+    await advanceAudioBatchInterval(generation.calls, 1);
     expect(voices(currentProject())[0].asset).toEqual(voices(project)[0].asset);
     fireEvent.click(screen.getByRole("button", { name: "取消批量生成" }));
-    await waitFor(() => expect(generation.bridge.cancelGeneration).toHaveBeenCalledWith(generation.calls[1].job.jobId));
+    expect(generation.bridge.cancelGeneration).toHaveBeenCalledWith(generation.calls[1].job.jobId);
     await act(async () => { generation.finishCandidate(1); });
-    await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(generation.calls).toHaveLength(2);
     expect(storedProject(project)).toEqual(project);
     expect(api.posts).toHaveLength(0);
@@ -293,17 +315,17 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
       throw new Error("桥接启动失败，下一段仍可生成。");
     });
     await mount(project);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fireEvent.click(screen.getByRole("button", { name: "音频全部生成" }));
-    await waitFor(() => expect(generation.calls).toHaveLength(2));
+    await act(async () => {});
+    await advanceAudioBatchInterval(generation.calls, 1);
     expect(generation.calls.map((call) => call.request.clipId)).toEqual(voices(project).slice(1).map((clip) => clip.id));
     expect(generation.bridge.cancelGeneration).toHaveBeenCalledWith(generation.calls[0].job.jobId);
     await act(async () => { generation.finishCandidate(1); });
-    await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
-      for (const name of ["音频全部生成", "音频全部重新生成", "分镜全部生成", "分镜全部重新生成"]) {
-        expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
-      }
-    });
+    expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
+    for (const name of ["音频全部生成", "音频全部重新生成", "分镜全部生成", "分镜全部重新生成"]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
+    }
     expect(screen.getByRole("group", { name: "批量生成" }).textContent).toContain("成功 1 · 失败 1");
     expect(screen.getByRole("group", { name: "批量生成" }).textContent).toContain("桥接启动失败");
     expect(storedProject(project)).toEqual(project);
@@ -318,7 +340,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     let view = await mount(project);
     fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
-    expect(api.posts[0].body).toMatchObject({ project, clipId: voices(project)[1].id, provider: "api", includePrevious: true, referenceMode: "new" });
+    expect(api.posts[0].body).toMatchObject({ project, clipId: voices(project)[1].id, provider: "api", includePrevious: true, referenceMode: "continuous" });
     await act(async () => { api.finishShot(0); });
     await waitFor(() => expect(storedProject(project).videoPlan?.shots[voices(project)[1].id]?.title).toBe("A newly generated moment"));
     expect(storedProject(project).videoPlan?.shots[manual.clipId]).toEqual(manual);
@@ -347,7 +369,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     await waitFor(() => expect(api.posts).toHaveLength(2));
     expect(api.posts[1].body.clipId).toBe(voices(project)[1].id);
     expect(api.posts[1].body.project.videoPlan?.shots[voices(project)[0].id]?.title).toBe("Replacement first shot");
-    expect(api.posts[1].body).toMatchObject({ includePrevious: true, referenceMode: "new" });
+    expect(api.posts[1].body).toMatchObject({ includePrevious: true, referenceMode: "continuous" });
     await act(async () => { api.finishShot(1, "Replacement second shot"); });
     await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());
     expect(storedProject(project).videoPlan?.shots[voices(project)[1].id]?.title).toBe("Replacement second shot");

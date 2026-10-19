@@ -1,8 +1,88 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-10-16
+Last updated: 2026-10-20
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
+
+## Latest release — 2026-10-20 voice reliability and Short storyboard defaults / 发布后再优化界面
+
+User explicitly requested checking/pushing the current version, then improving all frontend audio playback and nested right-panel scrolling. [Release record](records/2026-10-20-voice-reliability-release.md), evidence I:/AI/asmr-director-ui-polish/2026-10-20/release. Select voice batch/reliability/observer/short defaults plus independent alignment/native patch tools and necessary records; keep unrelated spatial/Qwen work local and select shared files by content. Validate the exported index tree. Real commit/remote/check results must come from Git/release-verification.json, not this preparatory statement. No service deployment/model call in the release; UI work follows separately. Paragraph cutting remains deferred, AudioQualityV1 inprogress/SFXpaused.
+
+Selected43 files independently passed1870Vitest/3conditional skipped (137passed files/2skipped; actualZIP→Python integration ran),48Python observer15/native5/CTC28, fulltypecheck/srcESLint/productionbuild.568exportedblobs checked;25unrelated paths excluded. Fixed5 old batch test timing assumptions with targeted virtual timers, full14pass and explicit4999/5000ms assertions. Nativepatch bytes unchanged; scoped.gitattributes prevents unified-diff blank context prefixes being treated as trailing-whitespace errors. Only docs may change after this validated apps/tools tree; do not mix subsequent UI polish into this release.
+
+## Latest validation — 2026-10-20 portable video batch compatibility / 另一主机批跑兼容性
+
+User asked whether recent voice/runtime/batch/default-mode changes affect the portable runner. [Compatibility record](records/2026-10-20-portable-video-batch-compatibility.md): no recent compatibility regression found, no product-code fix or runner update needed for these changes. runner.py/run.bat/workflow_api.json/README match publisheda115b3f; packagev1/state2/fingerprintRUNNER_VERSION1 and oldv1 migration unchanged. New Short default changes only existing new/continuous values; saved/manual/legacy modes and Paragraph preserved. Existing extracted packages remain snapshots. WAVs are exported as adopted, relative paths; runner does not need localVox/Whisper/DeepSeek. Original speech mux, ambient≤5s, N candidates, waits/resume and no timeline gaps remain.
+
+62Python+64TS tests passed/0skipped, real ZIP→Python N1/N2 dry-run and actualFFmpeg4clips/2previews/offline raw recovery passed. Current3001 synthetic4ambient HTTP export/download/CRC/extract→8candidate payloads passed; packaged4runner files byte-match source. No actual remoteH3/GPU/Tk verification; no model calls or service restart. Evidence I:/AI/asmr-director-batch-compatibility/2026-10-20, logs/receipts and protection before/after:52dirtynon-docsource hashes,134manifest/profile,HEAD/emptyindex and3001PID21316/buildAkzV2cH7nm4ZoVuIHjttq unchanged. Docs only in repo this turn, no commit/push. Cutting issue remains deferred by user; AudioQualityV1 inprogress/SFXpaused.
+
+## Current runtime — 2026-10-20 05:07 HKT short storyboard defaults / 首镜独立，后续连续
+
+User explicitly deferred the paragraph cutting issue and requested short-workspace storyboard initialization: firstnew, latercontinuous. [Record](records/2026-10-20-short-storyboard-default-continuity.md). Only video-plan.ts unified getter product code changed. Explicit referenceModes > savedshot.referenceMode > existing legacy shot's old previousClipId inference preserved; first still forcednew. Only uninitialized short/no-workspace subsequent clips with a valid adjacent predecessor defaultcontinuous. Paragraph defaults unchanged; silent voice entries use existing order. No user JSON migration/overwriting saved choices. List/editor/batch/video export already share the getter, so all use the same new initialization. Continuous still requires a usable adjacent shot, existing guards unchanged.
+
+139core/workspace/panel+41editor+7batch storyboard=187passed; TypeScript/relevantESLint/production build passed.7 unrelated audio batch cases filtered; initial5 old waitFor1s tests time out against existing5s item delay, not fixed or countedpassed. Original logs kept. Scope probe confirms short/legacy vsparagraph/manualnew and read-only behavior. Existing tests adjusted locally without global fixture mode injection; no TTS/ASR/API call, no semantic tolerance/audio changes. Shared spatial/Qwen/voice edits kept, no stage/commit/push.
+
+3001 now BUILD_ID AkzV2cH7nm4ZoVuIHjttq, dist .next-storyboard-continuity-default-production→I:/AI/asmr-director-storyboard-defaults/2026-10-20/build/next-production, PID21316/launcher27004(recheck). Page/catalog/Short+Paragraph candidates/new build static manifest allHTTP200. Production134 candidate manifest SHA0EDD0530…C92/profile SHA37E940…17DC unchanged. Canonical I:/AI/asmr-director-service/2026-10-16/start-production.ps1 matches new prepared entry, retaining fixedCLI and I assets/work/runner. Previous build start backed up in this root; deploy script oldPID guard nowstale, don't directly rerun. Next-generated config changes restored exact pre-buildbytes. Evidence deployment-verification.json and checks/logs in this root; no browser screenshot/storage interaction.
+
+The previous paragraph E2E findings below remain valid, but the user asked to put that cutting work aside on10-20; do not automatically implement a new homophone tolerance design. AudioQualityV1 in progress/SFX paused.
+
+## Previous validation — 2026-10-19 paragraph E2E / 测试完成，切分问题按用户暂缓
+
+User explicitly requested full paragraph generation→recognition→sentence splitting for multiple texts; previous12-item short/long_text run was not that path. [This record](records/2026-10-19-paragraph-e2e-generation-and-splitting.md). Real run I:/AI/asmr-director-paragraph-e2e/2026-10-19/paragraph-20261019T134028085Z_23803b0e completed21:40–22:08 HKT (~28min), runnerexit0/session63755 closed. Five single-paragraph texts35/71/109/149/190 Han plus one149-Han document through real default80 grouping yield7 paragraph tasks/32 planned clauses; genuine generateLocalClip paragraph + local ASR/safe PCM splitting, isolated assets/manifests, normal_zh with original prompt, actual random seeds/limits.7 TTS all exit0, no CUDA/cuBLAS failures;23 formal ASR+7readiness+7observer also exit0,44 recorded children gone. Task gaps5.113–5.131s, no TTS/ASR overlaps, locks/tmp cleared. Current3001 stays the fixed runtime below, page/static HTTP200; no new deployment/browser changes.
+
+Actual outcome5passed/0needs_confirmation/2review, not full pipeline success. First3 groups12clauses passed;149 and190 source continuation anchors发梢/发烧 and膝/西 causedunrecognized_continuation at3/6 and2/8,0published slices for each review, original sources33.92/45.12s retained. They stop before that sentence's independent left/right/final/quiet checks; no claim about actual pronunciation.9 later clauses untested. Default80 same149-Han document yielded2groups/6safe slices, both passed; different seeds/audio/context prevent a causal claim that grouping always fixes ASR.23 requests=21analysis success+2business failures; only18slices published plus2whole-source candidates=20isolated candidates.3published slices retain final literal differences啦/了、发梢/发烧、困意/坤姨. Do not infer cut success from queue.succeeded=candidate_saved.
+
+Independent verifier ran once, evidenceChecksPassed=true/errors=[], allSentencesCompletedCheck=false.76 WAV format/fresh SHA,32 existing hash receipts,7original copies and18published native-PCM continuous slices verified;14 protected production files/SHA+mtime and49shared dirty non-doc source SHA unchanged. Production candidates134/profile37E940…17DC remain unchanged. Reports in run root:independent-paragraph-verification.json, independent-paragraph-statistics.json, recognition-findings.json; root final-runtime-verification.json/source-protection-after.json. No product source/threshold/voice/model changes, quality retries, confirmation/adoption, code tests/build reruns or commit/push. Testing request completed; remaining issue is strict six-character source-following anchors rejecting homophonic ASR variants, beyond the existing3–9-Han source-correct/right-window-only phonetic exception. User has not requested a new tolerance design in this testing turn. AudioQualityV1 remains in progress/SFX paused.
+
+## Previous runtime — 2026-10-19 16:57 HKT generation reliability / 修复版已部署
+
+User requires the multi-copy audio batch to work reliably. [Full record](records/2026-10-19-audio-generation-reliability.md). Historical22 failures comprise17 cuBLAS initialization,3 explicit CUDA allocation OOM,2 other0xC0000409 exits; don't equate them all with VRAM/host RAM or text length. Today C already had7.69GiB free (not cleaned by us), old CLI first6/6 succeeded; never credit all subsequent success to the patch.
+
+New stable CLI I:/AI/asmr-director-runtimes/voxcpm2/reliability-20261019/voxcpm2-cli.exe SHA256 feba01044885d494bb428ec61d9db9626f728a482dc8fc51a84b6dbf5fec4c80. Low-VRAM Residual KV now follows4096 Base context (64MiB vs512MiB), with bounds errors propagated in the one-shot product path. Uses Aug30 cached/COPY-fallback components; not byte-compatible with the old Aug25 product generally. Two strict same-component/input/seed controls have identical whole-WAV SHA. Reproducible minimal build/patch/protected inputs and bilingual docs:tools/voxcpm2-runtime. Source/old engine/model/selected references untouched.
+
+14 native calls plus12 real product batch items all produced valid audio. Product batch10 long_text+2 clip,12 TTS/10 ASR exit0, serialized with5.110–5.138s inter-item gaps. Long checks9 passed/1 review; passed can retain recognition differences, warm-tea_1 has 边/别 cut_text_mismatch and original kept. No blind-listening claim, automatic adoption or threshold relaxation. Isolated candidates only; production manifest134/SHA0EDD0530…C92 and14 protected files unchanged across batch. Evidence I:/AI/asmr-director-generation-reliability/2026-10-19/product-20261019T080735054Z_fa2fe2ac/independent-product-verification.json.
+
+Optional stdlib resource observer records physical/global commit/native private/RSS/whole-GPU; diagnostics never alter native result, overall setup-to-finish await capped2.5s. Real batch exposed5 post-summary observer exits (all12 summaries valid). Reproduced under actual Anaconda3.12: buffered stdin daemon finalization lock, then removed both daemon readers for PeekNamedPipe polling.60 real small-process exits across3.12/3.11,15 Python tests, EOF/force-kill/parent/native/Node checks passed. Those60 are not new TTS runs. Original12 batch used pre-teardown-fix observer; preserve this boundary.
+
+173 relevant regression tests passed; last prefix-only capacity-error matching correction additionally passed70 provider/session tests, typecheck/ESLint. Build qikKsnc9iyniAim3_PRCC (.next-generation-reliability-production → I evidence build/next-production) passed after final TS change; generated tsconfig/next-env edits restored byte-for-byte. Python helper remains external. All shared spatial/Qwen work kept, no staging/commit/push.
+
+**Deployment completed at16:57 HKT:** after the user requested another fix, rechecked the old listener/profile/build and ran the already-reviewed deployment script using the normal execution tool; this call was accepted and exited0. No permission/system-policy changes, alternate execution tool or generation-source changes. Previous combined preparation/execution calls were blocked before launch; their specific rejection cause remains unknown. The earlier deployment-pending-verification.json is a16:50 historical snapshot, superseded by deployment-verification.json and deployment-postcheck.json under the Oct19 evidence root.
+
+Current3001 BUILD_ID qikKsnc9iyniAim3_PRCC, dist .next-generation-reliability-production, listener26936 / launcher25880 (recheck live identities). Profile SHA37E9404AB3690207ECB83C38E7892347082B7B952C8680052CAFB1E1C05317DC; semantic comparison with profile-before-deploy.json confirms only cliPath changed. Both normal/long-text profile and paragraph CLI override use the stable fixed EXE above. All reference selections/transcripts/settings remain; production manifest134/SHA0EDD0530…C92 unchanged. Page/catalog/Short and Paragraph candidates/new BUILD_ID static manifest all HTTP200; independent read-only check agrees. No remaining model/observer processes or generation lock. This deployment added0TTS/ASR and no new user candidates; the26 generation calls were prior verification.
+
+Canonical recovery entry I:/AI/asmr-director-service/2026-10-16/start-production.ps1 now matches Oct19/start-production.ps1 exactly. Previous build/profile backups remain for reviewed rollback. deploy-production.ps1 has already executed and its expected oldPID2136/profile SHA guard is now stale: retain it as history, do not rerun or blindly weaken guards. No system/pagefile changes, C cleanup, staging/commit/push. AudioQualityV1 in progress/SFX paused.
+
+## Previous runtime — 2026-10-16 19:02 HKT / 生成未生成按钮
+
+20:10追加诊断：用户报告两项仍失败且GPU空闲。最新6重试=2次LocDiT cudaMalloc404.48MiB OOM＋4次参考cuBLAS初始化失败，均未正文prefill。一次独立默认CLI同输入监测，1.844秒因预设提交余量512MiB保护主动停止（不是原生OOM复现）：全GPU最低空闲2193MiB、物理最低约3.337GiB，但ullAvailPageFile当前进程可新增提交只剩0.447GiB，native PrivateUsage约5.024GiB。C分页文件已分配11843MiB、C仅约604MiB可用，是优先排查线索；不宣称所有历史CUDA错误都由提交不足导致。见[记录](records/2026-10-16-native-allocation-and-commit-pressure.md)，I证据根gpu-allocation-investigation/report.json。真实模型调用1次、0音频／候选／ASR，临时锁已清，未改分页文件／清C／裁参考／换后端／更新服务。下方19:02的“0模型调用”仅指按钮部署本轮；3001身份保持，下一步验证C空间和提交余量。
+
+用户要求在原全部音频按钮旁增加“生成未生成”；现位于原“生成音频”右侧。[本轮记录](records/2026-10-16-audio-generate-ungenerated.md)。新action audio_ungenerated复用音频总览pending／needs_update，跳过已采用和当前可用待采用候选，隔离工程／短句整段／文案上下文；整段先逐成员筛再组首去重。候选未知时禁用新按钮并显示—，加载状态补mode键；每项开始前重新读取服务候选、结合最新工程复核，读取失败不派发模型。保留原所有操作及5秒／取消／人工采用规则。
+
+73定向测试、完整类型／相关ESLint／Webpack构建通过；只读复核无必要修正。3001当前`.next-audio-ungenerated-production`、BUILD_ID `u5Mvhqpkigpa29LHhohqY`、PID19308／启动器16796（恢复时重查）；页面／目录／两页候选／新bundle HTTP200，134候选manifest SHA保持、HEADa115b3f保持。start-production.ps1已更新新dist，证据在I:/AI/asmr-director-service/2026-10-16/audio-ungenerated/verification.json等；构建自动tsconfig／next-env改动已恢复原字节，既有空间等工作保持。本轮0真实模型调用／浏览器存储操作／提交推送；刷新原3001后实际试用待用户，未宣称新视觉验收。父阶段仍进行中／SFX暂停，下方运行身份和候选数为对应时间快照。
+
+## Previous runtime — 2026-10-16 15:05 HKT / 批量音频间隔 5 秒
+
+用户要求每项完成后等5秒试试；[本轮记录](records/2026-10-16-audio-batch-five-second-interval.md)。网页音频批量队列在成功／普通失败终态后等5000ms再派发下一项，界面显示间隔状态、取消立即生效；skip／末项／存储停止不等待，分镜仍0间隔。30队列＋7界面测试、完整类型／相关ESLint／正式Webpack构建通过；尚无新真实生成验证，不宣称已修复资源失败。
+
+当前3001为`.next-batch-delay-production`、BUILD_ID `7M_AccyV6kPlieCgDJjWW`、PID27128／启动器4220（恢复时重查）。页面／目录／候选／新浏览器bundle HTTP200，110候选manifest SHA保持，HEADa115b3f不变；0新增模型调用／自动确认采用／提交推送。`I:/AI/asmr-director-service/2026-10-16/start-production.ps1`已更新为新dist，其余I素材／工作目录／decoder／exFAT／当前runner路径沿用。证据及服务日志在同根batch-delay/verification.json等；tsconfig和next-env自动改动已核验后恢复原字节，既有空间等共享工作保持。用户刷新原3001来源后进行实际试用。下方14:26服务和104候选为此前快照。
+
+用户随后完成15:51–16:30一轮26项，并要求核对失败与字数；只读结果在同证据根length-comparison.json／compare-input-lengths.py。24项产出（20检查passed、4review）、2模型失败。失败目标“我还没睡，就猜你快到了。”10汉字、实际含后文84字；“进来坐，炉子边暖和。”8字、实际93字。成功实际输入5–143字、中位101.5；112／119／122／126／131／138／143等较长输入均产出，不能认定失败项特别长或长度导致失败。第一失败在8.6秒参考编码／cuBLAS初始化阶段，第二参考已恢复、实际text_tokens144／combined总255后LocEnc阶段异常退出，未记录上下文超限；第二诊断Text头部被32768字符tail上限截断，长度据同次plan还原。4个review输入89／94／97／100字为识别／切点复核，不能混成模型失败。仅核对既有用户结果，未新增生成／重试／策略改动；不能把前后失败率差当5秒间隔已证实有效。
+
+## Previous runtime — 2026-10-16 14:26 HKT / 用户完整测试
+
+用户要求启动3001。现已启动主仓现成完整构建`.next-video-batch-build`，BUILD_ID `VBSBCGexY9eqEgRfcxnGX`，含视频包和本地空间工作台；当前监听PID16732、启动器23496（操作前重新检查）。入口仍为http://127.0.0.1:3001/，保留原浏览器来源。a115b3f只更新运行器等非网页运行源码，故未重新构建；导出运行器显式读取主仓当前tools/comfy-batch，包含多候选／长等待／恢复升级。中文CTC实验仍未接入产品。
+
+新的恢复脚本`I:/AI/asmr-director-service/2026-10-16/start-production.ps1`沿用原I盘音频／voice-work、旧paragraph decoder及exFAT helper；不要再用下方10-14脚本启动旧确认版。verification.json及服务日志同目录：页面、静态bundle、声音目录、带projectId的候选查询均HTTP200，视频包POST路由存在；104条候选manifest SHA保持。仅启动／只读核验，0模型调用，无浏览器存储操作、提交或推送。完整用户测试待反馈；下方服务未启动／旧build为当时快照。
+
+用户随后询问全部生成的并发与资源失败；只读核对本次14:29–14:42的19次长文任务：6次完成（全部performance.pipeline=serial，其中2次有ASR定位review）、12次原生生成失败、1次取消。外层逐项等待终态、普通失败后继续；Vox锁覆盖整个候选。12份native诊断中1次明确`CUDA error: out of memory`发生于`cuMemCreate`设备内存分配，现provider误报通用“运行内存不足”；10次`CUBLAS_STATUS_NOT_INITIALIZED`、1次通用异常退出。初始化失败本身不足以判定主机RAM或VRAM不足；缺失败瞬间资源峰值，不把当下空闲显存或泛Memory allocation failure当完整归因。需后续修准GPU OOM分类并补资源遥测／退避；本轮仅诊断，无重试／产品改动。证据`I:/AI/asmr-director-service/2026-10-16/batch-generation-diagnosis.json`。
+
+## Latest experiment — 2026-10-16 Chinese forced alignment / 中文强制对齐
+
+用户授权开始此前评估过的实验；[真实对照记录](records/2026-10-16-audio-quality-v1-chinese-forced-alignment-experiment.md)，[中文协议](specs/2026-10-16-chinese-forced-alignment-experiment.zh.md)／[English](specs/2026-10-16-chinese-forced-alignment-experiment.en.md)。独立工具tools/forced-alignment，WhisperX默认中文模型＋现有TorchAudio2.8标准CTC，非完整WhisperX；单份1.189GiB权重全SHA验证，I:/AI/asmr-director-forced-alignment/2026-10-16，环境无安装／升级。
+
+首轮3份原音、4次发射（补1次字表内插词负控），9个可用独立Whisper窗口对照：首句新旧仍回来2/3，末句仍做／坐7/8，长停顿及后句嗯目标均相同完整匹配；未观察字面改善。给文稿删啦或插你好均能产生同切点，不可据CTC路径／分数证明完整。五句新切点1.995／5.24／9.06／12.37s不是人工gold；主报告21片PCM复拼相等，后句嗯全段1边界unsafe，无整组成功。28合成测试通过；未跑完整右窗／产品重检、未盲听，不改原needs_confirmation或采用门槛。
+
+CTC主进程峰值RSS2.509GiB／Torch GPU allocated0.979GiB，成功Whisper对照峰值RSS4.328GiB、最低可用physical约0.460GiB；必须分阶段串行。两次初期资源指标预检与一次ASR评分驱动失败均保留，实际ASR总10次／可用9次，TTS／DeepSeek0。最终预算physical≥3GiB＋commit余量≥4.82GB，产品guard未改。证据根含report、ASR比较、模型收据及verification.json。仅实验源码／协议／记录／入口和第三方增补；既有空间／Qwen内容保持，HEADa115b3f及空索引不变，未提交推送／部署／改正式素材。父阶段仍进行中／SFX暂停。
 
 ## Latest release — 2026-10-16 video candidates / 多候选批跑器发布
 

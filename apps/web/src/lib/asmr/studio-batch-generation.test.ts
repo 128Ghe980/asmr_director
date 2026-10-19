@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type AudioCandidate, getVoiceCandidateSourceFingerprint } from "./audio-candidate";
+import { AudioCandidateSchema, type AudioCandidate, getVoiceCandidateSourceFingerprint } from "./audio-candidate";
 import { adoptAudioCandidate } from "./candidate-acceptance";
 import type { GenerateClipRequest, GenerationBridge, GenerationJobSnapshot, GenerationJobUpdate } from "./generation-bridge";
 import { createMockGenerationBridge } from "./mock-generation-bridge";
@@ -8,8 +8,12 @@ import { LocalStorageError } from "./local-storage-error";
 import { demoProject } from "./mock-project";
 import { createInitialProjectLibrary, getCurrentLibraryEntry } from "./project-library";
 import type { AsmrProject, VoiceClip } from "./schema";
+import { ensureSpeechWorkspaces, switchSpeechWorkspace } from "./speech-workspace";
 import { getStudioBatchTargets, runStudioBatchQueue, waitForStudioVoiceGeneration, type StudioBatchProgress } from "./studio-batch-generation";
 import { createClipVideoSourceFingerprint, isClipVideoStoryboardCurrent } from "./video-plan";
+import { makeSemanticVoiceLongTextResultFixture } from "./voice-candidate-fixture";
+import { getVoiceGenerationContext } from "./voice-generation-context";
+import { getVoiceParagraphContext } from "./voice-paragraph-context";
 
 function makeProject(ids = ["a", "b", "c", "d"]): AsmrProject {
   const project = structuredClone(demoProject);
@@ -34,16 +38,34 @@ function putShot(project: AsmrProject, clip: VoiceClip) {
     title: "窗边", visual: "S1 sits by the window.", action: "S1 lowers one hand.", camera: "Static close-up.",
   };
 }
-function makeCandidate(project: AsmrProject): AudioCandidate {
-  const clip = voices(project)[0];
+function makeCandidate(project: AsmrProject, index = 0, id = "ready_take"): AudioCandidate {
+  const clip = voices(project)[index];
   return {
-    version: 1, candidateId: "ready_take", projectId: project.project_id, clipId: clip.id,
+    version: 1, candidateId: id, projectId: project.project_id, clipId: clip.id,
     sourceFingerprint: getVoiceCandidateSourceFingerprint(clip), requestFingerprint: "request",
-    asset: { assetId: "ready_take", uri: "asset://clip/ready_take", duration: 3 },
+    asset: { assetId: id, uri: `asset://clip/${id}`, duration: 3 },
     wav: { sampleRate: 48000, channels: 1, bitsPerSample: 16 },
     provenance: { provider: "voxcpm2", model: "VoxCPM2", seed: 42, temperature: 1, voicePackId: "soft_zh", referenceMode: "with_reference_text", generationMode: "clip", parameters: {} },
     qualityWarnings: [], createdAt: "2026-10-02T00:00:00.000Z", status: "ready",
   };
+}
+function makeParagraphCandidate(project: AsmrProject, index = 0): AudioCandidate {
+  const clip = voices(project)[index];
+  const paragraph = getVoiceParagraphContext(project, clip.id)!;
+  const base = makeCandidate(project, index, `${clip.id}_paragraph_take`);
+  const segments = paragraph.clips.map((member, memberIndex) => ({
+    clipId: member.clipId, text: member.text,
+    asset: { assetId: `${member.clipId}_paragraph_take`, uri: `asset://clip/${member.clipId}_paragraph_take`, duration: 3 },
+    cutStartSeconds: memberIndex * 3, cutEndSeconds: (memberIndex + 1) * 3,
+  }));
+  return AudioCandidateSchema.parse({ ...base,
+    sourceFingerprint: getVoiceCandidateSourceFingerprint(clip, undefined, paragraph),
+    provenance: { ...base.provenance, generationMode: "paragraph", paragraph: {
+      version: 1, groupId: paragraph.groupId, text: paragraph.text, clipIds: paragraph.clips.map((member) => member.clipId),
+      sourceAsset: { assetId: "paragraph_source", uri: "asset://clip/paragraph_source", duration: segments.length * 3 },
+      checkStatus: "passed", segments,
+    } },
+  });
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -109,6 +131,88 @@ describe("studio batch targets", () => {
     expect(getStudioBatchTargets(project, "audio_missing")).toEqual([noId.id, noUri.id]);
     expect(getStudioBatchTargets(project, "storyboard_all")).toEqual([valid.id]);
     expect(getStudioBatchTargets(project, "storyboard_missing")).toEqual([valid.id]);
+  });
+});
+
+describe("studio batch ungenerated audio targets", () => {
+  it("fails closed while candidates are unknown and distinguishes a known empty library", () => {
+    const project = makeProject(["a", "b"]);
+    expect(getStudioBatchTargets(project, "audio_ungenerated")).toEqual([]);
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [])).toEqual(["a", "b"]);
+    const candidate = makeCandidate(project);
+    expect(getStudioBatchTargets(project, "audio_missing", [candidate])).toEqual(["a", "b"]);
+    expect(getStudioBatchTargets(project, "audio_all", [candidate])).toEqual(["a", "b"]);
+  });
+
+  it("skips current adopted audio and usable candidates but includes stale adopted audio in timeline order", () => {
+    const project = makeProject(["adopted", "ready", "stale", "missing", "silent", "blank"]);
+    const clips = voices(project);
+    adopt(clips[0]); adopt(clips[2]); clips[2].audio_stale = true;
+    clips[2].start = 50; clips[3].start = 2;
+    clips[4].kind = "silent"; clips[5].text = " \n\t ";
+    const candidates = [makeCandidate(project, 1)];
+    candidates[0].requestFingerprint = "previous_voice_recipe";
+    candidates[0].provenance.seed = 999;
+    candidates[0].provenance.voicePackId = "normal_zh";
+    const before = structuredClone({ project, candidates });
+    expect(getStudioBatchTargets(project, "audio_ungenerated", candidates)).toEqual(["missing", "stale"]);
+    expect({ project, candidates }).toEqual(before);
+  });
+
+  it("does not let discarded, outdated, foreign or other-workspace candidates hide missing audio", () => {
+    const project = makeProject(["discarded", "outdated", "foreign", "paragraph", "ready"]);
+    const discarded = { ...makeCandidate(project, 0, "discarded_take"), status: "discarded" as const };
+    const outdated = makeCandidate(project, 1, "outdated_take");
+    voices(project)[1].text += "修改后的台词。";
+    const foreign = { ...makeCandidate(project, 2, "foreign_take"), projectId: "other_project" };
+    const paragraphProject = switchSpeechWorkspace(ensureSpeechWorkspaces(project), "paragraph");
+    const paragraph = makeParagraphCandidate(paragraphProject, 3);
+    const ready = makeCandidate(project, 4, "ready_take");
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [discarded, outdated, foreign, paragraph, ready]))
+      .toEqual(["discarded", "outdated", "foreign", "paragraph"]);
+  });
+
+  it("rechecks a long-text candidate's forward context while a direct take remains usable", () => {
+    const project = makeProject(["a", "b"]);
+    const [clip, following] = voices(project);
+    clip.semantic_unit = true; clip.text = "回来啦。"; following.text = "炉子边暖和。";
+    const context = getVoiceGenerationContext(project, clip.id)!;
+    const base = makeCandidate(project);
+    const longTake = AudioCandidateSchema.parse({ ...base,
+      sourceFingerprint: getVoiceCandidateSourceFingerprint(clip, context),
+      provenance: { ...base.provenance, generationMode: "long_text", longText: makeSemanticVoiceLongTextResultFixture(clip.text, context) },
+    });
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [longTake])).toEqual(["b"]);
+    following.text = "后面的台词改了。";
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [longTake])).toEqual(["a", "b"]);
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [longTake, base])).toEqual(["b"]);
+  });
+
+  it("checks every paragraph member before deduplicating work to the first member", () => {
+    const project = switchSpeechWorkspace(ensureSpeechWorkspaces(makeProject(["a", "b", "c", "d"])), "paragraph");
+    project.speechWorkspace!.groups = [{ id: "group_ab", clipIds: ["a", "b"] }, { id: "group_cd", clipIds: ["c", "d"] }];
+    adopt(voices(project)[0]);
+    const candidates = voices(project).map((_, index) => makeParagraphCandidate(project, index));
+    const before = structuredClone({ project, candidates });
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [])).toEqual(["a", "c"]);
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [candidates[0]])).toEqual(["a", "c"]);
+    expect(getStudioBatchTargets(project, "audio_ungenerated", candidates.slice(0, 2))).toEqual(["c"]);
+    expect(getStudioBatchTargets(project, "audio_ungenerated", candidates)).toEqual([]);
+    expect({ project, candidates }).toEqual(before);
+    voices(project)[1].text += "修改整段中的成员。";
+    expect(getStudioBatchTargets(project, "audio_ungenerated", candidates)).toEqual(["a"]);
+  });
+
+  it("does not reuse a short-workspace take or an unsafe retained original as a usable paragraph result", () => {
+    const project = switchSpeechWorkspace(ensureSpeechWorkspaces(makeProject(["a"])), "paragraph");
+    const shortTake = makeCandidate(project);
+    const passed = makeParagraphCandidate(project);
+    const paragraph = passed.provenance.paragraph!;
+    const review = AudioCandidateSchema.parse({ ...passed, asset: paragraph.sourceAsset,
+      provenance: { ...passed.provenance, paragraph: { ...paragraph, checkStatus: "review", segments: [] } },
+    });
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [shortTake, review])).toEqual(["a"]);
+    expect(getStudioBatchTargets(project, "audio_ungenerated", [passed])).toEqual([]);
   });
 });
 
@@ -191,6 +295,130 @@ describe("studio batch queue", () => {
     expect(await runStudioBatchQueue({ clipIds: ["a"], signal: controller.signal, onItem })).toMatchObject({ state: "cancelled", completed: 0, failed: 0 });
     expect(await runStudioBatchQueue({ clipIds: [], signal: new AbortController().signal, onItem })).toMatchObject({ state: "completed", total: 0, completed: 0 });
     expect(onItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("studio batch inter-item waiting", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  it("starts the five-second pause after work finishes and does not pause after the final success", async () => {
+    const first = deferred<"completed">();
+    const calls: Array<{ id: string; time: number }> = [];
+    const progress: StudioBatchProgress[] = [];
+    const queue = runStudioBatchQueue({ clipIds: ["a", "b"], signal: new AbortController().signal,
+      interItemDelayMs: 5000,
+      onItem: (id) => { calls.push({ id, time: Date.now() }); return id === "a" ? first.promise : "completed"; },
+      onProgress: (value) => progress.push(value) });
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(calls).toEqual([{ id: "a", time: 0 }]);
+    expect(vi.getTimerCount()).toBe(0);
+    first.resolve("completed");
+    await flush();
+    expect(progress.at(-1)).toEqual({ total: 2, completed: 1, succeeded: 1, failed: 0, skipped: 0, waitingBetweenItems: true });
+    expect(progress.at(-1)).not.toHaveProperty("currentClipId");
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toEqual([{ id: "a", time: 0 }, { id: "b", time: 12000 }]);
+    expect(await queue).toMatchObject({ state: "completed", completed: 2, succeeded: 2, failed: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(progress.filter((value) => !value.waitingBetweenItems).every((value) => !("waitingBetweenItems" in value))).toBe(true);
+    expect(progress.at(-1)).not.toHaveProperty("waitingBetweenItems");
+  });
+
+  it("also waits five seconds after an ordinary failure before continuing", async () => {
+    const calls: Array<{ id: string; time: number }> = [];
+    const progress: StudioBatchProgress[] = [];
+    const queue = runStudioBatchQueue({ clipIds: ["a", "b"], signal: new AbortController().signal,
+      interItemDelayMs: 5000,
+      onItem: (id) => { calls.push({ id, time: Date.now() }); if (id === "a") throw new Error("显卡暂不可用"); return "completed"; },
+      onProgress: (value) => progress.push(value) });
+    await flush();
+    expect(progress.at(-1)).toMatchObject({ completed: 1, failed: 1, succeeded: 0, waitingBetweenItems: true });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(calls).toEqual([{ id: "a", time: 0 }]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toEqual([{ id: "a", time: 0 }, { id: "b", time: 5000 }]);
+    expect(await queue).toMatchObject({ state: "completed", completed: 2, succeeded: 1, failed: 1,
+      failures: [{ clipId: "a", message: "显卡暂不可用" }] });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["completed", "failed"] as const)("finishes a single %s item without creating a trailing wait", async (outcome) => {
+    const settled = vi.fn();
+    const onItem = vi.fn(() => { if (outcome === "failed") throw new Error("模型失败"); return "completed" as const; });
+    const queue = runStudioBatchQueue({ clipIds: ["last"], signal: new AbortController().signal, interItemDelayMs: 5000, onItem });
+    void queue.then(settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await queue).toMatchObject({ state: "completed", completed: 1, succeeded: Number(outcome === "completed"), failed: Number(outcome === "failed") });
+  });
+
+  it("does not add waits for skipped items that launch no model task", async () => {
+    const calls: Array<{ id: string; time: number }> = [];
+    const queue = runStudioBatchQueue({ clipIds: ["skip_first", "a", "skip_middle", "b"], signal: new AbortController().signal,
+      interItemDelayMs: 5000,
+      onItem: (id) => { calls.push({ id, time: Date.now() }); return id.startsWith("skip") ? "skipped" : "completed"; } });
+    await flush();
+    expect(calls).toEqual([{ id: "skip_first", time: 0 }, { id: "a", time: 0 }]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(calls).toEqual([{ id: "skip_first", time: 0 }, { id: "a", time: 0 }, { id: "skip_middle", time: 5000 }, { id: "b", time: 5000 }]);
+    expect(await queue).toMatchObject({ state: "completed", completed: 4, succeeded: 2, skipped: 2, failed: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels an active pause immediately and clears its timer and abort listener", async () => {
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    const onItem = vi.fn(() => "completed" as const);
+    const settled = vi.fn();
+    const queue = runStudioBatchQueue({ clipIds: ["a", "b"], signal: controller.signal, interItemDelayMs: 5000, onItem });
+    void queue.then(settled);
+    await flush();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    controller.abort();
+    await flush();
+    expect(settled).toHaveBeenCalledOnce();
+    expect(await queue).toMatchObject({ state: "cancelled", completed: 1, succeeded: 1, failed: 0 });
+    expect(onItem).toHaveBeenCalledExactlyOnceWith("a", controller.signal);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(onItem).toHaveBeenCalledOnce();
+  });
+
+  it("stops on a storage failure immediately rather than entering a pause", async () => {
+    const onItem = vi.fn(() => { throw new LocalStorageError(); });
+    const settled = vi.fn();
+    const progress: StudioBatchProgress[] = [];
+    const queue = runStudioBatchQueue({ clipIds: ["a", "b"], signal: new AbortController().signal,
+      interItemDelayMs: 5000, onItem, onProgress: (value) => progress.push(value) });
+    void queue.then(settled);
+    await flush();
+    expect(settled).toHaveBeenCalledOnce();
+    expect(await queue).toMatchObject({ state: "stopped", completed: 1, failed: 1 });
+    expect(onItem).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(progress.some((value) => value.waitingBetweenItems)).toBe(false);
+  });
+
+  it("keeps the default zero-delay storyboard queue immediate", async () => {
+    const project = makeProject(["a", "b"]);
+    voices(project).forEach(adopt);
+    const calls: Array<{ id: string; time: number }> = [];
+    const progress: StudioBatchProgress[] = [];
+    const result = await runStudioBatchQueue({ clipIds: getStudioBatchTargets(project, "storyboard_all"),
+      signal: new AbortController().signal,
+      onItem: (id) => { calls.push({ id, time: Date.now() }); return "completed"; },
+      onProgress: (value) => progress.push(value) });
+    expect(result).toMatchObject({ state: "completed", completed: 2, succeeded: 2 });
+    expect(calls).toEqual([{ id: "a", time: 0 }, { id: "b", time: 0 }]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(progress.some((value) => value.waitingBetweenItems)).toBe(false);
   });
 });
 

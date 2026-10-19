@@ -10,6 +10,7 @@ type Props = Parameters<typeof StudioBatchActions>[0];
 
 const actions: { action: StudioBatchAction; name: string }[] = [
   { action: "audio_missing", name: "音频全部生成" },
+  { action: "audio_ungenerated", name: "生成未生成" },
   { action: "audio_all", name: "音频全部重新生成" },
   { action: "storyboard_missing", name: "分镜全部生成" },
   { action: "storyboard_all", name: "分镜全部重新生成" },
@@ -17,7 +18,7 @@ const actions: { action: StudioBatchAction; name: string }[] = [
 
 function fixture(): Props {
   return {
-    counts: { audio_missing: 2, audio_all: 5, storyboard_missing: 3, storyboard_all: 4 },
+    counts: { audio_missing: 2, audio_ungenerated: 1, audio_all: 5, storyboard_missing: 3, storyboard_all: 4 },
     onRun: vi.fn(), onCancel: vi.fn(),
   };
 }
@@ -30,7 +31,7 @@ function openMoreActions() {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("studio batch actions", () => {
-  it("labels all four actions distinctly, shows their eligible counts, and forwards the selected action", () => {
+  it("labels all five actions distinctly, shows their eligible counts, and forwards the selected action", () => {
     const props = fixture();
     render(<StudioBatchActions {...props} />);
     openMoreActions();
@@ -40,16 +41,18 @@ describe("studio batch actions", () => {
       fireEvent.click(button);
       expect(props.onRun).toHaveBeenNthCalledWith(index + 1, action);
     }
-    expect(props.onRun).toHaveBeenCalledTimes(4);
+    expect(props.onRun).toHaveBeenCalledTimes(5);
     expect(props.onCancel).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "音频全部生成" }).title).toBe("生成当前页缺失或待更新的音频，沿用当前声音设置。");
     expect(screen.getByRole("button", { name: "音频全部重新生成" }).title).toBe("按当前页声音设置重新生成全部音频。");
+    expect(screen.getByRole("button", { name: "生成未生成" }).title).toContain("当前可用候选");
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
   it("disables only actions without eligible clips and restores them when counts change", () => {
     const props = fixture();
     props.counts.audio_missing = 0;
+    props.counts.audio_ungenerated = 0;
     props.counts.storyboard_missing = 0;
     const view = render(<StudioBatchActions {...props} />);
     openMoreActions();
@@ -61,12 +64,14 @@ describe("studio batch actions", () => {
     expect(props.onRun).toHaveBeenCalledTimes(2);
     expect(props.onRun).toHaveBeenNthCalledWith(1, "audio_all");
     expect(props.onRun).toHaveBeenNthCalledWith(2, "storyboard_all");
-    view.rerender(<StudioBatchActions {...props} counts={{ ...props.counts, audio_missing: 1 }} />);
+    view.rerender(<StudioBatchActions {...props} counts={{ ...props.counts, audio_missing: 1, audio_ungenerated: 2 }} />);
     fireEvent.click(screen.getByRole("button", { name: "音频全部生成" }));
     expect(props.onRun).toHaveBeenLastCalledWith("audio_missing");
+    fireEvent.click(screen.getByRole("button", { name: "生成未生成" }));
+    expect(props.onRun).toHaveBeenLastCalledWith("audio_ungenerated");
   });
 
-  it("honors an external busy state even when all four counts are positive", () => {
+  it("honors an external busy state even when all five counts are positive", () => {
     const props = fixture();
     render(<StudioBatchActions {...props} disabled />);
     openMoreActions();
@@ -77,6 +82,27 @@ describe("studio batch actions", () => {
     }
     expect(props.onRun).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
+  });
+
+  it.each(["loading", "error"] as const)("disables only ungenerated audio and hides its count while the overview is %s", (overviewStatus) => {
+    const props = fixture();
+    const view = render(<StudioBatchActions {...props} overviewStatus={overviewStatus} />);
+    openMoreActions();
+    for (const { action, name } of actions) {
+      const button = screen.getByRole("button", { name }) as HTMLButtonElement;
+      expect(button.disabled).toBe(action === "audio_ungenerated");
+    }
+    const button = screen.getByRole("button", { name: "生成未生成" });
+    expect(button.textContent).toContain("—");
+    fireEvent.click(button);
+    expect(props.onRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "音频全部生成" }));
+    expect(props.onRun).toHaveBeenCalledExactlyOnceWith("audio_missing");
+    view.rerender(<StudioBatchActions {...props} overviewStatus="ready" />);
+    expect((screen.getByRole("button", { name: "生成未生成" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("button", { name: "生成未生成" }).textContent).toContain("1");
+    fireEvent.click(screen.getByRole("button", { name: "生成未生成" }));
+    expect(props.onRun).toHaveBeenLastCalledWith("audio_ungenerated");
   });
 
   it("reports completed clips and outcomes while preventing another run and allowing cancellation", () => {
@@ -116,11 +142,25 @@ describe("studio batch actions", () => {
     expect(props.onRun).toHaveBeenCalledExactlyOnceWith("storyboard_missing");
   });
 
+  it("shows the interval between audio tasks and keeps cancellation available", () => {
+    const props = fixture();
+    const view = render(<StudioBatchActions {...props} progress={{ action: "audio_ungenerated", total: 3, completed: 1, succeeded: 1, failed: 0, skipped: 0, waitingBetweenItems: true }} />);
+    expect(screen.getByRole("status").textContent).toContain("任务间隔中（5 秒）");
+    fireEvent.click(screen.getByRole("button", { name: "取消批量生成" }));
+    expect(props.onCancel).toHaveBeenCalledOnce();
+    view.rerender(<StudioBatchActions {...props} progress={{ action: "audio_missing", total: 3, completed: 1, succeeded: 1, failed: 0, skipped: 0, currentClipId: "next" }} />);
+    expect(screen.queryByText("任务间隔中（5 秒）")).toBeNull();
+  });
+
   it("keeps primary generation visible and puts both regeneration actions in one expandable menu", () => {
     render(<StudioBatchActions {...fixture()} />);
     const audio = screen.getByRole("group", { name: "批量音频" });
     const storyboard = screen.getByRole("group", { name: "批量分镜" });
-    expect(within(audio).getAllByRole("button")).toHaveLength(1);
+    expect(within(audio).getAllByRole("button")).toHaveLength(2);
+    const primary = within(audio).getByRole("button", { name: "音频全部生成" });
+    const ungenerated = within(audio).getByRole("button", { name: "生成未生成" });
+    expect(primary.textContent).toContain("生成音频");
+    expect(primary.nextElementSibling).toBe(ungenerated);
     expect(within(storyboard).getAllByRole("button")).toHaveLength(1);
     const menu = screen.getByLabelText("批量更多操作").closest("details")!;
     expect(menu.open).toBe(false);
@@ -128,6 +168,9 @@ describe("studio batch actions", () => {
     expect(menu.open).toBe(true);
     expect(screen.getByRole("button", { name: "音频全部重新生成" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "分镜全部重新生成" })).toBeTruthy();
+    expect(within(menu).getAllByRole("button")).toHaveLength(2);
+    expect(within(menu).queryByRole("button", { name: "生成未生成" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "生成未生成" })).toHaveLength(1);
     const layout = audio.parentElement!;
     expect(layout).toBe(storyboard.parentElement);
     // jsdom cannot measure responsive CSS: verify the compact wrapping layout.

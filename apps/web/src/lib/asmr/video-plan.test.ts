@@ -304,6 +304,9 @@ describe("storyboard reference modes", () => {
 
   it("resolves explicit preferences before generated mode and legacy links, while always forcing the first voice to new", () => {
     const project = makeProject();
+    expect(getClipStoryboardReferenceMode(project, firstId)).toBe("new");
+    expect(getClipStoryboardReferenceMode(project, secondId)).toBe("continuous");
+    expect(getClipStoryboardReferenceMode(project, thirdId)).toBe("continuous");
     putShot(project);
     const second = putLinkedShot(project, secondId);
     expect(getClipStoryboardReferenceMode(project, secondId)).toBe("continuous");
@@ -313,6 +316,8 @@ describe("storyboard reference modes", () => {
     project.videoPlan!.shots[firstId].referenceMode = "continuous";
     expect(getClipStoryboardReferenceMode(project, firstId)).toBe("new");
     expect(getClipStoryboardReferenceMode(project, secondId)).toBe("continuous");
+    expect(getClipStoryboardReferenceMode(project, thirdId)).toBe("continuous");
+    putShot(project, thirdId);
     expect(getClipStoryboardReferenceMode(project, thirdId)).toBe("new");
     const track = project.timeline.tracks.find((item) => item.track_type === "voice")!;
     track.clips.reverse();

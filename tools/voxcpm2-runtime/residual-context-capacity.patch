@@ -1,0 +1,86 @@
+--- original/voxcpm2_runtime.h
++++ isolated/voxcpm2_runtime.h
+@@ -85,7 +85,7 @@
+     VoxCPM2ResidualLM(VoxCPM2ResidualLM &&)                  = delete;
+     VoxCPM2ResidualLM & operator=(VoxCPM2ResidualLM &&)      = delete;
+ 
+-    bool               init_from_gguf(const std::string & path, ggml_backend_t backend);
++    bool               init_from_gguf(const std::string & path, ggml_backend_t backend, int context_capacity = 32768);
+     // Full-sequence forward (no KV cache)
+     std::vector<float> forward(const std::vector<float> & input, int seq_len) const;
+     std::vector<float> forward_last(const std::vector<float> & input, int seq_len) const;
+--- original/voxcpm2_runtime.cpp
++++ isolated/voxcpm2_runtime.cpp
+@@ -369,7 +369,7 @@
+     free();
+ }
+ 
+-bool VoxCPM2ResidualLM::init_from_gguf(const std::string & path, ggml_backend_t backend_in) {
++bool VoxCPM2ResidualLM::init_from_gguf(const std::string & path, ggml_backend_t backend_in, int context_capacity) {
+     free();
+     if (!backend_in) {
+         LOG_ERR("VoxCPM2ResidualLM: backend is null\n");
+@@ -388,7 +388,8 @@
+     config.n_heads        = 16;
+     config.n_kv_heads     = 2;
+     config.head_dim       = config.hidden_size / config.n_heads;
+-    config.max_length     = 32768;
++    // Match the actual BaseLM context; keep F32 values and attention math unchanged.
++    config.max_length     = std::max(context_capacity, 512);
+     config.use_flash_attn = false;
+ 
+     // Read no_rope from GGUF metadata; default to false for v0.5/v1.5 models
+@@ -467,6 +468,10 @@
+ }
+ 
+ std::vector<float> VoxCPM2ResidualLM::prefill_kv(const std::vector<float> & input, int seq_len) {
++    if (seq_len <= 0 || seq_len > config.max_length || seq_len > kv_cache.max_length) {
++        LOG_ERR("VoxCPM2ResidualLM::prefill_kv: context capacity exceeded (tokens=%d capacity=%d)\n", seq_len, config.max_length);
++        return {};
++    }
+     if (!backend || seq_len <= 0 || config.hidden_size <= 0 ||
+         input.size() != static_cast<size_t>(config.hidden_size) * static_cast<size_t>(seq_len)) {
+         LOG_ERR("VoxCPM2ResidualLM::prefill_kv: invalid input\n");
+@@ -530,6 +535,10 @@
+ }
+ 
+ std::vector<float> VoxCPM2ResidualLM::forward_step(const std::vector<float> & input_1d, int position) {
++    if (position < 0 || position >= config.max_length || position >= kv_cache.max_length) {
++        LOG_ERR("VoxCPM2ResidualLM::forward_step: context capacity exceeded (position=%d capacity=%d)\n", position, config.max_length);
++        return {};
++    }
+     if (!backend || config.hidden_size <= 0 || input_1d.size() != static_cast<size_t>(config.hidden_size)) {
+         LOG_ERR("VoxCPM2ResidualLM::forward_step: invalid input\n");
+         return {};
+@@ -666,7 +675,7 @@
+     if (!fsq.init_from_gguf(acoustic_path, backend)) {
+         return fail("failed to initialize FSQ");
+     }
+-    if (!residual_lm.init_from_gguf(acoustic_path, backend)) {
++    if (!residual_lm.init_from_gguf(acoustic_path, backend, std::max(base_lm_context_size, 512))) {
+         return fail("failed to initialize ResidualLM");
+     }
+     if (!loc_enc.init_from_gguf(acoustic_path, backend)) {
+@@ -809,6 +818,10 @@
+         return fail("prefill requires at least one token");
+     }
+ 
++    if (inputs.token_ids.size() > static_cast<size_t>(residual_lm.config.max_length)) {
++        return fail("prefill context capacity exceeded: tokens=" + std::to_string(inputs.token_ids.size())
++                    + " capacity=" + std::to_string(residual_lm.config.max_length));
++    }
+     const int seq_len     = static_cast<int>(inputs.token_ids.size());
+     const int hidden      = base_lm.n_embd;
+     const int fdim        = feat_dim();
+@@ -1243,6 +1256,11 @@
+         return result;
+     }
+ 
++    if (current_position < 0 || current_position >= residual_lm.config.max_length) {
++        fail("decode context capacity exceeded: position=" + std::to_string(current_position)
++             + " capacity=" + std::to_string(residual_lm.config.max_length));
++        return result;
++    }
+     if (!run_decode_front_half(noise, params, result)) {
+         return result;
+     }

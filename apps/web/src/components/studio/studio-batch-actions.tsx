@@ -13,6 +13,7 @@ export type StudioBatchProgress = {
   failed: number;
   skipped: number;
   currentClipId?: string;
+  waitingBetweenItems?: boolean;
 };
 
 type StudioBatchActionsProps = {
@@ -33,8 +34,9 @@ const groups = [
     tone: "border-sky-300/15 bg-sky-300/[0.035] text-sky-100",
     buttonTone: "border-sky-300/20 bg-sky-300/[0.06] hover:bg-sky-300/12 focus-visible:outline-sky-300",
     actions: [
-      { action: "audio_missing", label: "生成音频", accessibleLabel: "音频全部生成", title: "生成当前页缺失或待更新的音频，沿用当前声音设置。" },
-      { action: "audio_all", label: "重生成全部音频", accessibleLabel: "音频全部重新生成", title: "按当前页声音设置重新生成全部音频。" },
+      { action: "audio_missing", label: "生成音频", accessibleLabel: "音频全部生成", primary: true, title: "生成当前页缺失或待更新的音频，沿用当前声音设置。" },
+      { action: "audio_ungenerated", label: "生成未生成", accessibleLabel: "生成未生成", primary: true, title: "仅生成当前页没有可用音频的段落，已有采用音频或当前可用候选的段落会跳过。" },
+      { action: "audio_all", label: "重生成全部音频", accessibleLabel: "音频全部重新生成", primary: false, title: "按当前页声音设置重新生成全部音频。" },
     ],
   },
   {
@@ -43,8 +45,8 @@ const groups = [
     tone: "border-violet-300/15 bg-violet-300/[0.035] text-violet-100",
     buttonTone: "border-violet-300/20 bg-violet-300/[0.06] hover:bg-violet-300/12 focus-visible:outline-violet-300",
     actions: [
-      { action: "storyboard_missing", label: "生成分镜", accessibleLabel: "分镜全部生成", title: "生成当前页缺失或待更新的分镜，包括无对白镜头。" },
-      { action: "storyboard_all", label: "重做全部分镜", accessibleLabel: "分镜全部重新生成", title: "重新生成当前页全部可用分镜。" },
+      { action: "storyboard_missing", label: "生成分镜", accessibleLabel: "分镜全部生成", primary: true, title: "生成当前页缺失或待更新的分镜，包括无对白镜头。" },
+      { action: "storyboard_all", label: "重做全部分镜", accessibleLabel: "分镜全部重新生成", primary: false, title: "重新生成当前页全部可用分镜。" },
     ],
   },
 ] as const;
@@ -74,18 +76,18 @@ export function StudioBatchActions({ counts, audioOverview, overviewStatus = "re
       {overviewStatus === "error" && <span className="text-[10px] text-amber-200/80">统计暂不可用</span>}
     </div>}
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className="flex min-w-0 flex-1">
-          {group.actions.slice(0, 1).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title}
-            disabled={disabled || active || counts[action] <= 0} onClick={() => onRun(action)}
+      {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className={`flex gap-1.5 ${group.label === "音频" ? "min-w-[16rem] flex-[2]" : "min-w-[7rem] flex-1"}`}>
+          {group.actions.filter(({ primary }) => primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title}
+            disabled={disabled || active || counts[action] <= 0 || (action === "audio_ungenerated" && overviewStatus !== "ready")} onClick={() => onRun(action)}
             className={`inline-flex min-h-8 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-35 ${group.buttonTone}`}>
-            <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{counts[action]}</span>
+            <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{action === "audio_ungenerated" && overviewStatus !== "ready" ? "—" : counts[action]}</span>
           </button>)}
       </div>)}
-      <details className="relative"><summary aria-label="批量更多操作" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-studio-line text-studio-muted hover:bg-white/5"><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-30 mt-1 grid w-44 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">{groups.flatMap((group) => group.actions.slice(1).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title} disabled={disabled || active || counts[action] <= 0} onClick={() => onRun(action)} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">{label} · {counts[action]}</button>))}</div></details>
+      <details className="relative"><summary aria-label="批量更多操作" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-studio-line text-studio-muted hover:bg-white/5"><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-30 mt-1 grid w-44 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">{groups.flatMap((group) => group.actions.filter(({ primary }) => !primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title} disabled={disabled || active || counts[action] <= 0} onClick={() => onRun(action)} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">{label} · {counts[action]}</button>))}</div></details>
     </div>
     {progress && <div className="mt-2 space-y-1.5">
       <div className="flex min-w-0 items-center justify-between gap-2 text-[11px]">
-        <p role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-studio-muted"><span className={`inline-flex items-center gap-1.5 ${audio ? "text-sky-100" : "text-violet-100"}`}><LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />{audio ? "音频" : "分镜"} · 完成 {completed}/{total}</span>{result && <span>{result}</span>}</p>
+        <p role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-studio-muted"><span className={`inline-flex items-center gap-1.5 ${audio ? "text-sky-100" : "text-violet-100"}`}><LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />{audio ? "音频" : "分镜"} · 完成 {completed}/{total}</span>{result && <span>{result}</span>}{progress.waitingBetweenItems && <span>任务间隔中（5 秒）</span>}</p>
         <button type="button" onClick={onCancel} aria-label="取消批量生成" className="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-studio-muted hover:bg-white/5 hover:text-studio-text focus-visible:outline-2 focus-visible:outline-sky-300"><X className="h-3 w-3" aria-hidden="true" />取消</button>
       </div>
       <div role="progressbar" aria-label={`${audio ? "音频" : "分镜"}批量进度`} aria-valuemin={0} aria-valuemax={Math.max(1, total)} aria-valuenow={completed} aria-valuetext={`完成 ${completed}/${total}`} className="h-1 overflow-hidden rounded-full bg-white/5">

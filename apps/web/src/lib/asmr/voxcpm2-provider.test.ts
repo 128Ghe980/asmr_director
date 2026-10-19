@@ -11,6 +11,7 @@ import { LocalStorageError } from "./local-storage-error";
 import { generateVoxCpm2, type VoxCpm2Spawn } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
+import type { NativeResourceObserver, NativeResourceSummary } from "./native-resource-observer";
 
 async function failureDiagnostics(input: Awaited<ReturnType<typeof fixture>>["input"]) {
   const directory = path.join(getVoiceGenerationRoot(input.config), "diagnostics");
@@ -50,6 +51,52 @@ function successfulSpawn(output: Uint8Array, inspect?: (args: readonly string[])
 }
 
 describe("VoxCPM2 native provider", () => {
+  it("retains optional resource evidence in a failure diagnostic without exposing it in the error", async () => {
+    const { input } = await fixture();
+    const resources: NativeResourceSummary = {
+      version: 1, nativePid: 987654321, observerPid: 123, startedAt: "2026-10-19T00:00:00Z", finishedAt: "2026-10-19T00:00:01Z",
+      durationSeconds: 1, stopReason: "native_exited", sampleCount: 4, sampleIntervalMs: 250,
+      metrics: { physicalAvailableBytes: null, globalCommitUsedBytes: null, globalCommitLimitBytes: null,
+        globalCommitAvailableBytes: { min: 400_000_000, max: 600_000_000, last: 400_000_000 },
+        nativeWorkingSetBytes: null, nativePeakWorkingSetBytes: null, nativePrivateBytes: null },
+      samples: [], gpu: { status: "unavailable", sampleCount: 0, devices: [] },
+      sources: { system: "GetPerformanceInfo", native: "GetProcessMemoryInfo", gpu: "whole device" }, unavailable: ["gpu_unavailable"],
+    };
+    const finish = vi.fn(async () => resources);
+    const observeResources = vi.fn(async () => ({ finish }));
+    const spawnImpl: VoxCpm2Spawn = () => {
+      const process = child();
+      setImmediate(() => { process.stderr.write("CUDA error: CUBLAS_STATUS_NOT_INITIALIZED"); process.emit("close", 1, null); });
+      return process;
+    };
+    const error = await generateVoxCpm2(input, { spawnImpl, observeResources }).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ statusCode: 503, message: "显卡语音运行初始化失败，请稍后重试。" });
+    expect(String(error)).not.toContain("400000000");
+    expect(observeResources).toHaveBeenCalledWith({ pid: 987654321, config: input.config });
+    expect(finish).toHaveBeenCalledOnce();
+    expect(await failureDiagnostics(input)).toMatchObject([{ native: { resources } }]);
+  });
+  it.each(["start", "finish"])("an optional observer %s failure does not change the recording or runtime lock", async (stage) => {
+    const { input, output, root } = await fixture();
+    const observeResources = vi.fn(async () => {
+      if (stage === "start") throw new Error("Optional observer unavailable");
+      return { finish: async (): Promise<NativeResourceSummary> => { throw new Error("Optional summary unavailable"); } };
+    });
+    await expect(generateVoxCpm2(input, { spawnImpl: successfulSpawn(output), observeResources })).resolves.toHaveProperty("wav", output);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+  });
+  it("bounds optional observer setup and closes a late monitor after delivering the recording", async () => {
+    const { input, output, root } = await fixture();
+    let started!: (observer: NativeResourceObserver) => void;
+    const pendingObserver = new Promise<NativeResourceObserver>((resolve) => { started = resolve; });
+    const finish = vi.fn(async () => undefined);
+    await expect(generateVoxCpm2(input, { spawnImpl: successfulSpawn(output), observeResources: () => pendingObserver,
+      resourceObservationWaitMs: 5 })).resolves.toHaveProperty("wav", output);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect(finish).not.toHaveBeenCalled();
+    started({ finish });
+    await vi.waitFor(() => expect(finish).toHaveBeenCalledOnce());
+  });
   it("hashes an executable larger than 128 MiB without treating it as a small config file", async () => {
     const { root, input, output } = await fixture();
     const cliPath = path.join(root, "cli.exe");
@@ -114,6 +161,64 @@ describe("VoxCPM2 native provider", () => {
       await expect(generateVoxCpm2({ ...input, ...change }, { spawnImpl })).rejects.toMatchObject({ statusCode: 400 });
     }
     expect(spawnImpl).not.toHaveBeenCalled();
+  });
+  it.each([
+    "VoxCPM2Runtime: prefill context capacity exceeded: tokens=4097 capacity=4096",
+    "VoxCPM2Runtime: decode context capacity exceeded: position=4096 capacity=4096",
+    "VoxCPM2ResidualLM::prefill_kv: context capacity exceeded (tokens=4097 capacity=4096)",
+    "VoxCPM2ResidualLM::forward_step: context capacity exceeded (position=-1 capacity=4096)",
+    "Combined cloning failed: decode context capacity exceeded: position=4096 capacity=4096",
+  ])("rejects a zero-exit partial recording after a native context capacity error and retains its bytes: %s", async (nativeMessage) => {
+    const { input, output, root } = await fixture();
+    const onRawOutput = vi.fn();
+    const spawnImpl: VoxCpm2Spawn = (_command, args) => {
+      const process = child();
+      setImmediate(async () => {
+        await writeFile(args[args.indexOf("-o") + 1], output);
+        process.stderr.write(nativeMessage + "\n");
+        process.emit("close", 0, null);
+      });
+      return process;
+    };
+    await expect(generateVoxCpm2({ ...input, onRawOutput }, { spawnImpl })).rejects.toMatchObject({ statusCode: 400 });
+    expect(onRawOutput).toHaveBeenCalledExactlyOnceWith(output);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect(await failureDiagnostics(input)).toMatchObject([{ failure: { statusCode: 400 }, native: { exitCode: 0 } }]);
+  });
+  it.each(["target", "reference"])("accepts a successful recording when the %s echo contains the capacity phrase", async (source) => {
+    const { input, output, root } = await fixture();
+    const spokenText = "请读 context capacity exceeded，还有 VoxCPM2Runtime: decode context capacity exceeded: position=4096 capacity=4096。";
+    if (source === "reference") await writeFile(path.join(root, "transcript.txt"), spokenText);
+    const spawnImpl: VoxCpm2Spawn = (_command, args) => {
+      const process = child();
+      setImmediate(async () => {
+        await writeFile(args[args.indexOf("-o") + 1], output);
+        process.stdout.write(`  Text:     "${args[args.indexOf("-t") + 1]}"\r\n`);
+        process.stderr.write(`  Prompt text:   "${args[args.indexOf("--prompt-text") + 1]}"\r\n`);
+        process.emit("close", 0, null);
+      });
+      return process;
+    };
+    const result = await generateVoxCpm2({ ...input, text: source === "target" ? spokenText : input.text,
+      referenceMode: "with_reference_text" }, { spawnImpl });
+    expect(result.wav).toEqual(output);
+    expect(await readdir(path.join(root, "locks"))).toEqual([]);
+    expect(await readdir(path.join(getVoiceGenerationRoot(input.config), "diagnostics")).catch(() => [])).toEqual([]);
+  });
+  it("does not infer a capacity error from target or reference echoes after an unrelated native exit", async () => {
+    const { input } = await fixture();
+    const spawnImpl: VoxCpm2Spawn = () => {
+      const process = child();
+      setImmediate(() => {
+        process.stdout.write('  Text: "context capacity exceeded"\n');
+        process.stderr.write('  Prompt text: "VoxCPM2Runtime: decode context capacity exceeded: position=4096 capacity=4096"\n');
+        process.emit("close", 3221226505, null);
+      });
+      return process;
+    };
+    await expect(generateVoxCpm2(input, { spawnImpl })).rejects.toMatchObject({
+      statusCode: 502, message: "VoxCPM2 生成失败，请稍后重试。",
+    });
   });
   it("rejects a filesystem lock held by another process without launching a second CLI", async () => {
     const { root, input } = await fixture();
@@ -295,14 +400,16 @@ describe("VoxCPM2 native provider", () => {
     expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
   });
   it.each([
-    ["CUDA error: out of memory", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
-    ["cudaMallocAsync failed: out of memory", "语音模型可用显存不足，请关闭占用显卡的程序后重试。", 503],
-    ["CUDA error: CUBLAS_STATUS_NOT_INITIALIZED", "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503],
-    ["CUDA error: initialization error", "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503],
+    ["CUDA error: out of memory", "语音模型的显卡内存分配失败，请检查显存和系统内存余量后重试。", 503],
+    ["cudaMallocAsync failed: out of memory", "语音模型的显卡内存分配失败，请检查显存和系统内存余量后重试。", 503],
+    ["CUDA error: CUBLAS_STATUS_NOT_INITIALIZED", "显卡语音运行初始化失败，请稍后重试。", 503],
+    ["CUDA error: initialization error", "显卡语音运行初始化失败，请稍后重试。", 503],
     ["std::bad_alloc", "语音模型运行内存不足，请关闭占用较大的程序后重试。", 503],
     ["write failed: No space left on device", "音频保存空间不足，请释放存储空间后重试。", 507],
     ["write failed: [WinError 112]", "音频保存空间不足，请释放存储空间后重试。", 507],
     ["GGML_ASSERT(n_tokens <= n_batch) failed", "本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400],
+    ["VoxCPM2Runtime: prefill context capacity exceeded: tokens=4097 capacity=4096", "本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400],
+    ["VoxCPM2Runtime: decode context capacity exceeded: position=4096 capacity=4096", "本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400],
     ["private/ggml-cuda/cpy.cu:228: GGML_ASSERT(grid_y < USHRT_MAX) failed", "生成音频超出本机解码容量，请缩短生成范围后重试。", 400],
   ])("classifies an exact native failure safely: %s", async (nativeMessage, message, statusCode) => {
     const { input } = await fixture();
@@ -331,7 +438,7 @@ describe("VoxCPM2 native provider", () => {
       return process;
     });
     const reported = await generateVoxCpm2(input, { spawnImpl }).catch((caught: unknown) => caught);
-    expect(reported).toMatchObject({ statusCode: 503, message: "语音模型可用显存不足，请关闭占用显卡的程序后重试。" });
+    expect(reported).toMatchObject({ statusCode: 503, message: "语音模型的显卡内存分配失败，请检查显存和系统内存余量后重试。" });
     expect(String(reported)).not.toMatch(/757\.27|cudaMalloc|AudioVAE|794056192/);
     expect(spawnImpl).toHaveBeenCalledOnce();
     expect(await readFile(referencePath)).toEqual(referenceBefore);
@@ -339,7 +446,27 @@ describe("VoxCPM2 native provider", () => {
     expect(await readdir(path.join(root, "voxcpm2-product", "runs"))).toEqual([]);
     const [record] = await failureDiagnostics(input);
     expect(record.native).toMatchObject({ exitCode: 1, signal: null, exitConfirmed: true, stderrTail: nativeMessage });
-    expect(record.failure).toMatchObject({ statusCode: 503, message: "语音模型可用显存不足，请关闭占用显卡的程序后重试。" });
+    expect(record.failure).toMatchObject({ statusCode: 503, message: "语音模型的显卡内存分配失败，请检查显存和系统内存余量后重试。" });
+  });
+  it("classifies the cuMemCreate CUDA OOM trace as a device allocation failure instead of host RAM exhaustion", async () => {
+    const { input } = await fixture();
+    const nativeMessage = "MiniCPMLM: context suspended for low-VRAM reference encoding\n"
+      + "CUDA error: out of memory\n"
+      + "  current device: 0, in function alloc at private/ggml-cuda.cu:530\n"
+      + "  cuMemCreate(&handle, reserve_size, &prop, 0)\n"
+      + "private/ggml-cuda.cu:105: CUDA error\n";
+    const spawnImpl = vi.fn(() => {
+      const process = child();
+      setImmediate(() => { process.stderr.write(nativeMessage); process.emit("close", 3221226505, null); });
+      return process;
+    });
+    const reported = await generateVoxCpm2(input, { spawnImpl }).catch((caught: unknown) => caught);
+    expect(reported).toMatchObject({ statusCode: 503,
+      message: "语音模型的显卡内存分配失败，请检查显存和系统内存余量后重试。" });
+    expect(String(reported)).not.toMatch(/运行内存不足|关闭占用显卡|缩短参考|private|cuMemCreate/);
+    expect(spawnImpl).toHaveBeenCalledOnce();
+    const [record] = await failureDiagnostics(input);
+    expect(record.native).toMatchObject({ exitCode: 3221226505, exitConfirmed: true, stderrTail: nativeMessage });
   });
   it.each([
     { label: "cudaMalloc invalid argument", nativeMessage: "ggml_backend_cuda_buffer_type_alloc_buffer: allocating 757.27 MiB on device 0: cudaMalloc failed: invalid argument", exitCode: 1 },
@@ -371,14 +498,14 @@ describe("VoxCPM2 native provider", () => {
     const spawnImpl = vi.fn(() => {
       const process = child();
       setImmediate(() => {
-        process.stderr.write("Loading reference WAV: private-reference.wav\n  Reference: 15.00s, 16000 Hz\nMiniCPMLM: context suspended for low-VRAM reference encoding\nCUDA error: CUBLAS_STATUS_NOT_INITIALIZED\n  current device: 0, in function cublas_handle at private/common.cuh:1476\n  cublasCreate_v2(&cublas_handles[device])\nprivate/ggml-cuda.cu:105: CUDA error\n");
+        process.stderr.write("Loading reference WAV: private-reference.wav\n  Reference: 15.00s, 16000 Hz\nMiniCPMLM: context suspended for low-VRAM reference encoding\nfatal   : Memory allocation failure\nCUDA error: CUBLAS_STATUS_NOT_INITIALIZED\n  current device: 0, in function cublas_handle at private/common.cuh:1476\n  cublasCreate_v2(&cublas_handles[device])\nprivate/ggml-cuda.cu:105: CUDA error\n");
         process.emit("close", 3221226505, null);
       });
       return process;
     });
     await expect(generateVoxCpm2(input, { spawnImpl })).rejects.toMatchObject({
       statusCode: 503,
-      message: "显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。",
+      message: "显卡语音运行初始化失败，请稍后重试。",
     });
     expect(spawnImpl).toHaveBeenCalledOnce();
     expect(await readFile(referencePath)).toEqual(referenceBefore);

@@ -94,9 +94,14 @@ export function getPreviousVoiceClip(project: AsmrProject, clipId: string): Voic
 /** Preferences apply to the next generation, while saved shots retain their own provenance. */
 export function getClipStoryboardReferenceMode(project: AsmrProject, clipId: string): StoryboardReferenceMode {
   if (orderedVoiceClips(project)[0]?.id === clipId) return "new";
-  return project.videoPlan?.referenceModes?.[clipId]
-    ?? project.videoPlan?.shots[clipId]?.referenceMode
-    ?? (project.videoPlan?.shots[clipId]?.previousClipId ? "continuous" : "new");
+  const shot = project.videoPlan?.shots[clipId];
+  const selected = project.videoPlan?.referenceModes?.[clipId] ?? shot?.referenceMode;
+  if (selected) return selected;
+  // Legacy saved shots retain their original mode, including independent shots
+  // without mode metadata. Only uninitialized short-workspace shots use the default.
+  if (shot) return shot.previousClipId ? "continuous" : "new";
+  return project.speechWorkspace?.activeMode !== "paragraph" && getPreviousVoiceClip(project, clipId)
+    ? "continuous" : "new";
 }
 
 /** Source identity excludes timeline waiting, clip estimates, gain and spatial DSP. */

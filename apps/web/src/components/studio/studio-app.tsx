@@ -200,7 +200,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const referenceImportModeRef = useRef<SpeechWorkspaceMode>("short");
   const [voiceError, setVoiceError] = useState<string>();
   const [voiceCandidates, setVoiceCandidates] = useState<AudioCandidate[]>([]);
-  const [candidateListState, setCandidateListState] = useState<{ projectId: string; status: "loading" | "ready" | "error" }>();
+  const [candidateListState, setCandidateListState] = useState<{ projectId: string; workspaceMode: SpeechWorkspaceMode; status: "loading" | "ready" | "error" }>();
   const [candidateActionBusy, setCandidateActionBusy] = useState(false);
   const [recheckingCandidateId, setRecheckingCandidateId] = useState<string>();
   const [confirmingCandidateId, setConfirmingCandidateId] = useState<string>();
@@ -298,15 +298,15 @@ export function StudioApp({ project }: StudioAppProps) {
   );
   const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Boolean(recheckingCandidateId) || Boolean(confirmingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
   const batchCounts = useMemo(() => Object.fromEntries(
-    (["audio_missing", "audio_all", "storyboard_missing", "storyboard_all"] as const)
-      .map((action) => [action, getStudioBatchTargets(editableProject, action).length]),
-  ) as Record<StudioBatchAction, number>, [editableProject]);
+    (["audio_missing", "audio_ungenerated", "audio_all", "storyboard_missing", "storyboard_all"] as const)
+      .map((action) => [action, getStudioBatchTargets(editableProject, action, voiceCandidates).length]),
+  ) as Record<StudioBatchAction, number>, [editableProject, voiceCandidates]);
   const visibleVoiceCandidates = voiceCandidates.filter((candidate) =>
     candidate.projectId === editableProject.project_id && candidate.clipId === activeClipId && getAudioCandidateWorkspaceMode(candidate) === speechMode,
   );
   const audioProgress = useMemo(() => getStudioAudioProgress(editableProject, voiceCandidates), [editableProject, voiceCandidates]);
   const audioOverview = audioProgress.overview;
-  const audioOverviewStatus = hasLoadedStorage && candidateListState?.projectId === editableProject.project_id
+  const audioOverviewStatus = hasLoadedStorage && candidateListState?.projectId === editableProject.project_id && candidateListState.workspaceMode === speechMode
     ? candidateListState.status : "loading";
   const candidatesLoading = audioOverviewStatus === "loading";
   const isDirty = useMemo(
@@ -439,7 +439,7 @@ export function StudioApp({ project }: StudioAppProps) {
       if (!controller.signal.aborted) {
         setVoiceError(undefined);
         setVoiceCandidates([]);
-        setCandidateListState({ projectId, status: "loading" });
+        setCandidateListState({ projectId, workspaceMode: speechMode, status: "loading" });
       }
     });
     if (hasLoadedStorage) {
@@ -451,13 +451,13 @@ export function StudioApp({ project }: StudioAppProps) {
           const candidates = AudioCandidateSchema.array().parse(payload.candidates);
           if (!controller.signal.aborted) {
             setVoiceCandidates(candidates);
-            setCandidateListState({ projectId, status: "ready" });
+            setCandidateListState({ projectId, workspaceMode: speechMode, status: "ready" });
           }
         })
         .catch(() => {
           if (!controller.signal.aborted) {
             setVoiceError("候选列表读取失败，请刷新重试。");
-            setCandidateListState({ projectId, status: "error" });
+            setCandidateListState({ projectId, workspaceMode: speechMode, status: "error" });
           }
         });
     }
@@ -1725,9 +1725,13 @@ export function StudioApp({ project }: StudioAppProps) {
   async function handleRunBatch(action: StudioBatchAction) {
     if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
+    if (action === "audio_ungenerated" && audioOverviewStatus !== "ready") {
+      setBatchNotice("请等待当前页候选读取成功后，再生成未生成的音频。");
+      return;
+    }
     const initial = structuredClone(editableProjectRef.current);
     const mode = getSpeechWorkspaceMode(initial);
-    const clipIds = getStudioBatchTargets(initial, action);
+    const clipIds = getStudioBatchTargets(initial, action, voiceCandidates);
     if (!clipIds.length) return;
     const audio = action.startsWith("audio");
     const options = structuredClone(voiceOptions);
@@ -1762,12 +1766,23 @@ export function StudioApp({ project }: StudioAppProps) {
       const referenceModes = new Map(clipIds.map((clipId) => [clipId, getClipStoryboardReferenceMode(initial, clipId)]));
       const result = await runStudioBatchQueue({
         clipIds, signal,
+        interItemDelayMs: audio ? 5_000 : 0,
         onProgress: (progress) => { if (batchRunRef.current === run) setBatchProgress({ action, ...progress }); },
         onItem: async (clipId) => {
+          let currentCandidates: AudioCandidate[] | undefined;
+          if (action === "audio_ungenerated") {
+            const query = new URLSearchParams({ projectId: run.projectId, workspaceMode: mode });
+            const response = await fetch(`/api/audio-candidates?${query}`, { signal });
+            if (!response.ok) throw new Error("候选记录读取失败，本项尚未生成，请刷新后重试。");
+            const body = await response.json();
+            const parsed = AudioCandidateSchema.array().safeParse(body.candidates);
+            if (!parsed.success) throw new Error("候选记录暂时无法核对，本项尚未生成，请刷新后重试。");
+            currentCandidates = parsed.data;
+          }
           const active = editableProjectRef.current;
           const latest = active.speechWorkspace ? getSpeechWorkspaceProject(active, mode) : active;
           if (signal.aborted || latest.project_id !== run.projectId) return "skipped";
-          if (!getStudioBatchTargets(latest, action).includes(clipId)) return "skipped";
+          if (!getStudioBatchTargets(latest, action, currentCandidates).includes(clipId)) return "skipped";
           const snapshot = structuredClone(latest);
           const clip = flattenClips(snapshot).find((item) => item.id === clipId);
           if (clip?.type !== "voice") return "skipped";
@@ -1862,6 +1877,7 @@ export function StudioApp({ project }: StudioAppProps) {
       if (batchRunRef.current === run) {
         batchRunRef.current = null;
         setBatchProgress(undefined);
+        if (action === "audio_ungenerated") setCandidateRefresh((value) => value + 1);
       }
     }
   }

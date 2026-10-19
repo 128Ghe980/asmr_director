@@ -213,15 +213,15 @@ describe("每段视频分镜入口", () => {
     const view = render(component(false));
     const field = screen.getByRole("textbox", { name: "台词" }) as HTMLTextAreaElement;
     field.setSelectionRange(2, 8); fireEvent.select(field); vi.mocked(input.onSelectClip).mockClear();
-    const toggle = screen.getByRole("button", { name: /^第 2 段：新镜头，点击/u }) as HTMLButtonElement;
-    fireEvent.click(toggle); expect(onReferenceModeChange).toHaveBeenCalledExactlyOnceWith(second.id, "continuous");
+    const toggle = screen.getByRole("button", { name: /^第 2 段：连续镜头，点击/u }) as HTMLButtonElement;
+    fireEvent.click(toggle); expect(onReferenceModeChange).toHaveBeenCalledExactlyOnceWith(second.id, "new");
     expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(8);
     expect(input.onSelectClip).not.toHaveBeenCalled(); expect(input.onOpenStoryboard).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "选区独立成段" })); expect(input.onSplitClip).toHaveBeenCalledExactlyOnceWith(first.id, 2, 8);
     onReferenceModeChange.mockClear(); view.rerender(component(true)); expect(toggle.disabled).toBe(true);
     fireEvent.click(toggle); expect(onReferenceModeChange).not.toHaveBeenCalled();
     view.rerender(component(false)); expect(toggle.disabled).toBe(false);
-    fireEvent.click(toggle); expect(onReferenceModeChange).toHaveBeenCalledExactlyOnceWith(second.id, "continuous");
+    fireEvent.click(toggle); expect(onReferenceModeChange).toHaveBeenCalledExactlyOnceWith(second.id, "new");
   });
 
   it("opens the exact voice clip in displayed chronological order without activating script-edit actions", () => {
@@ -274,7 +274,7 @@ describe("批量工具条位置与编辑行为", () => {
     const input = fixture();
     input.canUndo = true;
     const onRun = vi.fn();
-    const counts = { audio_missing: 2, audio_all: 5, storyboard_missing: 3, storyboard_all: 4 };
+    const counts = { audio_missing: 2, audio_ungenerated: 1, audio_all: 5, storyboard_missing: 3, storyboard_all: 4 };
     render(<ScriptEditorPanel {...input} batchActions={<StudioBatchActions counts={counts} onRun={onRun} onCancel={vi.fn()} />} />);
     const toolbar = screen.getByRole("group", { name: "批量生成" });
     const scroller = screen.getByRole("textbox", { name: "第 1 段台词" }).closest("[data-script-scroll]")!;
@@ -299,7 +299,7 @@ describe("批量工具条位置与编辑行为", () => {
     const clip = input.project.timeline.tracks.find((track) => track.track_type === "voice")!.clips[0];
     clip.text = "第一句。第二句。第三句。";
     input.selectedClipId = clip.id;
-    const counts = { audio_missing: 2, audio_all: 5, storyboard_missing: 3, storyboard_all: 4 };
+    const counts = { audio_missing: 2, audio_ungenerated: 1, audio_all: 5, storyboard_missing: 3, storyboard_all: 4 };
     const onRun = vi.fn();
     const onCancel = vi.fn();
     const view = render(<ScriptEditorPanel {...input} batchActions={<StudioBatchActions counts={counts} onRun={onRun} onCancel={onCancel} />} />);

@@ -21,6 +21,10 @@ node_modules/
 .next-particle-production/
 .next-confirmation-production/
 .next-video-batch-build/
+.next-batch-delay-production/
+.next-audio-ungenerated-production/
+.next-generation-reliability-production/
+.next-storyboard-continuity-default-production/
 .next-semantic-build/
 .next-batch-build/
 .next-batch-production/

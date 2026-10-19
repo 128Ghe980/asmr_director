@@ -1,9 +1,11 @@
 import type { AsmrProject, VoiceClip } from "./schema";
 import type { GenerateClipRequest, GenerationBridge, GenerationJobUpdate } from "./generation-bridge";
+import type { AudioCandidate } from "./audio-candidate";
 import { getLocalStorageError } from "./local-storage-error";
 import { getParagraphGroup, getSpeechWorkspaceMode } from "./speech-workspace";
+import { getStudioAudioProgress } from "./studio-audio-overview";
 
-export type StudioBatchAction = "audio_missing" | "audio_all" | "storyboard_missing" | "storyboard_all";
+export type StudioBatchAction = "audio_missing" | "audio_ungenerated" | "audio_all" | "storyboard_missing" | "storyboard_all";
 
 function hasAdoptedAudio(clip: VoiceClip): boolean {
   return !clip.audio_stale && clip.generation.status === "asset_generated"
@@ -17,13 +19,16 @@ function hasAdoptedLocalAudio(clip: VoiceClip): boolean {
     && clip.asset.uri === `asset://clip/${assetId}`;
 }
 
-/** Candidates are not adopted audio: only the current timeline asset is considered. */
-export function getStudioBatchTargets(project: AsmrProject, action: StudioBatchAction): string[] {
+/** Missing audio considers adoption only; ungenerated audio also preserves usable candidates. */
+export function getStudioBatchTargets(project: AsmrProject, action: StudioBatchAction, candidates?: readonly AudioCandidate[]): string[] {
+  if (action === "audio_ungenerated" && candidates === undefined) return [];
+  const audioStates = action === "audio_ungenerated" ? getStudioAudioProgress(project, candidates!).byClip : undefined;
   const targets = project.timeline.tracks.flatMap<VoiceClip>((track) => track.track_type === "voice" ? track.clips : [])
     .map((clip, originalIndex) => ({ clip, originalIndex }))
     .filter(({ clip }) => {
       if (!clip.text.trim()) return false;
       if (action === "audio_all") return clip.kind !== "silent";
+      if (action === "audio_ungenerated") return audioStates?.[clip.id] === "pending" || audioStates?.[clip.id] === "needs_update";
       if (action === "audio_missing") return clip.kind !== "silent" && !hasAdoptedAudio(clip);
       if (clip.kind !== "silent" && !hasAdoptedLocalAudio(clip)) return false;
       // Preserve even stale or incomplete user notes when filling missing storyboards.
@@ -44,10 +49,11 @@ export type StudioBatchProgress = {
   failed: number;
   skipped: number;
   currentClipId?: string;
+  waitingBetweenItems?: boolean;
 };
 
 export type StudioBatchFailure = { clipId: string; message: string };
-export type StudioBatchResult = Omit<StudioBatchProgress, "currentClipId"> & {
+export type StudioBatchResult = Omit<StudioBatchProgress, "currentClipId" | "waitingBetweenItems"> & {
   state: "completed" | "cancelled" | "stopped";
   failures: StudioBatchFailure[];
 };
@@ -55,27 +61,30 @@ export type StudioBatchResult = Omit<StudioBatchProgress, "currentClipId"> & {
 export type StudioBatchQueueOptions = {
   clipIds: readonly string[];
   signal: AbortSignal;
+  interItemDelayMs?: number;
   onItem: (clipId: string, signal: AbortSignal) => "completed" | "skipped" | Promise<"completed" | "skipped">;
   onProgress?: (progress: StudioBatchProgress) => void;
 };
 
 /** Runs serially; callers validate the latest project and own all network/persistence work. */
-export async function runStudioBatchQueue({ clipIds, signal, onItem, onProgress }: StudioBatchQueueOptions): Promise<StudioBatchResult> {
+export async function runStudioBatchQueue({ clipIds, signal, interItemDelayMs = 0, onItem, onProgress }: StudioBatchQueueOptions): Promise<StudioBatchResult> {
   const targets = [...clipIds];
   const counts = { total: targets.length, completed: 0, succeeded: 0, failed: 0, skipped: 0 };
   const failures: StudioBatchFailure[] = [];
   let stopped = false;
-  const report = (currentClipId?: string) => onProgress?.({ ...counts, ...(currentClipId === undefined ? {} : { currentClipId }) });
+  const report = (currentClipId?: string, waitingBetweenItems = false) => onProgress?.({ ...counts,
+    ...(currentClipId === undefined ? {} : { currentClipId }), ...(waitingBetweenItems ? { waitingBetweenItems: true } : {}) });
   report();
 
-  for (const clipId of targets) {
+  for (const [index, clipId] of targets.entries()) {
     if (signal.aborted) break;
     report(clipId);
     if (signal.aborted) break;
+    let skipped = false;
     try {
       const outcome = await onItem(clipId, signal);
       if (signal.aborted) break;
-      if (outcome === "skipped") counts.skipped += 1;
+      if (outcome === "skipped") { counts.skipped += 1; skipped = true; }
       else if (outcome === "completed") counts.succeeded += 1;
       else throw new Error("本段生成未返回有效结果。");
     } catch (error) {
@@ -89,10 +98,28 @@ export async function runStudioBatchQueue({ clipIds, signal, onItem, onProgress 
     counts.completed += 1;
     report();
     if (stopped) break;
+    if (!signal.aborted && !skipped && index < targets.length - 1 && interItemDelayMs > 0) {
+      report(undefined, true);
+      await waitBetweenBatchItems(interItemDelayMs, signal);
+    }
   }
 
   report();
   return { state: signal.aborted ? "cancelled" : stopped ? "stopped" : "completed", ...counts, failures };
+}
+
+/** Cancellation releases both the timer and listener without waiting for the interval. */
+function waitBetweenBatchItems(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    signal.addEventListener("abort", finish, { once: true });
+  });
 }
 
 export type StudioVoiceGenerationOptions = {

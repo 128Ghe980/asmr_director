@@ -125,6 +125,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const result: ClipVideoStoryboard = { ...shotFixture(project), kind: "silent", duration: 5, audio: undefined, ambientSound: "Soft rain outside the window." };
     const api = mockApi(true, true, "ollama"); api.respond(Response.json({ storyboard: result }));
     const { onSave, onEdit, update } = await mountEditor(project);
+    fireEvent.click(control("新镜头"));
     expect(generationButton().disabled).toBe(false);
     expect(screen.getByText("无对白 · 5.0 秒")).toBeTruthy();
     expect(screen.queryByText(/先生成并采用本段音频/)).toBeNull();
@@ -167,10 +168,12 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     fireEvent.click(generationButton()); expect(api.posts).toHaveLength(0);
   });
 
-  it("defaults to a new shot using the current project and usable previous shot as a secondary reference", async () => {
+  it("uses a manually selected new shot with the current project and usable previous shot as a secondary reference", async () => {
     const project = fixture(); const clip = voices(project)[1]; const previous = voices(project)[0]; withShot(project, previous.id);
     const result = shotFixture(project, clip.id, true, "new"); const before = structuredClone(project); const api = mockApi(); api.respond(Response.json({ storyboard: result }));
     const { onSave } = await mountEditor(project);
+    expect((control("连续镜头") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(control("新镜头"));
     expect((control("新镜头") as HTMLInputElement).checked).toBe(true);
     expect((control("连续镜头") as HTMLInputElement).checked).toBe(false);
     fireEvent.click(screen.getByText(/本段偏好/)); fireEvent.change(control("本段分镜要求"), { target: { value: "  Keep the cup on the table.  " } });
@@ -202,7 +205,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const clipId = kind === "first clip" ? first.id : target.id;
     const api = mockApi(); const result = shotFixture(project, clipId); api.respond(Response.json({ storyboard: result })); const { onSave } = await mountEditor(project, clipId);
     const continuous = control("连续镜头") as HTMLInputElement; const newShot = control("新镜头") as HTMLInputElement;
-    expect(continuous.disabled).toBe(kind === "first clip"); expect(continuous.checked).toBe(false); expect(newShot.disabled).toBe(false); expect(newShot.checked).toBe(true);
+    expect(continuous.disabled).toBe(kind === "first clip"); expect(continuous.checked).toBe(kind !== "first clip"); expect(newShot.disabled).toBe(false); expect(newShot.checked).toBe(kind === "first clip");
     fireEvent.click(continuous);
     if (kind !== "first clip") {
       expect(continuous.checked).toBe(true); expect(newShot.checked).toBe(false); expect(generationButton().disabled).toBe(true);
@@ -276,7 +279,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
   it.each(["continuous", "new"] as const)("a previous-shot hand edit cancels a pending %s shot", async (referenceMode) => {
     const project = fixture(); const previous = voices(project)[0]; withShot(project, previous.id);
     const result = shotFixture(project, voices(project)[1].id, true, referenceMode); const api = mockApi(); const late = deferred<Response>(); api.respond(late.promise);
-    const view = await mountEditor(project); if (referenceMode === "continuous") fireEvent.click(control("连续镜头")); fireEvent.click(generationButton());
+    const view = await mountEditor(project); fireEvent.click(control(referenceMode === "continuous" ? "连续镜头" : "新镜头")); fireEvent.click(generationButton());
     await screen.findByRole("button", { name: "取消生成" });
     const changed = structuredClone(project); changed.videoPlan!.shots[previous.id].visual = "The previous hand-edited visual now faces the window."; view.update(changed);
     expect(api.posts[0].signal?.aborted).toBe(true);
@@ -384,6 +387,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const onBusyChange = vi.fn(); const onProviderChange = vi.fn(); const onSave = vi.fn().mockReturnValue(true);
     const view = render(<StrictMode><ClipStoryboardEditor project={project} clipId={clipId} onBusyChange={onBusyChange} onProviderChange={onProviderChange} onSave={onSave} onEdit={vi.fn()} onSceneChange={vi.fn()} /></StrictMode>);
     await screen.findByRole("option", { name: "测试外部模型" });
+    fireEvent.click(control("新镜头"));
     expect(onProviderChange).toHaveBeenCalledExactlyOnceWith("api");
     onProviderChange.mockClear(); onBusyChange.mockClear();
     fireEvent.change(screen.getByRole("combobox", { name: "分镜模型" }), { target: { value: "ollama" } });
@@ -406,6 +410,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
 
   it("aborts on unmount and never saves an eventual late response", async () => {
     const project = fixture(); const api = mockApi(); const late = deferred<Response>(); api.respond(late.promise); const view = await mountEditor(project);
+    fireEvent.click(control("新镜头"));
     fireEvent.click(generationButton()); await screen.findByRole("button", { name: "取消生成" }); view.unmount(); expect(api.posts[0].signal?.aborted).toBe(true);
     await act(async () => { late.resolve(Response.json({ storyboard: shotFixture(project) })); await late.promise; }); expect(view.onSave).not.toHaveBeenCalled();
   });

@@ -12,6 +12,7 @@ import { loadVoxCpm2Profile, selectVoxCpm2Reference } from "./voxcpm2-profile";
 import { VoxCpm2Error } from "./voxcpm2-error";
 import { withVoxCpm2RuntimeSession, type VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
+import { startNativeResourceObserver, type NativeResourceObserver, type NativeResourceSummary } from "./native-resource-observer";
 export { VoxCpm2Error } from "./voxcpm2-error";
 
 type VoxCpm2Child = {
@@ -45,6 +46,8 @@ type ProviderDependencies = {
   paragraphMode?: boolean;
   runtimeSession?: VoxCpm2RuntimeSession;
   spawnImpl?: VoxCpm2Spawn;
+  observeResources?: typeof startNativeResourceObserver;
+  resourceObservationWaitMs?: number;
   seed?: number;
   maxSteps?: number;
   timeoutMs?: number;
@@ -67,6 +70,7 @@ type NativeDiagnostic = {
   stdoutTail: string;
   stderrTail: string;
   spawnError: { name: string; message: string; code?: string } | null;
+  resources?: NativeResourceSummary;
 };
 
 function diagnosticError(error: unknown): NonNullable<NativeDiagnostic["spawnError"]> {
@@ -80,6 +84,12 @@ function diagnosticError(error: unknown): NonNullable<NativeDiagnostic["spawnErr
 
 type ProviderError = VoxCpm2Error | LocalStorageError;
 
+function hasNativeContextCapacityFailure(output: string): boolean {
+  // The CLI also echoes arbitrary target/reference text. Only its runtime or
+  // failure-record prefixes identify an error, never the spoken phrase alone.
+  return /^(?:(?:VoxCPM2Runtime|(?:Combined|Continuation|Voice) cloning failed|Generation failed):[ \t]*(?:prefill|decode) context capacity exceeded:[ \t]*(?:tokens|position)=-?\d+[ \t]+capacity=\d+\b|VoxCPM2ResidualLM::(?:prefill_kv|forward_step):[ \t]*context capacity exceeded[ \t]*\((?:tokens|position)=-?\d+[ \t]+capacity=\d+\))/im.test(output);
+}
+
 function classifiedNativeFailure(diagnostic: NativeDiagnostic, error?: unknown): ProviderError | undefined {
   const storageError = getLocalStorageError(error);
   if (storageError) return storageError;
@@ -88,22 +98,25 @@ function classifiedNativeFailure(diagnostic: NativeDiagnostic, error?: unknown):
   if (getLocalStorageError(cause) || /\bENOSPC\b|\bEDQUOT\b|No space left on device|There is not enough space on the disk|\bdisk (?:is )?full\b|\[WinError 112\]/i.test(output)) {
     return new LocalStorageError();
   }
-  if (/\bcudaMalloc(?:Async)?\b[^\r\n]{0,120}\bfailed:[ \t]*out of memory\b/i.test(output)) {
-    return new VoxCpm2Error("语音模型可用显存不足，请关闭占用显卡的程序后重试。", 503);
+  // A CUDA allocator failure identifies the allocation stage, not which
+  // process or memory budget caused it. Device allocations may also depend on
+  // system commit, so do not promise that closing another GPU app will fix it.
+  if (/\bcudaMalloc(?:Async)?\b[^\r\n]{0,120}\bfailed:[ \t]*out of memory\b|\bCUDA (?:error: )?out of memory\b/i.test(output)) {
+    return new VoxCpm2Error("语音模型的显卡内存分配失败，请检查显存和系统内存余量后重试。", 503);
   }
-  if (cause?.code === "ENOMEM" || /\bstd::bad_alloc\b|\bCUDA (?:error: )?out of memory\b|\bcannot allocate memory\b|\bENOMEM\b/i.test(output)) {
+  if (cause?.code === "ENOMEM" || /\bstd::bad_alloc\b|\bcannot allocate memory\b|\bENOMEM\b/i.test(output)) {
     return new VoxCpm2Error("语音模型运行内存不足，请关闭占用较大的程序后重试。", 503);
   }
   // cuBLAS initialization can fail after a valid reference has loaded. This
   // identifies the GPU stage without assuming memory exhaustion or changing
   // the selected reference behind the user's back.
   if (/\bCUBLAS_STATUS_NOT_INITIALIZED\b|\bCUDA_ERROR_INITIALIZATION_ERROR\b|\bcudaErrorInitializationError\b|\bCUDA (?:error: )?initialization error\b/i.test(output)) {
-    return new VoxCpm2Error("显卡语音运行初始化失败，请关闭占用显卡的程序或缩短参考音频后重试。", 503);
+    return new VoxCpm2Error("显卡语音运行初始化失败，请稍后重试。", 503);
   }
   if (/GGML_ASSERT\s*\(\s*grid_y\s*<\s*USHRT_MAX\s*\)\s*failed/i.test(output)) {
     return new VoxCpm2Error("生成音频超出本机解码容量，请缩短生成范围后重试。", 400);
   }
-  if (/\btoo many tokens\b|GGML_ASSERT\s*\(\s*n_tokens\s*<=\s*n_(?:batch|ctx)\s*\)|\b(?:input|prompt|sequence) (?:token )?length\b[^\r\n]{0,100}\bexceeds?\b[^\r\n]{0,80}\b(?:context|capacity|maximum|max)\b/i.test(output)) {
+  if (hasNativeContextCapacityFailure(output) || /\btoo many tokens\b|GGML_ASSERT\s*\(\s*n_tokens\s*<=\s*n_(?:batch|ctx)\s*\)|\b(?:input|prompt|sequence) (?:token )?length\b[^\r\n]{0,100}\bexceeds?\b[^\r\n]{0,80}\b(?:context|capacity|maximum|max)\b/i.test(output)) {
     return new VoxCpm2Error("本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400);
   }
   return undefined;
@@ -236,6 +249,7 @@ export async function generateVoxCpm2(
   let rawPublished = false;
   let operationFinished = false;
   let lateRecoveryStarted = false;
+  let resourceObserver: Promise<NativeResourceObserver | undefined> | undefined;
   const temporaryBase = path.join(getVoiceGenerationRoot(config), "runs");
   const nativeDiagnostic: NativeDiagnostic = { pid: null, exitCode: null, signal: null, exitConfirmed: false, stdoutTail: "", stderrTail: "", spawnError: null };
   const diagnosticPath = path.join(getVoiceGenerationRoot(config), "diagnostics", `voxcpm2-${randomUUID()}.json`);
@@ -308,8 +322,19 @@ export async function generateVoxCpm2(
         })().catch(() => undefined);
       } else dependencies.runtimeSession!.processExited(child.pid);
     }, nativeDiagnostic);
+    // Real native children get an optional, small stdlib-only observer. Fake
+    // test processes stay entirely in-process unless a monitor is injected.
+    if (!dependencies.spawnImpl || dependencies.observeResources) {
+      resourceObserver = Promise.resolve().then(() => (dependencies.observeResources ?? startNativeResourceObserver)({ pid: child.pid, config }))
+        .catch(() => undefined);
+    }
     await completion;
     checkCancelled(signal);
+    // A capacity error must not become a completed candidate even if a CLI
+    // returns zero. The ordinary recovery path still preserves source bytes.
+    if (hasNativeContextCapacityFailure(`${nativeDiagnostic.stdoutTail}\n${nativeDiagnostic.stderrTail}`)) {
+      throw new VoxCpm2Error("本次输入超过语音模型的上下文容量，请缩短生成范围后重试。", 400);
+    }
     const outputInfo = await stat(outputPath).catch(() => { throw new VoxCpm2Error("VoxCPM2 没有生成有效音频，请重试。"); });
     if (!outputInfo.isFile() || outputInfo.size < 44 || outputInfo.size > 24 * 1024 * 1024) throw new VoxCpm2Error("VoxCPM2 没有生成有效音频，请重试。");
     const output = await readFile(outputPath);
@@ -344,6 +369,20 @@ export async function generateVoxCpm2(
     failure = { message: reported.message, statusCode: reported.statusCode };
     throw reported;
   } finally {
+    let observationDeadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (resourceObserver) {
+        // Bound optional setup as well as shutdown: even a stalled filesystem
+        // lookup must not hold a completed native request or its reservation.
+        // If setup resolves late, this chain still asks that observer to exit.
+        const finished = resourceObserver.then((observer) => observer?.finish()).catch(() => undefined);
+        const resources = await Promise.race([finished, new Promise<undefined>((resolve) => {
+          observationDeadline = setTimeout(() => resolve(undefined), Math.min(2500, Math.max(1, dependencies.resourceObservationWaitMs ?? 2500)));
+        })]);
+        if (resources) nativeDiagnostic.resources = resources;
+      }
+    } catch { /* Optional diagnostics cannot change the native result. */ }
+    finally { clearTimeout(observationDeadline); }
     // Write while the request still owns its temporary directory. A confirmed
     // late exit during this await is handled by the ordinary cleanup below.
     await persistDiagnostic();

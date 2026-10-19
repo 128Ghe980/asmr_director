@@ -1,8 +1,17 @@
 # Third-Party Runtimes
 
-Last updated: 2026-10-05
+Last updated: 2026-10-20
 
 This file records external runtime projects and model assets used during local experiments or planned provider integration. It is not legal advice; re-check upstream licenses and model terms before redistribution, hosted service launch, commercial release, or publishing generated voice packs.
+
+## Chinese CTC forced alignment — isolated experiment
+
+2026-10-16: the user authorized an actual Chinese forced-alignment comparison. The standalone tool uses the same Chinese checkpoint selected by WhisperX, `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`, with the existing TorchAudio 2.8 standard CTC API; it does not install or run the complete WhisperX pipeline. See [中文协议](specs/2026-10-16-chinese-forced-alignment-experiment.zh.md) / [English protocol](specs/2026-10-16-chinese-forced-alignment-experiment.en.md) and the [real comparison record](records/2026-10-16-audio-quality-v1-chinese-forced-alignment-experiment.md). Nine usable independent Whisper target windows showed no literal-recognition improvement; these are experiment results, not product acceptance.
+
+The [author's model card](https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn) lists Apache-2.0. HF revision `99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd`; the public ModelScope same-author mirror revision `dc70e032dd023312c750ac50ba03ade725fd8016` provides identical weight bytes. The single PyTorch checkpoint is 1,276,296,151 bytes, SHA256 `de031fd4b29e0c0667e5346450fadfe1326c89936b888b59c4ede608db763ee4`, verified in full after resuming from the mirror. Config/tokenizer files and the model card were verified against HF Git-blob metadata. No Flax duplicate, new Python package, model weight or private WAV is vendored into Git.
+
+External root: `I:/AI/asmr-director-forced-alignment/2026-10-16`; reuse `env-comfyui-clone/python.exe` with Torch/TorchAudio 2.8.0+cu129 and Transformers 4.50.0. Inference is offline CUDA fp16 with processor normalization and attention mask; CTC path calculation uses CPU float32. Unsupported characters are rejected rather than replaced with unknown/wildcard/interpolated times. Given-text alignment scores are not recognition accuracy or proof of complete speech. Original 48kHz PCM, existing Whisper checks and explicit user confirmation remain separate; no product provider or candidate state is changed. TorchAudio's CTC interface is deprecated in 2.8, so this recipe records that existing version rather than upgrading the environment.
+
 
 ## AudioLDM2 — isolated personal-care SFX experiment
 
@@ -82,6 +91,12 @@ Repository policy:
 
 ## VoxCPM2 / llama.cpp-omni native CLI
 
+2026-10-19 stability build: [reproducible patch and build notes](../tools/voxcpm2-runtime/README.en.md), [中文说明](../tools/voxcpm2-runtime/README.zh.md). The local F32 ResidualLM KV capacity now follows the actual BaseLM context: low-VRAM 4096 uses 64MiB instead of the fixed 512MiB. The isolated executable is stored at `I:/AI/asmr-director-runtimes/voxcpm2/reliability-20261019/voxcpm2-cli.exe`, SHA256 `feba01044885d494bb428ec61d9db9626f728a482dc8fc51a84b6dbf5fec4c80`. It reuses the previously tested Aug30 cached components/COPY fallback; it is not solely a one-line modification of the Aug25 default binary. Weights and selected references remain external and unchanged. Two same-component, same-seed control WAVs match exactly; this does not establish that every historical initialization failure has the same cause. Production activation and batch evidence are recorded separately in the dated development record.
+
+Optional Windows resource diagnostics use the existing Python's base interpreter with `-I -S -B` and standard-library Windows APIs; no Torch/model import or dependency installation. `GetPerformanceInfo` supplies global commit/physical figures, `GetProcessMemoryInfo` supplies native process figures, and `nvidia-smi` supplies whole-device observations. Missing data remain unknown. The monitor only controls its own GPU query process, never the native model; setup/shutdown have a total 2.5-second request wait bound. CUDA OOM, host allocation failure and cuBLAS initialization remain separate error classes.
+
+Activated locally on port3001 at2026-10-19 16:57 HKT, build `qikKsnc9iyniAim3_PRCC`: only the profile's `cliPath` was changed, and the paragraph launcher override points to the same fixed executable. Existing model/reference inputs and134 candidate entries remain unchanged. Successful activation receipts and earlier rejected-command history are in [the development record](records/2026-10-19-audio-generation-reliability.md); earlier pending snapshots are superseded.
+
 Current role: optional local voice generation through the existing Generation Bridge, with previewable candidates and explicit adoption. The selected long-text grouping/padding/extraction/pause workflow passed real-workbench technical verification on 2026-09-09. Product workflow verification is recorded in `docs/AI_HANDOFF.md`; user listening evaluation remains separate.
 
 Locally inspected installation (2026-09-08):
@@ -94,7 +109,7 @@ Locally inspected installation (2026-09-08):
 - Product profile: `D:\CodexWorkplace\asmr_director_runtime\audio-quality-v1\voxcpm2\profile.json`, overridable with `ASMR_VOXCPM2_PROFILE_PATH`.
 - Current references: `soft_zh` and `normal_zh`, with separate mono 16 kHz PCM16 recordings, accurate transcripts and authorization metadata in the external profile.
 
-No engine source, binaries, weights, references or generated audio are vendored by this integration. The provider invokes the native executable directly with argument arrays, `shell: false`, hidden windows, bounded logs and timeout; runtime paths and raw logs stay on the server. GPU layers 0 plus low-VRAM still uses GPU memory. A filesystem lock serializes all product requests sharing the runtime root, including all TTS and CPU-ASR stages of a long-text candidate. Cancellation retains that lock until child exit is confirmed. The supported output is mono / 48 kHz / PCM16 WAV; the model's 7680 samples per decode step supplies the length-limit check. Direct-clip format/cap checks do not establish ASR completeness or perceptual quality. Long-text mode separately verifies each retained group with the local ASR described below.
+No full engine source, binaries, weights, references or generated audio are vendored by this integration; the repository keeps only the small local patch and build tooling described above. The provider invokes the native executable directly with argument arrays, `shell: false`, hidden windows, bounded logs and timeout; runtime paths and raw logs stay on the server. GPU layers 0 plus low-VRAM still uses GPU memory. A filesystem lock serializes all product requests sharing the runtime root, including all TTS and CPU-ASR stages of a long-text candidate. Cancellation retains that lock until child exit is confirmed. The supported output is mono / 48 kHz / PCM16 WAV; the model's 7680 samples per decode step supplies the length-limit check. Direct-clip format/cap checks do not establish ASR completeness or perceptual quality. Long-text mode separately verifies each retained group with the local ASR described below.
 
 Reference permission remains separate from runtime/model terms. Do not copy the example consent timestamp as evidence of a new voice's authorization. Runtime setup and recovery instructions are in `apps/web/README.md`.
 
