@@ -12,6 +12,8 @@ export type LocalRuntimeConfig = {
   voiceReferenceFfmpegPath?: string;
   voiceAnalysisPythonPath?: string;
   voiceAnalysisModelPath?: string;
+  voiceAlignmentPythonPath?: string;
+  voiceAlignmentModelPath?: string;
   spatialCacheRoot?: string;
   spatialPythonPath?: string;
   spatialHrtfPath?: string;
@@ -32,6 +34,8 @@ type RuntimeEnv = Partial<
     | "ASMR_VOICE_REFERENCE_FFMPEG"
     | "ASMR_VOICE_ANALYSIS_PYTHON"
     | "ASMR_VOICE_ANALYSIS_MODEL"
+    | "ASMR_VOICE_ALIGNMENT_PYTHON"
+    | "ASMR_VOICE_ALIGNMENT_MODEL"
     | "ASMR_SPATIAL_CACHE_ROOT"
     | "ASMR_SPATIAL_PYTHON"
     | "ASMR_SPATIAL_HRTF",
@@ -64,6 +68,8 @@ export function getLocalRuntimeConfig(
     ...(env.ASMR_VOICE_REFERENCE_ROOT ? { voiceReferenceRoot: env.ASMR_VOICE_REFERENCE_ROOT } : {}),
     ...(env.ASMR_VOICE_REFERENCE_FFMPEG ? { voiceReferenceFfmpegPath: env.ASMR_VOICE_REFERENCE_FFMPEG } : {}),
     voiceAnalysisModelPath: env.ASMR_VOICE_ANALYSIS_MODEL || undefined,
+    voiceAlignmentPythonPath: env.ASMR_VOICE_ALIGNMENT_PYTHON || undefined,
+    voiceAlignmentModelPath: env.ASMR_VOICE_ALIGNMENT_MODEL || undefined,
     spatialCacheRoot: env.ASMR_SPATIAL_CACHE_ROOT || path.join(runtimeRoot, "assets", "spatial"),
     spatialPythonPath: env.ASMR_SPATIAL_PYTHON || path.join(runtimeRoot, "audio-quality-v1", ".venv", "Scripts", "python.exe"),
     spatialHrtfPath: env.ASMR_SPATIAL_HRTF || path.join(runtimeRoot, "audio-quality-v1", "hrtf", "viking", "subj_A.sofa"),

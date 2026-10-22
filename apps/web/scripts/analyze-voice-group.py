@@ -62,6 +62,8 @@ def recognition_snapshot(recognition: dict) -> dict:
     result = {"stage": recognition.get("stage") if recognition.get("stage") in stages else "unavailable",
               "sourceTranscript": bounded_text(recognition.get("sourceTranscript"), 8000),
               "expectedText": bounded_text(recognition.get("expectedText"), 500)}
+    if recognition.get("analysisMode") == "cutting_only":
+        result["analysisMode"] = "cutting_only"
     for key, limit in (("followingText", 1500), ("targetTranscript", 8000)):
         if key in recognition:
             result[key] = bounded_text(recognition[key], limit)
@@ -879,7 +881,7 @@ def choose_opening_cut(audio: np.ndarray, words: list[dict], terminal: int) -> f
 
 
 def quiet_cut_candidates(levels: np.ndarray, strict_threshold: float,
-                         start: float, end: float, boundary: float) -> list[dict]:
+                         start: float, end: float, boundary: float, *, max_candidates: int | None = 3) -> list[dict]:
     first = max(0, math.ceil(start * 100))
     last = min(len(levels), math.floor(end * 100))
     if last <= first:
@@ -900,7 +902,7 @@ def quiet_cut_candidates(levels: np.ndarray, strict_threshold: float,
             candidates.append({"method": method, "thresholdDbfs": threshold,
                                "quietStartSeconds": quiet_start, "quietEndSeconds": quiet_end,
                                "cut": cut, "localNoiseDbfs": local_floor, "peakFrameDbfs": peak})
-            if len(candidates) == 3:
+            if max_candidates is not None and len(candidates) == max_candidates:
                 return candidates
     return candidates
 
@@ -1456,19 +1458,213 @@ def _analyze(model, audio: np.ndarray, expected: str, following: str, clauses: l
     return processed, result, continuation_bridge
 
 
+def cutting_positions(reference: str, observed: str, boundary: int, *, free_end: bool = False) -> tuple[set[int], list[int]]:
+    """Find all optimal ordered edit mappings, without inventing sub-word time.
+
+    Edit cost ranks locator hypotheses, not spoken-content correctness. An
+    ambiguous boundary is retained as ambiguous rather than choosing a path.
+    """
+    if reference == observed:
+        return {boundary}, [len(observed)]
+    rows = [list(range(len(observed) + 1))]
+    for i, character in enumerate(reference, 1):
+        previous, current = rows[-1], [i]
+        for j, actual in enumerate(observed, 1):
+            current.append(min(previous[j] + 1, current[-1] + 1, previous[j - 1] + (character != actual)))
+        rows.append(current)
+    if free_end:
+        minimum = min(rows[-1])
+        endings = [index for index, score in enumerate(rows[-1]) if score == minimum]
+    else:
+        endings = [len(observed)]
+    pending = [(len(reference), end) for end in endings]
+    visited, positions = set(), set()
+    while pending:
+        i, j = pending.pop()
+        if (i, j) in visited or i < boundary:
+            continue
+        visited.add((i, j))
+        if i == boundary:
+            positions.add(j)
+            if len(positions) > 1:
+                return positions, endings
+        score = rows[i][j]
+        if i and j and score == rows[i - 1][j - 1] + (reference[i - 1] != observed[j - 1]):
+            pending.append((i - 1, j - 1))
+        if i and score == rows[i - 1][j] + 1:
+            pending.append((i - 1, j))
+        if j and score == rows[i][j - 1] + 1:
+            pending.append((i, j - 1))
+    return positions, endings
+
+
+def cutting_word_boundary(expected: str, following: str, words: list[dict]) -> tuple[int, float]:
+    target, context = normalize(expected), normalize(following)[:16]
+    if not context:
+        actual = "".join(normalize(word["text"]) for word in words)
+        return len(words) - 1, difflib.SequenceMatcher(None, target, actual, autojunk=False).ratio() if target or actual else 0.0
+    if not target or not words:
+        raise UnsafeGroup("boundary_unlocatable")
+    # Bound the locator's memory independently of distant generated context.
+    limit, observed, endpoints = max(32, 2 * (len(target) + len(context)) + 16), "", {}
+    for index, word in enumerate(words[:2000]):
+        observed += normalize(word["text"])
+        endpoints[len(observed)] = index
+        if len(observed) >= limit:
+            break
+    anchors = sum(block.size for block in difflib.SequenceMatcher(None, target + context, observed, autojunk=False).get_matching_blocks())
+    if anchors < min(2, len(target + context)):
+        raise UnsafeGroup("boundary_unlocatable")
+    positions, endings = cutting_positions(target + context, observed, len(target), free_end=True)
+    if len(positions) != 1:
+        raise UnsafeGroup("ambiguous_boundary" if positions else "boundary_unlocatable")
+    position = next(iter(positions))
+    if position not in endpoints or position <= 0 or endpoints[position] + 1 >= len(words):
+        raise UnsafeGroup("boundary_unlocatable")
+    left = observed[:position]
+    # The joint sequence's anchors and unique mapping locate the boundary.
+    # In particular a one-character target 坐 must not require literal 坐 when
+    # 做 plus the following context still has one ordered whole-word endpoint.
+    return endpoints[position], difflib.SequenceMatcher(None, target, left, autojunk=False).ratio()
+
+
+def cutting_quiet_boundary(audio: np.ndarray, words: list[dict], terminal: int) -> tuple[float, dict]:
+    left, right = words[terminal], words[terminal + 1]
+    levels, threshold = frame_levels(audio)
+    boundary = (float(left["end"]) + float(right["start"])) / 2
+    lower, upper = float(left["end"]) + WORD_GUARD, float(right["start"]) - WORD_GUARD
+    candidates = quiet_cut_candidates(levels, threshold, lower, upper, boundary, max_candidates=None)
+    if not candidates:
+        # ASR can assign real quiet to an adjacent syllable. Refine only inside
+        # a single-character side's span; a multi-character side keeps its full
+        # timestamp protection. Their nominal join can precede real quiet.
+        # Never search an earlier phrase pause or split a multi-character word.
+        refine_left = len(normalize(left["text"])) == 1
+        refine_right = len(normalize(right["text"])) == 1
+        if not refine_left and not refine_right:
+            raise UnsafeGroup("no_verified_quiet_cut")
+        lower = float(left["start"] if refine_left else left["end"]) + WORD_GUARD
+        upper = float(right["end"] if refine_right else right["start"]) - WORD_GUARD
+        candidates = quiet_cut_candidates(levels, threshold, lower, upper, boundary, max_candidates=None)
+        verified = []
+        for candidate in candidates:
+            quiet_start, quiet_end = candidate["quietStartSeconds"], candidate["quietEndSeconds"]
+            left_start = max(0, math.ceil(float(left["start"]) * 100))
+            left_end = min(len(levels), math.floor(quiet_start * 100))
+            right_start = max(0, math.ceil(quiet_end * 100))
+            right_end = min(len(levels), math.floor(float(right["end"]) * 100))
+            if (np.any(levels[left_start:left_end] >= candidate["thresholdDbfs"])
+                    and np.any(levels[right_start:right_end] >= candidate["thresholdDbfs"])):
+                verified.append(candidate)
+        strict = [candidate for candidate in verified if candidate["method"] == "two_sided"]
+        # Prefer measured deep quiet; a wider noise-floor interval around that
+        # same pause must not count as a second independent candidate.
+        candidates = strict or verified
+        if len(candidates) > 1:
+            raise UnsafeGroup("ambiguous_boundary")
+    if not candidates:
+        raise UnsafeGroup("no_verified_quiet_cut")
+    selected = candidates[0]
+    cut = selected["cut"]
+    if (cut - selected["quietStartSeconds"] < WORD_GUARD - 1e-8
+            or selected["quietEndSeconds"] - cut < WORD_GUARD - 1e-8):
+        raise UnsafeGroup("no_verified_quiet_cut")
+    return cut, {key: selected[key] for key in ("method", "thresholdDbfs", "quietStartSeconds", "quietEndSeconds")}
+
+
+def cutting_internal_pauses(expected: str, clauses: list[str], words: list[dict]) -> tuple[list[float], list[int]]:
+    reference = normalize(expected)
+    if normalize("".join(clauses)) != reference:
+        raise UnsafeGroup("invalid_target")
+    observed, endpoints = "", {}
+    for index, word in enumerate(words):
+        observed += normalize(word["text"])
+        endpoints[len(observed)] = index
+    pauses, positions, length = [], [], 0
+    for index, clause in enumerate(clauses[:-1]):
+        length += len(normalize(clause))
+        mapped, _ = cutting_positions(reference, observed, length)
+        if len(mapped) != 1:
+            continue
+        terminal = endpoints.get(next(iter(mapped)), -1)
+        if terminal < 0 or terminal + 1 >= len(words):
+            continue
+        milliseconds = (float(words[terminal + 1]["start"]) - float(words[terminal]["end"])) * 1000
+        if math.isfinite(milliseconds) and 0 <= milliseconds <= INTERNAL_PAUSE_OBSERVATION_MAX_MS:
+            pauses.append(math.floor(milliseconds + .5))
+            positions.append(index)
+    return pauses, positions
+
+
+def _analyze_cutting_only(model, audio: np.ndarray, expected: str, following: str, clauses: list[str],
+                          recognition: dict, checkpoint) -> tuple[np.ndarray, dict]:
+    for key in ("contentComparison", "shortSentenceReview", "followingPhoneticBoundary", "continuationBridge", "boundaryMatch"):
+        recognition.pop(key, None)
+    update_recognition(recognition, checkpoint, analysisMode="cutting_only", stage="source_transcription")
+    transcript, words = transcribe(model, audio)
+    update_recognition(recognition, checkpoint, stage="source_alignment", sourceTranscript=transcript, sourceWords=words)
+    if not following:
+        # There is no cut to locate. Even absent/unrelated ASR or unusable word
+        # timing cannot justify throwing away an unchanged complete recording.
+        words = recognition.get("sourceWords", [])
+    terminal, similarity = cutting_word_boundary(expected, following, words)
+    if following:
+        retained = words[:terminal + 2]
+        validate_words(retained, audio.size / RATE)
+        if any(word["end"] <= word["start"] for word in retained):
+            raise UnsafeGroup("invalid_word_timestamps")
+        # Distant discarded context is not timing evidence for this boundary.
+        update_recognition(recognition, checkpoint, sourceWords=retained)
+    prefix = "".join(word["text"] for word in words[:terminal + 1])
+    update_recognition(recognition, checkpoint, stage="boundary_check", targetTranscript=prefix)
+    cut_validation = None
+    if following:
+        cut, cut_validation = cutting_quiet_boundary(audio, words, terminal)
+        end_sample = round(cut * RATE)
+    else:
+        end_sample = audio.size
+    processed = audio[:end_sample].copy()
+    try:
+        leading, trailing = measure_quiet(processed)
+    except UnsafeGroup as error:
+        if following or str(error) != "silent_audio":
+            raise
+        leading, trailing = processed.size / RATE * 1000, 0.0
+    pauses, positions = cutting_internal_pauses(expected, clauses, words[:terminal + 1])
+    evidence = {"method": "ordered_word_boundary" if following else "whole_recording", "alignmentSimilarity": round(similarity, 6),
+                "targetEndWordIndex": terminal, "contentVerified": False, "internalPausePositions": positions}
+    if following:
+        evidence["followingStartWordIndex"] = terminal + 1
+    result = {"version": 1, "success": True, "internalPausesMs": pauses,
+              "leadingQuietMs": round(leading, 1), "trailingQuietMs": round(trailing, 1),
+              "transcript": prefix, "coverage": round(similarity, 6),
+              "cutStartSeconds": 0, "cutEndSeconds": round(end_sample / RATE, 6),
+              "asrModel": "faster-whisper-large-v3/cpu/int8", "boundaryOnly": evidence}
+    if cut_validation:
+        result["cutValidation"] = cut_validation
+    return processed, result
+
+
 def analyze(model, audio: np.ndarray, expected: str, following: str, clauses: list[str],
             recognition: dict | None = None, checkpoint=None, alignment_hint: dict | None = None,
             require_two_sided: bool = False, allow_short_sentence_particle: bool = False,
-            allow_short_sentence_text_review: bool = False) -> tuple[np.ndarray, dict]:
+            allow_short_sentence_text_review: bool = False, cutting_only: bool = False) -> tuple[np.ndarray, dict]:
     if recognition is None:
         recognition = {"stage": "source_transcription", "sourceTranscript": "",
                        "expectedText": expected, "followingText": following}
     try:
-        if allow_short_sentence_particle and (not require_two_sided or alignment_hint is not None):
+        if cutting_only:
+            recognition["analysisMode"] = "cutting_only"
+            if alignment_hint is not None:
+                raise UnsafeGroup("invalid_target")
+            processed, result = _analyze_cutting_only(model, audio, expected, following, clauses, recognition, checkpoint)
+            continuation_bridge = None
+        elif allow_short_sentence_particle and (not require_two_sided or alignment_hint is not None):
             raise UnsafeGroup("invalid_target")
-        if allow_short_sentence_text_review and (not require_two_sided or not allow_short_sentence_particle or alignment_hint is not None):
+        elif allow_short_sentence_text_review and (not require_two_sided or not allow_short_sentence_particle or alignment_hint is not None):
             raise UnsafeGroup("invalid_target")
-        processed, result, continuation_bridge = _analyze(model, audio, expected, following, clauses, recognition, checkpoint,
+        if not cutting_only:
+            processed, result, continuation_bridge = _analyze(model, audio, expected, following, clauses, recognition, checkpoint,
                                                         alignment_hint, require_two_sided, allow_short_sentence_particle, allow_short_sentence_text_review)
     except UnsafeGroup as error:
         if error.alignment:
@@ -1500,7 +1696,11 @@ def process_request(request_file: str, model_provider=load_model) -> int:
         return 2
     request = json.loads(request_path.read_text(encoding="utf-8-sig"))
     allowed = {"version", "inputWav", "outputWav", "outputJson", "modelPath", "expectedText", "followingText", "clauses"}
-    if not allowed.issubset(request) or set(request) - allowed - {"alignmentHint", "requireTwoSided", "allowShortSentenceParticle", "allowShortSentenceTextReview"} or request["version"] != 1:
+    if not allowed.issubset(request) or set(request) - allowed - {"alignmentHint", "requireTwoSided", "allowShortSentenceParticle", "allowShortSentenceTextReview", "cuttingOnly"} or request["version"] != 1:
+        return 2
+    if "cuttingOnly" in request and not isinstance(request["cuttingOnly"], bool):
+        return 2
+    if request.get("cuttingOnly") and request.get("alignmentHint") is not None:
         return 2
     if "requireTwoSided" in request and not isinstance(request["requireTwoSided"], bool):
         return 2
@@ -1527,6 +1727,8 @@ def process_request(request_file: str, model_provider=load_model) -> int:
     recognition = recognition_snapshot({"stage": "input_validation", "sourceTranscript": "",
                                         "expectedText": request["expectedText"],
                                         "followingText": request["followingText"]})
+    if request.get("cuttingOnly"):
+        recognition["analysisMode"] = "cutting_only"
 
     def checkpoint(snapshot: dict) -> None:
         try:
@@ -1559,7 +1761,8 @@ def process_request(request_file: str, model_provider=load_model) -> int:
                                     recognition, checkpoint, alignment_hint=alignment_hint,
                                     require_two_sided=request.get("requireTwoSided", False),
                                     allow_short_sentence_particle=request.get("allowShortSentenceParticle", False),
-                                    allow_short_sentence_text_review=request.get("allowShortSentenceTextReview", False))
+                                    allow_short_sentence_text_review=request.get("allowShortSentenceTextReview", False),
+                                    cutting_only=request.get("cuttingOnly", False))
         sf.write(paths["outputWav"], processed, RATE, subtype="PCM_16", format="WAV")
     except UnsafeGroup as error:
         code = str(error) if re.fullmatch(r"[a-z_]{1,80}", str(error)) else "analysis_failed"

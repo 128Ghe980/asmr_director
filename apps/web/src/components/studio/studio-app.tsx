@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { registerAudioPlayback } from "./audio-playback-coordinator";
 
 import {
   applyDirectorPreset,
@@ -195,6 +196,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const voiceOptions = speechMode === "paragraph" ? paragraphVoiceOptions ?? { ...shortVoiceOptions, provider: "voxcpm2" as const, generationMode: "paragraph" as const } : shortVoiceOptions;
   const [voiceCatalog, setVoiceCatalog] = useState<VoiceProviderCatalog | null>(null);
   const [voiceCatalogError, setVoiceCatalogError] = useState<string>();
+  const [voiceSettingsStatus, setVoiceSettingsStatus] = useState<"loading" | "ready" | "error">("loading");
   const [referenceImportBusy, setReferenceImportBusy] = useState(false);
   const referenceImportBusyRef = useRef(false);
   const referenceImportModeRef = useRef<SpeechWorkspaceMode>("short");
@@ -202,17 +204,17 @@ export function StudioApp({ project }: StudioAppProps) {
   const [voiceCandidates, setVoiceCandidates] = useState<AudioCandidate[]>([]);
   const [candidateListState, setCandidateListState] = useState<{ projectId: string; workspaceMode: SpeechWorkspaceMode; status: "loading" | "ready" | "error" }>();
   const [candidateActionBusy, setCandidateActionBusy] = useState(false);
-  const [recheckingCandidateId, setRecheckingCandidateId] = useState<string>();
+  const [forceSplittingCandidateId, setForceSplittingCandidateId] = useState<string>();
   const [confirmingCandidateId, setConfirmingCandidateId] = useState<string>();
-  const candidateRecheckRunRef = useRef<{ controller: AbortController; projectId: string; clipId: string; kind?: "confirm" } | null>(null);
+  const candidateRecheckRunRef = useRef<{ controller: AbortController; projectId: string; clipId: string; kind?: "confirm" | "force" } | null>(null);
   const handleCancelCandidateRecheck = useCallback((notify = true) => {
     const run = candidateRecheckRunRef.current;
     if (!run) return;
     candidateRecheckRunRef.current = null;
     run.controller.abort();
-    setRecheckingCandidateId(undefined);
+    setForceSplittingCandidateId(undefined);
     setConfirmingCandidateId(undefined);
-    if (notify) setVoiceError(run.kind === "confirm" ? "已取消采用，当前人声保持；可刷新候选查看试听确认是否已保存。" : "已取消重新识别，原候选已保留。");
+    if (notify) setVoiceError(run.kind === "confirm" ? "已取消采用，当前人声保持；可刷新候选查看试听确认是否已保存。" : "已取消强制切分，原候选已保留。");
   }, []);
   const [candidateRefresh, setCandidateRefresh] = useState(0);
   const [batchProgress, setBatchProgress] = useState<StudioBatchProgress>();
@@ -296,7 +298,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const currentLibraryEntry = projectLibrary.projects.find(
     (entry) => entry.projectId === editableProject.project_id,
   );
-  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Boolean(recheckingCandidateId) || Boolean(confirmingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
   const batchCounts = useMemo(() => Object.fromEntries(
     (["audio_missing", "audio_ungenerated", "audio_all", "storyboard_missing", "storyboard_all"] as const)
       .map((action) => [action, getStudioBatchTargets(editableProject, action, voiceCandidates).length]),
@@ -427,8 +429,14 @@ export function StudioApp({ project }: StudioAppProps) {
           const paragraph = VoiceGenerationOptionsSchema.safeParse(JSON.parse(window.localStorage.getItem("ai-asmr-studio:v1:voice-options-paragraph") || "null"));
           if (paragraph.success) setParagraphVoiceOptions({ ...paragraph.data, provider: "voxcpm2", generationMode: "paragraph" });
         } catch { /* Default to the current reference on the first paragraph visit. */ }
+        setVoiceSettingsStatus("ready");
       })
-      .catch(() => { if (!controller.signal.aborted) setVoiceCatalogError("无法读取人声配置，请刷新重试。"); });
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setVoiceCatalogError("无法读取人声配置，请刷新重试。");
+          setVoiceSettingsStatus("error");
+        }
+      });
     return () => controller.abort();
   }, []);
 
@@ -572,33 +580,37 @@ export function StudioApp({ project }: StudioAppProps) {
     } catch (error) { setVoiceError(error instanceof Error ? error.message : "未能撤回采用。"); }
   }
 
-  async function handleRecheckVoiceCandidate(candidate: AudioCandidate) {
+  async function handleForceSplitVoiceCandidate(candidate: AudioCandidate) {
     if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy || singleStoryboardBusyRef.current || candidatesLoading) return;
     const projectSnapshot = structuredClone(editableProjectRef.current);
     const clip = flattenClips(projectSnapshot).find((item) => item.id === activeClipId);
-    if (!clip || clip.type !== "voice" || candidate.status !== "ready" || candidate.projectId !== projectSnapshot.project_id || candidate.clipId !== clip.id) return;
-    const paragraphRecheck = candidate.provenance.generationMode === "paragraph" && Boolean(candidate.provenance.paragraph?.sourceAsset);
-    if (!paragraphRecheck && (candidate.provenance.generationMode !== "long_text" || !candidate.provenance.longText?.plan)) {
-      setVoiceError("此候选未保存可核对的分组原音，暂不能重新识别。"); return;
-    }
-    const context = paragraphRecheck ? undefined : getVoiceGenerationContext(projectSnapshot, clip.id);
-    const paragraphContext = paragraphRecheck ? getVoiceParagraphContext(projectSnapshot, clip.id) : undefined;
+    const mode = getSpeechWorkspaceMode(projectSnapshot);
+    if (!clip || clip.type !== "voice" || clip.kind === "silent" || candidate.status !== "ready"
+        || candidate.projectId !== projectSnapshot.project_id || candidate.clipId !== clip.id
+        || getAudioCandidateWorkspaceMode(candidate) !== mode || candidate.provenance.forcedSegmentation) return;
+    const paragraphForce = candidate.provenance.generationMode === "paragraph" && candidate.provenance.paragraph?.checkStatus === "review";
+    const longTextForce = candidate.provenance.generationMode === "long_text"
+      && candidate.provenance.longText?.groups.some((group) => group.checkStatus === "review");
+    if (!paragraphForce && !longTextForce) return;
+    const context = paragraphForce ? undefined : getVoiceGenerationContext(projectSnapshot, clip.id);
+    const paragraphContext = paragraphForce ? getVoiceParagraphContext(projectSnapshot, clip.id) : undefined;
     const sourceFingerprint = getVoiceCandidateSourceFingerprint(clip, context, paragraphContext);
     if (candidate.sourceFingerprint !== sourceFingerprint) {
-      setVoiceError("文案或后续上下文已修改，暂不能重新识别此候选。"); return;
+      setVoiceError("文案或后续上下文已修改，暂不能强制切分此候选。"); return;
     }
-    const run = { controller: new AbortController(), projectId: projectSnapshot.project_id, clipId: clip.id };
+    const run = { controller: new AbortController(), projectId: projectSnapshot.project_id, clipId: clip.id, kind: "force" as const };
     candidateRecheckRunRef.current = run;
     const session = generationSessionRef.current;
+    const editRevision = editRevisionRef.current;
     const savedContext = JSON.stringify(candidate.provenance.longText?.context);
     let failureMessage = "无法连接本地服务，请确认 3001 服务正在运行后重试；原候选已保留。";
-    setRecheckingCandidateId(candidate.candidateId);
+    setForceSplittingCandidateId(candidate.candidateId);
     setVoiceError(undefined);
     try {
-      const response = await fetch(`/api/audio-candidates/${encodeURIComponent(candidate.candidateId)}/recheck`, {
+      const response = await fetch("/api/audio-candidates/" + encodeURIComponent(candidate.candidateId) + "/force-split", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: projectSnapshot, clipId: clip.id }), signal: run.controller.signal,
       });
-      failureMessage = "重新识别服务未返回有效结果，请刷新页面后重试；原候选已保留。";
+      failureMessage = "强制切分服务未返回有效结果；原候选已保留。";
       const rawPayload: unknown = await response.json();
       if (candidateRecheckRunRef.current !== run || run.controller.signal.aborted || session !== generationSessionRef.current) return;
       if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) throw new Error(failureMessage);
@@ -609,25 +621,39 @@ export function StudioApp({ project }: StudioAppProps) {
       }
       const latest = editableProjectRef.current;
       const latestClip = flattenClips(latest).find((item) => item.id === clip.id);
-      if (latest.project_id !== run.projectId || !latestClip || latestClip.type !== "voice"
-          || getVoiceCandidateSourceFingerprint(latestClip, paragraphRecheck ? undefined : getVoiceGenerationContext(latest, clip.id), paragraphRecheck ? getVoiceParagraphContext(latest, clip.id) : undefined) !== sourceFingerprint) {
-        failureMessage = "文案或后续上下文已修改，重新识别结果未加入；原候选已保留。";
+      if (editRevision !== editRevisionRef.current || latest.project_id !== run.projectId || getSpeechWorkspaceMode(latest) !== mode
+          || !latestClip || latestClip.type !== "voice"
+          || getVoiceCandidateSourceFingerprint(latestClip, paragraphForce ? undefined : getVoiceGenerationContext(latest, clip.id), paragraphForce ? getVoiceParagraphContext(latest, clip.id) : undefined) !== sourceFingerprint) {
+        failureMessage = "工程或文案已修改，强制切分结果未加入；原候选已保留。";
         throw new Error(failureMessage);
       }
       const parsed = AudioCandidateSchema.safeParse(payload.candidate);
+      const forced = parsed.success ? parsed.data.provenance.forcedSegmentation : undefined;
+      const resultParagraph = parsed.success ? parsed.data.provenance.paragraph : undefined;
+      const resultGroups = parsed.success ? parsed.data.provenance.longText?.groups : undefined;
       if (!parsed.success || parsed.data.projectId !== run.projectId || parsed.data.clipId !== run.clipId || parsed.data.status !== "ready"
           || parsed.data.sourceFingerprint !== sourceFingerprint || parsed.data.candidateId === candidate.candidateId
           || voiceCandidates.some((item) => item.candidateId === parsed.data.candidateId)
-          || (paragraphRecheck ? parsed.data.provenance.generationMode !== "paragraph"
-            || parsed.data.provenance.paragraph?.sourceAsset.assetId !== candidate.provenance.paragraph?.sourceAsset.assetId
-            || parsed.data.provenance.paragraph?.text !== paragraphContext?.text
-            || parsed.data.provenance.paragraph?.clipIds.join("|") !== paragraphContext?.clips.map((item) => item.clipId).join("|")
-            : parsed.data.provenance.generationMode !== "long_text" || JSON.stringify(parsed.data.provenance.longText?.context) !== savedContext)) {
-        failureMessage = "重新识别结果与当前片段不一致，原候选已保留。";
+          || forced?.method !== "ctc_forced" || forced.sourceCandidateId !== candidate.candidateId
+          || (paragraphForce ? parsed.data.provenance.generationMode !== "paragraph" || resultParagraph?.checkStatus !== "passed"
+            || JSON.stringify(resultParagraph.sourceAsset) !== JSON.stringify(candidate.provenance.paragraph?.sourceAsset)
+            || resultParagraph.text !== paragraphContext?.text
+            || resultParagraph.clipIds.join("|") !== paragraphContext?.clips.map((item) => item.clipId).join("|")
+            || resultParagraph.segments.length !== paragraphContext?.clips.length
+            || resultParagraph.segments.some((segment, index) => segment.clipId !== paragraphContext?.clips[index]?.clipId || segment.text !== paragraphContext?.clips[index]?.text)
+            : parsed.data.provenance.generationMode !== "long_text" || JSON.stringify(parsed.data.provenance.longText?.context) !== savedContext
+              || !resultGroups || resultGroups.length !== candidate.provenance.longText?.groups.length
+              || resultGroups.some((group, index) => {
+                const original = candidate.provenance.longText!.groups[index];
+                return group.checkStatus === "review" || (original.checkStatus === "review"
+                  ? group.checkStatus !== "passed" || group.index !== original.index || group.text !== original.text || group.inputText !== original.inputText
+                  : JSON.stringify(group) !== JSON.stringify(original));
+              }))) {
+        failureMessage = "强制切分结果与当前原音或片段不一致；原候选已保留。";
         throw new Error(failureMessage);
       }
-      setVoiceCandidates((current) => [parsed.data, ...current]);
-      if (paragraphRecheck) setCandidateRefresh((value) => value + 1);
+      setVoiceCandidates((current) => [parsed.data, ...current.filter((item) => item.candidateId !== parsed.data.candidateId)]);
+      if (paragraphForce) setCandidateRefresh((value) => value + 1);
     } catch {
       if (candidateRecheckRunRef.current === run && !run.controller.signal.aborted && session === generationSessionRef.current) {
         setVoiceError(failureMessage);
@@ -635,7 +661,7 @@ export function StudioApp({ project }: StudioAppProps) {
     } finally {
       if (candidateRecheckRunRef.current === run) {
         candidateRecheckRunRef.current = null;
-        setRecheckingCandidateId(undefined);
+        setForceSplittingCandidateId(undefined);
       }
     }
   }
@@ -1234,6 +1260,10 @@ export function StudioApp({ project }: StudioAppProps) {
     if (!generationClip || control.disabled) {
       return;
     }
+    if (generationClip.type === "voice" && voiceSettingsStatus !== "ready") {
+      setVoiceError(voiceCatalogError || "正在读取声音设置，请稍候再生成。");
+      return;
+    }
     const options = generationClip.type === "voice" ? optionsOverride ?? voiceOptions : undefined;
     if ((options?.provider === "voxcpm2" && voiceBusy) || (generationClip.type === "voice" && generationClip.kind === "silent")
       || Object.values(generationRuntimeStateRef.current.jobsById).some((job) => isActiveGenerationJob(job) && job.clipId === generationClip.id)) return;
@@ -1408,8 +1438,11 @@ export function StudioApp({ project }: StudioAppProps) {
     acceptedPreviewAudioRef.current?.pause();
     audioRef.current?.pause();
     const audio = new Audio(resolvedUri);
+    const stopTracking = registerAudioPlayback(audio);
+    for (const event of ["pause", "ended", "error"]) audio.addEventListener(event, stopTracking, { once: true });
     audioRef.current = audio;
     void audio.play().catch(() => {
+      stopTracking();
       audio.pause();
 
       if (audioRef.current === audio) {
@@ -1434,8 +1467,11 @@ export function StudioApp({ project }: StudioAppProps) {
     acceptedPreviewAudioRef.current?.pause();
     audioRef.current?.pause();
     const audio = new Audio(resolvedUri);
+    const stopTracking = registerAudioPlayback(audio);
+    for (const event of ["pause", "ended", "error"]) audio.addEventListener(event, stopTracking, { once: true });
     audioRef.current = audio;
     void audio.play().catch(() => {
+      stopTracking();
       audio.pause();
 
       if (audioRef.current === audio) {
@@ -1725,6 +1761,10 @@ export function StudioApp({ project }: StudioAppProps) {
   async function handleRunBatch(action: StudioBatchAction) {
     if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
+    if (action.startsWith("audio") && voiceSettingsStatus !== "ready") {
+      setBatchNotice(voiceCatalogError || "正在读取声音设置，请稍候再生成。");
+      return;
+    }
     if (action === "audio_ungenerated" && audioOverviewStatus !== "ready") {
       setBatchNotice("请等待当前页候选读取成功后，再生成未生成的音频。");
       return;
@@ -2050,7 +2090,7 @@ export function StudioApp({ project }: StudioAppProps) {
             audioStates={audioProgress.byClip} audioStatesStatus={audioOverviewStatus}
             key={editableProject.project_id}
             batchActions={<>
-              <StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />
+              <StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} audioSettingsStatus={voiceSettingsStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />
               <AcceptedVoicePreview project={editableProject} disabled={!hasLoadedStorage} onAudioElementChange={handlePreviewAudioChange} onPlaybackStart={() => audioRef.current?.pause()} />
             </>}
             project={displayProject}
@@ -2085,7 +2125,7 @@ export function StudioApp({ project }: StudioAppProps) {
           <div role="tablist" aria-label="片段工作内容" className="flex shrink-0 gap-1 border-b border-studio-line px-3 py-2">
             {([['audio', '声音'], ['storyboard', '分镜']] as const).map(([tab, label]) => <button key={tab} type="button" role="tab" id={`clip-inspector-tab-${tab}`} aria-selected={inspectorView === tab} aria-controls={`clip-inspector-${tab}`} tabIndex={inspectorView === tab ? 0 : -1} disabled={tab === "storyboard" && selectedClip?.type !== "voice"} onClick={() => setInspectorTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || selectedClip?.type !== "voice") return; event.preventDefault(); const next = event.key === "Home" ? "audio" : event.key === "End" ? "storyboard" : tab === "audio" ? "storyboard" : "audio"; setInspectorTab(next); document.getElementById(`clip-inspector-tab-${next}`)?.focus(); }} className={`min-h-8 rounded-lg px-4 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 disabled:opacity-35 ${inspectorView === tab ? tab === "storyboard" ? "bg-violet-300/15 text-violet-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5"}`}>{label}</button>)}
           </div>
-          <div ref={inspectorScrollerRef} id="clip-inspector-audio" role="tabpanel" aria-labelledby="clip-inspector-tab-audio" hidden={inspectorView !== "audio"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [&>section]:border-0">
+          <div ref={inspectorScrollerRef} id="clip-inspector-audio" role="tabpanel" aria-labelledby="clip-inspector-tab-audio" hidden={inspectorView !== "audio"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] [&>section]:border-0">
           <ClipInspector
             speechWorkspaceMode={speechMode}
             textEditorExternal
@@ -2105,7 +2145,7 @@ export function StudioApp({ project }: StudioAppProps) {
                 selectedClip={selectedClip} candidates={visibleVoiceCandidates}
                 onAdopt={handleAdoptVoiceCandidate} onDiscard={handleDiscardVoiceCandidate}
                 onRegenerateGroup={handleRegenerateVoiceGroup}
-                onRecheck={handleRecheckVoiceCandidate} recheckingCandidateId={recheckingCandidateId} onCancelRecheck={() => handleCancelCandidateRecheck()}
+                onForceSplit={handleForceSplitVoiceCandidate} forceSplittingCandidateId={forceSplittingCandidateId} onCancelForceSplit={() => handleCancelCandidateRecheck()}
                 onConfirmText={handleConfirmParagraphText} confirmingCandidateId={confirmingCandidateId} onCancelConfirmation={() => handleCancelCandidateRecheck()}
                 onUndo={handleUndoVoiceCandidate}
                 canUndo={canUndoLastAudioCandidate({ ...projectLibrary, projects: projectLibrary.projects.map((entry) =>
@@ -2117,7 +2157,7 @@ export function StudioApp({ project }: StudioAppProps) {
             ) : undefined}
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={displaySelectedClip}
-            selectedClipGeneration={referenceImportBusy || recheckingCandidateId || confirmingCandidateId ? { ...generationView.selectedClipControl, disabled: true, disabledReason: confirmingCandidateId ? "正在保存试听确认" : recheckingCandidateId ? "正在重新识别已保存的原音" : "正在处理参考音频" } : generationView.selectedClipControl}
+            selectedClipGeneration={referenceImportBusy || forceSplittingCandidateId || confirmingCandidateId ? { ...generationView.selectedClipControl, disabled: true, disabledReason: confirmingCandidateId ? "正在保存试听确认" : forceSplittingCandidateId ? "正在强制切分已保存的原音" : "正在处理参考音频" } : selectedClip?.type === "voice" && voiceSettingsStatus !== "ready" ? { ...generationView.selectedClipControl, disabled: true, disabledReason: voiceCatalogError || "正在读取声音设置…" } : generationView.selectedClipControl}
             selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}
             onGenerateSelectedClip={handleGenerateSelectedClip}
@@ -2126,8 +2166,8 @@ export function StudioApp({ project }: StudioAppProps) {
             onUpdateClip={handleUpdateClip}
           />
           </div>
-          <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${speechMode}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress) || Boolean(recheckingCandidateId) || Boolean(confirmingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={(id, shot) => handleSaveClipStoryboard(id, shot, speechMode)} onEdit={handleEditClipStoryboard} /> : null}
+          <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${speechMode}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress) || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={(id, shot) => handleSaveClipStoryboard(id, shot, speechMode)} onEdit={handleEditClipStoryboard} /> : null}
           </div>
         </div>
       </EditorPanels>

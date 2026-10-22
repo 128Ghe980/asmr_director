@@ -1,0 +1,19 @@
+# Audio segmentation responsibility correction
+
+Date: 2026-10-20. Parent: Audio Quality V1; SFX remains paused. The user's explicit request resumes segmentation work and supersedes the earlier deferral.
+
+2026-10-21 amendment: the user rejects a frontend entry for re-splitting old candidates after an algorithm update. Remove the visible re-split action, its cancellation control and related guidance; retain the backend API for compatibility. This remains within Audio Quality V1 and adds no top-level roadmap stage.
+
+ASR supplies positions for segmentation. The user listens and decides whether generated speech is satisfactory and should be adopted or regenerated. Transcript agreement is not a product content certification and must not independently block a locatable slice.
+
+Substitutions and omitted particles remain visible without imposing an additional text-confirmation step. A completed split means ready for listening, not correct generated content. An uncertain boundary retains the full original recording for listening and download; the user decides whether to regenerate. The frontend no longer offers re-splitting old candidates. The system must not remove actual terminal speech to manufacture a successful check.
+
+New short/context generation, paragraph splitting and the retained compatibility API for re-splitting existing recordings send the internal `cuttingOnly: true` request. The 2026-10-21 change removes only the frontend re-split entry, its cancellation control and guidance; automatic segmentation during generation, original-audio listening/download and ordinary adoption remain available. Each endpoint location uses one ASR pass on its input; paragraph splitting still processes successive remaining recordings. Ordered words and timestamps locate whole-word endpoints despite transcript differences. No character-proportional time interpolation is allowed. Measured native PCM quiet and adjacent word times establish cuts; left/right/final transcript equality is no longer an acceptance gate or a reason for repeated recognition. Final remaining audio is retained in full.
+
+New recognition carries `analysisMode: cutting_only`. Analysis `boundaryOnly` records positional evidence and `contentVerified: false`. A final `whole_recording` retains complete valid audio even with different or absent ASR text. Literal coverage remains a measurement and is not a segmentation or adoption threshold. Existing strict results and manual confirmations remain readable; already cut legacy results awaiting text confirmation also support ordinary adoption. Remove the extra text-checkbox gate without automatically adopting or confirming anything. No TTS quality retries, vocabulary patches, extra user switches or changes to voice selection/video batch protocols.
+
+Forced segmentation is not implemented. This change must not define or implement it, or relax the current boundary conditions while removing the entry.
+
+The original segmentation change validates actual problem PCM and deterministic boundary cases: locatable differences produce slices; uncertain/acoustically unsafe boundaries retain originals; paragraph slices partition the original PCM exactly; the retained backend re-splitting API invokes no TTS; ordinary listening/adoption remains available. Assess forced-alignment experiments by boundary usefulness rather than ASR spelling improvement. Save evidence, run appropriate backend/UI/type/build checks, then update the same 3001 service while protecting existing candidates and references.
+
+Validate the 2026-10-21 entry removal separately: no visible re-split action, corresponding cancellation or guidance; automatic generation-time segmentation, listening/download, ordinary adoption and backend compatibility remain. Implementation, test and deployment results belong in the [change record](../records/2026-10-21-remove-recheck-entry.md); do not claim completion before verification.

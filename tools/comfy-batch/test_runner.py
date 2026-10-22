@@ -9,13 +9,14 @@ import re
 import shutil
 import socket
 import struct
-import sys
 import tempfile
 import threading
 import time
 import unittest
 from unittest import mock
+import urllib.parse
 import wave
+import zlib
 
 SOURCE = Path(__file__).resolve().parent
 TEST_ROOT = Path(os.environ.get("ASMR_BATCH_TEST_ROOT", "I:/AI/asmr-director-video-batch/2026-10-15/candidates-qa")) if Path("I:/").is_dir() else Path(tempfile.gettempdir())
@@ -30,7 +31,20 @@ def entry(batch, shot_id="arbitrary/id:one", index=1):
 
 
 def seeds(posts):
-    return [body["prompt"]["10"]["inputs"]["noise_seed"] for body in posts]
+    return [body["prompt"]["10"]["inputs"]["noise_seed"] for body in posts if "22" in body["prompt"]]
+
+
+def png_bytes(filename):
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    pixel = hashlib.sha256(filename.encode()).digest()[:3]
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\0" + pixel)) + chunk(b"IEND", b""))
+
+
+def uploaded_name(path):
+    path = Path(path)
+    return "asmr_" + runner.file_hash(path)[:24] + path.suffix.lower()
 
 
 class FakeComfy:
@@ -40,14 +54,32 @@ class FakeComfy:
         self.queue_pending = False
         self.read_failures = 0
         self.fail_posts = set()
+        self.fail_previews = False
         self.gets = []
         self.classes = {node["class_type"]: {} for node in json.loads((SOURCE / "workflow_api.json").read_text()).values()}
-        self.classes["LoadImage"] = {}
+        self.classes.update({name: {} for name in ("LoadImage", "LoadVideo", "CLFSelectVideoTailFrames", "SaveImage", "ImageFromBatch", "TrimAudioDuration",
+                            "ConcatenateVideo", "CLFLoadVideoTailFrames", "ComfyMathExpression", "EmptyAudio", "AudioMerge", "AudioConcat")})
+
+    @property
+    def model_posts(self):
+        return [body for body in self.posts if "22" in body["prompt"]]
+
+    @property
+    def preview_posts(self):
+        return [body for body in self.posts if "22" not in body["prompt"] and "26" in body["prompt"]]
+
+    @property
+    def tail_posts(self):
+        return [body for body in self.posts if "22" not in body["prompt"] and "910" in body["prompt"]]
 
     def record(self, prompt_id, body, failed=False):
-        self.history[prompt_id] = {"prompt": [1, prompt_id, body["prompt"], body["extra_data"], ["26"]],
-                                   "status": {"completed": True, "status_str": "error" if failed else "success"},
-                                   "outputs": {} if failed else {"26": {"images": [{"filename": prompt_id + ".mp4", "subfolder": "batch", "type": "output"}]}}}
+        outputs = {}
+        if not failed:
+            for node_id, extension in (("26", ".mp4"), ("902", ".png")):
+                if node_id in body["prompt"]:
+                    outputs[node_id] = {"images": [{"filename": prompt_id + extension, "subfolder": "batch", "type": "output"}]}
+        self.history[prompt_id] = {"prompt": [1, prompt_id, body["prompt"], body["extra_data"], list(outputs)],
+                                   "status": {"completed": True, "status_str": "error" if failed else "success"}, "outputs": outputs}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -83,7 +115,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/view?"):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"mock-video-content")
+            filename = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)["filename"][0]
+            self.wfile.write(png_bytes(filename) if filename.endswith(".png") else b"mock-video-content:" + filename.encode())
         else:
             self.send_error(404)
 
@@ -101,7 +134,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(data)
         state.posts.append(body)
         prompt_id = "prompt-" + str(len(state.posts))
-        prompt = body["prompt"]["22"]["inputs"]["prompt"]
+        prompt = body["prompt"].get("22", {}).get("inputs", {}).get("prompt", "")
         if state.behavior == "unknown":
             self.connection.shutdown(socket.SHUT_RDWR)
             self.connection.close()
@@ -109,7 +142,8 @@ class Handler(BaseHTTPRequestHandler):
         if state.behavior in ("queued", "queued_lost"):
             state.pending.append([1, prompt_id, body["prompt"], body["extra_data"], ["26"]])
         else:
-            state.record(prompt_id, body, failed="FAIL_THIS" in prompt or len(state.posts) in state.fail_posts)
+            state.record(prompt_id, body, failed="FAIL_THIS" in prompt or len(state.posts) in state.fail_posts
+                         or (state.fail_previews and "22" not in body["prompt"] and "26" in body["prompt"]))
         if state.behavior in ("lost_response", "queued_lost"):
             self.connection.shutdown(socket.SHUT_RDWR)
             self.connection.close()
@@ -148,12 +182,19 @@ class RunnerTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_port}"
-        self.ffmpeg_patch = mock.patch.object(runner, "run_ffmpeg")
-        self.ffmpeg_patch.start()
-        self.finishes, self.tails, self.concatenations = [], [], []
+        self.publishes, self.tails = [], []
+        previous_tail = runner.BatchRunner.previous_tail
+
+        def track_previous_tail(batch, index, candidate=1):
+            result = previous_tail(batch, index, candidate)
+            if result is not None:
+                self.tails.append(batch.previous_output(index, candidate))
+            return result
+        self.tail_patch = mock.patch.object(runner.BatchRunner, "previous_tail", new=track_previous_tail)
+        self.tail_patch.start()
 
     def tearDown(self):
-        self.ffmpeg_patch.stop()
+        self.tail_patch.stop()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join()
@@ -162,48 +203,47 @@ class RunnerTests(unittest.TestCase):
     def save_manifest(self):
         (self.package / "project.json").write_text(json.dumps(self.manifest), encoding="utf-8")
 
-    def finish(self, executable, raw, target, entry):
-        self.finishes.append(copy.deepcopy(entry))
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-        Path(target).write_bytes(Path(raw).read_bytes() + str(entry["target_duration"]).encode())
-
-    def tail(self, executable, previous, target):
-        self.tails.append(Path(previous))
-        Path(target).write_bytes(b"synthetic-tail")
-        return target
-
-    def concatenate(self, executable, clips, target):
-        self.concatenations.append(clips)
-        Path(target).write_bytes(b"complete-sequential-preview")
-        return target
+    def publish(self, raw, target, receipt):
+        self.publishes.append(copy.deepcopy(receipt))
+        return runner.copy_saved_video(raw, target, receipt)
 
     def make_runner(self, **kwargs):
         package = kwargs.pop("package", self.package)
-        options = dict(comfy_url=self.url, ffmpeg=sys.executable, poll_interval=.002, missing_grace=.006,
-                       job_timeout=.04, log=lambda unused: None, finish=self.finish, tail_extractor=self.tail,
-                       concatenator=self.concatenate)
+        options = dict(comfy_url=self.url, poll_interval=.002, missing_grace=.006,
+                       job_timeout=.04, log=lambda unused: None, publisher=self.publish)
         options.update(kwargs)
         return runner.BatchRunner(package, **options)
 
-    def test_speech_routes_original_ambient_routes_generated_and_caps_five_seconds(self):
+    def test_speech_routes_original_ambient_routes_generated_and_exports_native_video_and_tail(self):
         batch = self.make_runner()
         self.assertEqual(batch.run()["succeeded"], 2)
         speech, ambient = [body["prompt"] for body in self.remote.posts]
         self.assertEqual(speech["11"]["inputs"]["audio"], ["24", 0])
         self.assertEqual(speech["22"]["inputs"]["ref_audios.ref_audio_0"], ["24", 0])
         self.assertNotIn("4", speech)
-        self.assertEqual(ambient["11"]["inputs"]["audio"], ["4", 0])
+        self.assertEqual(ambient["11"]["inputs"]["audio"], ["904", 0])
+        self.assertEqual(ambient["904"]["class_type"], "TrimAudioDuration")
+        self.assertEqual(ambient["904"]["inputs"], {"audio": ["4", 0], "start_index": 0.0, "duration": 5.0})
+        self.assertEqual(ambient["903"]["inputs"]["length"], 120)
         self.assertNotIn("24", ambient)
         self.assertFalse(any(key.startswith("ref_audios") for key in ambient["22"]["inputs"]))
         self.assertEqual(ambient["22"]["inputs"]["length"], 124)
-        self.assertEqual(self.finishes[1]["target_duration"], 5)
-        self.assertEqual(self.finishes[0]["source_duration"], 1.625)
-        self.assertGreaterEqual(self.finishes[0]["target_duration"], 1.625)
-        self.assertLess(self.finishes[0]["target_duration"] - 1.625, 1 / 24 + 1e-9)
+        self.assertEqual(self.publishes[1]["target_duration"], 5)
+        self.assertEqual(self.publishes[0]["source_duration"], 1.625)
+        self.assertGreaterEqual(self.publishes[0]["target_duration"], 1.625)
+        self.assertLess(self.publishes[0]["target_duration"] - 1.625, 1 / 24 + 1e-9)
         self.assertIn("ref_images.ref_image_1", ambient["22"]["inputs"])
+        for graph in (speech, ambient):
+            self.assertEqual(graph["903"]["class_type"], "ImageFromBatch")
+            self.assertEqual(graph["11"]["inputs"]["images"], ["903", 0])
+            self.assertEqual(graph["901"]["class_type"], "CLFSelectVideoTailFrames")
+            self.assertEqual(graph["901"]["inputs"]["video"], ["11", 0])
+            self.assertEqual(graph["902"]["inputs"]["images"], ["901", 0])
         self.assertEqual(len(self.tails), 1)
+        self.assertFalse(self.remote.tail_posts)  # New outputs already include their PNG branch.
         self.assertTrue((self.package / "outputs" / "run-state.json").is_file())
         self.assertEqual(len(list((self.package / "outputs").glob("*.mp4"))), 2)
+        self.assertEqual((batch.output / entry(batch)["output"]).read_bytes(), b"mock-video-content:prompt-1.mp4")
 
     def test_resume_skips_success_and_changed_single_shot_does_not_cascade(self):
         self.make_runner().run()
@@ -249,10 +289,10 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.make_runner(only="1").run()["succeeded"], 1)
         self.assertEqual(len(self.remote.posts), 1)
 
-    def test_final_encoding_failure_resumes_without_regenerating_model(self):
+    def test_final_publish_failure_resumes_without_regenerating_model(self):
         def fail(*unused):
-            raise runner.BatchError("temporary encoder issue")
-        first = self.make_runner(only="1", finish=fail)
+            raise runner.BatchError("temporary publisher issue")
+        first = self.make_runner(only="1", publisher=fail)
         self.assertEqual(first.run()["downloading"], 1)
         self.assertEqual(self.make_runner(only="1").run()["succeeded"], 1)
         self.assertEqual(len(self.remote.posts), 1)
@@ -375,7 +415,9 @@ class RunnerTests(unittest.TestCase):
         second = self.make_runner(package=moved, only="1")
         self.assertEqual(second.run()["succeeded"], 1)
         self.assertEqual(len(self.remote.posts), 1)
-        self.assertTrue(Path(self.finishes[-1]["audio_snapshot"]).relative_to(moved))
+        snapshot = second.state_file(entry(second)["audio_snapshot"])
+        self.assertTrue(snapshot.relative_to(moved))
+        self.assertEqual(runner.file_hash(snapshot), runner.file_hash(moved / "shots/001/audio.wav"))
         output = entry(second)["output"]
         self.assertFalse(Path(output).is_absolute())
         self.assertTrue((moved / "outputs" / output).is_file())
@@ -397,19 +439,24 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(third.run()["input_error"], 0)
         self.assertEqual(len(self.remote.posts), 1)
 
+
     def test_concat_three_successful_shots_in_order_and_cached_without_model_posts(self):
         self.manifest["shots"].append({"id": "third", "order": 3, "kind": "ambient", "referenceMode": "new", "prompt": "Quiet wind.", "durationSeconds": 2})
         self.save_manifest()
         first = self.make_runner(concat=True)
         self.assertEqual(first.run()["preview_failed"], 0)
-        self.assertEqual(len(self.remote.posts), 3)
-        self.assertEqual(len(self.concatenations), 1)
-        self.assertEqual([path.name[:3] for path, duration in self.concatenations[0]], ["001", "002", "003"])
+        self.assertEqual(len(self.remote.model_posts), 3)
+        self.assertEqual(len(self.remote.preview_posts), 1)
+        graph = self.remote.preview_posts[0]["prompt"]
+        self.assertEqual([graph[str(2000 + index)]["inputs"]["file"] for index in range(3)],
+                         [uploaded_name(first.output / entry(first, shot["id"])["output"]) for shot in self.manifest["shots"]])
         self.assertTrue((first.output / "preview.mp4").is_file())
         self.assertEqual(first.state["preview"]["shot_count"], 3)
+        self.assertEqual(first.state["preview"]["method"], "comfy_native")
         self.make_runner(concat=True).run()
-        self.assertEqual(len(self.remote.posts), 3)
-        self.assertEqual(len(self.concatenations), 1)
+        self.assertEqual(len(self.remote.model_posts), 3)
+        self.assertEqual(len(self.remote.preview_posts), 1)
+
 
     def test_concat_refuses_missing_shot_and_preserves_existing_preview(self):
         self.manifest["shots"][0]["prompt"] = "FAIL_THIS"
@@ -419,21 +466,21 @@ class RunnerTests(unittest.TestCase):
         preview.write_bytes(b"prior-preview")
         result = batch.run()
         self.assertEqual(result["preview_failed"], 1)
-        self.assertFalse(self.concatenations)
+        self.assertFalse(self.remote.preview_posts)
         self.assertEqual(preview.read_bytes(), b"prior-preview")
         self.assertEqual(batch.state["preview"]["status"], "unavailable")
+
 
     def test_concat_error_does_not_recreate_models_or_replace_preview(self):
         first = self.make_runner()
         first.run()
         preview = first.output / "preview.mp4"
         preview.write_bytes(b"prior-preview")
-
-        def fail(*unused):
-            raise runner.BatchError("temporary concat issue")
-        self.assertEqual(self.make_runner(concat=True, concatenator=fail).run()["preview_failed"], 1)
+        self.remote.fail_previews = True
+        self.assertEqual(self.make_runner(concat=True).run()["preview_failed"], 1)
         self.assertEqual(preview.read_bytes(), b"prior-preview")
-        self.assertEqual(len(self.remote.posts), 2)
+        self.assertEqual(len(self.remote.model_posts), 2)
+        self.assertEqual(len(self.remote.preview_posts), 1)
 
     def test_candidate_count_increase_fills_only_missing_and_decrease_preserves_extras(self):
         first = self.make_runner(candidates=2)
@@ -498,30 +545,30 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(len(self.remote.posts), 4)
 
     def test_prompt_round_trip_reuses_success_history_without_post_or_output_overwrite(self):
-        def distinctive_finish(executable, raw, target, receipt):
-            self.finish(executable, raw, target, receipt)
+        def distinctive_publish(raw, target, receipt):
+            self.publish(raw, target, receipt)
             with Path(target).open("ab") as handle:
                 handle.write(receipt["submission_id"].encode())
 
-        first = self.make_runner(candidates=2, finish=distinctive_finish)
+        first = self.make_runner(candidates=2, publisher=distinctive_publish)
         self.assertEqual(first.run()["succeeded"], 4)
         original = {number: copy.deepcopy(entry(first, index=number)) for number in (1, 2)}
         originals = {first.output / value["output"]: ((first.output / value["output"]).read_bytes(),
                      (first.output / value["output"]).stat().st_mtime_ns) for value in original.values()}
         self.manifest["shots"][0]["prompt"] = "CHANGED_FIRST"
         self.save_manifest()
-        changed = self.make_runner(candidates=2, finish=distinctive_finish)
+        changed = self.make_runner(candidates=2, publisher=distinctive_publish)
         self.assertEqual(changed.run()["succeeded"], 4)
         changed_receipts = {number: copy.deepcopy(entry(changed, index=number)) for number in (1, 2)}
         self.assertEqual(len(self.remote.posts), 6)
         self.manifest["shots"][0]["prompt"] = "FIRST_SHOT"
         self.save_manifest()
-        restored = self.make_runner(candidates=2, finish=distinctive_finish)
+        restored = self.make_runner(candidates=2, publisher=distinctive_publish)
         result = restored.run()
         self.assertEqual(result["succeeded"], 4)
         self.assertEqual(result["input_error"], 0)
         self.assertEqual(len(self.remote.posts), 6)
-        self.assertEqual(len(self.finishes), 6)
+        self.assertEqual(len(self.publishes), 6)
         for number in (1, 2):
             current = entry(restored, index=number)
             for field in ("fingerprint", "seed", "submission_id", "prompt_id", "output", "output_sha256"):
@@ -604,14 +651,14 @@ class RunnerTests(unittest.TestCase):
         second = self.make_runner()
         self.assertEqual(second.run()["succeeded"], 1)
         changed = copy.deepcopy(entry(second))
-        self.assertEqual(len(self.remote.posts), 2)
+        self.assertEqual(len(self.remote.model_posts), 2)
         self.manifest["shots"][0]["prompt"] = "FIRST_SHOT"
         self.save_manifest()
         third = self.make_runner(concat=True)
         result = third.run()
         self.assertEqual(result["succeeded"], 1)
         self.assertEqual(result["preview_failed"], 0)
-        self.assertEqual(len(self.remote.posts), 3)
+        self.assertEqual(len(self.remote.model_posts), 3)
         current = copy.deepcopy(entry(third))
         self.assertEqual(current["fingerprint"], original["fingerprint"])
         self.assertNotEqual(current["output"], original["output"])
@@ -623,7 +670,7 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(any(old.get("prompt_id") == changed["prompt_id"] for old in current["history"]))
         fourth = self.make_runner(concat=True)
         self.assertEqual(fourth.run()["succeeded"], 1)
-        self.assertEqual(len(self.remote.posts), 3)
+        self.assertEqual(len(self.remote.model_posts), 3)
         self.assertEqual(entry(fourth)["output"], current["output"])
         self.assertEqual(entry(fourth)["output_suffix"], current["output_suffix"])
         self.assertEqual(old_path.read_bytes(), external_content)
@@ -647,7 +694,7 @@ class RunnerTests(unittest.TestCase):
             result = continued.run()
             self.assertEqual(result["succeeded"], 1)
             self.assertEqual(result["preview_failed"], 0)
-            self.assertEqual(len(self.remote.posts), 1)
+            self.assertEqual(len(self.remote.model_posts), 1)
             current = entry(continued)
             self.assertEqual(current["submission_id"], original["submission_id"])
             self.assertEqual(current["prompt_id"], original["prompt_id"])
@@ -660,11 +707,11 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), content)
                 self.assertEqual(path.stat().st_mtime_ns, modified_ns)
             previous = continued
-        self.assertEqual(len(self.finishes), 3)  # Initial encode plus two local repairs.
+        self.assertEqual(len(self.publishes), 3)  # Initial publish plus two local copy repairs.
         final = self.make_runner(concat=True)
         self.assertEqual(final.run()["succeeded"], 1)
-        self.assertEqual(len(self.remote.posts), 1)
-        self.assertEqual(len(self.finishes), 3)
+        self.assertEqual(len(self.remote.model_posts), 1)
+        self.assertEqual(len(self.publishes), 3)
         self.assertEqual(entry(final)["output"], entry(previous)["output"])
         for path, (content, modified_ns) in protected.items():
             self.assertEqual(path.read_bytes(), content)
@@ -733,6 +780,13 @@ class RunnerTests(unittest.TestCase):
                                       first.output / entry(first, index=2)["output"]])
         for number in (1, 2):
             self.assertEqual(entry(first, "second", number)["effective_reference_mode"], "continuous")
+            previous = entry(first, index=number)
+            tail = first.state_file(previous["tail"])
+            self.assertTrue(tail.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+            graph = json.loads(first.state_file(entry(first, "second", number)["payload"]).read_text(encoding="utf-8"))["prompt"]
+            self.assertEqual(graph["900"]["inputs"]["image"], uploaded_name(tail))
+        self.assertNotEqual(entry(first, index=1)["tail_sha256"], entry(first, index=2)["tail_sha256"])
+        self.assertFalse(self.remote.tail_posts)
 
     def test_failed_corresponding_candidate_falls_back_without_borrowing_another(self):
         self.remote.fail_posts = {2}
@@ -795,18 +849,21 @@ class RunnerTests(unittest.TestCase):
         single = self.make_runner(dry_run=True).run()["dry_run"]
         self.assertEqual([Path(path).name for path in single], ["001.json", "002.json"])
 
+
     def test_multiple_candidate_previews_are_separate_complete_numbered_lanes(self):
         first = self.make_runner(candidates=2, concat=True)
         self.assertEqual(first.run()["preview_failed"], 0)
-        self.assertEqual(len(self.concatenations), 2)
-        for number, clips in enumerate(self.concatenations, 1):
-            self.assertEqual([path for path, duration in clips],
-                             [first.output / entry(first, shot["id"], number)["output"] for shot in self.manifest["shots"]])
+        self.assertEqual(len(self.remote.preview_posts), 2)
+        for number, body in enumerate(self.remote.preview_posts, 1):
+            graph = body["prompt"]
+            self.assertEqual([graph[str(2000 + index)]["inputs"]["file"] for index in range(2)],
+                             [uploaded_name(first.output / entry(first, shot["id"], number)["output"]) for shot in self.manifest["shots"]])
             self.assertTrue((first.output / f"preview-c{number:03d}.mp4").is_file())
         self.assertFalse((first.output / "preview.mp4").exists())
         self.make_runner(candidates=2, concat=True).run()
-        self.assertEqual(len(self.remote.posts), 4)
-        self.assertEqual(len(self.concatenations), 2)
+        self.assertEqual(len(self.remote.model_posts), 4)
+        self.assertEqual(len(self.remote.preview_posts), 2)
+
 
     def test_missing_candidate_lane_does_not_block_other_complete_preview(self):
         self.remote.fail_posts = {2}
@@ -814,11 +871,12 @@ class RunnerTests(unittest.TestCase):
         prior = batch.output / "preview-c002.mp4"
         prior.write_bytes(b"prior-candidate-two-preview")
         self.assertEqual(batch.run()["preview_failed"], 1)
-        self.assertEqual(len(self.concatenations), 1)
+        self.assertEqual(len(self.remote.preview_posts), 1)
         self.assertTrue((batch.output / "preview-c001.mp4").is_file())
         self.assertEqual(prior.read_bytes(), b"prior-candidate-two-preview")
-        self.assertEqual([path for path, duration in self.concatenations[0]],
-                         [batch.output / entry(batch, shot["id"], 1)["output"] for shot in self.manifest["shots"]])
+        graph = self.remote.preview_posts[0]["prompt"]
+        self.assertEqual([graph[str(2000 + index)]["inputs"]["file"] for index in range(2)],
+                         [uploaded_name(batch.output / entry(batch, shot["id"], 1)["output"]) for shot in self.manifest["shots"]])
 
     def test_healthy_long_queue_has_heartbeats_and_no_implicit_job_deadline(self):
         self.remote.behavior, self.remote.queue_pending = "queued", True
@@ -904,25 +962,28 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(entry(second)["submission_id"], submission_id)
         self.assertEqual(len(self.remote.posts), 4)
 
-    def test_confirmed_raw_finishes_locally_when_comfy_is_offline(self):
+    def test_confirmed_raw_publishes_locally_when_comfy_is_offline(self):
         def fail(*unused):
-            raise runner.BatchError("temporary encoder issue")
-        first = self.make_runner(only="1", finish=fail)
+            raise runner.BatchError("temporary publisher issue")
+        first = self.make_runner(only="1", publisher=fail)
         self.assertEqual(first.run()["downloading"], 1)
         receipt = copy.deepcopy(entry(first))
         self.assertTrue(receipt.get("remote_output"))
         self.assertTrue(receipt.get("raw_sha256"))
         offline = runner.ComfyClient("http://127.0.0.1:1", timeout=.01)
+
         with mock.patch.object(offline, "get", side_effect=AssertionError("raw recovery must not request ComfyUI")), \
-             mock.patch.object(offline, "download", side_effect=AssertionError("verified raw must not download again")), \
+             mock.patch.object(offline, "download", side_effect=AssertionError("local recovery must not download video or optional tail")), \
              mock.patch.object(offline, "submit", side_effect=AssertionError("raw recovery must not resubmit")):
             second = self.make_runner(only="1", client=offline)
             self.assertEqual(second.run()["succeeded"], 1)
         self.assertEqual(entry(second)["submission_id"], receipt["submission_id"])
+        self.assertTrue(entry(second)["remote_tail"])
+        self.assertFalse(entry(second).get("tail"))  # Deferred until a later shot needs it.
         self.assertEqual(len(self.remote.posts), 1)
 
     def test_default_timeout_and_request_timeout_are_separate(self):
-        batch = runner.BatchRunner(self.package, comfy_url=self.url, ffmpeg=sys.executable,
+        batch = runner.BatchRunner(self.package, comfy_url=self.url,
                                    request_timeout=.75, log=lambda unused: None)
         self.assertEqual(batch.job_timeout, 0)
         self.assertEqual(batch.client.timeout, .75)
@@ -988,43 +1049,6 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(resumed.run()["succeeded"], 4)
         self.assertEqual(len(self.remote.posts), 4)
 
-    def test_concat_filter_resets_timestamps_and_exact_lengths_for_paths_with_spaces(self):
-        directory = self.root / "output folder with spaces"
-        directory.mkdir()
-        source = directory / "source file with spaces.mp4"
-        source.write_bytes(b"synthetic-source")
-        target = directory / "preview.mp4"
-        captures = []
-
-        def ffmpeg(executable, arguments):
-            captures.append(arguments)
-            filters = arguments[arguments.index("-filter_complex") + 1]
-            self.assertIn("trim=end_frame=8,setpts=N/(24*TB)", filters)
-            self.assertIn("trim=end_frame=120,setpts=N/(24*TB)", filters)
-            self.assertIn("atrim=end_sample=16000,asetpts=N/SR/TB", filters)
-            self.assertIn("atrim=end_sample=240000,asetpts=N/SR/TB", filters)
-            self.assertIn("concat=n=2:v=1:a=1", filters)
-            self.assertNotIn(str(source), filters)
-            self.assertEqual([arguments[index + 1] for index, value in enumerate(arguments) if value == "-i"], [source, source])
-            self.assertEqual(arguments[arguments.index("-t") + 1], "5.333333333333")
-            self.assertEqual(arguments[arguments.index("-frames:v") + 1], "128")
-            self.assertEqual(arguments[arguments.index("-r") + 1], "24")
-            Path(arguments[-1]).write_bytes(b"concatenated-preview")
-        with mock.patch.object(runner, "run_ffmpeg", side_effect=ffmpeg):
-            runner.concat_videos("ffmpeg", [(source, 8 / 24), (source, 5)], target)
-        self.assertEqual(len(captures), 1)
-        self.assertEqual(target.read_bytes(), b"concatenated-preview")
-        self.assertEqual(source.read_bytes(), b"synthetic-source")
-        self.assertFalse(list(directory.glob("preview.part-*")))
-
-        def fail_final(executable, arguments):
-            Path(arguments[-1]).write_bytes(b"partial-preview")
-            raise runner.BatchError("concat failure")
-        with mock.patch.object(runner, "run_ffmpeg", side_effect=fail_final):
-            with self.assertRaises(runner.BatchError):
-                runner.concat_videos("ffmpeg", [(source, 1)], target)
-        self.assertEqual(target.read_bytes(), b"concatenated-preview")
-        self.assertFalse(list(directory.glob("preview.part-*")))
 
 
 if __name__ == "__main__":

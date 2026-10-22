@@ -4,6 +4,7 @@ import { Plus, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
+import { AudioPlayer } from "./audio-player";
 
 export type ImportedVoiceReference = VoiceProviderCatalog["providers"][number]["references"][number];
 export type VoiceReferenceImportResult = { reference: ImportedVoiceReference; catalog: VoiceProviderCatalog };
@@ -236,7 +237,7 @@ export function VoiceReferenceImport({ disabled, onImported, onCatalogRefresh, o
       <label className="block space-y-1.5 text-xs text-studio-muted"><span>声音名称</span><input aria-label="参考声音名称" className={fieldClass} maxLength={100} value={name} disabled={locked} onChange={(event) => setName(event.target.value)} /></label>
       {sourceUrl ? <div className="min-w-0 space-y-2">
         <p className="text-xs text-studio-muted">原录音试听{sourceDuration !== undefined ? ` · ${timeLabel(sourceDuration)} 秒` : ""}</p>
-        <audio key={sourceUrl} ref={audioRef} aria-label="待添加的原录音试听" controls preload="metadata" src={sourceUrl} className="h-9 w-full min-w-0 max-w-full"
+        <AudioPlayer key={sourceUrl} ref={audioRef} label="待添加的原录音试听" preload="metadata" src={sourceUrl} statusDisplay="none" className="w-full min-w-0 max-w-full"
           onLoadedMetadata={(event) => {
             const length = event.currentTarget.duration;
             if (Number.isFinite(length) && length > 0) {

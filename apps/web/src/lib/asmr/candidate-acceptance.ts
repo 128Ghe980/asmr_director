@@ -6,7 +6,6 @@ import type { AsmrProject, TimelineClip, TimelineTrack } from "./schema";
 import { getVoiceGenerationContext } from "./voice-generation-context";
 import { getVoiceParagraphContext } from "./voice-paragraph-context";
 import { captureSpeechWorkspace, getParagraphGroup, getSpeechWorkspaceMode, getSpeechWorkspaceProject, restoreSpeechWorkspaceBank } from "./speech-workspace";
-import { isVoiceParagraphManuallyConfirmed } from "./voice-paragraph-result";
 
 function undoFingerprint(entry: Pick<ProjectLibraryEntry, "project" | "plannerSource">): string {
   if (entry.project.speechWorkspace) {
@@ -46,7 +45,7 @@ export function adoptAudioCandidate(library: ProjectLibrary, inputCandidate: Aud
   let timedProject: AsmrProject;
   const paragraph = candidate.provenance.paragraph;
   if (candidateMode === "paragraph") {
-    if (!paragraph || (paragraph.checkStatus !== "passed" && !isVoiceParagraphManuallyConfirmed(paragraph))) throw new Error("请先试听并确认有识别差异的短句，再采用整段。");
+    if (!paragraph || paragraph.checkStatus === "review") throw new Error("请先确认安全切分位置，再采用整段短句。");
     const members = getParagraphGroup(entry.project, target.id);
     if (!paragraphContext || paragraph.groupId !== paragraphContext.groupId || paragraph.text !== paragraphContext.text
       || paragraph.clipIds.length !== members.length || paragraph.segments.length !== members.length

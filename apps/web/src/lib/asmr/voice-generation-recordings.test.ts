@@ -39,6 +39,34 @@ async function take(root: string, runId = id, extra: Record<string, unknown> = {
 }
 
 describe("complete original voice recordings", () => {
+  it("labels cutting-only success and unresolved boundaries without text certification", async () => {
+    const config = await setup();
+    const clips = [{ clipId: "first", text: "回来啦。" }, { clipId: "second", text: "先坐。" }];
+    const fullText = clips.map(clip => clip.text).join("");
+    const directory = await take(getVoiceGenerationRoot(config), id, { projectId: "p", clipId: "first", generationMode: "paragraph",
+      paragraph: { clips }, plan: { clauses: clips.map(clip => clip.text) }, targets: [{ expectedText: fullText, text: fullText }] });
+    const segments = clips.map((clip, index) => ({ ...clip, cutStartSeconds: index * .5, cutEndSeconds: (index + 1) * .5,
+      recognition: { analysisMode: "cutting_only", stage: "complete", expectedText: clip.text,
+        sourceTranscript: "回来先坐", targetTranscript: index ? "先坐" : "回来",
+        sourceWords: index ? [{ text: "先坐", start: .1, end: .3 }]
+          : [{ text: "回来", start: .1, end: .3 }, { text: "先坐", start: .7, end: .9 }],
+        ...(index === 0 ? { followingText: clips[1].text } : {}) } }));
+    await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ checkStatus: "passed", segments }));
+    const query = { config, projectId: "p", clipId: "first", text: clips[0].text, workspaceMode: "paragraph" as const };
+    const [recording] = (await listVoiceGenerationRecordings(query)).recordings;
+    expect(recording.status).toBe("checked");
+    expect(recording.warning).toContain("未核验台词内容");
+    expect(recording.warning).toContain("试听后决定");
+    expect(recording.warning).not.toContain("逐句确认");
+    const failureRecognition = { ...segments[0].recognition, stage: "boundary_check" };
+    await writeFile(path.join(directory, "group-1-take-1-failure.json"), JSON.stringify({ code: "boundary_unlocatable", recognition: failureRecognition }));
+    await writeFile(path.join(directory, "group-1-take-1-analysis.json"), JSON.stringify({ checkStatus: "review" }));
+    const [unresolved] = (await listVoiceGenerationRecordings(query)).recordings;
+    expect(unresolved.warning).toContain("未能确认自动切分的位置");
+    expect(unresolved.warning).toContain("台词内容由你试听判断");
+    expect(await readFile(path.join(directory, "group-1-take-1-source.wav"))).toEqual(Buffer.from(wav));
+  });
+
   it("recovers existing paragraph failure recognition using the exact short target and suffix", async () => {
     const config = await setup();
     const clips = [{ clipId: "first", text: "回来啦。" }, { clipId: "second", text: "先坐。" }];

@@ -3,6 +3,26 @@ import { makeVoiceLongTextResultFixture } from "./voice-candidate-fixture";
 import { VoiceLongTextResultSchema, type VoiceLongTextResult } from "./voice-longtext-result";
 
 describe("persisted long-text result integrity", () => {
+  it("stores only measured internal pauses for cutting-only results at zero literal coverage", () => {
+    const result = makeVoiceLongTextResultFixture(), group = result.groups[0];
+    group.checkStatus = "passed";
+    group.coverage = 0;
+    group.transcript = "不同的定位词";
+    group.recognition = { analysisMode: "cutting_only", stage: "complete", sourceTranscript: "不同的定位词后文",
+      expectedText: group.text, targetTranscript: group.transcript };
+    group.internalPausesMs = [];
+    group.internalPauseClasses = [];
+    group.internalPausePositions = [];
+    expect(VoiceLongTextResultSchema.parse(result)).toEqual(result);
+    group.internalPausesMs = [120];
+    expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(false);
+    group.internalPausePositions = [0];
+    group.internalPauseClasses = ["short"];
+    expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(true);
+    group.internalPausePositions = [1];
+    expect(VoiceLongTextResultSchema.safeParse(result).success).toBe(false);
+  });
+
   it("accepts a complete plan/result and the earlier result format without an optional plan", () => {
     const result = makeVoiceLongTextResultFixture();
     expect(VoiceLongTextResultSchema.parse(result)).toEqual(result);

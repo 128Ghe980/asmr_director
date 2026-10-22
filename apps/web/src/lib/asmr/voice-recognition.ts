@@ -213,6 +213,28 @@ export const VoiceContentComparisonSchema = z.union([SubstitutionComparisonSchem
 
 const TerminalWordIndex = z.number().int().min(0).max(1999);
 
+/** Locates complete ASR words; it never certifies that spoken text is correct. */
+export const VoiceBoundaryOnlySchema = z.object({
+  method: z.enum(["ordered_word_boundary", "whole_recording"]),
+  alignmentSimilarity: z.number().finite().min(0).max(1),
+  targetEndWordIndex: z.number().int().min(-1).max(1999),
+  followingStartWordIndex: TerminalWordIndex.optional(),
+  contentVerified: z.literal(false),
+  internalPausePositions: z.array(z.number().int().min(0).max(30)).max(31),
+}).strict().superRefine((boundary, context) => {
+  if ((boundary.method === "ordered_word_boundary" && boundary.targetEndWordIndex < 0)
+    || (boundary.method === "whole_recording" && boundary.followingStartWordIndex !== undefined)) {
+    context.addIssue({ code: "custom", path: ["method"], message: "Only a complete recording can have no word endpoint" });
+  }
+  if (boundary.followingStartWordIndex !== undefined && boundary.followingStartWordIndex <= boundary.targetEndWordIndex) {
+    context.addIssue({ code: "custom", path: ["followingStartWordIndex"], message: "The following words must come after the target prefix" });
+  }
+  if (boundary.internalPausePositions.some((position, index, positions) => index > 0 && position <= positions[index - 1])) {
+    context.addIssue({ code: "custom", path: ["internalPausePositions"], message: "Measured pause positions must be ordered and unique" });
+  }
+});
+export type VoiceBoundaryOnly = z.infer<typeof VoiceBoundaryOnlySchema>;
+
 const ReviewWindowSchema = z.object({
   transcript: z.string().min(1).max(8000),
   words: z.array(z.object({ text: z.string().max(200), start: z.number().finite().min(0).max(120.1),
@@ -310,6 +332,7 @@ export type ShortSentenceReview = z.infer<typeof ShortSentenceReviewSchema>;
 
 /** Public recognition evidence contains text/timestamps only, never process details or paths. */
 export const VoiceRecognitionSchema = z.object({
+  analysisMode: z.literal("cutting_only").optional(),
   stage: z.enum(["input_validation", "source_transcription", "source_alignment", "continuation_alignment", "boundary_check", "target_transcription", "target_validation", "complete", "unavailable"]),
   sourceTranscript: z.string().max(8000),
   sourceWords: z.array(z.object({
@@ -352,6 +375,23 @@ export const VoiceRecognitionSchema = z.object({
     reason: z.string().regex(/^[a-z_]{1,80}$/),
   }).strict().optional(),
 }).strict().superRefine((recognition, context) => {
+  if (recognition.analysisMode === "cutting_only") {
+    const fail = (message: string) => context.addIssue({ code: "custom", path: ["analysisMode"], message });
+    if (recognition.contentComparison || recognition.shortSentenceReview || recognition.followingPhoneticBoundary
+      || recognition.boundaryMatch || recognition.continuationBridge || recognition.endpointCandidates || recognition.apiFallback) {
+      fail("Cutting-only evidence cannot include legacy text acceptance or semantic selection");
+    }
+    if (recognition.stage === "complete" && recognition.followingText?.trim()) {
+      let previousEnd = 0, prefix = "", targetIsWholePrefix = false;
+      for (const word of recognition.sourceWords ?? []) {
+        if (word.end <= word.start || word.start < previousEnd - .02) fail("Cutting-only words require positive ordered timestamps");
+        previousEnd = word.end;
+        prefix += word.text;
+        if (prefix === recognition.targetTranscript) targetIsWholePrefix = true;
+      }
+      if (!recognition.targetTranscript?.trim() || !targetIsWholePrefix) fail("A completed cut must retain the exact whole-word source prefix");
+    }
+  }
   const comparison = recognition.contentComparison;
   const review = recognition.shortSentenceReview;
   if (review) {
@@ -475,3 +515,7 @@ export const VoiceRecognitionSchema = z.object({
 
 export type VoiceRecognition = z.infer<typeof VoiceRecognitionSchema>;
 export type VoiceContentComparison = z.infer<typeof VoiceContentComparisonSchema>;
+
+export function isCuttingOnlyRecognition(recognition?: Pick<VoiceRecognition, "analysisMode">): boolean {
+  return recognition?.analysisMode === "cutting_only";
+}

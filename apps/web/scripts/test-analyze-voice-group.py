@@ -1708,6 +1708,36 @@ class RecognitionDiagnosticsTests(unittest.TestCase):
             self.assertEqual(helper.process_request(str(self.request), lambda _: None), 2)
         self.assertEqual(self.output.read_bytes(), before)
 
+    def test_json_cutting_only_uses_one_source_asr_and_preserves_exact_pcm(self):
+        request = json.loads(self.request.read_text(encoding="utf-8"))
+        request["cuttingOnly"] = True
+        self.request.write_text(json.dumps(request), encoding="utf-8")
+        source = ("慢慢放松，安静休息。", segment_words())
+        with patch.object(helper, "transcribe", return_value=source) as transcribe:
+            self.assertEqual(helper.process_request(str(self.request), lambda _: None), 0)
+        self.assertEqual(transcribe.call_count, 1)
+        result = self.read_result()
+        self.assertEqual(result["recognition"]["analysisMode"], "cutting_only")
+        self.assertFalse(result["boundaryOnly"]["contentVerified"])
+        original, rate = helper.sf.read(self.source, dtype="int16")
+        processed, _ = helper.sf.read(request["outputWav"], dtype="int16")
+        self.assertTrue(np.array_equal(processed, original[:round(result["cutEndSeconds"] * rate)]))
+
+    def test_json_cutting_only_rejects_invalid_flags_before_model_loading(self):
+        request = json.loads(self.request.read_text(encoding="utf-8"))
+        for fields in ({"cuttingOnly": "true"}, {"cuttingOnly": True,
+                "alignmentHint": {"terminalWordIndex": 0, "recognizedPrefix": "慢慢放松"}}):
+            self.request.write_text(json.dumps({**request, **fields}), encoding="utf-8")
+            with self.subTest(fields=fields), patch.object(helper, "load_model", side_effect=AssertionError("invalid request")):
+                self.assertEqual(helper.process_request(str(self.request)), 2)
+        request["cuttingOnly"] = True
+        self.request.write_text(json.dumps(request), encoding="utf-8")
+        self.assertEqual(helper.process_request(str(self.request), lambda _: (_ for _ in ()).throw(RuntimeError("private model path"))), 0)
+        result = self.read_result()
+        self.assertFalse(result["success"])
+        self.assertEqual(result["recognition"]["analysisMode"], "cutting_only")
+        self.assertNotIn("private model path", json.dumps(result))
+
     def test_json_short_particle_flag_requires_boolean_two_sided_and_no_api_hint(self):
         request = json.loads(self.request.read_text(encoding="utf-8"))
         request.update(expectedText="回来啦。", followingText="安静休息。", clauses=["回来啦。"],
@@ -1915,6 +1945,228 @@ class RecognitionDiagnosticsTests(unittest.TestCase):
         self.assertLessEqual(len(result["sourceWords"]), 2000)
         self.assertEqual(len(result["sourceWords"][0]["text"]), 200)
         json.dumps(result, allow_nan=False)
+
+
+class CuttingOnlyTests(unittest.TestCase):
+    expected = "进来坐，炉子边暖和。"
+    following = "擦擦脸吧。"
+
+    def audio(self):
+        return np.concatenate([np.zeros(9600), tone(.4), np.zeros(24000), tone(.4), np.zeros(9600)])
+
+    def source(self, target=None, following=None):
+        words = [{"text": target or "进来坐炉子边暖和", "start": .2, "end": .6},
+                 {"text": following or "擦擦脸吧", "start": 1.1, "end": 1.5}]
+        return "".join(word["text"] for word in words), words
+
+    def analyze(self, source=None, audio=None, expected=None, following=None, clauses=None):
+        with patch.object(helper, "transcribe", return_value=source or self.source()) as transcribe:
+            result = helper.analyze(None, self.audio() if audio is None else audio,
+                expected or self.expected, self.following if following is None else following,
+                clauses or [expected or self.expected], cutting_only=True)
+        self.assertEqual(transcribe.call_count, 1)
+        return result
+
+    def test_source_only_and_exact_pcm_no_left_right_or_final_transcription(self):
+        audio = self.audio()
+        processed, result = self.analyze(audio=audio)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["cutStartSeconds"], 0)
+        self.assertTrue(np.array_equal(processed, audio[:round(result["cutEndSeconds"] * helper.RATE)]))
+        self.assertEqual(result["recognition"]["analysisMode"], "cutting_only")
+        self.assertEqual(result["recognition"]["stage"], "complete")
+        self.assertEqual(result["recognition"]["targetTranscript"], self.source()[1][0]["text"])
+        self.assertEqual(result["transcript"], result["recognition"]["targetTranscript"])
+        self.assertEqual(result["boundaryOnly"], {"method": "ordered_word_boundary",
+            "alignmentSimilarity": 1.0, "targetEndWordIndex": 0, "followingStartWordIndex": 1,
+            "contentVerified": False, "internalPausePositions": []})
+        for field in ("contentComparison", "shortSentenceReview", "followingPhoneticBoundary"):
+            self.assertNotIn(field, result["recognition"])
+
+    def test_substitutions_and_independent_segment_text_are_not_content_gates(self):
+        for text in ("进来做炉子边暖和", "进来坐炉子别暖和", "进来做炉子别暖和"):
+            with self.subTest(text=text):
+                source = self.source(text)
+                source = ("这条segment文字与word数组不同", source[1])
+                _, result = self.analyze(source=source)
+                self.assertLess(result["coverage"], .9)
+                self.assertEqual(result["recognition"]["targetTranscript"], text)
+                self.assertFalse(result["boundaryOnly"]["contentVerified"])
+
+    def test_missing_particle_can_locate_whole_word_endpoint(self):
+        _, result = self.analyze(source=self.source("回来", "安静休息"), expected="回来啦。",
+            following="安静休息。")
+        self.assertLess(result["coverage"], .9)
+        self.assertEqual(result["boundaryOnly"]["targetEndWordIndex"], 0)
+
+    def test_single_changed_target_character_can_use_ordered_following_anchors(self):
+        _, result = self.analyze(source=self.source("做", "我给你倒茶"), expected="坐。", following="我给你倒茶。")
+        self.assertEqual(result["coverage"], 0)
+        self.assertEqual(result["boundaryOnly"]["targetEndWordIndex"], 0)
+        self.assertTrue(result["success"])
+
+    def test_following_substitution_is_only_a_locator_difference(self):
+        _, result = self.analyze(source=self.source(following="擦擦连吧"))
+        self.assertTrue(result["success"])
+
+    def test_final_take_keeps_all_original_pcm_despite_word_difference(self):
+        source = ("进来做炉子别暖和", [{"text": "进来做炉子别暖和", "start": .2, "end": .6}])
+        audio = self.audio()[:round(.9 * helper.RATE)]
+        processed, result = self.analyze(source=source, audio=audio, following="")
+        self.assertTrue(np.array_equal(processed, audio))
+        self.assertEqual(result["cutEndSeconds"], .9)
+        self.assertNotIn("followingStartWordIndex", result["boundaryOnly"])
+        self.assertNotIn("cutValidation", result)
+        self.assertEqual(result["boundaryOnly"]["method"], "whole_recording")
+
+    def test_final_unrelated_asr_has_no_content_anchor_gate(self):
+        source = ("完全另一些话", [{"text": "完全另一些话", "start": .2, "end": .6}])
+        audio = self.audio()
+        processed, result = self.analyze(source=source, audio=audio, following="")
+        self.assertTrue(np.array_equal(processed, audio))
+        self.assertEqual(result["boundaryOnly"]["method"], "whole_recording")
+        self.assertEqual(result["coverage"], 0)
+
+    def test_final_without_words_or_with_bad_word_fields_keeps_all_audio(self):
+        for words in ([], [{"text": "坏", "start": float("nan"), "end": .1}]):
+            with self.subTest(words=words):
+                processed, result = self.analyze(source=("识别段文字仍可展示", words), following="")
+                self.assertTrue(np.array_equal(processed, self.audio()))
+                self.assertEqual(result["boundaryOnly"]["targetEndWordIndex"], -1)
+                self.assertEqual(result["recognition"]["sourceWords"], [])
+                self.assertEqual(result["transcript"], "")
+                self.assertEqual(result["recognition"]["sourceTranscript"], "识别段文字仍可展示")
+
+    def test_final_silent_recording_is_preserved_for_user_listening(self):
+        audio = np.zeros(helper.RATE)
+        processed, result = self.analyze(source=("", []), audio=audio, following="")
+        self.assertTrue(np.array_equal(processed, audio))
+        self.assertEqual(result["leadingQuietMs"], 1000)
+        self.assertEqual(result["trailingQuietMs"], 0)
+
+    def test_discarded_later_context_timing_cannot_block_this_cut(self):
+        source = self.source()
+        source[1].append({"text": "远处后文", "start": 30, "end": 120.5})
+        _, result = self.analyze(source=source)
+        self.assertEqual(len(result["recognition"]["sourceWords"]), 2)
+
+    def test_unrelated_source_only_means_unlocatable_and_keeps_mode_in_failure(self):
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^boundary_unlocatable$") as caught:
+            self.analyze(source=self.source("完全其他声音", "陌生故事继续"))
+        self.assertEqual(caught.exception.recognition["analysisMode"], "cutting_only")
+        self.assertEqual(caught.exception.recognition["sourceTranscript"], "完全其他声音陌生故事继续")
+
+    def test_ambiguous_optimal_whole_word_positions_are_not_guessed(self):
+        words = [{"text": char, "start": .1 + index * .2, "end": .2 + index * .2}
+                 for index, char in enumerate("回来来坐")]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^ambiguous_boundary$"):
+            self.analyze(source=("回来来坐", words), expected="回来。", following="坐。")
+
+    def test_merged_word_boundary_is_not_divided_by_character_count(self):
+        words = [{"text": "进来坐炉子边", "start": .1, "end": .5},
+                 {"text": "暖和擦擦脸吧", "start": .5, "end": 1.5}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^boundary_unlocatable$"):
+            self.analyze(source=("进来坐炉子边暖和擦擦脸吧", words))
+
+    def test_real_quiet_required_even_with_perfect_text(self):
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            self.analyze(audio=tone(1.7))
+
+    def test_single_character_timestamps_can_absorb_a_real_pause(self):
+        words = [{"text": "暖", "start": .2, "end": .4},
+                 {"text": "和", "start": .4, "end": .9},
+                 {"text": "擦", "start": .9, "end": 1.3},
+                 {"text": "脸", "start": 1.3, "end": 1.5}]
+        _, result = self.analyze(source=("暖和擦脸", words), expected="暖和。", following="擦脸。")
+        self.assertTrue(result["success"])
+        quiet = result["cutValidation"]
+        self.assertLessEqual(quiet["quietStartSeconds"], .9)
+        self.assertGreaterEqual(quiet["quietEndSeconds"], .9)
+        self.assertGreaterEqual(result["cutEndSeconds"] - quiet["quietStartSeconds"], .08)
+        self.assertGreaterEqual(quiet["quietEndSeconds"] - result["cutEndSeconds"], .08)
+
+    def test_real_quiet_can_follow_the_nominal_join_inside_the_next_syllable_span(self):
+        # Regression for c700: a word timestamp can precede the real sentence
+        # pause. Keep the actual pause, not an 80ms gap around its coarse join.
+        words = [{"text": "暖", "start": .2, "end": .4},
+                 {"text": "和", "start": .4, "end": .5},
+                 {"text": "擦", "start": .55, "end": 1.3},
+                 {"text": "脸", "start": 1.3, "end": 1.5}]
+        _, result = self.analyze(source=("暖和擦脸", words), expected="暖和。", following="擦脸。")
+        self.assertGreater(result["cutValidation"]["quietStartSeconds"], .55)
+        self.assertGreater(result["cutEndSeconds"], .55)
+
+    def test_multi_character_target_keeps_its_span_while_next_syllable_absorbs_quiet(self):
+        words = [{"text": "放松", "start": .2, "end": .5},
+                 {"text": "先", "start": .55, "end": 1.5}]
+        cut, quiet = helper.cutting_quiet_boundary(self.audio(), words, 0)
+        self.assertAlmostEqual(cut, .85)
+        self.assertGreaterEqual(quiet["quietStartSeconds"], words[0]["end"] + helper.WORD_GUARD)
+        self.assertLessEqual(quiet["quietEndSeconds"], words[1]["end"] - helper.WORD_GUARD)
+
+    def test_multi_character_following_keeps_its_span_while_target_syllable_absorbs_quiet(self):
+        words = [{"text": "坐", "start": .2, "end": 1.25},
+                 {"text": "喝茶", "start": 1.25, "end": 1.5}]
+        cut, quiet = helper.cutting_quiet_boundary(self.audio(), words, 0)
+        self.assertAlmostEqual(cut, .85)
+        self.assertGreaterEqual(quiet["quietStartSeconds"], words[0]["start"] + helper.WORD_GUARD)
+        self.assertLessEqual(quiet["quietEndSeconds"], words[1]["start"] - helper.WORD_GUARD)
+
+    def test_refinement_does_not_borrow_internal_pause_from_multi_character_target(self):
+        words = [{"text": "放松", "start": .2, "end": 1.2},
+                 {"text": "先", "start": 1.2, "end": 1.5}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            helper.cutting_quiet_boundary(self.audio(), words, 0)
+
+    def test_refinement_does_not_borrow_internal_pause_from_multi_character_following(self):
+        words = [{"text": "坐", "start": .2, "end": .5},
+                 {"text": "喝茶", "start": .5, "end": 1.5}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            helper.cutting_quiet_boundary(self.audio(), words, 0)
+
+    def test_two_multi_character_spans_are_not_divided_to_guess_the_quiet_boundary(self):
+        words = [{"text": "放松", "start": .2, "end": .9},
+                 {"text": "喝茶", "start": .9, "end": 1.5}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            helper.cutting_quiet_boundary(self.audio(), words, 0)
+
+    def test_f0eb_shape_still_rejects_early_pause_and_short_actual_boundary_quiet(self):
+        # Recorded word bounds and quiet lengths, represented as synthetic PCM:
+        # 2.64..2.82 is before the final target syllable; 3.35..3.48 is only 130ms.
+        audio = np.concatenate([tone(2.64), np.zeros(round(.18 * helper.RATE)), tone(.53),
+                                np.zeros(round(.13 * helper.RATE)), tone(.08)])
+        words = [{"text": "和", "start": 2.96, "end": 3.16},
+                 {"text": "擦", "start": 3.16, "end": 3.56}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            helper.cutting_quiet_boundary(audio, words, 0)
+
+    def test_earlier_pause_cannot_cut_off_last_target_syllable(self):
+        audio = np.concatenate([np.zeros(9600), tone(.3), np.zeros(14400), tone(.35),
+                                np.zeros(4800), tone(.35), np.zeros(4800)])
+        words = [{"text": "暖", "start": .2, "end": .9},
+                 {"text": "和", "start": .9, "end": 1.2},
+                 {"text": "擦", "start": 1.2, "end": 1.5}]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^no_verified_quiet_cut$"):
+            self.analyze(source=("暖和擦", words), audio=audio, expected="暖和。", following="擦。")
+
+    def test_invalid_source_timestamps_still_prevent_cutting(self):
+        source = self.source()
+        source[1][0]["end"] = source[1][0]["start"]
+        with self.assertRaisesRegex(helper.UnsafeGroup, "^invalid_word_timestamps$"):
+            self.analyze(source=source)
+
+    def test_unknown_internal_boundary_does_not_block_the_outer_cut_or_invent_zero(self):
+        _, result = self.analyze(clauses=["进来坐，", "炉子边暖和。"])
+        self.assertEqual(result["internalPausesMs"], [])
+        self.assertEqual(result["boundaryOnly"]["internalPausePositions"], [])
+
+    def test_located_internal_pause_has_explicit_position(self):
+        words = [{"text": "进来坐", "start": .2, "end": .4},
+                 {"text": "炉子边暖和", "start": .5, "end": .6},
+                 {"text": "擦擦脸吧", "start": 1.1, "end": 1.5}]
+        _, result = self.analyze(source=("进来坐炉子边暖和擦擦脸吧", words), clauses=["进来坐，", "炉子边暖和。"])
+        self.assertEqual(result["internalPausesMs"], [100])
+        self.assertEqual(result["boundaryOnly"]["internalPausePositions"], [0])
 
 
 if __name__ == "__main__":

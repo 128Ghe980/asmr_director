@@ -155,6 +155,28 @@ describe("long-text PCM assembly", () => {
 });
 
 describe("long-text generation orchestration with injected engine and alignment", () => {
+  it("persists low-coverage cutting-only results without inventing missing internal pauses", async () => {
+    const { input, deps } = await fixture();
+    deps.analyze.mockImplementation(async ({ wav, expectedText, followingText }) => ({
+      ...analysis(wav, "定位结果", 0), coverage: 0, internalPausesMs: [],
+      recognition: { analysisMode: "cutting_only", stage: "complete", expectedText,
+        sourceTranscript: "定位结果", targetTranscript: "定位结果", followingText: followingText ?? "",
+        sourceWords: [{ text: "定位结果", start: 0, end: .01 }] },
+      boundaryOnly: { method: followingText ? "ordered_word_boundary" : "whole_recording", alignmentSimilarity: 0,
+        targetEndWordIndex: 0, contentVerified: false, internalPausePositions: [],
+        ...(followingText ? { followingStartWordIndex: 1 } : {}) },
+    }));
+    const result = await generateVoiceLongText(input, deps);
+    expect(deps.analyze).toHaveBeenCalledTimes(3);
+    for (const group of result.provenance.longText!.groups) {
+      expect(group).toMatchObject({ checkStatus: "passed", coverage: 0,
+        internalPausesMs: [], internalPauseClasses: [], internalPausePositions: [] });
+      expect(group.recognition?.analysisMode).toBe("cutting_only");
+      expect(group.recognition?.contentComparison).toBeUndefined();
+    }
+    expect(result.qualityWarnings.join("")).not.toContain("逐句确认");
+  });
+
   it("diagnoses unrecognized continuation separately while preserving the original and raw recognition", async () => {
     const { root, input, waves, deps } = await fixture();
     const expectedText = "今天是不是又加班了？眼睛都红红的。", followingText = "面快好了，";

@@ -15,7 +15,7 @@ import { analyzeVoiceGroup, VoiceGroupAnalysisError, type VoiceGroupAnalysis } f
 import { assembleVoiceGroups } from "./voice-longtext-generation";
 import { buildLongTextInputs, chooseGroupPauses } from "./voice-longtext-plan";
 import { VoiceLongTextResultSchema, type VoiceLongTextResult } from "./voice-longtext-result";
-import { VoiceRecognitionSchema, type VoiceRecognition } from "./voice-recognition";
+import { VoiceRecognitionSchema, isCuttingOnlyRecognition, type VoiceRecognition } from "./voice-recognition";
 import { getVoiceReviewWarning, getVoiceContentDifferenceWarning } from "./voice-review-warning";
 import { flattenClips } from "./view-model";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
@@ -23,8 +23,10 @@ import { getLocalStorageError } from "./local-storage-error";
 import { getParagraphGroup, getSpeechWorkspaceMode } from "./speech-workspace";
 import { getVoiceParagraphContext } from "./voice-paragraph-context";
 import { VoiceParagraphResultSchema, type VoiceParagraphResult } from "./voice-paragraph-result";
-import { paragraphPcmFrames, splitVoiceParagraph, type ParagraphAudioSegment } from "./voice-paragraph-split";
+import { paragraphPcmFrames, sliceParagraphPcmWav, splitVoiceParagraph, type ParagraphAudioSegment } from "./voice-paragraph-split";
 import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
+import { forceAlignVoiceAudio, validateForcedVoiceAlignment } from "./voice-forced-alignment";
+import { ForcedSegmentationSchema, type ForcedSegmentationAlignment } from "./voice-forced-segmentation";
 
 const RUN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_JSON_BYTES = 1024 * 1024;
@@ -58,7 +60,8 @@ async function readJson(filePath: string, root: string): Promise<unknown> {
 
 // Asset IDs identify the exact saved group. Text similarity, trace recency and
 // the cropped candidate WAV cannot prove which full original produced it.
-async function findOriginals(input: RecheckInput, candidate: AudioCandidate, check: () => void): Promise<SavedSource[]> {
+async function findOriginalSources(input: RecheckInput, candidate: AudioCandidate, check: () => void,
+  indices: readonly number[]): Promise<Map<number, SavedSource>> {
   const prior = candidate.provenance.longText!;
   const targets = buildLongTextInputs(prior.plan!, prior.context);
   const locations = [...new Set([path.join(getVoiceGenerationRoot(input.config), "long-text"),
@@ -87,7 +90,7 @@ async function findOriginals(input: RecheckInput, candidate: AudioCandidate, che
         if (!isDeepStrictEqual(result.groups, recordedGroups) || !isDeepStrictEqual(result.plan, prior.plan)
           || !isDeepStrictEqual(result.context, prior.context)) continue;
         const files = await readdir(directory);
-        for (const group of prior.groups) {
+        for (const group of prior.groups.filter(group => indices.includes(group.index))) {
           if (!isDeepStrictEqual(result.groups[group.index], group)) continue;
           const sourcePattern = new RegExp(`^group-${group.index + 1}-take-([1-9][0-9]?)\\-source\\.wav$`);
           for (const name of files) {
@@ -107,8 +110,20 @@ async function findOriginals(input: RecheckInput, candidate: AudioCandidate, che
     }
   }
   check();
-  if (matches.some((sources) => sources.length !== 1)) throw sourceUnavailable();
-  return matches.map((sources) => sources[0]);
+  if (indices.some(index => matches[index].length !== 1)) throw sourceUnavailable();
+  return new Map(indices.map(index => [index, matches[index][0]]));
+}
+
+async function findOriginals(input: RecheckInput, candidate: AudioCandidate, check: () => void): Promise<SavedSource[]> {
+  const indices = candidate.provenance.longText!.groups.map(group => group.index);
+  const sources = await findOriginalSources(input, candidate, check, indices);
+  return indices.map(index => sources.get(index)!);
+}
+
+function withoutForcedReceipt(provenance: AudioCandidate["provenance"]): AudioCandidate["provenance"] {
+  const { forcedSegmentation: _forced, ...rest } = provenance;
+  void _forced;
+  return rest;
 }
 
 function differenceWarning(group: VoiceLongTextResult["groups"][number]) {
@@ -118,7 +133,7 @@ function differenceWarning(group: VoiceLongTextResult["groups"][number]) {
 }
 function retainedWarnings(candidate: AudioCandidate) {
   const prior = candidate.provenance.longText!;
-  const analysisWarnings = new Set([FULL_SOURCE_WARNING, JOIN_WARNING]);
+  const analysisWarnings = new Set([FULL_SOURCE_WARNING, JOIN_WARNING, FORCED_WARNING]);
   for (const group of prior.groups) {
     analysisWarnings.add(getVoiceReviewWarning(group.index, group.text, group.diagnosticCode));
     for (const reason of ["识别文字未能定位目标句的结束位置", "截取后的识别文字与目标台词存在差异", "识别文字与目标台词存在差异",
@@ -187,10 +202,6 @@ async function recheckParagraph(input: RecheckInput, candidate: AudioCandidate, 
     let failedClipId: string | undefined;
     let attemptedSentence: { text: string; followingText: string } | undefined;
     try {
-      const max = candidate.provenance.parameters.maxSteps, generated = candidate.provenance.parameters.generatedSteps;
-      if (typeof max === "number" && typeof generated === "number" && generated >= max - .001) {
-        throw new VoiceGroupAnalysisError("整段录音达到模型长度上限。", 422, "generation_length_limit");
-      }
       cuts = await splitVoiceParagraph({ wav, targets: group.map((member) => ({ clipId: member.id, text: member.text })), config: input.config, signal },
         { runtimeSession, analyze: async (analysisInput, analysisDependencies) => {
           attemptedSentence = { text: analysisInput.expectedText, followingText: analysisInput.followingText ?? "" };
@@ -227,18 +238,17 @@ async function recheckParagraph(input: RecheckInput, candidate: AudioCandidate, 
         ...(cut.recognition ? { recognition: cut.recognition } : {}), ...(cut.textReview ? { textReview: cut.textReview } : {}) });
     }
     const paragraph = VoiceParagraphResultSchema.parse({ version: 1, groupId: context.groupId, text: context.text,
-      clipIds: group.map((member) => member.id), sourceAsset: prior.sourceAsset, checkStatus: cuts.length ? (cuts.some((cut) => cut.textReview) ? "needs_confirmation" : "passed") : "review", segments,
+      clipIds: group.map((member) => member.id), sourceAsset: prior.sourceAsset, checkStatus: cuts.length ? "passed" : "review", segments,
       ...(diagnosticCode ? { diagnosticCode } : {}), ...(failureRecognition ? { failureRecognition, failedClipId } : {}) });
-    const priorWarnings = new Set([PARAGRAPH_REVIEW_WARNING, PARAGRAPH_CONFIRMATION_WARNING,
+    const priorWarnings = new Set([PARAGRAPH_REVIEW_WARNING, PARAGRAPH_CONFIRMATION_WARNING, FORCED_WARNING,
       "短句音频已安全切分，但极短句识别漏了句尾语气词；请逐句试听确认后采用整段。",
       ...prior.segments.filter((segment) => segment.recognition?.contentComparison?.status === "different")
         .map((segment) => `「${segment.text}」识别文字有差异，请试听确认。`)]);
     const warnings = [...candidate.qualityWarnings.filter((warning) => !priorWarnings.has(warning)),
       ...(paragraph.checkStatus === "review" ? [PARAGRAPH_REVIEW_WARNING] : []),
-      ...(paragraph.checkStatus === "needs_confirmation" ? [PARAGRAPH_CONFIRMATION_WARNING] : []),
       ...segments.filter((segment) => segment.recognition?.contentComparison?.status === "different")
         .map((segment) => `「${segment.text}」识别文字有差异，请试听确认。`)];
-    const provenance = { ...candidate.provenance, paragraph, parameters: { ...candidate.provenance.parameters,
+    const provenance = { ...withoutForcedReceipt(candidate.provenance), paragraph, parameters: { ...candidate.provenance.parameters,
       recheckedFromCandidateId: candidate.candidateId, recheckedAt: now.toISOString(), generationCalls: 0, recheckCalls: 1 } };
     const candidates = (paragraph.checkStatus !== "review" ? group : [clip]).map((member) => {
       const sourceFingerprint = getVoiceCandidateSourceFingerprint(member, undefined, context);
@@ -336,7 +346,7 @@ export async function recheckVoiceCandidate(input: RecheckInput, dependencies: D
           const evidence = VoiceRecognitionSchema.safeParse(error.recognition);
           const recognition = evidence.success && evidence.data.expectedText === target.expectedText
             && (evidence.data.followingText ?? "") === (target.followingText ?? "") ? evidence.data : {
-              stage: "unavailable" as const, sourceTranscript: "", expectedText: target.expectedText,
+              analysisMode: "cutting_only" as const, stage: "unavailable" as const, sourceTranscript: "", expectedText: target.expectedText,
               ...(target.followingText ? { followingText: target.followingText } : {}) };
           measured.push({ wav, recognition, code: error.diagnosticCode ?? "analysis_failed" });
         }
@@ -360,10 +370,19 @@ export async function recheckVoiceCandidate(input: RecheckInput, dependencies: D
         await writeFile(path.join(traceRoot, `${prefix}-source.json`), await readFile(original.metadataPath), { flag: "wx" });
         const decoded = decodePcmWav(measuredGroup.wav), duration = decoded.samples.length / decoded.sampleRate / decoded.channels;
         const asset = await saveClipAsset({ config: input.config, clipId: `${clip.id}_group_${index + 1}`, wav: measuredGroup.wav, duration, now });
-        const { recognition: _oldRecognition, diagnosticCode: _oldCode, ...oldGroup } = prior.groups[index];
-        void _oldRecognition; void _oldCode;
+        const { recognition: _oldRecognition, diagnosticCode: _oldCode, internalPausePositions: _oldPositions, segmentationMethod: _oldMethod, ...oldGroup } = prior.groups[index];
+        void _oldRecognition; void _oldCode; void _oldPositions; void _oldMethod;
         const analysis = measuredGroup.analysis;
         const group = { ...oldGroup, asset, internalPausesMs: analysis?.internalPausesMs ?? [],
+          internalPauseClasses: prior.plan ? prior.plan.clausePauseClasses.slice(prior.plan.groups[index].start, prior.plan.groups[index].end)
+            : oldGroup.internalPauseClasses,
+          ...(isCuttingOnlyRecognition(measuredGroup.recognition) && analysis?.boundaryOnly ? {
+            internalPausePositions: analysis.boundaryOnly.internalPausePositions,
+            internalPauseClasses: analysis.boundaryOnly.internalPausePositions.map(position => {
+              const plan = prior.plan;
+              return plan ? plan.clausePauseClasses[plan.groups[index].start + position] : oldGroup.internalPauseClasses[position];
+            }),
+          } : {}),
           leadingQuietMs: analysis?.leadingQuietMs ?? 0, trailingQuietMs: analysis?.trailingQuietMs ?? 0,
           transcript: analysis?.transcript ?? "", recognition: measuredGroup.recognition, coverage: analysis?.coverage ?? 0,
           cutStartSeconds: analysis?.cutStartSeconds ?? 0, cutEndSeconds: analysis?.cutEndSeconds ?? duration,
@@ -395,7 +414,7 @@ export async function recheckVoiceCandidate(input: RecheckInput, dependencies: D
       const asset = await saveClipAsset({ config: input.config, clipId: clip.id, wav: assembled.wav,
         duration: decoded.samples.length / decoded.sampleRate / decoded.channels, now });
       const rechecked = AudioCandidateSchema.parse({ ...candidate, candidateId: `vox_${randomUUID().replaceAll("-", "")}`, asset,
-        provenance: { ...candidate.provenance, parameters: { ...candidate.provenance.parameters,
+        provenance: { ...withoutForcedReceipt(candidate.provenance), parameters: { ...candidate.provenance.parameters,
           recheckedFromCandidateId: candidate.candidateId, recheckedAt: now.toISOString() }, longText },
         qualityWarnings: [...new Set(warnings)], createdAt: now.toISOString(), status: "ready" });
       check();
@@ -415,5 +434,221 @@ export async function recheckVoiceCandidate(input: RecheckInput, dependencies: D
   } finally {
     clearTimeout(timeout);
     input.signal?.removeEventListener("abort", abort);
+  }
+}
+
+type ForceSplitDependencies = { forceAlign?: typeof forceAlignVoiceAudio; timeoutMs?: number; now?: Date };
+const FORCED_WARNING = "已强制切分，请试听后决定是否采用。台词内容未核验。";
+const sha256 = (value: Uint8Array | string) => createHash("sha256").update(value).digest("hex");
+
+/** Explicit CTC timing of the exact saved original; never an automatic adoption. */
+export async function forceSplitVoiceCandidate(input: RecheckInput, dependencies: ForceSplitDependencies = {}): Promise<{ candidate: AudioCandidate }> {
+  const controller = new AbortController();
+  const cancelled = new VoiceCandidateRecheckError("强制切分已取消，原候选仍保留。", 499);
+  const abort = () => controller.abort(cancelled);
+  input.signal?.addEventListener("abort", abort, { once: true });
+  if (input.signal?.aborted) abort();
+  const budget = dependencies.timeoutMs ?? 30 * 60_000, deadline = Date.now() + budget;
+  const timer = setTimeout(() => controller.abort(new VoiceCandidateRecheckError("强制切分超时，原候选仍保留。", 504)), budget);
+  const check = () => { if (controller.signal.aborted) throw controller.signal.reason; };
+  let traceRoot: string | undefined;
+  try {
+    check();
+    const candidate = await getAudioCandidate({ config: input.config, candidateId: input.candidateId });
+    const clip = flattenClips(input.project).find(member => member.id === input.clipId);
+    if (!candidate || candidate.status !== "ready" || candidate.projectId !== input.project.project_id
+      || candidate.clipId !== input.clipId || clip?.type !== "voice" || clip.kind === "silent") {
+      throw new VoiceCandidateRecheckError("此候选已不可用或不属于当前片段，请刷新列表。", 404);
+    }
+    if (candidate.provenance.forcedSegmentation) throw new VoiceCandidateRecheckError("此候选已经强制切分，请试听后决定是否采用。", 400);
+    const paragraph = candidate.provenance.paragraph, prior = candidate.provenance.longText;
+    const isParagraph = candidate.provenance.generationMode === "paragraph";
+    if (isParagraph ? paragraph?.checkStatus !== "review"
+      : candidate.provenance.generationMode !== "long_text" || !prior?.plan || !prior.groups.some(group => group.checkStatus === "review")) {
+      throw new VoiceCandidateRecheckError("只有自动切分失败且保留完整原音的候选可以强制切分。", 400);
+    }
+    const context = isParagraph ? getVoiceParagraphContext(input.project, clip.id) : undefined;
+    const generationContext = isParagraph ? undefined : getVoiceGenerationContext(input.project, clip.id);
+    const members = isParagraph ? getParagraphGroup(input.project, clip.id) : [clip];
+    const checkContext = () => {
+      const activeClip = flattenClips(input.project).find(member => member.id === clip.id);
+      if (activeClip?.type !== "voice" || activeClip.kind === "silent") throw new VoiceCandidateRecheckError("当前片段已改变，原候选仍保留。", 409);
+      if (isParagraph) {
+        if (!context || !paragraph || getSpeechWorkspaceMode(input.project) !== "paragraph"
+          || members.some(member => member.kind === "silent") || !isDeepStrictEqual(getVoiceParagraphContext(input.project, clip.id), context)
+          || context.groupId !== paragraph.groupId || context.text !== paragraph.text
+          || !isDeepStrictEqual(members.map(member => member.id), paragraph.clipIds)
+          || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(activeClip, undefined, context)) {
+          throw new VoiceCandidateRecheckError("当前整段台词或短句划分已改变，请重新生成；原候选仍保留。", 409);
+        }
+      } else if (!prior?.plan || getSpeechWorkspaceMode(input.project) !== "short"
+        || !isDeepStrictEqual(getVoiceGenerationContext(input.project, clip.id), generationContext)
+        || !isDeepStrictEqual(prior.context, generationContext) || prior.plan.clauses.join("") !== activeClip.text.trim()
+        || candidate.sourceFingerprint !== getVoiceCandidateSourceFingerprint(activeClip, generationContext)) {
+        throw new VoiceCandidateRecheckError("当前台词或后续语境已改变，请重新生成；原候选仍保留。", 409);
+      }
+    };
+    checkContext();
+    const owners = members.map(member => ({ config: input.config, projectId: candidate.projectId, clipId: member.id,
+      adoptedAssetId: member.asset.asset_id ?? undefined, workspaceMode: isParagraph ? "paragraph" as const : "short" as const }));
+    for (const owner of owners) { check(); await ensureAudioCandidateCapacity(owner); }
+    return await withVoxCpm2RuntimeSession(input.config, controller.signal, async runtimeSession => {
+      const sourceSnapshots = new Map<string, { root: string; sha: string }>();
+      const readSource = async (filePath: string, root: string) => {
+        await safeFile(filePath, root, MAX_RECORDING_BYTES);
+        const wav = new Uint8Array(await readFile(filePath));
+        try { paragraphPcmFrames(wav); } catch { throw sourceUnavailable(); }
+        sourceSnapshots.set(filePath, { root, sha: sha256(wav) });
+        return wav;
+      };
+      const checkSources = async () => {
+        check(); checkContext();
+        if (!isDeepStrictEqual(await getAudioCandidate({ config: input.config, candidateId: candidate.candidateId }), candidate)) {
+          throw new VoiceCandidateRecheckError("原候选状态已改变，请刷新列表。", 409);
+        }
+        for (const [filePath, snapshot] of sourceSnapshots) {
+          check(); await safeFile(filePath, snapshot.root, MAX_RECORDING_BYTES);
+          if (sha256(await readFile(filePath)) !== snapshot.sha) throw new VoiceCandidateRecheckError("完整原音已改变，原候选仍保留。", 409);
+        }
+      };
+      const now = dependencies.now ?? new Date();
+      traceRoot = path.join(getVoiceGenerationRoot(input.config), "long-text", randomUUID());
+      await mkdir(traceRoot, { recursive: true });
+      const record = (name: string, value: unknown) => writeFile(path.join(traceRoot!, name), JSON.stringify(value, null, 2), { flag: "wx" });
+      const alignments: ForcedSegmentationAlignment[] = [];
+      const align = async (wav: Uint8Array, clauses: string[], inputText: string, mode: "paragraph" | "prefix") => {
+        check();
+        const request = { wav, clauses, inputText: inputText.trim(), mode, config: input.config, signal: controller.signal };
+        const result = await (dependencies.forceAlign ?? forceAlignVoiceAudio)(request,
+          { runtimeSession, timeoutMs: Math.max(1, deadline - Date.now()) });
+        check();
+        return validateForcedVoiceAlignment(result, request);
+      };
+      const receipt = () => ForcedSegmentationSchema.parse({ version: 1, method: "ctc_forced", sourceCandidateId: candidate.candidateId,
+        createdAt: now.toISOString(), contentVerified: false, alignments });
+      if (isParagraph && paragraph && context) {
+        const sourcePath = resolveClipAssetPath(paragraph.sourceAsset.assetId, input.config);
+        const wav = await readSource(sourcePath, input.config.clipAssetRoot), { frames } = paragraphPcmFrames(wav);
+        if (Math.abs(frames / 48_000 - paragraph.sourceAsset.duration) > 1 / 48_000) throw sourceUnavailable();
+        await record("plan.json", { projectId: candidate.projectId, clipId: clip.id, createdAt: now.toISOString(), generationMode: "paragraph",
+          sourceFingerprint: candidate.sourceFingerprint, paragraph: context, plan: { clauses: members.map(member => member.text) },
+          targets: [{ expectedText: context.text, text: context.text }], sourceAsset: paragraph.sourceAsset,
+          forcedFromCandidateId: candidate.candidateId, generationCalls: 0 });
+        await writeFile(path.join(traceRoot!, "group-1-take-1-source.wav"), wav, { flag: "wx" });
+        await record("group-1-take-1-source.json", candidate.provenance);
+        if (members.length === 1) alignments.push({ groupIndex: 0, sourceAssetId: paragraph.sourceAsset.assetId, method: "whole_recording",
+          sourceSha256: sha256(wav), inputTextSha256: sha256(context.text.trim()), sampleRate: 48_000, sourceFrames: frames,
+          cutFrames: [], contentVerified: false, ...(paragraph.failureRecognition ? { previousRecognition: paragraph.failureRecognition } : {}),
+          ...(paragraph.failedClipId ? { failedClipId: paragraph.failedClipId } : {}) });
+        else alignments.push({ ...await align(wav, members.map(member => member.text), context.text, "paragraph"),
+          groupIndex: 0, sourceAssetId: paragraph.sourceAsset.assetId,
+          ...(paragraph.failureRecognition ? { previousRecognition: paragraph.failureRecognition } : {}),
+          ...(paragraph.failedClipId ? { failedClipId: paragraph.failedClipId } : {}) });
+        await checkSources();
+        const boundaries = [0, ...alignments[0].cutFrames, frames];
+        const segments: VoiceParagraphResult["segments"] = [];
+        for (const [index, member] of members.entries()) {
+          check();
+          const start = boundaries[index], end = boundaries[index + 1];
+          const asset = await saveClipAsset({ config: input.config, clipId: member.id,
+            wav: sliceParagraphPcmWav(wav, start, end), duration: (end - start) / 48_000, now });
+          segments.push({ clipId: member.id, text: member.text, asset, cutStartSeconds: start / 48_000, cutEndSeconds: end / 48_000 });
+        }
+        const result = VoiceParagraphResultSchema.parse({ version: 1, groupId: paragraph.groupId, text: paragraph.text,
+          clipIds: paragraph.clipIds, sourceAsset: paragraph.sourceAsset, checkStatus: "passed", segments });
+        const forcedSegmentation = receipt();
+        const provenance = { ...candidate.provenance, paragraph: result, forcedSegmentation,
+          parameters: { ...candidate.provenance.parameters, forcedFromCandidateId: candidate.candidateId, generationCalls: 0, forcedSplitCalls: 1 } };
+        const candidates = members.map(member => AudioCandidateSchema.parse({ ...candidate,
+          candidateId: `vox_${randomUUID().replaceAll("-", "")}`, clipId: member.id,
+          sourceFingerprint: getVoiceCandidateSourceFingerprint(member, undefined, context),
+          requestFingerprint: JSON.stringify({ forcedFromCandidateId: candidate.candidateId, method: "ctc_forced", at: now.toISOString() }),
+          asset: segments.find(segment => segment.clipId === member.id)!.asset, provenance, status: "ready", createdAt: now.toISOString(),
+          qualityWarnings: [...candidate.qualityWarnings.filter(warning => ![PARAGRAPH_REVIEW_WARNING, PARAGRAPH_CONFIRMATION_WARNING].includes(warning)), FORCED_WARNING] }));
+        await record("forced-segmentation.json", forcedSegmentation);
+        await record("group-1-take-1-analysis.json", { checkStatus: "passed", segments, forcedSegmentation, generationCalls: 0 });
+        await record("result.json", result);
+        await checkSources();
+        await saveParagraphAudioCandidates({ config: input.config, candidates, signal: controller.signal, sourceCandidate: candidate,
+          adoptedAssetIds: Object.fromEntries(owners.map(owner => [owner.clipId, owner.adoptedAssetId])) });
+        return { candidate: candidates.find(item => item.clipId === clip.id)! };
+      }
+      if (!prior?.plan) throw sourceUnavailable();
+      const targets = buildLongTextInputs(prior.plan, prior.context);
+      if (targets.length !== prior.groups.length || targets.some((target, index) => target.expectedText !== prior.groups[index].text
+        || target.text !== prior.groups[index].inputText || target.isFinal !== prior.groups[index].isFinal
+        || !isDeepStrictEqual(target.paddingClauses, prior.groups[index].paddingClauses))) {
+        throw new VoiceCandidateRecheckError("此候选的分组语境已失效，请重新生成。", 409);
+      }
+      const indices = prior.groups.filter(group => group.checkStatus === "review").map(group => group.index);
+      const originals = await findOriginalSources(input, candidate, check, indices);
+      await record("plan.json", { projectId: candidate.projectId, clipId: clip.id, sourceFingerprint: candidate.sourceFingerprint,
+        plan: prior.plan, targets, ...(prior.context ? { context: prior.context } : {}), createdAt: now.toISOString(),
+        forcedFromCandidateId: candidate.candidateId, generationCalls: 0 });
+      const groups: VoiceLongTextResult["groups"] = [], audio: Array<{ wav: Uint8Array; leadingQuietMs: number; trailingQuietMs: number }> = [];
+      for (const [index, group] of prior.groups.entries()) {
+        check();
+        if (group.checkStatus !== "review") {
+          const wav = await readSource(resolveClipAssetPath(group.asset.assetId, input.config), input.config.clipAssetRoot);
+          if (Math.abs(paragraphPcmFrames(wav).frames / 48_000 - group.asset.duration) > 1 / 48_000) throw sourceUnavailable();
+          groups.push(group); audio.push({ wav, leadingQuietMs: group.leadingQuietMs, trailingQuietMs: group.trailingQuietMs });
+          continue;
+        }
+        const original = originals.get(index)!, target = targets[index];
+        const wav = await readSource(original.wavPath, path.dirname(original.wavPath)), { frames } = paragraphPcmFrames(wav);
+        const inputText = group.inputText.trim();
+        const alignment: ForcedSegmentationAlignment = target.isFinal
+          ? { groupIndex: index, sourceAssetId: group.asset.assetId, method: "whole_recording", sourceSha256: sha256(wav),
+            inputTextSha256: sha256(inputText), sampleRate: 48_000, sourceFrames: frames, cutFrames: [], contentVerified: false,
+            ...(group.recognition ? { previousRecognition: group.recognition } : {}) }
+          : { ...await align(wav, [target.expectedText], inputText, "prefix"), groupIndex: index, sourceAssetId: group.asset.assetId,
+            ...(group.recognition ? { previousRecognition: group.recognition } : {}) };
+        alignments.push(alignment);
+        const end = alignment.method === "whole_recording" ? frames : alignment.cutFrames[0];
+        const cropped = sliceParagraphPcmWav(wav, 0, end);
+        const asset = await saveClipAsset({ config: input.config, clipId: `${clip.id}_group_${index + 1}`, wav: cropped, duration: end / 48_000, now });
+        const { diagnosticCode: _diagnostic, ...retained } = group; void _diagnostic;
+        groups.push({ ...retained, asset, cutStartSeconds: 0, cutEndSeconds: end / 48_000, checkStatus: "passed",
+          segmentationMethod: alignment.method, internalPausesMs: [], internalPauseClasses: [], internalPausePositions: [], leadingQuietMs: 0, trailingQuietMs: 0 });
+        audio.push({ wav: cropped, leadingQuietMs: 0, trailingQuietMs: 0 });
+        // Only changed groups get a new source trace. Unchanged assets keep their
+        // original unique ownership instead of acquiring a duplicate source.
+        const prefix = `group-${index + 1}-take-1`;
+        await writeFile(path.join(traceRoot!, `${prefix}-source.wav`), wav, { flag: "wx" });
+        await writeFile(path.join(traceRoot!, `${prefix}-source.json`), await readFile(original.metadataPath), { flag: "wx" });
+        await record(`${prefix}-analysis.json`, { checkStatus: "passed", segmentationMethod: alignment.method,
+          recognition: group.recognition, forcedAlignment: alignment, cutStartSeconds: 0, cutEndSeconds: end / 48_000, generationCalls: 0 });
+      }
+      await checkSources();
+      const assembled = assembleVoiceGroups(audio, chooseGroupPauses(groups));
+      const longText = VoiceLongTextResultSchema.parse({ ...prior, groups, joins: assembled.joins, loudnessGainDb: assembled.loudnessGainDb });
+      const forcedSegmentation = receipt();
+      await record("forced-segmentation.json", forcedSegmentation);
+      await record("groups.json", groups); await record("result.json", longText);
+      await writeFile(path.join(traceRoot!, "assembled.wav"), assembled.wav, { flag: "wx" });
+      const asset = await saveClipAsset({ config: input.config, clipId: clip.id, wav: assembled.wav,
+        duration: paragraphPcmFrames(assembled.wav).frames / 48_000, now });
+      const result = AudioCandidateSchema.parse({ ...candidate, candidateId: `vox_${randomUUID().replaceAll("-", "")}`, asset,
+        requestFingerprint: JSON.stringify({ forcedFromCandidateId: candidate.candidateId, method: "ctc_forced", at: now.toISOString() }),
+        provenance: { ...candidate.provenance, longText, forcedSegmentation,
+          parameters: { ...candidate.provenance.parameters, forcedFromCandidateId: candidate.candidateId, generationCalls: 0, forcedSplitCalls: 1 } },
+        qualityWarnings: [...retainedWarnings(candidate), FORCED_WARNING], createdAt: now.toISOString(), status: "ready" });
+      await checkSources();
+      await saveAudioCandidate({ config: input.config, candidate: result, adoptedAssetId: owners[0].adoptedAssetId,
+        signal: controller.signal, sourceCandidate: candidate });
+      return { candidate: result };
+    });
+  } catch (error) {
+    if (traceRoot) await writeFile(path.join(traceRoot, "forced-failure.json"), JSON.stringify({
+      cancelled: controller.signal.aborted, retainedOriginal: true,
+      code: error instanceof Error && "diagnosticCode" in error ? error.diagnosticCode : "force_split_failed" }), { flag: "wx" }).catch(() => undefined);
+    check();
+    if (error instanceof CandidateSourceChangedError) throw new VoiceCandidateRecheckError(error.message, error.statusCode);
+    if (error instanceof VoiceCandidateRecheckError) throw error;
+    const storage = getLocalStorageError(error); if (storage) throw storage;
+    if (error instanceof Error && "statusCode" in error) throw error;
+    throw new VoiceCandidateRecheckError("强制切分未能完成，原候选仍保留。", 500);
+  } finally {
+    clearTimeout(timer); input.signal?.removeEventListener("abort", abort);
   }
 }

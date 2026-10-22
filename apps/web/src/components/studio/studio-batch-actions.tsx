@@ -20,6 +20,7 @@ type StudioBatchActionsProps = {
   counts: Record<StudioBatchAction, number>;
   audioOverview?: StudioAudioOverview;
   overviewStatus?: "loading" | "ready" | "error";
+  audioSettingsStatus?: "loading" | "ready" | "error";
   disabled?: boolean;
   progress?: StudioBatchProgress;
   notice?: string;
@@ -51,7 +52,7 @@ const groups = [
   },
 ] as const;
 
-export function StudioBatchActions({ counts, audioOverview, overviewStatus = "ready", disabled = false, progress, notice, onRun, onCancel }: StudioBatchActionsProps) {
+export function StudioBatchActions({ counts, audioOverview, overviewStatus = "ready", audioSettingsStatus = "ready", disabled = false, progress, notice, onRun, onCancel }: StudioBatchActionsProps) {
   const active = progress !== undefined;
   const total = Math.max(0, progress?.total ?? 0);
   const completed = Math.min(total, Math.max(0, progress?.completed ?? 0));
@@ -78,13 +79,14 @@ export function StudioBatchActions({ counts, audioOverview, overviewStatus = "re
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className={`flex gap-1.5 ${group.label === "音频" ? "min-w-[16rem] flex-[2]" : "min-w-[7rem] flex-1"}`}>
           {group.actions.filter(({ primary }) => primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title}
-            disabled={disabled || active || counts[action] <= 0 || (action === "audio_ungenerated" && overviewStatus !== "ready")} onClick={() => onRun(action)}
+            disabled={disabled || active || counts[action] <= 0 || (action.startsWith("audio") && audioSettingsStatus !== "ready") || (action === "audio_ungenerated" && overviewStatus !== "ready")} onClick={() => onRun(action)}
             className={`inline-flex min-h-8 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-35 ${group.buttonTone}`}>
             <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{action === "audio_ungenerated" && overviewStatus !== "ready" ? "—" : counts[action]}</span>
           </button>)}
       </div>)}
-      <details className="relative"><summary aria-label="批量更多操作" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-studio-line text-studio-muted hover:bg-white/5"><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-30 mt-1 grid w-44 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">{groups.flatMap((group) => group.actions.filter(({ primary }) => !primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title} disabled={disabled || active || counts[action] <= 0} onClick={() => onRun(action)} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">{label} · {counts[action]}</button>))}</div></details>
+      <details className="relative"><summary aria-label="批量更多操作" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-studio-line text-studio-muted hover:bg-white/5"><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-30 mt-1 grid w-44 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">{groups.flatMap((group) => group.actions.filter(({ primary }) => !primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title} disabled={disabled || active || counts[action] <= 0 || (action.startsWith("audio") && audioSettingsStatus !== "ready")} onClick={() => onRun(action)} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">{label} · {counts[action]}</button>))}</div></details>
     </div>
+    {audioSettingsStatus !== "ready" && <p role="status" className="mt-2 text-[11px] leading-5 text-studio-muted">{audioSettingsStatus === "loading" ? "正在读取声音设置…" : "声音设置读取失败，请刷新重试。"}</p>}
     {progress && <div className="mt-2 space-y-1.5">
       <div className="flex min-w-0 items-center justify-between gap-2 text-[11px]">
         <p role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-studio-muted"><span className={`inline-flex items-center gap-1.5 ${audio ? "text-sky-100" : "text-violet-100"}`}><LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />{audio ? "音频" : "分镜"} · 完成 {completed}/{total}</span>{result && <span>{result}</span>}{progress.waitingBetweenItems && <span>任务间隔中（5 秒）</span>}</p>

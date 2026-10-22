@@ -1,10 +1,30 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-10-20
+Last updated: 2026-10-22
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 当前优先级
+
+2026-10-22按用户要求记录并发布本会话音频工作台/原生视频批跑器改动，补根README和仓库简述；选定index独立树的完整验证正在进行，测试数量、真实提交/远端SHA及About结果待Git与发布收据确认。空间工作台/渲染/Qwen另会话增量排除，不重启3001或跑新模型。Audio Quality V1进行中/SFX暂停，不新增路线系统或阶段。[发布记录](records/2026-10-22-audio-workbench-and-native-video-release.md)。
+
+2026-10-21无本地FFmpeg批跑器完成：直接保存Comfy成品、CLF远端取尾帧，新环境镜头图内裁图音≤5秒，对白原音直连；模板/旧指纹/状态兼容，旧成品不追改。可选native合片逐镜补轨，缺能力只影响预览。97Python/31web及类型/lint/diff、真实CPU媒体与hidden Tk通过，实际ZIP解压9payload核验；三文件更新包已生成，不含项目/工作流/素材/outputs，3001动态导出新运行器无需重启。342范围外源码/HEAD/index保持；用户远端H3/完整合片未跑，无生产写入/提交推送。该更新完成，Audio Quality V1进行中/SFX暂停、无新路线。[记录](records/2026-10-21-native-comfy-video-runner.md)。
+
+最新常驻“停止”按钮更新完成：21定向测试及两轮真实hidden Tk停止/继续验证通过，新32280字节三文件包已生成，旧包留档；仍只停本机后续提交和等待，不调用Comfy全局中断，未重跑97/31或重启服务。[停止更新](records/2026-10-21-native-comfy-video-runner.md#追加停止按钮)。
+
+2026-10-21 16:01 HKT已部署顿号列举小修复：雪夜归家第14句被`planner-semantic`误计5子句、3+2拆在“腌菜、”后；仅从边界正则移除顿号并补真实回归。TTS原本仍1组，TTS splitter/音频切分/CTC及旧项目不改，已保存两条不自动合并、音频与ID保留。169定向测试/类型/相关lint/build通过，未重跑整站；3001为EfV1V3LY3zzKsvsgiOS4N，三路200/8JS字节/345源码SHA及部署快照150候选/profile保持。0模型/工程存储操作/提交推送；该修复完成，Audio Quality V1进行中/SFX暂停、无新顶层路线。[记录](records/2026-10-21-enumeration-sentence-boundary.md)。
+
+2026-10-21 04:38 HKT已部署“自动切分失败→试听完整原音→强制切分”：独立full/prefix中文CTC无静音/分数/文字门槛，新增候选普通采用，保留原音/失败证据，不恢复维护重试入口。初轮f0eb约1.0008秒错切与3OOV失败留档，修为无自由sink全T有序前缀DP+原字wildcard；修正版24短句+5整段29条完成/0执行失败、1缺源未测，独立48中点/PCM核对通过。32新Python、完整Vitest1975/0/5（154文件）、类型/lint/build通过；2模式真实模型POST+9WAV GET通过。3001为tailcp5e6fQWpxKVDWMqe，8实际JS字节一致，138候选/profile、81冻结/59范围外源码保持；未提交推送。该功能完成，Audio Quality V1仍进行中/SFX暂停，无新顶层路线。[中文](specs/2026-10-21-forced-audio-segmentation.zh.md) / [English](specs/2026-10-21-forced-audio-segmentation.en.md)；[记录](records/2026-10-21-forced-audio-segmentation.md)。
+
+2026-10-21 03:45 HKT按用户要求撤下前端“重新切分”及对应取消/引导：该重试入口不属于正常制作流程，不以改名冒充“强制切分”。仅改panel和3测试，生成时自动切分、原音试听下载和普通采用保持，后台API兼容保留；当前定位及160ms局部静音/80ms保护条件未改，强制切分仍未实现。84相关测试/完整类型/相关lint/正式构建通过，3001原无监听，现启动nJSfHj4aRJNZtETBwP_zJ；3路HTTP200/8实际JS身份及入口撤除、138候选/profile和65范围外源码保护通过。无模型/浏览器工程存储操作/提交推送；该入口调整完成，Audio Quality V1仍进行中/SFX暂停。见[本轮记录及现有失败条件](records/2026-10-21-remove-recheck-entry.md)。
+
+2026-10-20 16:35 HKT完成识别职责纠正：短句/整段/已有原音重新切分统一只定位切点，ASR字差不再独立阻止切分，也不增加文字认证；新旧已切好候选直接试听、普通采用，真实边界不明保留原音。180 Python、1924 Vitest/5条件跳过、类型/相关lint/正式构建通过；真实05“边/别”切出2.68秒，五句整段完整分割且原PCM精确复拼。3001已更新TLEqEjfqRjd_EpUyCtxxs，8实际JS字节一致、138候选/profile和共享工作保持。工程经验已写入用户指定目录及初始化汇总，本轮未提交推送。此指令覆盖此前“切分暂缓”，该项改造完成，Audio Quality V1仍进行中/SFX暂停。设计：[中文](specs/2026-10-20-audio-segmentation-purpose.zh.md) / [English](specs/2026-10-20-audio-segmentation-purpose.en.md)；[实现与验证记录](records/2026-10-20-audio-segmentation-purpose.md)。
+
+2026-10-20 15:10 HKT修复刷新后首次“生成未生成”误报引擎未就绪：候选先返回、声音目录与已存选项未恢复时，音频按钮等待并显示加载状态；三批量音频/单条人声及处理函数均设就绪保护，分镜独立、原引擎参考保持。89相关测试/类型/相关ESLint/正式构建通过，3001更新GGbun_rDvvQE04KRojhnb，HTTP200、134候选/profile SHA保持。无真实生成/工程浏览器存储操作/提交推送；切分暂缓、父阶段进行中/SFX暂停。见[修复记录](records/2026-10-20-voice-settings-readiness.md)。
+
+2026-10-20 14:37 HKT用户准备导出音频/分镜，3001原已停止，直接启动同一已验收UI build3X49m7UFCwJwpnjPAPAyZ；页面/目录/静态manifest HTTP200，134候选/profile SHA保持，0模型/构建/工程存储操作，未停止其他进程。批下载/视频包及依赖只读预检齐全，未替用户真实导出。初次组合命令审批拦截后，限定为既有脚本正常执行获准，记录在[界面记录末节](records/2026-10-20-audio-player-and-panel-scroll.md)。父阶段进行中/SFX暂停。
+
+2026-10-20 已先推送语音/分镜版本90d4eb4（远端同SHA，1870Vitest/3条件跳过+48Python/类型/lint/build），随后统一四处原生播放器及页面互斥，保留下载/音量/倍速，移除右侧六处内层滚动并让H3预览自动增高。252相关测试/类型/相关ESLint/最终构建通过；06:16更新3001为3X49m7UFCwJwpnjPAPAyZ，五路HTTP200、134候选/profile和共享工作保持。浏览器两入口均初始化失败，无新截图/视觉验收；界面留本地未二次推送，0模型，切分暂缓、父阶段进行中/SFX暂停。见[本轮记录](records/2026-10-20-audio-player-and-panel-scroll.md)。
 
 2026-10-20 用户授权检查并推送近期语音可靠性/批量音频/短句分镜与相关实验工具记录；独立选定43文件通过1870Vitest/3条件跳过、48Python、完整类型/源码ESLint/正式构建和568导出文件核验，14批量组件测试修正5秒时钟后完整通过。空间工作台/渲染/Qwen留本地，共享文件按内容选取；真实提交/远端以Git及仓库外收据为准。前端播放器和滚动优化随后单独进行，0模型/部署，切分暂缓、父阶段进行中/SFX暂停。见[发布记录](records/2026-10-20-voice-reliability-release.md)。
 

@@ -12,14 +12,28 @@ import { ensureSpeechWorkspaces, switchSpeechWorkspace } from "./speech-workspac
 import { makeVoiceCandidateFixture } from "./voice-candidate-fixture";
 import { recheckVoiceCandidate } from "./voice-candidate-recheck";
 import { listVoiceGenerationRecordings, resolveVoiceGenerationRecording } from "./voice-generation-recordings";
-import { VoiceGroupAnalysisError } from "./voice-group-analysis";
+import { VoiceGroupAnalysisError, type VoiceGroupAnalysis } from "./voice-group-analysis";
 import { getVoiceParagraphContext } from "./voice-paragraph-context";
-import { paragraphPcmFrames } from "./voice-paragraph-split";
-import { ShortSentenceReviewSchema, VoiceRecognitionSchema } from "./voice-recognition";
-import { confirmVoiceParagraphText } from "./voice-paragraph-confirmation";
+import { paragraphPcmFrames, sliceParagraphPcmWav } from "./voice-paragraph-split";
 
 const temporaryRoots: string[] = [];
 type Dependencies = NonNullable<Parameters<typeof recheckVoiceCandidate>[1]>;
+function cuttingAnalysis(input: Parameters<NonNullable<Dependencies["analyze"]>>[0], recognized = input.expectedText, similarity = 1): VoiceGroupAnalysis {
+  const { frames } = paragraphPcmFrames(input.wav);
+  const following = Boolean(input.followingText);
+  const sourceWords = [{ text: recognized, start: .2, end: .72 },
+    ...(following ? [{ text: input.followingText!, start: 1.28, end: 1.7 }] : [])];
+  const cutEndSeconds = following ? 1 : frames / 48_000;
+  return { wav: sliceParagraphPcmWav(input.wav, 0, Math.round(cutEndSeconds * 48_000)),
+    transcript: recognized, coverage: similarity, internalPausesMs: [], leadingQuietMs: 0, trailingQuietMs: 0,
+    cutStartSeconds: 0, cutEndSeconds, asrModel: "faster-whisper-large-v3/cpu/int8",
+    boundaryOnly: { method: following ? "ordered_word_boundary" : "whole_recording", alignmentSimilarity: similarity,
+      targetEndWordIndex: 0, ...(following ? { followingStartWordIndex: 1 } : {}), contentVerified: false, internalPausePositions: [] },
+    recognition: { stage: "complete", analysisMode: "cutting_only", expectedText: input.expectedText,
+      followingText: input.followingText ?? "", sourceTranscript: recognized + (input.followingText ?? ""),
+      sourceWords, targetTranscript: recognized },
+    ...(following ? { cutValidation: { method: "two_sided", thresholdDbfs: -66.02, quietStartSeconds: .8, quietEndSeconds: 1.2 } } : {}) };
+}
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "paragraph-recheck-test-"));
@@ -47,11 +61,7 @@ async function fixture() {
       sourceAsset, checkStatus: "review", segments: [], diagnosticCode: "uncertain_word_alignment" } },
     qualityWarnings: ["原生模型音质提示", "整段已生成，但短句切分未全部通过检查；完整原音可试听、下载，确认安全分段后才能采用到短句。"] });
   await saveParagraphAudioCandidates({ config, candidates: [candidate] });
-  const analyze = vi.fn<NonNullable<Dependencies["analyze"]>>(async (input) => ({ wav: input.wav, transcript: input.expectedText,
-    coverage: 1, internalPausesMs: [], leadingQuietMs: 0, trailingQuietMs: 0, cutStartSeconds: 0, cutEndSeconds: 1,
-    asrModel: "faster-whisper-large-v3/cpu/int8", recognition: { stage: "complete", expectedText: input.expectedText,
-      sourceTranscript: input.expectedText + (input.followingText ?? ""), ...(input.followingText ? { followingText: input.followingText } : {}) },
-    ...(input.followingText ? { cutValidation: { method: "two_sided", thresholdDbfs: -60, quietStartSeconds: .9, quietEndSeconds: 1.1 } } : {}) }));
+  const analyze = vi.fn<NonNullable<Dependencies["analyze"]>>(async input => cuttingAnalysis(input));
   return { root, config, project, clips, context, wav, candidate, analyze, workRoot: path.join(root, "voice-work", "long-text") };
 }
 const inputFor = (data: Awaited<ReturnType<typeof fixture>>) => ({ project: data.project, clipId: data.candidate.clipId,
@@ -75,28 +85,19 @@ afterEach(async () => {
 });
 
 describe("saved paragraph candidate recognition", () => {
-  it("retains a same-tone final short sentence as safe slices pending manual confirmation", async () => {
-    const data = await fixture(), exact = data.analyze.getMockImplementation()!;
-    const review = ShortSentenceReviewSchema.parse({ status: "needs_confirmation", reason: "same_tone_substitution", expected: "我替你倒杯茶",
-      sourcePrefix: "我替你倒杯查", similarity: 5 / 6,
-      differences: [{ index: 5, expected: "茶", recognized: "查", expectedPinyin: "cha2", recognizedPinyin: "cha2", rule: "same_tone" }],
-      final: { transcript: "我替你倒杯查", words: [{ text: "我替你倒杯查", start: .1, end: .8 }], durationSeconds: 1 } });
-    data.analyze.mockImplementation(async (input, dependencies) => {
-      const normal = await exact(input, dependencies);
-      return input.followingText ? normal : { ...normal, transcript: "我替你倒杯查", coverage: 5 / 6,
-        recognition: VoiceRecognitionSchema.parse({ stage: "complete", expectedText: input.expectedText, sourceTranscript: "我替你倒杯查",
-          sourceWords: [{ text: "我替你倒杯查", start: .1, end: .8 }], targetTranscript: "我替你倒杯查", shortSentenceReview: review }) };
-    });
+  it("keeps a safely partitioned same-tone final sentence passed without a separate manual-text gate", async () => {
+    const data = await fixture();
+    data.analyze.mockImplementation(async input => input.followingText ? cuttingAnalysis(input) : cuttingAnalysis(input, "我替你倒杯查", 5 / 6));
     const { candidate } = await recheckVoiceCandidate(inputFor(data), { analyze: data.analyze });
-    expect(candidate.provenance.paragraph).toMatchObject({ checkStatus: "needs_confirmation", segments: [{ clipId: data.clips[0].id }, { textReview: review }] });
-    expect(candidate.qualityWarnings).toContain("短句音频已安全切分，部分文字待试听确认；请逐句确认后采用整段。");
-    expect(candidate.qualityWarnings.join("")).not.toContain("漏了句尾");
+    expect(candidate.provenance.paragraph).toMatchObject({ checkStatus: "passed", segments: [{ clipId: data.clips[0].id },
+      { recognition: { analysisMode: "cutting_only", targetTranscript: "我替你倒杯查" } }] });
+    expect(candidate.provenance.paragraph!.segments.every(segment => !segment.textReview)).toBe(true);
+    expect(candidate.provenance.paragraph!.manualTextConfirmation).toBeUndefined();
+    expect(candidate.qualityWarnings).toEqual(["原生模型音质提示"]);
     const recordings = await listVoiceGenerationRecordings({ config: data.config, projectId: data.project.project_id, clipId: data.clips[1].id, text: data.clips[1].text, workspaceMode: "paragraph" });
-    expect(recordings.recordings[0]).toMatchObject({ status: "needs_review", paragraphRecognition: { checkStatus: "needs_confirmation", segments: [{ clipId: data.clips[0].id }, { textReview: review }] } });
-    expect(recordings.recordings[0].warning).toContain("文字待试听确认");
-    const confirmed = await confirmVoiceParagraphText({ ...inputFor(data), candidateId: candidate.candidateId, confirmedClipIds: [data.clips[1].id] });
-    expect(confirmed.candidate.provenance.paragraph?.segments).toEqual(candidate.provenance.paragraph?.segments);
-    expect(confirmed.candidate.provenance.paragraph?.manualTextConfirmation?.confirmedClipIds).toEqual([data.clips[1].id]);
+    expect(recordings.recordings[0]).toMatchObject({ status: "checked", paragraphRecognition: { checkStatus: "passed", segments: [
+      { clipId: data.clips[0].id }, { recognition: { targetTranscript: "我替你倒杯查" } }] } });
+    expect(recordings.recordings[0].warning).not.toContain("文字待试听确认");
     expect(data.analyze).toHaveBeenCalledTimes(2);
     expect(await getAudioCandidate({ config: data.config, candidateId: data.candidate.candidateId })).toEqual(data.candidate);
   });
@@ -131,23 +132,14 @@ describe("saved paragraph candidate recognition", () => {
     expect(await readFile(resolveClipAssetPath(data.candidate.asset.assetId, data.config))).toEqual(Buffer.from(data.wav));
     expect(await readdir(path.join(data.root, "locks"))).toEqual([]);
   });
-  it("retains all safe original-PCM slices as needs_confirmation when a tiny sentence ASR omits its final particle", async () => {
-    const data = await fixture(), exact = data.analyze.getMockImplementation()!;
-    const window = { transcript: "回来", words: [{ text: "回来", start: .1, end: .7 }], durationSeconds: 1 };
-    const review = ShortSentenceReviewSchema.parse({ status: "needs_confirmation", reason: "missing_final_particle", expected: "回来啦", sourcePrefix: "回来了",
-      expectedPinyin: "la5", sourcePinyin: "le5", similarity: 2 / 3, left: window, final: window,
-      right: { transcript: "我替你倒杯茶", words: [{ text: "我替你倒杯茶", start: .1, end: .8 }], durationSeconds: 1 } });
-    data.analyze.mockImplementation(async (input, dependencies) => {
-      const normal = await exact(input, dependencies);
-      if (!input.followingText) return normal;
-      return { ...normal, transcript: "回来", coverage: 2 / 3, recognition: VoiceRecognitionSchema.parse({ stage: "complete",
-        expectedText: input.expectedText, followingText: input.followingText, sourceTranscript: "回来了我替你倒杯茶", targetTranscript: "回来",
-        sourceWords: [{ text: "回来了", start: .1, end: .7 }, { text: "我替你倒杯茶", start: 1.1, end: 1.8 }], shortSentenceReview: review }) };
-    });
+  it("partitions safe original PCM when source ASR omits a particle, preserving the literal evidence without extra confirmation", async () => {
+    const data = await fixture();
+    data.analyze.mockImplementation(async input => input.followingText ? cuttingAnalysis(input, "回来", 2 / 3) : cuttingAnalysis(input));
     const result = await recheckVoiceCandidate(inputFor(data), { analyze: data.analyze });
     expect(data.analyze).toHaveBeenCalledTimes(2);
     const paragraph = result.candidate.provenance.paragraph!;
-    expect(paragraph).toMatchObject({ checkStatus: "needs_confirmation", segments: [{ textReview: review, recognition: { targetTranscript: "回来" } }, { clipId: data.clips[1].id }] });
+    expect(paragraph).toMatchObject({ checkStatus: "passed", segments: [{ recognition: { analysisMode: "cutting_only", targetTranscript: "回来" } }, { clipId: data.clips[1].id }] });
+    expect(paragraph.segments.every(segment => !segment.textReview)).toBe(true);
     expect(paragraph.manualTextConfirmation).toBeUndefined();
     expect(result.candidate.asset).toEqual(paragraph.segments[1].asset);
     expect(await getAudioCandidate({ config: data.config, candidateId: data.candidate.candidateId })).toEqual(data.candidate);
@@ -155,7 +147,8 @@ describe("saved paragraph candidate recognition", () => {
     const payloads = await Promise.all(paragraph.segments.map(async (segment) => paragraphPcmFrames(new Uint8Array(await readFile(resolveClipAssetPath(segment.asset.assetId, data.config)))).pcm));
     expect(Buffer.concat(payloads)).toEqual(Buffer.from(paragraphPcmFrames(data.wav).pcm));
     const recordings = await listVoiceGenerationRecordings({ config: data.config, projectId: data.project.project_id, clipId: data.clips[0].id, text: data.clips[0].text, workspaceMode: "paragraph" });
-    expect(recordings.recordings[0]).toMatchObject({ status: "needs_review", paragraphRecognition: { checkStatus: "needs_confirmation", segments: [{ textReview: review }, { clipId: data.clips[1].id }] } });
+    expect(recordings.recordings[0]).toMatchObject({ status: "checked", paragraphRecognition: { checkStatus: "passed", segments: [
+      { recognition: { targetTranscript: "回来" } }, { clipId: data.clips[1].id }] } });
   });
   it("cuts the exact saved original, publishes all sibling candidates atomically, and retains the original native recipe and results", async () => {
     const data = await fixture();
@@ -200,19 +193,21 @@ describe("saved paragraph candidate recognition", () => {
     expect(data.analyze.mock.calls[2][0].wav).toEqual(data.wav);
   });
 
-  it("retains a failed later sentence's exact recognition and full original without publishing any partial cuts", async () => {
+  it("retains a later whole-recording integrity failure's exact evidence and full original without publishing partial cuts", async () => {
     const data = await fixture();
-    const recognition = { stage: "target_validation" as const, sourceTranscript: "我替你倒茶", expectedText: data.clips[1].text };
-    data.analyze.mockRejectedValueOnce(new VoiceGroupAnalysisError("位置未确认", 422, "uncertain_word_alignment", {
-      stage: "source_alignment", sourceTranscript: "回来了我替你倒茶", expectedText: data.clips[0].text, followingText: data.clips[1].text }));
+    const recognition = { stage: "boundary_check" as const, analysisMode: "cutting_only" as const,
+      sourceTranscript: "我替你倒茶", expectedText: data.clips[1].text };
+    data.analyze.mockRejectedValueOnce(new VoiceGroupAnalysisError("位置未确认", 422, "boundary_unlocatable", {
+      stage: "source_alignment", analysisMode: "cutting_only", sourceTranscript: "回来了我替你倒茶",
+      expectedText: data.clips[0].text, followingText: data.clips[1].text }));
     const first = await recheckVoiceCandidate(inputFor(data), { analyze: data.analyze });
     expect(first.candidate.provenance.paragraph).toMatchObject({ checkStatus: "review", segments: [], failedClipId: data.clips[0].id,
       failureRecognition: { sourceTranscript: "回来了我替你倒茶" } });
     data.analyze.mockClear();
     data.analyze.mockImplementationOnce(data.analyze.getMockImplementation()!);
-    data.analyze.mockRejectedValueOnce(new VoiceGroupAnalysisError("检查未通过", 422, "cut_text_mismatch", recognition));
+    data.analyze.mockRejectedValueOnce(new VoiceGroupAnalysisError("完整PCM响应无法核实", 422, "unsafe_cutting_boundary", recognition));
     const result = await recheckVoiceCandidate(inputFor(data), { analyze: data.analyze });
-    expect(result.candidate.provenance.paragraph).toMatchObject({ checkStatus: "review", segments: [], diagnosticCode: "cut_text_mismatch",
+    expect(result.candidate.provenance.paragraph).toMatchObject({ checkStatus: "review", segments: [], diagnosticCode: "unsafe_cutting_boundary",
       failedClipId: data.clips[1].id, failureRecognition: recognition });
     expect(result.candidate.asset).toEqual(data.candidate.asset);
     expect(await readFile(resolveClipAssetPath(result.candidate.asset.assetId, data.config))).toEqual(Buffer.from(data.wav));
@@ -221,6 +216,17 @@ describe("saved paragraph candidate recognition", () => {
     const recordings = await listVoiceGenerationRecordings({ config: data.config, projectId: data.project.project_id,
       clipId: data.clips[0].id, text: data.clips[0].text, workspaceMode: "paragraph" });
     expect(recordings.recordings[0]).toMatchObject({ status: "needs_review", paragraphRecognition: { failedClipId: data.clips[1].id, failureRecognition: recognition } });
+  });
+
+  it("rechecks an original at its native step budget instead of treating that metadata as a cut failure", async () => {
+    const data = await fixture();
+    await rewriteCandidate(data, candidate => { candidate.provenance.parameters.generatedSteps = 800; });
+    const original = await getAudioCandidate({ config: data.config, candidateId: data.candidate.candidateId });
+    const { candidate } = await recheckVoiceCandidate(inputFor(data), { analyze: data.analyze });
+    expect(candidate.provenance.paragraph?.checkStatus).toBe("passed");
+    expect(candidate.provenance.parameters).toMatchObject({ generatedSteps: 800, maxSteps: 800, generationCalls: 0, recheckCalls: 1 });
+    expect(data.analyze).toHaveBeenCalledTimes(2);
+    expect(await getAudioCandidate({ config: data.config, candidateId: data.candidate.candidateId })).toEqual(original);
   });
 
   it.each(["foreign", "short", "text", "ids", "group", "style", "silent", "discarded", "missing"])("rejects %s source changes before ASR", async (kind) => {

@@ -85,12 +85,23 @@ describe("reference audio import", () => {
   it("previews the selection, stops at its end and uses the source playback position as a new start", async () => {
     const onPreviewPlay = vi.fn(); render(<VoiceReferenceImport {...props({ onPreviewPlay })} />); choose();
     const audio = screen.getByLabelText("待添加的原录音试听") as HTMLAudioElement;
+    const progress = screen.getByRole("slider", { name: "待添加的原录音试听播放进度" }) as HTMLInputElement;
+    expect(progress.disabled).toBe(true);
     Object.defineProperty(audio, "duration", { configurable: true, value: 108 }); fireEvent.loadedMetadata(audio);
+    expect(progress.disabled).toBe(false); expect(progress.max).toBe("108");
+    expect(screen.getByText("原录音试听 · 108 秒")).toBeTruthy();
     audio.currentTime = 25.5; fireEvent.click(screen.getByRole("button", { name: "从当前播放位置开始" }));
     expect((screen.getByLabelText("参考片段开始时间") as HTMLInputElement).value).toBe("25.5");
     fireEvent.click(screen.getByRole("button", { name: "试听所选片段" })); fireEvent.play(audio);
     expect(audio.play).toHaveBeenCalled(); expect(onPreviewPlay).toHaveBeenCalledWith(audio);
-    audio.currentTime = 40.6; fireEvent.timeUpdate(audio); expect(audio.pause).toHaveBeenCalled();
+    expect(audio.currentTime).toBe(25.5);
+    const pause = vi.mocked(audio.pause); pause.mockClear();
+    audio.currentTime = 33.49; fireEvent.timeUpdate(audio);
+    expect(pause).not.toHaveBeenCalled(); expect(Number(progress.value)).toBe(33.49);
+    audio.currentTime = 33.5; fireEvent.timeUpdate(audio);
+    expect(pause).toHaveBeenCalledOnce(); expect(Number(progress.value)).toBe(33.5);
+    audio.currentTime = 40.6; fireEvent.timeUpdate(audio);
+    expect(pause).toHaveBeenCalledOnce();
   });
 
   it("keeps an explicitly chosen length when audio metadata arrives late", () => {

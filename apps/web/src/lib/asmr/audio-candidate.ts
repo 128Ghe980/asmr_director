@@ -5,6 +5,7 @@ import { VoiceLongTextResultSchema } from "./voice-longtext-result";
 import type { VoiceGenerationContext } from "./voice-generation-context";
 import type { VoiceParagraphContext } from "./voice-paragraph-context";
 import { VoiceParagraphResultSchema } from "./voice-paragraph-result";
+import { ForcedSegmentationSchema } from "./voice-forced-segmentation";
 
 const SafeIdSchema = z.string().min(1).max(240).regex(/^[A-Za-z0-9_-]+$/);
 const ScalarSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
@@ -23,12 +24,41 @@ export const AudioCandidateProvenanceSchema = z.object({
   referenceIdentity: z.string().min(1).optional(),
   longText: VoiceLongTextResultSchema.optional(),
   paragraph: VoiceParagraphResultSchema.optional(),
+  forcedSegmentation: ForcedSegmentationSchema.optional(),
 }).strict().superRefine((provenance, context) => {
   if ((provenance.generationMode === "long_text") !== (provenance.longText !== undefined)) {
     context.addIssue({ code: "custom", path: ["longText"], message: "Long-text provenance is required only for long-text generation" });
   }
   if ((provenance.generationMode === "paragraph") !== (provenance.paragraph !== undefined)) {
     context.addIssue({ code: "custom", path: ["paragraph"], message: "Paragraph provenance is required only for paragraph generation" });
+  }
+  const forced = provenance.forcedSegmentation;
+  if (forced) {
+    const issue = (message: string) => context.addIssue({ code: "custom", path: ["forcedSegmentation"], message });
+    if (provenance.generationMode === "paragraph") {
+      const paragraph = provenance.paragraph, alignment = forced.alignments[0];
+      if (!paragraph || paragraph.checkStatus !== "passed" || forced.alignments.length !== 1
+        || alignment.groupIndex !== 0 || alignment.sourceAssetId !== paragraph.sourceAsset.assetId
+        || Math.abs(alignment.sourceFrames / 48_000 - paragraph.sourceAsset.duration) > 1 / 48_000
+        || (alignment.method === "ctc_forced" && alignment.mode !== "paragraph")
+        || alignment.cutFrames.length !== paragraph.segments.length - 1
+        || paragraph.segments.some((segment, index) => Math.round(segment.cutEndSeconds * 48_000)
+          !== (alignment.cutFrames[index] ?? alignment.sourceFrames))) issue("Forced paragraph evidence must bind its complete original PCM partition");
+    } else if (provenance.generationMode === "long_text" && provenance.longText) {
+      const groups = provenance.longText.groups;
+      if (forced.alignments.some(alignment => {
+        const group = groups[alignment.groupIndex];
+        const endpoint = alignment.method === "whole_recording" ? alignment.sourceFrames : alignment.cutFrames[0];
+        return !group || group.checkStatus !== "passed" || group.segmentationMethod !== alignment.method
+          || (alignment.method === "ctc_forced" && alignment.mode !== "prefix")
+          || group.cutStartSeconds !== 0 || Math.abs(group.cutEndSeconds * 48_000 - endpoint) > 1
+          || Math.abs(group.asset.duration * 48_000 - endpoint) > 1;
+      }) || groups.some(group => group.segmentationMethod && !forced.alignments.some(alignment => alignment.groupIndex === group.index))) {
+        issue("Forced long-text evidence must bind each retained group endpoint");
+      }
+    } else issue("Forced segmentation requires a saved paragraph or long-text source");
+  } else if (provenance.longText?.groups.some(group => group.segmentationMethod)) {
+    context.addIssue({ code: "custom", path: ["forcedSegmentation"], message: "Forced group markers require their alignment receipt" });
   }
 });
 
@@ -66,6 +96,9 @@ export const AudioCandidateSchema = z.object({
   }
   if (candidate.provenance.longText?.baseCandidateId === candidate.candidateId) {
     context.addIssue({ code: "custom", path: ["provenance", "longText", "baseCandidateId"], message: "A rerolled candidate must refer to a different source candidate" });
+  }
+  if (candidate.provenance.forcedSegmentation?.sourceCandidateId === candidate.candidateId) {
+    context.addIssue({ code: "custom", path: ["provenance", "forcedSegmentation"], message: "Forced output must refer to an earlier candidate" });
   }
 });
 

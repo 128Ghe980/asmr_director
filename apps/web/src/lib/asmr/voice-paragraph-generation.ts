@@ -20,7 +20,6 @@ import { generateVoxCpm2, VoxCpm2Error } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 
 const reviewWarning = "整段已生成，但短句切分未全部通过检查；完整原音可试听、下载，确认安全分段后才能采用到短句。";
-const confirmationWarning = "短句音频已安全切分，部分文字待试听确认；请逐句确认后采用整段。";
 type ParagraphGenerationInput = {
   project: AsmrProject; clipId: string; config: LocalRuntimeConfig; voiceOptions: VoiceGenerationOptions;
   signal?: AbortSignal; now?: Date; onProgress?: (progress: VoiceGenerationProgress) => void;
@@ -82,11 +81,8 @@ export async function generateVoiceParagraphCandidates(input: ParagraphGeneratio
       let failedClipId: string | undefined;
       let failureRecognition: VoiceRecognition | undefined;
       try {
-        // A take stopped at the native cap cannot establish complete speech.
-        const max = take.provenance.parameters.maxSteps, generated = take.provenance.parameters.generatedSteps;
-        if (typeof max === "number" && typeof generated === "number" && generated >= max - .001) throw new VoiceGroupAnalysisError("整段录音达到模型长度上限。", 422, "generation_length_limit");
         cuts = await splitVoiceParagraph({ wav: take.wav, targets: group.map((clip) => ({ clipId: clip.id, text: clip.text })), config: input.config, signal,
-          onProgress: (index, total) => { attemptedSentence = index; progress(15 + index / total * 70, `完整原音已保存，正在核对第 ${index + 1}/${total} 个短句与静音边界`); } },
+          onProgress: (index, total) => { attemptedSentence = index; progress(15 + index / total * 70, `完整原音已保存，正在定位第 ${index + 1}/${total} 个短句的切分边界`); } },
         { analyze: dependencies.analyze, runtimeSession });
       } catch (error) {
         signal.throwIfAborted();
@@ -100,7 +96,7 @@ export async function generateVoiceParagraphCandidates(input: ParagraphGeneratio
           recognition: failureRecognition, failedClipId, retainedOriginal: true });
       }
       const segments: VoiceParagraphResult["segments"] = [];
-      // Publish slices only when every boundary is safe; text doubt retains a manual gate.
+      // Publish slices only when every boundary is safe. Content is judged by listening.
       for (const cut of cuts) {
         signal.throwIfAborted();
         const asset = await saveClipAsset({ config: input.config, clipId: cut.clipId, wav: cut.wav, duration: cut.cutEndSeconds - cut.cutStartSeconds, now });
@@ -108,10 +104,9 @@ export async function generateVoiceParagraphCandidates(input: ParagraphGeneratio
           ...(cut.recognition ? { recognition: cut.recognition } : {}), ...(cut.textReview ? { textReview: cut.textReview } : {}) });
       }
       const paragraph = VoiceParagraphResultSchema.parse({ version: 1, groupId: paragraphContext.groupId, text: paragraphContext.text,
-        clipIds: group.map((clip) => clip.id), sourceAsset, checkStatus: cuts.length ? (cuts.some((cut) => cut.textReview) ? "needs_confirmation" : "passed") : "review", segments,
+        clipIds: group.map((clip) => clip.id), sourceAsset, checkStatus: cuts.length ? "passed" : "review", segments,
         ...(diagnosticCode ? { diagnosticCode } : {}), ...(failedClipId ? { failedClipId } : {}), ...(failureRecognition ? { failureRecognition } : {}) });
       const qualityWarnings = [...take.qualityWarnings, ...(paragraph.checkStatus === "review" ? [reviewWarning] : []),
-        ...(paragraph.checkStatus === "needs_confirmation" ? [confirmationWarning] : []),
         ...segments.filter((segment) => segment.recognition?.contentComparison?.status === "different")
           .map((segment) => `「${segment.text}」识别文字有差异，请试听确认。`)];
       const provenance = { ...take.provenance, generationMode: "paragraph" as const, paragraph,

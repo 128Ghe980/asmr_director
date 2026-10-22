@@ -4,6 +4,7 @@ import { Download, Headphones, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getAcceptedVoicePreviewPlan } from "@/lib/asmr/accepted-voice-preview";
 import type { AsmrProject } from "@/lib/asmr/schema";
+import { AudioPlayer } from "./audio-player";
 
 type PreviewResult = {
   audioUrl: string; filename: string; clipCount: number; skippedCount: number;
@@ -131,8 +132,8 @@ export function AcceptedVoicePreview({ project, disabled = false, onAudioElement
       </div>
     </div>
     {ready && <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-      <audio ref={setAudioElement} aria-label="已采用语音整体试听" controls preload="metadata" src={ready.audioUrl} onPlay={onPlaybackStart}
-        onError={() => setState({ source, status: "error", error: "预览音频无法读取，请重新合并。" })} className="h-8 w-full min-w-0 flex-1" />
+      <AudioPlayer ref={setAudioElement} label="已采用语音整体试听" preload="metadata" src={ready.audioUrl} onPlay={onPlaybackStart}
+        statusDisplay="none" onError={() => setState({ source, status: "error", error: "预览音频无法读取，请重新合并。" })} className="w-full min-w-0 flex-1" />
       <span className="text-[10px] tabular-nums text-studio-muted">{ready.duration.toFixed(1)} 秒 · 原声{plan.skippedCount > 0 ? ` · 跳过 ${plan.skippedCount} 段` : ""}</span>
     </div>}
     {!plan.entries.length && <p className="mt-1 text-[11px] text-studio-muted">采用音频后，即可合并试听和下载。</p>}

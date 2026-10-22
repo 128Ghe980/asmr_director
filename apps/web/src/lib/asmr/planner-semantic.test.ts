@@ -11,6 +11,14 @@ const draft: PlannerDraft = {
 };
 
 describe("planner semantic units", () => {
+  it("keeps the Snow Night food enumeration in one editable unit", () => {
+    const text = "吃的也囤了不少，米面、腌菜、冻肉，还有你爱吃的果酱。";
+    expect(splitPlannerSemanticText(text)).toEqual([text]);
+    const normalized = normalizePlannerSemanticDraft({ ...draft, sections: [{ ...draft.sections[0], text }] });
+    expect(normalized.sections.map((section) => section.text)).toEqual([text]);
+    expect(normalized.sections[0].id).toBe("opening");
+  });
+
   it("splits the real six-clause greeting into two natural voice groups even though it has only three full sentences", () => {
     const text = "回来啦。我还没睡，就猜你快到了。先把鞋换了，外套挂这边，过来坐。";
     const result = splitPlannerSemanticText(text);

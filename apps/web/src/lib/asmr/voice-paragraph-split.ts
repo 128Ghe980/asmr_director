@@ -1,7 +1,7 @@
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { decodePcmWav } from "./pcm-audio";
-import { analyzeVoiceGroup, VoiceGroupAnalysisError } from "./voice-group-analysis";
-import { VoiceRecognitionSchema, normalizeVoiceSentenceParticleText, type ShortSentenceReview, type VoiceRecognition } from "./voice-recognition";
+import { analyzeVoiceGroup, assertCuttingOnlyVoiceAnalysis, VoiceGroupAnalysisError } from "./voice-group-analysis";
+import type { ShortSentenceReview, VoiceRecognition } from "./voice-recognition";
 import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 
 const unsafe = (recognition?: VoiceRecognition, code = "unsafe_paragraph_boundary") => new VoiceGroupAnalysisError(
@@ -46,8 +46,8 @@ export type ParagraphAudioSegment = {
 };
 
 /**
- * Verify each successive opening sentence against the complete remaining text.
- * The analysis WAV may trim/fade edges; only its evidence is used. The returned
+ * Locate each successive sentence against the complete remaining source.
+ * Word matching only locates boundaries; it never certifies spoken content. The returned
  * slices partition the original PCM, including all natural pauses and edges.
  */
 export async function splitVoiceParagraph(input: {
@@ -68,7 +68,7 @@ export async function splitVoiceParagraph(input: {
     const followingText = input.targets.slice(index + 1).map((target) => target.text).join("");
     const remainder = sliceParagraphPcmWav(input.wav, cursor, frames);
     const analysis = await (dependencies.analyze ?? analyzeVoiceGroup)({ wav: remainder, expectedText: target.text,
-      requireTwoSided: true, allowShortSentenceParticle: true, allowShortSentenceTextReview: true,
+      requireTwoSided: true,
       ...(followingText ? { followingText } : {}), clauses: [target.text], config: input.config, signal: input.signal },
     // Paragraph splitting is fully local; do not invoke the optional semantic
     // API fallback inherited from context-window generation.
@@ -78,19 +78,7 @@ export async function splitVoiceParagraph(input: {
     if (analysis.recognition.expectedText !== target.text || (analysis.recognition.followingText ?? "") !== followingText) {
       throw unsafe(analysis.recognition, "paragraph_recognition_source_mismatch");
     }
-    const particleEvidence = analysis.recognition.contentComparison?.mode === "sentence_particle";
-    const particleSafe = particleEvidence && VoiceRecognitionSchema.safeParse(analysis.recognition).success
-      && analysis.recognition.contentComparison?.mode === "sentence_particle"
-      && normalizeVoiceSentenceParticleText(analysis.transcript) === analysis.recognition.contentComparison.recognized
-      && Math.abs(analysis.coverage - analysis.recognition.contentComparison.similarity) < .000001;
-    const textReview = analysis.recognition.shortSentenceReview;
-    const textReviewSafe = Boolean(textReview) && VoiceRecognitionSchema.safeParse(analysis.recognition).success
-      && textReview?.final.transcript === analysis.transcript && Math.abs(analysis.coverage - textReview.similarity) < .000001;
-    if ((analysis.coverage < .9 && !particleSafe && !textReviewSafe) || (particleEvidence && !particleSafe)
-        || (textReview && !textReviewSafe)) throw unsafe(analysis.recognition, "paragraph_content_below_threshold");
-    if (analysis.recognition.followingPhoneticBoundary && !VoiceRecognitionSchema.safeParse(analysis.recognition).success) {
-      throw unsafe(analysis.recognition, "paragraph_following_phonetic_evidence_invalid");
-    }
+    assertCuttingOnlyVoiceAnalysis(analysis, remainder, { expectedText: target.text, followingText, clauses: [target.text] });
     let end = frames;
     if (followingText) {
       const quiet = analysis.cutValidation;
@@ -114,8 +102,7 @@ export async function splitVoiceParagraph(input: {
       if (end <= cursor || end >= frames) throw unsafe(analysis.recognition);
     }
     segments.push({ clipId: target.clipId, text: target.text, wav: sliceParagraphPcmWav(input.wav, cursor, end),
-      cutStartSeconds: cursor / 48_000, cutEndSeconds: end / 48_000, recognition: analysis.recognition,
-      ...(textReview ? { textReview } : {}) });
+      cutStartSeconds: cursor / 48_000, cutEndSeconds: end / 48_000, recognition: analysis.recognition });
     cursor = end;
   }
   if (cursor !== frames) throw unsafe();

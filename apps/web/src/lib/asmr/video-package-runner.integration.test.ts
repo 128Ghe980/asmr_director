@@ -71,7 +71,11 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
       const payloads = await Promise.all([1, 2, 3].map(async index => JSON.parse(await readFile(path.join(output, `dry-run/${String(index).padStart(3, "0")}.json`), "utf8"))));
       expect(payloads[0].prompt["11"].inputs.audio).toEqual(["24", 0]);
       expect(payloads[0].prompt["4"]).toBeUndefined();
-      expect(payloads[1].prompt["11"].inputs.audio).toEqual(["4", 0]);
+      expect(payloads[1].prompt["11"].inputs.audio).toEqual(["904", 0]);
+      expect(payloads[1].prompt["904"].inputs).toEqual({ audio: ["4", 0], start_index: 0, duration: 5 });
+      expect(payloads[1].prompt["903"].inputs.length).toBe(120);
+      expect(payloads[1].prompt["901"].class_type).toBe("CLFSelectVideoTailFrames");
+      expect(payloads[1].prompt["902"].inputs.images).toEqual(["901", 0]);
       expect(payloads[1].prompt["24"]).toBeUndefined();
       expect(payloads[1]._dry_run.targetDurationSeconds).toBeLessThanOrEqual(5);
       expect(payloads[2].prompt["22"].inputs["ref_images.ref_image_1"]).toBeDefined();

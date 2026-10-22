@@ -78,46 +78,41 @@ function fixture() {
   return { project, candidate };
 }
 
-type ConfirmationPost = { url: string; body: { project: AsmrProject; clipId: string; confirmedClipIds: string[] }; signal?: AbortSignal | null;
-  resolve: (response: Response) => void; reject: (reason?: unknown) => void };
+type CandidateRead = { url: string; resolve: (response: Response) => void; reject: (reason?: unknown) => void };
 function api(candidate: AudioCandidate) {
-  const posts: ConfirmationPost[] = [];
-  let savedCandidates = [candidate];
-  const project = getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, demoProject)).project;
-  const context = getVoiceParagraphContext(project, candidate.clipId)!;
+  const reads: CandidateRead[] = [];
   const fetcher = vi.fn<typeof fetch>(async (input, init) => {
     const url = String(input);
     if (url === "/api/generation/clip" && init?.method !== "POST") return Response.json(catalog);
     if (url.startsWith("/api/audio-candidates?")) {
       const query = new URL(url, "http://localhost").searchParams;
-      return Response.json({ candidates: query.get("projectId") === candidate.projectId && query.get("workspaceMode") === "paragraph" ? savedCandidates : [] });
+      return Response.json({ candidates: query.get("projectId") === candidate.projectId && query.get("workspaceMode") === "paragraph" ? [candidate] : [] });
     }
     if (url.startsWith("/api/voice-generation-recordings?")) return Response.json({ recordings: [], nextCursor: null });
     if (url.startsWith("/api/assets/analysis")) return Response.json({ analysis: { bars: [10], duration: 3, sampleRate: 48000, channels: 1, peakDbfs: -12, rmsDbfs: -20, clippedSampleCount: 0 } });
-    if (url.endsWith("/confirm-text") && init?.method === "POST") return await new Promise<Response>((resolve, reject) => {
-      posts.push({ url, body: JSON.parse(String(init.body)), signal: init.signal, resolve, reject });
+    if (url.startsWith("/api/audio-candidates/" + candidate.candidateId + "?") && !init?.method) return await new Promise<Response>((resolve, reject) => {
+      reads.push({ url, resolve, reject });
     });
-    throw new Error(`Unexpected manual confirmation request: ${url}`);
+    throw new Error("Unexpected paragraph adoption request: " + url);
   });
   vi.stubGlobal("fetch", fetcher);
-  const confirmed = () => AudioCandidateSchema.parse({ ...candidate, provenance: { ...candidate.provenance, paragraph: { ...candidate.provenance.paragraph!,
-    manualTextConfirmation: { sourceCandidateId: candidate.candidateId, confirmedClipIds: [candidate.clipId], confirmedAt: "2026-10-14T13:45:00.000Z" } } } });
-  const confirmedCandidates = () => candidate.provenance.paragraph!.segments.map((segment, index) => {
-    const member = flattenClips(project).find((clip) => clip.id === segment.clipId)!;
-    return AudioCandidateSchema.parse({ ...confirmed(), candidateId: index ? `${candidate.candidateId}_${index}` : candidate.candidateId, clipId: segment.clipId,
-      sourceFingerprint: getVoiceCandidateSourceFingerprint(member, undefined, context), asset: segment.asset });
-  });
-  return { posts, fetcher, confirmed, confirmedCandidates, publish: () => { savedCandidates = confirmedCandidates(); } };
+  return { reads, fetcher, complete: async (fresh = candidate) => {
+    await act(async () => reads.at(-1)!.resolve(Response.json({ candidate: fresh })));
+  } };
 }
 function current(): AsmrProject { return JSON.parse(screen.getByTestId("project").textContent!); }
 async function mount(project: AsmrProject) {
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: "候选 1 短句 1 已听且台词完整" })).toBeTruthy());
+  await waitFor(() => expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByRole("checkbox", { name: /已听且台词完整/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /确认并采用/ })).toBeNull();
   return view;
 }
-function start() {
-  fireEvent.click(screen.getByRole("checkbox", { name: "候选 1 短句 1 已听且台词完整" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认并采用候选 1" }));
+function start() { fireEvent.click(screen.getByRole("button", { name: "采用候选 1" })); }
+function noConfirmationOrGeneration(mock: ReturnType<typeof api>) {
+  expect(mock.fetcher.mock.calls.some(([input]) => String(input).includes("/confirm-text"))).toBe(false);
+  expect(mock.fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  expect(bridgeFactory).not.toHaveBeenCalled();
 }
 beforeEach(() => {
   window.localStorage.clear(); bridgeFactory.mockReset(); vi.stubEnv("NEXT_PUBLIC_ASMR_GENERATION_MODE", "local");
@@ -128,99 +123,139 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-describe("StudioApp manual paragraph text confirmation", () => {
-  it("posts explicit ordered review IDs and persists whole-paragraph adoption while preserving short audio and ASR", async () => {
-    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project);
-    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(mock.posts).toHaveLength(0);
-    start();
-    expect(mock.posts).toHaveLength(1);
-    expect(mock.posts[0].url).toBe(`/api/audio-candidates/${candidate.candidateId}/confirm-text`);
-    expect(mock.posts[0].body).toEqual({ project, clipId: candidate.clipId, confirmedClipIds: [candidate.clipId] });
-    expect((screen.getByRole("button", { name: "测试生成音频" }) as HTMLButtonElement).disabled).toBe(true);
-    mock.publish();
-    await act(async () => mock.posts[0].resolve(Response.json({ candidate: mock.confirmed(), candidates: mock.confirmedCandidates() })));
-    await waitFor(() => expect(current().speechWorkspace!.paragraph.clips[0].asset.asset_id).toBe("review_first"));
-    expect(current().speechWorkspace!.paragraph.clips.map((clip) => clip.asset.asset_id)).toEqual(["review_first", "review_second"]);
-    expect(current().speechWorkspace!.short.clips.map((clip) => clip.asset.asset_id)).toEqual(["short_keep_0", "short_keep_1"]);
+describe("StudioApp ordinary adoption of safely split legacy paragraphs", () => {
+  it("adopts all saved slices without text confirmation, preserves short audio and ASR, and supports undo", async () => {
+    const { project, candidate } = fixture(); const before = JSON.stringify(candidate); const mock = api(candidate); await mount(project);
+    expect(current()).toEqual(project);
+    expect(screen.getByLabelText("候选 1 整段完整原音试听").getAttribute("src")).toContain("source_original");
+    expect(screen.getByLabelText("候选 1 短句 1 原声试听").getAttribute("src")).toContain("review_first");
+    expect(screen.getByText("短句识别（历史）").nextElementSibling?.textContent).toBe("回来");
+    start(); expect(mock.reads).toHaveLength(1);
+    expect(new URL(mock.reads[0].url, "http://localhost").searchParams.get("projectId")).toBe(project.project_id);
+    await mock.complete();
+    await waitFor(() => expect(current().speechWorkspace!.paragraph.clips.map(clip => clip.asset.asset_id)).toEqual(["review_first", "review_second"]));
+    expect(current().speechWorkspace!.short.clips.map(clip => clip.asset.asset_id)).toEqual(["short_keep_0", "short_keep_1"]);
     expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).project).toEqual(current());
-    expect(screen.getByText("整段切分 · 台词已试听确认")).toBeTruthy();
-    expect(screen.getByText("短句识别（已试听确认）").nextElementSibling?.textContent).toBe("回来");
     expect(candidate.provenance.paragraph!.manualTextConfirmation).toBeUndefined();
-    expect(bridgeFactory).not.toHaveBeenCalled();
-    expect(mock.fetcher.mock.calls.some(([input, init]) => String(input) === "/api/generation/clip" && init?.method === "POST")).toBe(false);
+    expect(JSON.stringify(candidate)).toBe(before);
+    expect(screen.getByText("短句识别（历史）").nextElementSibling?.textContent).toBe("回来");
+    expect(screen.queryByText("历史试听确认记录已保存。")).toBeNull();
+    const undo = screen.getByRole("button", { name: "撤回上次采用" }) as HTMLButtonElement;
+    expect(undo.disabled).toBe(false); fireEvent.click(undo);
+    await waitFor(() => expect(current().speechWorkspace!.paragraph.clips.map(clip => clip.asset.asset_id)).toEqual(["paragraph_keep_0", "paragraph_keep_1"]));
+    expect(current().speechWorkspace!.short.clips.map(clip => clip.asset.asset_id)).toEqual(["short_keep_0", "short_keep_1"]);
+    expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).project).toEqual(current());
+    expect(JSON.stringify(candidate)).toBe(before); noConfirmationOrGeneration(mock);
   });
 
-  it("retains the audible project if confirmation rejects or fails to connect", async () => {
+  it("keeps audible and persisted audio if local adoption storage fails, and permits a later retry", async () => {
     const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
-    await act(async () => mock.posts[0].resolve(Response.json({ error: "原音或切片已变化，请重新识别。" }, { status: 409 })));
-    expect(screen.getByText("原音或切片已变化，请重新识别。")).toBeTruthy();
-    expect(current()).toEqual(project);
-    fireEvent.click(screen.getByRole("button", { name: "确认并采用候选 1" }));
-    await act(async () => mock.posts[1].reject(new TypeError("Failed to fetch")));
-    expect(screen.getByText("无法连接本地服务，试听确认未能核实；当前人声保持。请刷新候选后重试。")).toBeTruthy();
-    expect(current()).toEqual(project);
-    expect(bridgeFactory).not.toHaveBeenCalled();
-  });
-
-  it.each(["source", "asset", "evidence", "receipt"])("rejects a %s-mutated confirmation response before adoption", async (kind) => {
-    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
-    const response = mock.confirmed();
-    if (kind === "source") response.sourceFingerprint = "changed";
-    if (kind === "asset") response.asset = { ...response.asset, assetId: "wrong", uri: "asset://clip/wrong" };
-    if (kind === "evidence") response.provenance.paragraph!.segments[1].recognition!.sourceTranscript = "修改了原识别";
-    if (kind === "receipt") response.provenance.paragraph!.manualTextConfirmation!.sourceCandidateId = "foreign_candidate";
-    await act(async () => mock.posts[0].resolve(Response.json({ candidate: response, candidates: [response, ...mock.confirmedCandidates().slice(1)] })));
-    expect(screen.getByText("试听确认结果与当前整段不一致，当前人声保持。")).toBeTruthy();
-    expect(current()).toEqual(project);
-    expect(bridgeFactory).not.toHaveBeenCalled();
-  });
-
-  it.each(["main_only", "duplicate_clip", "sibling_source"])("rejects a %s sibling response before updating candidates or adopting", async (kind) => {
-    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
-    let siblings = mock.confirmedCandidates();
-    if (kind === "main_only") siblings = [siblings[0]];
-    if (kind === "duplicate_clip") siblings[1] = { ...siblings[1], clipId: siblings[0].clipId, asset: siblings[0].asset, sourceFingerprint: siblings[0].sourceFingerprint };
-    if (kind === "sibling_source") siblings[1].sourceFingerprint = "foreign_member_source";
-    await act(async () => mock.posts[0].resolve(Response.json({ candidate: mock.confirmed(), candidates: siblings })));
-    expect(screen.getByText("试听确认结果与当前整段不一致，当前人声保持。")).toBeTruthy();
-    expect(screen.queryByText("整段切分 · 台词已试听确认")).toBeNull();
+    const storage = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Storage full", "QuotaExceededError"); });
+    await mock.complete();
+    expect(screen.getByText("采用未保存，原声已保留。请检查本地存储后重试。")).toBeTruthy();
     expect(current()).toEqual(project);
     expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).project).toEqual(project);
-    expect(bridgeFactory).not.toHaveBeenCalled();
+    expect(candidate.provenance.paragraph!.manualTextConfirmation).toBeUndefined();
+    storage.mockRestore(); start(); await mock.complete();
+    await waitFor(() => expect(current().speechWorkspace!.paragraph.clips[0].asset.asset_id).toBe("review_first"));
+    noConfirmationOrGeneration(mock);
   });
 
-  it("does not adopt a late confirmation after the paragraph copy changes", async () => {
+  it.each(["http", "network"])("keeps the project after a %s revalidation failure", async kind => {
+    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
+    await act(async () => {
+      if (kind === "http") mock.reads[0].resolve(Response.json({ error: "原音或切片已变化，请重新切分。" }, { status: 409 }));
+      else mock.reads[0].reject(new TypeError("Failed to fetch"));
+    });
+    await waitFor(() => expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(current()).toEqual(project);
+    expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).project).toEqual(project);
+    noConfirmationOrGeneration(mock);
+  });
+
+  it.each(["source", "asset", "review", "discarded"])("rejects a fresh %s candidate without changing the audible project", async kind => {
+    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
+    const fresh = structuredClone(candidate);
+    if (kind === "source") fresh.sourceFingerprint = "changed";
+    if (kind === "asset") fresh.asset = { ...fresh.asset, assetId: "wrong", uri: "asset://clip/wrong" };
+    if (kind === "review") { fresh.provenance.paragraph!.checkStatus = "review"; fresh.provenance.paragraph!.segments = []; fresh.asset = fresh.provenance.paragraph!.sourceAsset; }
+    if (kind === "discarded") fresh.status = "discarded";
+    await mock.complete(fresh);
+    await waitFor(() => expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(current()).toEqual(project);
+    expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).project).toEqual(project);
+    expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).candidateAcceptances?.paragraph).toBeUndefined();
+    noConfirmationOrGeneration(mock);
+  });
+
+  it("disables adoption after the paragraph copy changes", async () => {
+    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project);
+    fireEvent.change(screen.getByRole("textbox", { name: "整段 1 文案" }), { target: { value: "回来啦。先喝茶。" } });
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    start(); expect(mock.reads).toHaveLength(0); noConfirmationOrGeneration(mock);
+  });
+
+  it("blocks duplicate adoption and actual generation during fresh-candidate revalidation", async () => {
+    const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "测试生成音频" }));
+    expect(screen.queryByRole("button", { name: "重新切分候选 1" })).toBeNull();
+    start(); expect(mock.reads).toHaveLength(1); expect(current()).toEqual(project);
+    await mock.complete(); noConfirmationOrGeneration(mock);
+  });
+
+  it("keeps unsplit review audio available while preventing ordinary slice adoption", async () => {
+    const { project, candidate } = fixture();
+    candidate.provenance.paragraph!.checkStatus = "review";
+    candidate.provenance.paragraph!.segments = [];
+    candidate.asset = candidate.provenance.paragraph!.sourceAsset;
+    const mock = api(candidate);
+    render(<StrictMode><StudioApp project={project} /></StrictMode>);
+    await screen.findByText("完整原音 · 未保存切片");
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByLabelText("候选 1 试听").getAttribute("src")).toContain("source_original");
+    start(); expect(mock.reads).toHaveLength(0); expect(current()).toEqual(project);
+    noConfirmationOrGeneration(mock);
+  });
+
+  it("ignores the response after the paragraph copy changes during adoption", async () => {
     const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
     fireEvent.change(screen.getByRole("textbox", { name: "整段 1 文案" }), { target: { value: "回来啦。先喝茶。" } });
-    await act(async () => mock.posts[0].resolve(Response.json({ candidate: mock.confirmed() })));
+    await mock.complete();
     expect(current().speechWorkspace!.paragraph.clips[0].asset.asset_id).toBe("paragraph_keep_0");
-    expect(screen.getByText("工程刚刚有修改，未采用试听确认结果；当前人声保持。")).toBeTruthy();
-    expect(bridgeFactory).not.toHaveBeenCalled();
+    expect(screen.getByText("工程刚刚有修改，请检查后重新采用。")).toBeTruthy();
+    noConfirmationOrGeneration(mock);
   });
 
-  it.each(["page", "project", "cancel", "unmount"])("aborts and ignores a late confirmation after %s", async (kind) => {
-    const { project, candidate } = fixture(); const mock = api(candidate); const view = await mount(project); start();
-    if (kind === "page") fireEvent.click(screen.getByRole("tab", { name: "短句" }));
-    if (kind === "project") fireEvent.click(screen.getByRole("button", { name: "测试新建项目" }));
-    if (kind === "cancel") fireEvent.click(screen.getByRole("button", { name: "取消试听确认" }));
-    if (kind === "unmount") view.unmount();
-    expect(mock.posts[0].signal?.aborted).toBe(true);
-    const before = kind === "unmount" ? undefined : current();
-    await act(async () => mock.posts[0].resolve(Response.json({ candidate: mock.confirmed() })));
-    if (kind !== "unmount") expect(current()).toEqual(before);
-    expect(bridgeFactory).not.toHaveBeenCalled();
-  });
-
-  it("keeps previous audio when confirmation is saved but local adoption storage fails", async () => {
+  it("finishes adoption into its paragraph bank after tab switching without replacing short-page audio", async () => {
     const { project, candidate } = fixture(); const mock = api(candidate); await mount(project); start();
-    mock.publish();
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Storage full", "QuotaExceededError"); });
-    await act(async () => mock.posts[0].resolve(Response.json({ candidate: mock.confirmed(), candidates: mock.confirmedCandidates() })));
-    expect(screen.getByText("试听确认已保存，但采用未能保存；当前人声保持。请检查本地存储后重试采用。")).toBeTruthy();
-    expect(current()).toEqual(project);
-    expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project)).project).toEqual(project);
-    expect(screen.getByText("整段切分 · 台词已试听确认")).toBeTruthy();
-    expect(bridgeFactory).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("tab", { name: "短句" }));
+    await mock.complete();
+    expect(current().speechWorkspace!.activeMode).toBe("short");
+    expect(current().speechWorkspace!.short.clips.map(clip => clip.asset.asset_id)).toEqual(["short_keep_0", "short_keep_1"]);
+    expect(flattenClips(current()).filter(clip => clip.type === "voice").map(clip => clip.asset.asset_id)).toEqual(["short_keep_0", "short_keep_1"]);
+    expect(current().speechWorkspace!.paragraph.clips.map(clip => clip.asset.asset_id)).toEqual(["review_first", "review_second"]);
+    noConfirmationOrGeneration(mock);
+  });
+
+  it.each(["project", "unmount"])("ignores a late adoption response after %s", async kind => {
+    const { project, candidate } = fixture(); const mock = api(candidate); const view = await mount(project); start();
+    if (kind === "project") fireEvent.click(screen.getByRole("button", { name: "测试新建项目" }));
+    if (kind === "unmount") view.unmount();
+    const before = kind === "unmount" ? undefined : current();
+    await mock.complete();
+    if (kind !== "unmount") expect(current()).toEqual(before);
+    noConfirmationOrGeneration(mock);
+  });
+
+  it("preserves an existing historical receipt without requesting or manufacturing a new one", async () => {
+    const { project, candidate } = fixture();
+    candidate.provenance.paragraph!.manualTextConfirmation = { sourceCandidateId: candidate.candidateId,
+      confirmedClipIds: [candidate.clipId], confirmedAt: "2026-10-14T13:45:00.000Z" };
+    const before = JSON.stringify(candidate); const mock = api(candidate); await mount(project);
+    expect(screen.getByText("历史试听确认记录已保存。")).toBeTruthy();
+    start(); await mock.complete();
+    await waitFor(() => expect(current().speechWorkspace!.paragraph.clips[0].asset.asset_id).toBe("review_first"));
+    expect(JSON.stringify(candidate)).toBe(before); noConfirmationOrGeneration(mock);
   });
 });

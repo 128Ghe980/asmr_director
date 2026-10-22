@@ -51,7 +51,7 @@ function adopt(clip: VoiceClip): void {
 }
 
 describe("studio audio overview", () => {
-  it("counts safe text-review paragraph audio only after listening confirmation and while its source stays current", () => {
+  it("counts safe legacy text-review slices as usable without an extra confirmation and while their source stays current", () => {
     const initial = makeProject(["a"]);
     voices(initial)[0].text = "回来啦。";
     const project = switchSpeechWorkspace(ensureSpeechWorkspaces(initial), "paragraph");
@@ -69,7 +69,10 @@ describe("studio audio overview", () => {
         text: "回来啦。", clipIds: ["a"], sourceAsset: { assetId: "review_source", uri: "asset://clip/review_source", duration: 1 },
         checkStatus: "needs_confirmation", segments: [{ clipId: "a", text: "回来啦。", asset,
           cutStartSeconds: 0, cutEndSeconds: 1, recognition, textReview }] } } });
-    expect(getStudioAudioOverview(project, [take])).toEqual({ adopted: 0, pending: 1, unadopted: 0, total: 1 });
+    expect(getStudioAudioOverview(project, [take])).toEqual({ adopted: 0, pending: 0, unadopted: 1, total: 1 });
+    const adopted = getCurrentLibraryEntry(adoptAudioCandidate(createInitialProjectLibrary(project), take)).project;
+    expect(voices(adopted)[0].asset.asset_id).toBe(asset.assetId);
+    expect(take.provenance.paragraph!.manualTextConfirmation).toBeUndefined();
     take.provenance.paragraph!.manualTextConfirmation = { sourceCandidateId: take.candidateId,
       confirmedClipIds: ["a"], confirmedAt: "2026-10-14T13:00:00.000Z" };
     expect(getStudioAudioOverview(project, [take])).toEqual({ adopted: 0, pending: 0, unadopted: 1, total: 1 });

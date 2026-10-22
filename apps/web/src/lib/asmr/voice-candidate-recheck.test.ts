@@ -85,6 +85,30 @@ afterEach(async () => {
 });
 
 describe("saved voice candidate recognition", () => {
+  it("saves a new cutting-only candidate at zero coverage with only actual pause measurements", async () => {
+    const data = await fixture(), originalAnalysis = data.analyze.getMockImplementation()!;
+    data.analyze.mockImplementation(async (input, dependencies) => {
+      const result = await originalAnalysis(input, dependencies);
+      return { ...result, transcript: "定位词", coverage: 0, internalPausesMs: [],
+        recognition: { analysisMode: "cutting_only", stage: "complete", expectedText: input.expectedText,
+          followingText: input.followingText ?? "", sourceTranscript: "定位词", targetTranscript: "定位词",
+          sourceWords: [{ text: "定位词", start: 0, end: .5 }] },
+        boundaryOnly: { method: input.followingText ? "ordered_word_boundary" : "whole_recording",
+          alignmentSimilarity: 0, targetEndWordIndex: 0, contentVerified: false, internalPausePositions: [],
+          ...(input.followingText ? { followingStartWordIndex: 1 } : {}) } };
+    });
+    const result = await recheckVoiceCandidate({ project: data.project, clipId: data.clip.id,
+      candidateId: data.candidate.candidateId, config: data.config }, { analyze: data.analyze });
+    expect(result.candidate.candidateId).not.toBe(data.candidate.candidateId);
+    expect(result.candidate.provenance.longText!.groups).toHaveLength(2);
+    for (const group of result.candidate.provenance.longText!.groups) {
+      expect(group).toMatchObject({ checkStatus: "passed", coverage: 0,
+        internalPausesMs: [], internalPauseClasses: [], internalPausePositions: [] });
+      expect(group.recognition?.contentComparison).toBeUndefined();
+    }
+    expect(await getAudioCandidate({ config: data.config, candidateId: data.candidate.candidateId })).toEqual(data.candidate);
+  });
+
   it("retains the old long-text five-minute default and preserves the original when it expires", async () => {
     const data = await fixture(), before = await readFile(resolveCandidateManifestPath(data.config));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -204,6 +228,18 @@ describe("saved voice candidate recognition", () => {
     expect(result.candidate.provenance.longText!.groups[1].checkStatus).toBe("passed");
     expect(result.candidate.qualityWarnings.some((warning) => warning.includes("完整原音"))).toBe(true);
     expect(await getAudioCandidate({ config: data.config, candidateId: data.candidate.candidateId })).toEqual(data.candidate);
+  });
+
+  it("marks an unavailable cutting checkpoint without inventing text certification", async () => {
+    const data = await fixture();
+    data.analyze.mockRejectedValueOnce(new VoiceGroupAnalysisError("切点无法确认", 422, "boundary_unlocatable"));
+    const result = await recheckVoiceCandidate({ project: data.project, clipId: data.clip.id,
+      candidateId: data.candidate.candidateId, config: data.config }, { analyze: data.analyze });
+    const group = result.candidate.provenance.longText!.groups[0];
+    expect(group).toMatchObject({ checkStatus: "review", cutStartSeconds: 0, cutEndSeconds: 3,
+      recognition: { analysisMode: "cutting_only", stage: "unavailable", expectedText: data.targets[0].expectedText } });
+    expect(group.recognition?.contentComparison).toBeUndefined();
+    expect(await readFile(path.join(data.config.clipAssetRoot, `${group.asset.assetId}.wav`))).toEqual(Buffer.from(data.originals[0]));
   });
 
   it("does not publish a candidate when the local recognition runtime fails", async () => {

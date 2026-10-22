@@ -80,7 +80,8 @@ describe("manual paragraph text confirmation", () => {
     const candidates = data.candidates.map((candidate, index) => AudioCandidateSchema.parse({ ...candidate, candidateId: `same_tone_take_${index}`,
       sourceFingerprint: getVoiceCandidateSourceFingerprint(data.clips[index], undefined, context), provenance: { ...candidate.provenance, paragraph } }));
     await saveParagraphAudioCandidates({ config: data.config, candidates });
-    expect(() => adoptAudioCandidate(createInitialProjectLibrary(data.project), candidates[1])).toThrow(/试听/);
+    expect(() => adoptAudioCandidate(createInitialProjectLibrary(data.project), candidates[1])).not.toThrow();
+    expect(candidates[1].provenance.paragraph!.manualTextConfirmation).toBeUndefined();
     const result = await confirmVoiceParagraphText({ ...data.input, candidateId: candidates[1].candidateId, confirmedClipIds: paragraph.clipIds });
     expect(result.candidate.provenance.paragraph?.checkStatus).toBe("needs_confirmation");
     expect(result.candidate.provenance.paragraph?.segments).toEqual(paragraph.segments);
@@ -101,7 +102,8 @@ describe("manual paragraph text confirmation", () => {
   });
   it("blocks adoption before listening and records all siblings atomically without changing ASR or original PCM", async () => {
     const data = await fixture(), library = createInitialProjectLibrary(data.project);
-    expect(() => adoptAudioCandidate(library, data.candidates[1])).toThrow(/试听/);
+    expect(() => adoptAudioCandidate(library, data.candidates[1])).not.toThrow();
+    expect(data.candidates[1].provenance.paragraph!.manualTextConfirmation).toBeUndefined();
     const shortBefore = structuredClone(data.project.speechWorkspace!.short);
     const result = await confirmVoiceParagraphText(data.input);
     expect(result.candidate.candidateId).toBe(data.input.candidateId);

@@ -8,8 +8,7 @@ import { decodePcmWav } from "./pcm-audio";
 import type { VoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { VoiceAnalysisWorker, VoiceGroupAnalysisError, type VoiceAnalysisWorkerSpawn } from "./voice-analysis-worker";
-import { VoiceRecognitionSchema, normalizeVoiceEvidenceText, normalizeVoiceSentenceParticleText, type VoiceRecognition } from "./voice-recognition";
-import { selectVoiceBoundaryWithApi, type VoiceAlignmentHint } from "./voice-boundary-api";
+import { VoiceBoundaryOnlySchema, VoiceRecognitionSchema, isCuttingOnlyRecognition, type VoiceRecognition } from "./voice-recognition";
 export { VoiceGroupAnalysisError } from "./voice-analysis-worker";
 
 type AnalysisChild = {
@@ -38,7 +37,7 @@ type Dependencies = {
 
 const cancelError = () => new VoiceGroupAnalysisError("已取消生成。", 499);
 const unavailableError = () => new VoiceGroupAnalysisError("本机长文语音检查尚未就绪，请检查语音分析环境。", 503);
-const unsafeError = () => new VoiceGroupAnalysisError("未能确认这组台词完整且截取安全，请重新生成。", 422);
+const unsafeError = () => new VoiceGroupAnalysisError("未能确认安全切分位置；完整原音已保留，请试听。", 422);
 const analysisCache = new Map<string, { checkedAt: number; result: Promise<{ pythonPath: string; modelPath: string }> }>();
 const workers = new WeakMap<VoxCpm2RuntimeSession, VoiceAnalysisWorker>();
 const sessionRuntimes = new WeakMap<VoxCpm2RuntimeSession, Promise<{ pythonPath: string; modelPath: string }>>();
@@ -162,10 +161,9 @@ const AnalysisResultSchema = z.object({
   internalPausesMs: z.array(z.number().finite().min(0).max(10_000)).max(31),
   leadingQuietMs: z.number().finite().min(0).max(120_000),
   trailingQuietMs: z.number().finite().min(0).max(120_000),
-  // Three-character particle evidence has literal coverage 2/3; the mode
-  // specific checks below still enforce all original acceptance thresholds.
-  transcript: z.string().min(1).max(2000), coverage: z.number().finite().min(2 / 3).max(1),
+  transcript: z.string().max(2000), coverage: z.number().finite().min(0).max(1),
   recognition: VoiceRecognitionSchema.optional(),
+  boundaryOnly: VoiceBoundaryOnlySchema.optional(),
   cutStartSeconds: z.number().finite().min(0).max(120),
   cutEndSeconds: z.number().finite().positive().max(120),
   asrModel: z.literal("faster-whisper-large-v3/cpu/int8"),
@@ -179,6 +177,92 @@ const AnalysisResultSchema = z.object({
 }).strict();
 
 export type VoiceGroupAnalysis = Omit<z.infer<typeof AnalysisResultSchema>, "version" | "success"> & { wav: Uint8Array };
+
+function quietMatchesWordBoundary(samples: Float32Array, left: { text: string; start: number; end: number },
+  right: { text: string; start: number; end: number }, validation: NonNullable<VoiceGroupAnalysis["cutValidation"]>): boolean {
+  const tolerance = 1 / 48_000;
+  const quietStart = validation.quietStartSeconds, quietEnd = validation.quietEndSeconds;
+  // Python selects an unambiguous acoustic boundary. Verify its source binding
+  // here without choosing a second region or requiring identical frame rounding.
+  if (quietStart >= left.end + .08 - tolerance && quietEnd <= right.start - .08 + tolerance) return true;
+  const letters = (text: string) => Array.from(text.replace(/[^\p{L}\p{N}]/gu, "")).length;
+  const singleLeft = letters(left.text) === 1, singleRight = letters(right.text) === 1;
+  const lower = (singleLeft ? left.start : left.end) + .08;
+  const upper = (singleRight ? right.end : right.start) - .08;
+  if ((!singleLeft && !singleRight) || quietStart < lower - tolerance || quietEnd > upper + tolerance) return false;
+  const threshold = 10 ** (validation.thresholdDbfs / 20);
+  const activity = (start: number, end: number) => {
+    const first = Math.max(0, Math.ceil(start * 100 - 1e-8));
+    const last = Math.min(Math.floor(samples.length / 480), Math.floor(end * 100 + 1e-8));
+    for (let index = first; index < last; index++) {
+      let sum = 0;
+      for (let frame = index * 480; frame < (index + 1) * 480; frame++) sum += samples[frame] ** 2;
+      if (Math.sqrt(sum / 480) >= threshold) return true;
+    }
+    return false;
+  };
+  return activity(left.start, quietStart) && activity(quietEnd, right.end);
+}
+/**
+ * Verify the cut's source identity and acoustic/PCM boundaries. Text similarity
+ * is deliberately a measurement only: users decide content by listening.
+ */
+export function assertCuttingOnlyVoiceAnalysis(analysis: VoiceGroupAnalysis, sourceWav: Uint8Array,
+  request: { expectedText: string; followingText?: string; clauses: string[] }): void {
+  const evidence = VoiceRecognitionSchema.safeParse(analysis.recognition);
+  const boundary = VoiceBoundaryOnlySchema.safeParse(analysis.boundaryOnly);
+  const fail = () => { throw new VoiceGroupAnalysisError(unsafeError().message, 422, "unsafe_cutting_boundary", analysis.recognition); };
+  if (!evidence.success || !boundary.success || !isCuttingOnlyRecognition(evidence.data)) return fail();
+  const recognition = evidence.data, located = boundary.data;
+  if (recognition.stage !== "complete" || recognition.expectedText !== request.expectedText
+      || (recognition.followingText ?? "") !== (request.followingText ?? "")
+      || !Number.isFinite(analysis.coverage) || analysis.coverage < 0 || analysis.coverage > 1) return fail();
+  const source = decodePcmWav(sourceWav), decoded = decodePcmWav(analysis.wav);
+  const sampleRate = 48_000, tolerance = 1 / sampleRate;
+  const sourceDuration = source.samples.length / sampleRate;
+  if (source.channels !== 1 || source.sampleRate !== sampleRate || decoded.channels !== 1 || decoded.sampleRate !== sampleRate
+      || Math.abs(analysis.cutStartSeconds) > tolerance || analysis.cutEndSeconds <= 0
+      || analysis.cutEndSeconds > sourceDuration + tolerance) return fail();
+  const words = recognition.sourceWords ?? [];
+  const endIndex = located.targetEndWordIndex;
+  if (analysis.transcript !== recognition.targetTranscript) return fail();
+  const hasFollowing = Boolean(request.followingText?.trim());
+  if (hasFollowing) {
+    if (located.method !== "ordered_word_boundary" || endIndex < 0 || endIndex >= words.length
+        || located.followingStartWordIndex !== endIndex + 1 || located.followingStartWordIndex >= words.length
+        || words.some(word => word.end > sourceDuration + .04)
+        || recognition.targetTranscript !== words.slice(0, endIndex + 1).map(word => word.text).join("")
+        || analysis.cutEndSeconds >= sourceDuration) return fail();
+  } else if (located.method !== "whole_recording" || located.followingStartWordIndex !== undefined || endIndex !== words.length - 1
+      || Math.abs(analysis.cutEndSeconds - sourceDuration) > tolerance) return fail();
+  const positions = located.internalPausePositions;
+  if (positions.length !== analysis.internalPausesMs.length || positions.some(position => position >= request.clauses.length - 1)
+      || analysis.internalPausesMs.some(value => !Number.isFinite(value) || value < 0)) return fail();
+  const quiet = analysis.cutValidation;
+  if (hasFollowing && !quiet) return fail();
+  if (quiet && hasFollowing) {
+    if (!Number.isFinite(quiet.thresholdDbfs) || quiet.thresholdDbfs < -120 || quiet.thresholdDbfs > -30
+        || quiet.quietStartSeconds < 0 || quiet.quietEndSeconds > sourceDuration + tolerance
+        || quiet.quietEndSeconds - quiet.quietStartSeconds < .16 - tolerance
+        || analysis.cutEndSeconds - quiet.quietStartSeconds < .08 - tolerance
+        || quiet.quietEndSeconds - analysis.cutEndSeconds < .08 - tolerance) return fail();
+    if (!quietMatchesWordBoundary(source.samples, words[endIndex], words[endIndex + 1], quiet)) return fail();
+    const start = Math.ceil(quiet.quietStartSeconds * sampleRate), end = Math.floor(quiet.quietEndSeconds * sampleRate);
+    if (end <= start || end > source.samples.length) return fail();
+    const threshold = 10 ** (quiet.thresholdDbfs / 20);
+    for (let offset = start; offset < end; offset += 480) {
+      const stop = Math.min(offset + 480, end);
+      let sum = 0;
+      for (let frame = offset; frame < stop; frame++) sum += source.samples[frame] ** 2;
+      if (Math.sqrt(sum / (stop - offset)) > threshold + 1e-7) return fail();
+    }
+  }
+  const expectedFrames = Math.round(analysis.cutEndSeconds * sampleRate);
+  if (!expectedFrames || decoded.samples.length !== expectedFrames
+      || (hasFollowing && (analysis.leadingQuietMs + analysis.trailingQuietMs >= expectedFrames / sampleRate * 1000
+        || !decoded.samples.some(sample => Math.abs(sample) > 1e-5)))
+      || decoded.samples.some((sample, index) => sample !== source.samples[index])) return fail();
+}
 
 const AnalysisFailureSchema = z.object({
   version: z.literal(1), success: z.literal(false), code: z.string().regex(/^[a-z_]{1,80}$/),
@@ -213,56 +297,24 @@ export async function analyzeVoiceGroup(input: {
   allowShortSentenceTextReview?: boolean;
   config: LocalRuntimeConfig; signal?: AbortSignal;
 }, dependencies: Dependencies = {}): Promise<VoiceGroupAnalysis> {
-  let originalRecognition: VoiceRecognition | undefined;
-  let apiFallback: VoiceRecognition["apiFallback"];
-  const withApiStatus = (recognition: VoiceRecognition | undefined) => recognition && apiFallback ? { ...recognition, apiFallback } : recognition;
   try {
-    try {
-      return await analyzeVoiceGroupImpl(input, dependencies);
-    } catch (error) {
-      if (error instanceof VoiceGroupAnalysisError) originalRecognition = error.recognition;
-      checkCancelled(input.signal);
-      if (!input.allowShortSentenceTextReview && error instanceof VoiceGroupAnalysisError && error.statusCode === 422
-          && ["uncertain_word_alignment", "ambiguous_ending_anchor"].includes(error.diagnosticCode ?? "")
-          && error.recognition?.stage === "source_alignment" && error.recognition.endpointCandidates?.length
-          && input.followingText?.trim()) {
-        originalRecognition = error.recognition;
-        const hint = await selectVoiceBoundaryWithApi(error.recognition, {
-          env: dependencies.env, fetchImpl: dependencies.fetchImpl, timeoutMs: dependencies.apiTimeoutMs, signal: input.signal,
-          onStatus: (status) => { apiFallback = status; },
-        });
-        checkCancelled(input.signal);
-        // Exactly one optional semantic selection and one local verification
-        // pass. No recursion, API retries or native voice regeneration.
-        if (hint) {
-          const result = await analyzeVoiceGroupImpl(input, dependencies, hint);
-          return { ...result, recognition: withApiStatus(result.recognition) };
-        }
-      }
-      throw error;
-    }
+    return await analyzeVoiceGroupImpl(input, dependencies);
   } catch (error) {
     const safe = input.signal?.aborted ? cancelError() : error instanceof VoiceGroupAnalysisError ? error : unsafeError();
     const recognition = error instanceof VoiceGroupAnalysisError ? error.recognition : undefined;
-    // A second pass may stop before ASR. Retain the complete first checkpoint
-    // until the new pass has real recognition; never merge two cut attempts.
-    const hasNewRecognition = Boolean(recognition?.sourceTranscript.trim() || recognition?.sourceWords?.length || recognition?.targetTranscript?.trim());
-    const retainedRecognition = hasNewRecognition || !originalRecognition ? recognition : originalRecognition;
-    throw new VoiceGroupAnalysisError(safe.message, safe.statusCode, safe.diagnosticCode, withApiStatus(retainedRecognition ?? {
-      stage: safe.statusCode === 422 ? "input_validation" : "unavailable", sourceTranscript: "",
-      expectedText: input.expectedText.slice(0, 500),
+    throw new VoiceGroupAnalysisError(safe.message, safe.statusCode, safe.diagnosticCode, safe.recognition ?? recognition ?? {
+      analysisMode: "cutting_only", stage: safe.statusCode === 422 ? "input_validation" : "unavailable",
+      sourceTranscript: "", expectedText: input.expectedText.slice(0, 500),
       ...(input.followingText ? { followingText: input.followingText.slice(0, 1500) } : {}),
-    }));
+    });
   }
 }
 
-async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>[0], dependencies: Dependencies,
-  alignmentHint?: VoiceAlignmentHint): Promise<VoiceGroupAnalysis> {
+async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>[0], dependencies: Dependencies): Promise<VoiceGroupAnalysis> {
   checkCancelled(input.signal);
   if (!input.expectedText.trim() || input.expectedText.length > 500 || (input.followingText?.length ?? 0) > 1500
       || input.clauses.length < 1 || input.clauses.length > 32 || input.clauses.some((clause) => !clause.trim())
-      || input.wav.byteLength > 24 * 1024 * 1024 || (input.allowShortSentenceParticle && !input.requireTwoSided)
-      || (input.allowShortSentenceTextReview && (!input.requireTwoSided || !input.allowShortSentenceParticle || alignmentHint))) throw unsafeError();
+      || input.wav.byteLength > 24 * 1024 * 1024) throw unsafeError();
   let source: ReturnType<typeof decodePcmWav>;
   try { source = decodePcmWav(input.wav); } catch { throw unsafeError(); }
   const sourceDuration = source.samples.length / source.sampleRate;
@@ -284,11 +336,7 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
     await writeFile(requestPath, JSON.stringify({
       version: 1, inputWav: path.join(directory, "input.wav"), outputWav, outputJson,
       modelPath: runtime.modelPath, expectedText: input.expectedText,
-      followingText: input.followingText ?? "", clauses: input.clauses,
-      ...(input.requireTwoSided ? { requireTwoSided: true } : {}),
-      ...(input.allowShortSentenceParticle ? { allowShortSentenceParticle: true } : {}),
-      ...(input.allowShortSentenceTextReview ? { allowShortSentenceTextReview: true } : {}),
-      ...(alignmentHint ? { alignmentHint } : {}),
+      followingText: input.followingText ?? "", clauses: input.clauses, cuttingOnly: true,
     }), "utf8");
     checkCancelled(input.signal);
     if (session?.onClose && !dependencies.spawnImpl && (workers.has(session) || shouldReuseVoiceAnalysis())) {
@@ -333,115 +381,15 @@ async function analyzeVoiceGroupImpl(input: Parameters<typeof analyzeVoiceGroup>
       unavailable ? 503 : 422, failure.data.code,
       responseRecognition(response, input.expectedText, input.followingText));
     const result = AnalysisResultSchema.safeParse(response);
-    const verifiedRecognition = result.success ? responseRecognition(response, input.expectedText, input.followingText) : undefined;
-    const boundedEditEvidence = result.success && result.data.recognition?.contentComparison?.mode === "bounded_edits";
-    const boundarySafe = result.success && Boolean(input.followingText?.trim())
-      && Boolean(verifiedRecognition?.boundaryMatch) && Boolean(result.data.cutValidation);
-    const boundedEditSafe = boundedEditEvidence && boundarySafe;
-    const phoneticEvidence = result.success && result.data.recognition?.contentComparison?.mode === "phonetic_substitutions";
-    const phoneticComparison = result.success && verifiedRecognition?.contentComparison?.mode === "phonetic_substitutions" ? verifiedRecognition.contentComparison : undefined;
-    let phoneticClauseLength = 0;
-    const phoneticClauseEnds = new Set(input.clauses.map(clause => (phoneticClauseLength += Array.from(normalizeVoiceEvidenceText(clause)).length) - 1));
-    const phoneticSafe = phoneticEvidence && result.success && verifiedRecognition?.stage === "complete"
-      && Boolean(input.followingText?.trim()) && !verifiedRecognition.continuationBridge
-      && phoneticComparison && normalizeVoiceEvidenceText(result.data.transcript) === phoneticComparison.recognized
-      && phoneticComparison.differences.every(difference => difference.rule !== "sentence_particle" || phoneticClauseEnds.has(difference.index))
-      && result.data.cutValidation
-      && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
-      && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001;
-    const particleEvidence = result.success && result.data.recognition?.contentComparison?.mode === "sentence_particle";
-    const particleComparison = verifiedRecognition?.contentComparison?.mode === "sentence_particle" ? verifiedRecognition.contentComparison : undefined;
-    const particleSafe = particleEvidence && result.success && input.allowShortSentenceParticle && input.requireTwoSided
-      && verifiedRecognition?.stage === "complete" && !verifiedRecognition.continuationBridge
-      && particleComparison && normalizeVoiceSentenceParticleText(result.data.transcript) === particleComparison.recognized
-      && (input.followingText?.trim() ? result.data.cutValidation
-        && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
-        && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001
-        : normalizeVoiceSentenceParticleText(verifiedRecognition.sourceTranscript) === particleComparison.sourcePrefix
-          && normalizeVoiceSentenceParticleText(verifiedRecognition.sourceWords?.map((word) => word.text).join("") ?? "") === particleComparison.sourcePrefix);
-    const reviewEvidence = result.success && Boolean(result.data.recognition?.shortSentenceReview);
-    const review = verifiedRecognition?.shortSentenceReview;
-    const reviewSafe = reviewEvidence && result.success && input.allowShortSentenceTextReview && input.allowShortSentenceParticle && input.requireTwoSided
-      && verifiedRecognition?.stage === "complete" && !verifiedRecognition.boundaryMatch && !verifiedRecognition.continuationBridge
-      && input.clauses.length === 1 && normalizeVoiceSentenceParticleText(input.clauses[0]) === review?.expected
-      && review && result.data.transcript === review.final.transcript && Math.abs(result.data.coverage - review.similarity) <= .000001
-      && (input.followingText?.trim() ? result.data.cutValidation
-        && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
-        && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001
-        : !review.left && !review.right);
-    const followingEvidence = result.success && Boolean(result.data.recognition?.followingPhoneticBoundary);
-    const followingBoundary = verifiedRecognition?.followingPhoneticBoundary;
-    const followingSafe = followingEvidence && result.success && input.allowShortSentenceTextReview && input.allowShortSentenceParticle && input.requireTwoSided
-      && followingBoundary && verifiedRecognition?.stage === "complete" && !verifiedRecognition.boundaryMatch && !verifiedRecognition.continuationBridge
-      && result.data.cutValidation && Boolean(input.followingText?.trim())
-      && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
-      && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001;
-    const bridge = result.success ? result.data.recognition?.continuationBridge : undefined;
-    const bridgeSafe = result.success && verifiedRecognition?.continuationBridge
-      && result.data.coverage === 1 && result.data.cutValidation
-      && result.data.cutValidation.quietEndSeconds <= bridge!.sourceStartSeconds - .08 + .001
-      && result.data.cutEndSeconds <= bridge!.sourceStartSeconds - .08 + .001
-      && result.data.cutEndSeconds >= result.data.cutValidation.quietStartSeconds
-      && result.data.cutEndSeconds <= result.data.cutValidation.quietEndSeconds + .001;
-    if (!result.success || result.data.cutEndSeconds <= result.data.cutStartSeconds || result.data.cutEndSeconds > sourceDuration + 0.001
-        || (input.requireTwoSided && input.followingText?.trim() && !result.data.cutValidation)
-        || (result.data.cutValidation && result.data.cutValidation.quietEndSeconds > sourceDuration + .001)
-        || (result.data.coverage < .9 && !boundedEditSafe && !phoneticSafe && !particleSafe && !reviewSafe) || (boundedEditEvidence && !boundedEditSafe)
-        || (phoneticEvidence && !phoneticSafe)
-        || (particleEvidence && !particleSafe)
-        || (reviewEvidence && !reviewSafe)
-        || (followingEvidence && !followingSafe)
-        || (result.data.recognition?.boundaryMatch && !boundarySafe)
-        || (bridge && !bridgeSafe)
-        || (result.data.recognition?.contentComparison && Math.abs(result.data.coverage - result.data.recognition.contentComparison.similarity) > .000001)
-        || (alignmentHint && (!boundarySafe || result.data.recognition?.boundaryMatch?.method !== "api"
-          || result.data.recognition.boundaryMatch.terminalWordIndex !== alignmentHint.terminalWordIndex
-          || result.data.recognition.boundaryMatch.recognizedPrefix !== alignmentHint.recognizedPrefix))
-        || (input.followingText && result.data.recognition?.contentComparison?.status === "different" && !result.data.cutValidation)) throw unsafeError();
+    if (!result.success || !isCuttingOnlyRecognition(result.data.recognition) || !result.data.boundaryOnly) throw unsafeError();
     if ((await stat(outputWav)).size > input.wav.byteLength + 4096) throw unsafeError();
     const wav = new Uint8Array(await readFile(outputWav));
-    const decoded = decodePcmWav(wav);
-    const duration = decoded.samples.length / decoded.sampleRate;
-    if (decoded.channels !== 1 || decoded.sampleRate !== 48_000 || duration <= 0
-        || Math.abs(duration - (result.data.cutEndSeconds - result.data.cutStartSeconds)) > 0.002
-        || result.data.leadingQuietMs + result.data.trailingQuietMs >= duration * 1000
-        || result.data.internalPausesMs.length !== input.clauses.length - 1
-        || !decoded.samples.some((sample) => Math.abs(sample) > 1e-5)) throw unsafeError();
-    if (review) {
-      if (Math.abs(review.final.durationSeconds - duration) > .002
-          || (review.left && review.left.durationSeconds > (result.data.cutValidation?.quietEndSeconds ?? 0) + .04)
-          || (review.right && review.right.durationSeconds > sourceDuration - (result.data.cutValidation?.quietStartSeconds ?? sourceDuration) + .04)) throw unsafeError();
-      let sourcePrefix = "", endpoint = -1;
-      for (const [index, word] of (verifiedRecognition?.sourceWords ?? []).entries()) {
-        sourcePrefix += normalizeVoiceSentenceParticleText(word.text);
-        if (sourcePrefix === review.sourcePrefix) { endpoint = index; break; }
-        if (Array.from(sourcePrefix).length >= Array.from(review.sourcePrefix).length) break;
-      }
-      let previous = 0;
-      for (const word of (verifiedRecognition?.sourceWords ?? []).slice(0, endpoint + 1 + (input.followingText?.trim() ? 1 : 0))) {
-        if (word.end <= word.start || word.start < previous - .02 || word.end > sourceDuration + .04) throw unsafeError();
-        previous = word.end;
-      }
-      if (endpoint < 0) throw unsafeError();
-    }
-    if (followingBoundary) {
-      if (followingBoundary.right.durationSeconds > sourceDuration - (result.data.cutValidation?.quietStartSeconds ?? sourceDuration) + .04) throw unsafeError();
-      let followingPrefix = "", terminal = -1;
-      for (let index = followingBoundary.sourceWordIndex; index < (verifiedRecognition?.sourceWords?.length ?? 0); index++) {
-        followingPrefix += normalizeVoiceSentenceParticleText(verifiedRecognition!.sourceWords![index].text);
-        if (Array.from(followingPrefix).length >= Array.from(followingBoundary.expected).length) { terminal = index; break; }
-      }
-      let previous = 0;
-      for (const word of (verifiedRecognition?.sourceWords ?? []).slice(0, terminal + 1)) {
-        if (word.end <= word.start || word.start < previous - .02 || word.end > sourceDuration + .04) throw unsafeError();
-        previous = word.end;
-      }
-      if (terminal < followingBoundary.sourceWordIndex) throw unsafeError();
-    }
-    checkCancelled(input.signal);
     const { version: _version, success: _success, ...details } = result.data;
     void _version; void _success;
-    return { ...details, recognition: responseRecognition(response, input.expectedText, input.followingText), wav };
+    const analysis = { ...details, wav };
+    assertCuttingOnlyVoiceAnalysis(analysis, input.wav, input);
+    checkCancelled(input.signal);
+    return analysis;
   } catch (error) {
     const safe = error instanceof VoiceGroupAnalysisError ? error : unsafeError();
     // A timeout, worker failure or malformed crop must not erase recognition

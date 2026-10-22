@@ -84,6 +84,26 @@ describe("studio batch actions", () => {
     expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
   });
 
+  it.each(["loading", "error"] as const)("waits for audio settings while keeping storyboard actions available: %s", (audioSettingsStatus) => {
+    const props = fixture();
+    const view = render(<StudioBatchActions {...props} audioSettingsStatus={audioSettingsStatus} />);
+    openMoreActions();
+    for (const { action, name } of actions) {
+      const button = screen.getByRole("button", { name }) as HTMLButtonElement;
+      expect(button.disabled).toBe(action.startsWith("audio"));
+      if (action.startsWith("audio")) fireEvent.click(button);
+    }
+    expect(props.onRun).not.toHaveBeenCalled();
+    expect(screen.getByText(audioSettingsStatus === "loading" ? "正在读取声音设置…" : "声音设置读取失败，请刷新重试。")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    expect(props.onRun).toHaveBeenCalledWith("storyboard_missing");
+    view.rerender(<StudioBatchActions {...props} audioSettingsStatus="ready" />);
+    fireEvent.click(screen.getByRole("button", { name: "生成未生成" }));
+    expect(props.onRun).toHaveBeenLastCalledWith("audio_ungenerated");
+    expect(screen.queryByText("正在读取声音设置…")).toBeNull();
+    expect(screen.queryByText("声音设置读取失败，请刷新重试。")).toBeNull();
+  });
+
   it.each(["loading", "error"] as const)("disables only ungenerated audio and hides its count while the overview is %s", (overviewStatus) => {
     const props = fixture();
     const view = render(<StudioBatchActions {...props} overviewStatus={overviewStatus} />);

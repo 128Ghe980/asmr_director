@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { validateVoiceLongTextAnalysis } from "./voice-longtext-plan";
 import { VoiceGenerationContextSchema } from "./voice-generation-context";
-import { VoiceRecognitionSchema } from "./voice-recognition";
+import { VoiceRecognitionSchema, isCuttingOnlyRecognition } from "./voice-recognition";
 
 const PauseClass = z.enum(["short", "medium", "long"]);
 const Scalar = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
@@ -29,6 +29,7 @@ export const VoiceLongTextResultSchema = z.object({
     asset: z.object({ assetId: z.string().regex(/^[A-Za-z0-9_-]+$/), uri: z.string().regex(/^asset:\/\/clip\/[A-Za-z0-9_-]+$/), duration: z.number().positive() }).strict(),
     internalPausesMs: z.array(z.number().finite().min(0)),
     internalPauseClasses: z.array(PauseClass),
+    internalPausePositions: z.array(z.number().int().min(0).max(30)).max(31).optional(),
     leadingQuietMs: z.number().finite().min(0),
     trailingQuietMs: z.number().finite().min(0),
     transcript: z.string(),
@@ -38,6 +39,7 @@ export const VoiceLongTextResultSchema = z.object({
     cutEndSeconds: z.number().positive(),
     attempts: z.number().int().positive(),
     checkStatus: z.enum(["passed", "review"]).optional(),
+    segmentationMethod: z.enum(["ctc_forced", "whole_recording"]).optional(),
     diagnosticCode: z.string().min(1).max(120).regex(/^[a-z0-9_]+$/).optional(),
     runtimeVersion: z.string().optional(),
     referenceIdentity: z.string().optional(),
@@ -59,6 +61,15 @@ export const VoiceLongTextResultSchema = z.object({
     if (group.asset.uri !== `asset://clip/${group.asset.assetId}`) issue(["groups", index, "asset", "uri"], "Group asset URI must match its stable clip asset id");
     const unmeasuredReview = group.checkStatus === "review" && group.internalPausesMs.length === 0;
     if (!unmeasuredReview && group.internalPausesMs.length !== group.internalPauseClasses.length) issue(["groups", index, "internalPauseClasses"], "Every measured internal pause must have a corresponding class");
+    if (group.segmentationMethod && group.checkStatus !== "passed") issue(["groups", index, "segmentationMethod"], "Forced segmentation must describe a completed cut");
+    if ((isCuttingOnlyRecognition(group.recognition) || group.segmentationMethod) && group.checkStatus !== "review") {
+      const positions = group.internalPausePositions;
+      if (group.checkStatus !== "passed" || (!group.segmentationMethod && group.recognition?.stage !== "complete") || !positions
+        || positions.length !== group.internalPausesMs.length
+        || positions.some((position, offset) => offset > 0 && position <= positions[offset - 1])) {
+        issue(["groups", index, "internalPausePositions"], "Cutting-only results require ordered real pause measurements");
+      }
+    }
     if (group.cutEndSeconds <= group.cutStartSeconds) issue(["groups", index, "cutEndSeconds"], "Group audio end must follow its start");
     if (result.joins[index] && result.joins[index].category !== group.pauseAfter) issue(["joins", index, "category"], "Join category must match its preceding group boundary");
   });
@@ -85,7 +96,10 @@ export const VoiceLongTextResultSchema = z.object({
       if (actual.text !== group.text) issue(["groups", index, "text"], "Generated group text must match its planned group");
       if (actual.pauseAfter !== group.pauseAfter) issue(["groups", index, "pauseAfter"], "Generated group boundary must match the plan");
       const classes = plan.clausePauseClasses.slice(group.start, group.end);
-      if (classes.length !== actual.internalPauseClasses.length || classes.some((value, position) => value !== actual.internalPauseClasses[position])) {
+      const positions = (isCuttingOnlyRecognition(actual.recognition) || actual.segmentationMethod) && actual.checkStatus === "passed" ? actual.internalPausePositions : undefined;
+      const measuredClasses = positions ? positions.map(position => classes[position]) : classes;
+      if (positions?.some(position => position >= classes.length)
+        || measuredClasses.length !== actual.internalPauseClasses.length || measuredClasses.some((value, position) => value !== actual.internalPauseClasses[position])) {
         issue(["groups", index, "internalPauseClasses"], "Generated internal boundaries must match the planned clause boundaries");
       }
     });

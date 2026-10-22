@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, Clapperboard, Copy, Download, Link2, LoaderCircle, ScanLine, Sparkles } from "lucide-react";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { flattenClips } from "@/lib/asmr/view-model";
@@ -67,6 +67,27 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
   let prompt = "";
   try { prompt = createClipH3Prompt(project, clipId); }
   catch { /* Preserve incomplete or stale visual notes for editing. */ }
+
+  const fitPromptPreview = useCallback(() => {
+    const element = preview.current;
+    if (!element || !disclosure.current?.open) return;
+    element.style.height = "auto";
+    if (element.scrollHeight > 0) element.style.height = `${element.scrollHeight}px`;
+  }, []);
+  useLayoutEffect(() => {
+    fitPromptPreview();
+    const element = preview.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    let previousWidth = element.clientWidth;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry && entry.contentRect.width !== previousWidth) {
+        previousWidth = entry.contentRect.width;
+        fitPromptPreview();
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [prompt, fitPromptPreview]);
 
   useEffect(() => { latestProject.current = project; }, [project]);
   useEffect(() => { latestReferenceMode.current = referenceMode; }, [referenceMode]);
@@ -216,7 +237,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
       {([['visual', '画面', 800], ['action', '动作', 600], ['camera', '镜头', 400]] as const).map(([field, label, maxLength]) => <label key={field} className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">{label}</span><textarea aria-label={`本段分镜${label}`} disabled={batchBusy} className={fieldClass} value={shot[field]} rows={field === "visual" ? 3 : 2} maxLength={maxLength} onChange={(event) => edit({ [field]: event.target.value })} /></label>)}
       {silent ? <label className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">环境声</span><textarea aria-label="本段分镜环境声" disabled={batchBusy} className={fieldClass} value={shot.ambientSound ?? ""} rows={2} maxLength={600} placeholder="Soft rain outside the window with a faint room tone." onChange={(event) => edit({ ambientSound: event.target.value })} /></label> : null}
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!prompt} onClick={() => void copy()}>{copiedPrompt === prompt && prompt ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}{copiedPrompt === prompt && prompt ? "已复制 H3 提示词" : "复制 H3 提示词"}</button><button type="button" className={buttonClass} disabled={!prompt} onClick={download}><Download className="h-3.5 w-3.5" aria-hidden="true" />下载提示词</button></div>
-      <details ref={disclosure} className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted"><summary className="cursor-pointer">H3 提示词预览</summary>{prompt ? <textarea ref={preview} aria-label="本段 H3 提示词" readOnly value={prompt} rows={8} spellCheck={false} className="mt-3 max-h-80 w-full min-w-0 resize-y rounded-lg bg-black/20 px-2 py-2 font-mono text-xs leading-6 outline-none focus:ring-1 focus:ring-violet-300/30" /> : <p className="mt-2 leading-5">补全画面、动作与镜头，并确保分镜对应当前音频。</p>}</details>
+      <details ref={disclosure} onToggle={fitPromptPreview} className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted"><summary className="cursor-pointer">H3 提示词预览</summary>{prompt ? <textarea ref={preview} aria-label="本段 H3 提示词" readOnly value={prompt} rows={8} spellCheck={false} className="mt-3 w-full min-w-0 resize-none overflow-hidden rounded-lg bg-black/20 px-2 py-2 font-mono text-xs leading-6 outline-none focus:ring-1 focus:ring-violet-300/30" /> : <p className="mt-2 leading-5">补全画面、动作与镜头，并确保分镜对应当前音频。</p>}</details>
     </div> : null}
   </section>;
 }

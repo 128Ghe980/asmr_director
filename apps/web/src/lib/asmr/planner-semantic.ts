@@ -54,7 +54,8 @@ export function splitPlannerSemanticText(text: string): string[] {
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
     const numericSeparator = /[.,，:：]/u.test(character) && /\d/u.test(text[index - 1] ?? "") && /\d/u.test(text[index + 1] ?? "");
-    const boundary = /[，。！？；：、!?;:\r\n…]/u.test(character)
+    // Enumeration commas join list items; they do not add clauses or groups.
+    const boundary = /[，。！？；：!?;:\r\n…]/u.test(character)
       || character === "," || (character === "." && !/[\p{L}\p{N}]/u.test(text[index + 1] ?? ""));
     if (!boundary || numericSeparator) continue;
     let end = index + 1;

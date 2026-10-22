@@ -90,3 +90,57 @@ button {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(143, 161, 183, 0.58);
 }
+
+.studio-audio-seek {
+  appearance: none;
+  background: transparent;
+  margin: 0;
+}
+
+.studio-audio-seek::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--studio-blue) 0 var(--audio-progress, 0%),
+    rgba(143, 161, 183, 0.26) var(--audio-progress, 0%) 100%
+  );
+}
+
+.studio-audio-seek::-webkit-slider-thumb {
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border: 2px solid var(--studio-panel);
+  border-radius: 50%;
+  background: var(--studio-blue);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+.studio-audio-seek::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(143, 161, 183, 0.26);
+}
+
+.studio-audio-seek::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--studio-blue);
+}
+
+.studio-audio-seek::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--studio-panel);
+  border-radius: 50%;
+  background: var(--studio-blue);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-audio-player .animate-spin {
+    animation: none;
+  }
+}

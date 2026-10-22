@@ -28,6 +28,38 @@ function group(evidence: VoiceRecognition): VoiceLongTextResult["groups"][number
 }
 
 describe("ending match recognition inspection", () => {
+  it("labels cutting-only target text as a source-ASR location reference without claiming a final transcription or content check", () => {
+    const evidence: VoiceRecognition = { analysisMode: "cutting_only", stage: "complete", expectedText: "回来啦。",
+      sourceTranscript: "回来先坐", targetTranscript: "回来", followingText: "先坐。" };
+    render(<VoiceRecognitionComparison groups={[{ ...group(evidence), coverage: .5 }]} />);
+    expect(screen.getByText("切分定位参考")).toBeTruthy();
+    expect(screen.getByText("目标片段定位文本").nextElementSibling?.textContent).toBe("回来");
+    expect(screen.getByText("完整原音识别").nextElementSibling?.textContent).toBe("回来先坐");
+    expect(screen.getByText("目标台词").nextElementSibling?.textContent).toBe("回来啦。");
+    expect(screen.getByText("切分阶段：切分完成，待试听")).toBeTruthy();
+    expect(screen.getByText(/识别文本仅用于定位切分/)).toBeTruthy();
+    expect(screen.queryByText(/裁剪后识别|尝试裁剪后识别|文字相似度|容错通过|识别文字与源文一致|生成错误/)).toBeNull();
+  });
+
+  it("explains a cutting-only unlocatable boundary on the exact remaining short target without diagnosing the generated content", () => {
+    render(<VoiceParagraphRecognitionComparison expectedText="回来啦。先坐。" originalRecording paragraph={{ checkStatus: "review", clipIds: ["a", "b"], segments: [],
+      failedClipId: "b", diagnosticCode: "boundary_unlocatable", failureRecognition: { analysisMode: "cutting_only", stage: "source_alignment",
+        expectedText: "先坐。", sourceTranscript: "先做喝茶", targetTranscript: "先做" } }} />);
+    expect(screen.getByText("短句 2 · 切点未确定")).toBeTruthy();
+    expect(screen.getByText("剩余原音识别").nextElementSibling?.textContent).toBe("先做喝茶");
+    expect(screen.getByText("目标片段定位文本").nextElementSibling?.textContent).toBe("先做");
+    expect(screen.getByText("无法确定目标片段的切分位置，完整原音已保留。")).toBeTruthy();
+    expect(screen.queryByText(/检查未通过|内容核对|念错|读错|裁剪后识别/)).toBeNull();
+  });
+
+  it("preserves ambiguous-boundary diagnostics for a cutting-only original", () => {
+    render(<VoiceRecordingRecognitionComparison expectedText="先坐。" review recognition={{ analysisMode: "cutting_only", stage: "boundary_check",
+      expectedText: "先坐。", sourceTranscript: "先做先做", alignment: { expected: "先坐", recognizedPrefix: "先做", reason: "ambiguous_boundary" } }} />);
+    expect(screen.getByText("存在多个可能的切分位置，完整原音已保留。")).toBeTruthy();
+    expect(screen.getByText("本条试听与下载均为完整原音。")).toBeTruthy();
+    expect(screen.queryByText(/文字相似度|通过|内容正确/)).toBeNull();
+  });
+
   it("keeps following-boundary homophone evidence folded and displays the original right text and pinyin", () => {
     const evidence: VoiceRecognition = { ...recognition, followingText: "过来坐，炉子边暖和。",
       followingPhoneticBoundary: { expected: "过来坐炉子边暖和", recognized: "过来做炉子边暖和", sourceWordIndex: 13,
@@ -51,14 +83,14 @@ describe("ending match recognition inspection", () => {
         asset: { assetId: "slice", uri: "asset://clip/slice", duration: 2 }, textReview,
         recognition: { stage: "complete", expectedText: "回来啦。", sourceTranscript: "回来了", targetTranscript: "回来", sourceWords: [{ text: "回来了", start: .1, end: 1 }], shortSentenceReview: textReview } }] };
     const view = render(<VoiceParagraphRecognitionComparison expectedText={paragraph.text} paragraph={paragraph} />);
-    expect(screen.getByText("各短句切点已确认；部分台词需要试听确认。")).toBeTruthy();
-    expect(screen.getByText("短句识别（待试听确认）").nextElementSibling?.textContent).toBe("回来");
-    expect(screen.getByText("检查阶段：切点检查完成 · 文字需试听确认")).toBeTruthy();
+    expect(screen.getByText(/切分完成，待试听。已保存 1 个短句片段/)).toBeTruthy();
+    expect(screen.getByText("短句识别（历史）").nextElementSibling?.textContent).toBe("回来");
+    expect(screen.getByText("检查阶段：历史切分及识别记录")).toBeTruthy();
     expect(screen.queryByText(/整段已通过/)).toBeNull();
     view.rerender(<VoiceParagraphRecognitionComparison expectedText={paragraph.text} paragraph={{ ...paragraph,
       manualTextConfirmation: { sourceCandidateId: "candidate", confirmedClipIds: ["a"], confirmedAt: "2026-10-14T13:00:00.000Z" } }} />);
-    expect(screen.getByText("台词已试听确认；原识别字差保留。")).toBeTruthy();
-    expect(screen.getByText("短句识别（已试听确认）").nextElementSibling?.textContent).toBe("回来");
+    expect(screen.getByText("历史试听确认记录已保存；原识别字差保留。")).toBeTruthy();
+    expect(screen.getByText("短句识别（历史）").nextElementSibling?.textContent).toBe("回来");
     expect(screen.queryByText(/整段已通过/)).toBeNull();
   });
 
@@ -68,9 +100,10 @@ describe("ending match recognition inspection", () => {
         substitutionCount: 1, expected: "回来啦", recognized: "回来了", sourcePrefix: "回来了", acceptanceRule: "exact_prefix_final_particle",
         differences: [{ index: 2, expected: "啦", recognized: "了", expectedPinyin: "la5", recognizedPinyin: "le5", rule: "sentence_particle", clauseEnd: true }] } };
     render(<VoiceRecognitionComparison groups={[group(evidence)]} />);
-    expect(screen.getByText("已截取目标片段；句尾语气词容错通过，请试听。")).toBeTruthy();
+    expect(screen.getByText("切分完成，待试听。")).toBeTruthy();
     expect(screen.getByText("文字相似度 66.7% · 阈值 90%")).toBeTruthy();
-    expect(screen.getByText("句尾语气词容错通过；其余字与源文逐字一致。")).toBeTruthy();
+    expect(screen.getByText("历史识别记录，仅供试听参考；不作为采用条件。")).toBeTruthy();
+    expect(screen.getByText("历史记录：句尾语气词存在识别字差，仅供试听参考。")).toBeTruthy();
     expect(screen.getByText("第 3 字：啦 → 了")).toBeTruthy();
     expect(screen.getByText(/la5 → le5 · 句末语气词差异/)).toBeTruthy();
     expect(screen.queryByText(/拼音容错得分|95%/)).toBeNull();
@@ -142,7 +175,7 @@ describe("ending match recognition inspection", () => {
   it("shows the ending anchor and isolated missing/substituted characters in a folded crop inspection", () => {
     render(<VoiceRecognitionComparison groups={[group(recognition)]} />);
     expect(screen.getByText("识别对照").closest("details")?.open).toBe(false);
-    expect(screen.getByText("已截取目标片段；识别文字与源文有差异。")).toBeTruthy();
+    expect(screen.getByText("切分完成，待试听。")).toBeTruthy();
     expect(screen.getByText("末尾词定位：「暖胃」")).toBeTruthy();
     expect(screen.getByText("文字相似度 88.9% · 阈值 85%")).toBeTruthy();
     expect(screen.getByText("第 4 字：啦 → 了")).toBeTruthy();
@@ -194,7 +227,7 @@ describe("ending match recognition inspection", () => {
         differences: [{ index: 3, expected: "啦", recognized: "了", expectedPinyin: "la5", recognizedPinyin: "le5", rule: "sentence_particle", clauseEnd: true },
           { index: 4, expected: "汤", recognized: "糖", expectedPinyin: "tang1", recognizedPinyin: "tang2", rule: "source_supported_tone", sourceCharacter: "汤" }] } };
     render(<VoiceRecognitionComparison groups={[{ ...group(evidence), coverage: .818182 }]} />);
-    expect(screen.getByText("已截取目标片段；拼音容错通过，请试听。")).toBeTruthy();
+    expect(screen.getByText("切分完成，待试听。")).toBeTruthy();
     expect(screen.getByText("文字相似度 81.8% · 阈值 90%")).toBeTruthy();
     expect(screen.getByText("拼音容错得分 95.5% · 阈值 95%")).toBeTruthy();
     expect(screen.getByText("第 4 字：啦 → 了")).toBeTruthy();

@@ -3,7 +3,6 @@ import type { AsmrProject, VoiceClip } from "./schema";
 import { getVoiceGenerationContext } from "./voice-generation-context";
 import { getVoiceParagraphContext } from "./voice-paragraph-context";
 import { getSpeechWorkspaceMode } from "./speech-workspace";
-import { isVoiceParagraphManuallyConfirmed } from "./voice-paragraph-result";
 
 export type StudioAudioOverview = {
   adopted: number;
@@ -58,7 +57,7 @@ export function getStudioAudioProgress(project: AsmrProject, candidates: readonl
         if (candidate.provenance.generationMode === "clip") return candidate.sourceFingerprint === directSource;
         if (candidate.provenance.generationMode === "paragraph") {
           const paragraph = candidate.provenance.paragraph;
-          if (!paragraph || (paragraph.checkStatus !== "passed" && !isVoiceParagraphManuallyConfirmed(paragraph))) return false;
+          if (!paragraph || paragraph.checkStatus === "review") return false;
           paragraphSource ??= getVoiceCandidateSourceFingerprint(clip, undefined, getVoiceParagraphContext(project, clip.id));
           return candidate.sourceFingerprint === paragraphSource;
         }

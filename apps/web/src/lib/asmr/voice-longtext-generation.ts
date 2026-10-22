@@ -14,7 +14,7 @@ import { generateVoxCpm2, VoxCpm2Error } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import { VoiceGenerationContextSchema, type VoiceGenerationContext } from "./voice-generation-context";
-import { VoiceRecognitionSchema, type VoiceContentComparison, type VoiceRecognition } from "./voice-recognition";
+import { VoiceRecognitionSchema, isCuttingOnlyRecognition, type VoiceContentComparison, type VoiceRecognition } from "./voice-recognition";
 import { getLocalStorageError } from "./local-storage-error";
 import { getVoiceReviewWarning as reviewMessage, getVoiceContentDifferenceWarning } from "./voice-review-warning";
 
@@ -175,7 +175,7 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
             const diagnostic = VoiceRecognitionSchema.safeParse(error instanceof VoiceGroupAnalysisError ? error.recognition : undefined);
             recognition = diagnostic.success && diagnostic.data.expectedText === target.expectedText
               && (diagnostic.data.followingText ?? "") === (target.followingText ?? "") ? diagnostic.data : recognition ?? {
-                stage: "unavailable", sourceTranscript: "", expectedText: target.expectedText,
+                analysisMode: "cutting_only", stage: "unavailable", sourceTranscript: "", expectedText: target.expectedText,
                 ...(target.followingText ? { followingText: target.followingText } : {}),
               };
             if (error instanceof VoiceGroupAnalysisError && [503, 504].includes(error.statusCode)) analysisUnavailable = true;
@@ -199,7 +199,11 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
               isFinal: target.isFinal, pauseAfter: plan.groups[index].pauseAfter,
               seed: take.provenance.seed, parameters: take.provenance.parameters, asset,
               internalPausesMs: analysis?.internalPausesMs ?? [],
-              internalPauseClasses: plan.clausePauseClasses.slice(plan.groups[index].start, plan.groups[index].end),
+              internalPauseClasses: isCuttingOnlyRecognition(recognition) && analysis?.boundaryOnly
+                ? analysis.boundaryOnly.internalPausePositions.map(position => plan.clausePauseClasses[plan.groups[index].start + position])
+                : plan.clausePauseClasses.slice(plan.groups[index].start, plan.groups[index].end),
+              ...(isCuttingOnlyRecognition(recognition) && analysis?.boundaryOnly
+                ? { internalPausePositions: analysis.boundaryOnly.internalPausePositions } : {}),
               leadingQuietMs: analysis?.leadingQuietMs ?? 0, trailingQuietMs: analysis?.trailingQuietMs ?? 0,
               transcript: analysis?.transcript ?? "", recognition, coverage: analysis?.coverage ?? 0,
               cutStartSeconds: analysis?.cutStartSeconds ?? 0, cutEndSeconds: analysis?.cutEndSeconds ?? duration,

@@ -8,13 +8,14 @@ import type { SpeechWorkspaceMode, TimelineClip } from "@/lib/asmr/schema";
 import type { VoiceGenerationOptions } from "@/lib/asmr/voice-generation-options";
 import type { VoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
 import type { VoiceParagraphContext } from "@/lib/asmr/voice-paragraph-context";
-import { isVoiceParagraphManuallyConfirmed } from "@/lib/asmr/voice-paragraph-result";
-import { normalizeVoiceSentenceParticleText } from "@/lib/asmr/voice-recognition";
+import { isVoiceParagraphManuallyConfirmed, type VoiceParagraphResult } from "@/lib/asmr/voice-paragraph-result";
+import { isCuttingOnlyRecognition } from "@/lib/asmr/voice-recognition";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import { VoiceGenerationRecordingsSchema, type VoiceGenerationRecording } from "@/lib/asmr/voice-generation-recording";
 import { VoiceParagraphRecognitionComparison, VoiceRecognitionComparison, VoiceRecordingRecognitionComparison } from "./voice-recognition-comparison";
 import { getVoiceReviewWarningForDisplay } from "@/lib/asmr/voice-review-warning";
 import { VoiceReferenceImport, type VoiceReferenceImportResult } from "./voice-reference-import";
+import { AudioPlayer } from "./audio-player";
 
 export type VoiceGenerationPanelProps = {
   projectId?: string;
@@ -34,6 +35,9 @@ export type VoiceGenerationPanelProps = {
   onRecheck?: (candidate: AudioCandidate) => void;
   recheckingCandidateId?: string;
   onCancelRecheck?: () => void;
+  onForceSplit?: (candidate: AudioCandidate) => void;
+  forceSplittingCandidateId?: string;
+  onCancelForceSplit?: () => void;
   onConfirmText?: (candidate: AudioCandidate, confirmedClipIds: string[]) => void;
   confirmingCandidateId?: string;
   onCancelConfirmation?: () => void;
@@ -70,78 +74,25 @@ function preferredMode(reference: Reference): VoiceGenerationOptions["referenceM
     : "reference_only";
 }
 
-function VoicePreview({ src, label, onPreviewPlay, compact = false }: {
-  src: string;
-  label: string;
-  onPreviewPlay: (audio: HTMLAudioElement) => void;
-  compact?: boolean;
-}) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const mounted = useRef(true);
-  const retrySequence = useRef(0);
-  const [status, setStatus] = useState<"idle" | "waiting" | "ready" | "error">("idle");
-  const spatial = src.startsWith("/api/assets/spatial/");
-
-  useEffect(() => {
-    mounted.current = true;
-    const audio = audioRef.current;
-    if (audio && audio.getAttribute("src") !== src) audio.src = src;
-    return () => {
-      mounted.current = false;
-      retrySequence.current += 1;
-      if (audio) {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-      }
-    };
-  }, [src]);
-
-  function updateStatus(audio: HTMLAudioElement, next: typeof status) {
-    if (mounted.current && audioRef.current === audio) setStatus(next);
-  }
-
-  function retry() {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const sequence = ++retrySequence.current;
-    setStatus("waiting");
-    onPreviewPlay(audio);
-    audio.load();
-    void audio.play().catch((error: unknown) => {
-      if (sequence !== retrySequence.current) return;
-      updateStatus(audio, error instanceof DOMException && error.name === "AbortError" ? "idle" : "error");
-    });
-  }
-
-  return <div className={compact ? "w-60 min-w-0 max-w-full flex-none space-y-1" : "min-w-0 space-y-2"}>
-    <audio ref={audioRef} aria-label={label} controls preload="none" src={src}
-      onPlay={(event) => {
-        onPreviewPlay(event.currentTarget);
-        updateStatus(event.currentTarget, event.currentTarget.readyState < 3 ? "waiting" : "ready");
-      }}
-      onWaiting={(event) => updateStatus(event.currentTarget, "waiting")}
-      onCanPlay={(event) => updateStatus(event.currentTarget, "ready")}
-      onPlaying={(event) => updateStatus(event.currentTarget, "ready")}
-      onPause={(event) => {
-        if (mounted.current && audioRef.current === event.currentTarget) {
-          setStatus((current) => current === "error" ? current : "idle");
-        }
-      }}
-      onError={(event) => updateStatus(event.currentTarget, "error")}
-      className={`${compact ? "block h-8" : "h-9"} w-full min-w-0 max-w-full`} />
-    {status === "waiting" ? <p role="status" className="text-xs leading-5 text-studio-muted">{spatial ? "正在准备空间试听…" : "正在准备试听…"}</p> : null}
-    {status === "error" ? <div className="space-y-2">
-      <p role="alert" className="break-words text-xs leading-5 text-amber-100">{spatial ? "空间试听暂不可用。可重试，或关闭双耳空间后试听原声。" : "试听暂不可用，请重试。"}</p>
-      <button type="button" aria-label={`重试${label}`} className={`${buttonClass} text-studio-muted`} onClick={retry}>重试试听</button>
-    </div> : null}
-  </div>;
+function isCuttingOnlyParagraph(paragraph?: VoiceParagraphResult): boolean {
+  return Boolean(paragraph && (isCuttingOnlyRecognition(paragraph.failureRecognition)
+    || paragraph.segments.some((segment) => isCuttingOnlyRecognition(segment.recognition))));
 }
 
-function OriginalVoiceRecordings({ projectId, clipId, text, workspaceMode, busy, onPreviewPlay }: {
+function VoicePreview({ src, label, compact = false }: {
+  src: string;
+  label: string;
+  compact?: boolean;
+}) {
+  const spatial = src.startsWith("/api/assets/spatial/");
+  return <AudioPlayer src={src} label={label} compact={compact}
+    waitingLabel={spatial ? "正在准备空间试听…" : "正在准备试听…"}
+    errorLabel={spatial ? "空间试听暂不可用。可重试，或关闭双耳空间后试听原声。" : "试听暂不可用，请重试。"} />;
+}
+
+function OriginalVoiceRecordings({ projectId, clipId, text, workspaceMode, busy }: {
   projectId: string; clipId: string; text: string; busy: boolean;
   workspaceMode: SpeechWorkspaceMode;
-  onPreviewPlay: (audio: HTMLAudioElement) => void;
 }) {
   const disclosureRef = useRef<HTMLDetailsElement>(null);
   const openedForGeneration = useRef(false);
@@ -223,10 +174,10 @@ function OriginalVoiceRecordings({ projectId, clipId, text, workspaceMode, busy,
           <p className="text-xs text-studio-muted">试听与下载</p>
           <button type="button" className={`${buttonClass} text-studio-muted`} onClick={() => setRefresh((value) => value + 1)}>刷新录音</button>
         </div>
-        <p className="break-words text-xs leading-5 text-studio-muted">{workspaceMode === "paragraph" ? "保留整段连续原音，可试听或下载。短句切分通过检查后再采用。" : "完整原音保留，可随时试听或下载；长文录音可能包含补充台词。"}</p>
+        <p className="break-words text-xs leading-5 text-studio-muted">{workspaceMode === "paragraph" ? "保留整段连续原音，可试听或下载。切分完成后，请试听并自行决定是否采用。" : "完整原音保留，可随时试听或下载；长文录音可能包含补充台词。"}</p>
         {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
         {!recordings.length ? <p className="text-xs leading-5 text-studio-muted">{nextCursor ? "本页尚未找到这段台词的录音，可加载更多继续查看。" : busy ? "第一条录音完成后会自动显示在这里。" : "这段台词暂无原始录音。"}</p> : null}
-        <div className="max-h-80 min-w-0 space-y-3 overflow-y-auto">
+        <div className="min-w-0 space-y-3">
           {recordings.map((recording, index) => <article key={recording.recordingId} aria-label={`完整原音 ${index + 1}`} className="min-w-0 space-y-2 border-t border-studio-line pt-3">
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
               <span className="font-semibold text-studio-text">第 {recording.group} 组 · 第 {recording.take} 次</span>
@@ -234,7 +185,7 @@ function OriginalVoiceRecordings({ projectId, clipId, text, workspaceMode, busy,
               {recording.historicalMatch ? <span className="text-studio-muted">历史同文案</span> : null}
             </div>
             <p className="break-words text-xs leading-5 text-studio-muted">{recording.expectedText}</p>
-            <VoicePreview src={recording.audioUrl} label={`完整原音 ${index + 1} 试听`} onPreviewPlay={onPreviewPlay} />
+            <VoicePreview src={recording.audioUrl} label={`完整原音 ${index + 1} 试听`} />
             <p className={`break-words text-xs leading-5 ${recording.status === "needs_review" ? "text-amber-100" : "text-studio-muted"}`}>{recording.warning}</p>
             <div className="flex flex-wrap items-center gap-2">
               <a className={`${buttonClass} inline-flex items-center text-studio-text`} href={`${recording.audioUrl}?download=1`} download>下载完整原音</a>
@@ -255,76 +206,16 @@ function OriginalVoiceRecordings({ projectId, clipId, text, workspaceMode, busy,
   </section>;
 }
 
-function ParagraphTextConfirmation({ candidate, candidateNumber, disabled, confirming, onConfirm, onPreviewPlay }: {
-  candidate: AudioCandidate;
-  candidateNumber: number;
-  disabled: boolean;
-  confirming: boolean;
-  onConfirm?: VoiceGenerationPanelProps["onConfirmText"];
-  onPreviewPlay: (audio: HTMLAudioElement) => void;
-}) {
-  const [confirmedIds, setConfirmedIds] = useState<string[]>([]);
-  const paragraph = candidate.provenance.paragraph;
-  if (!paragraph || paragraph.checkStatus !== "needs_confirmation" || isVoiceParagraphManuallyConfirmed(paragraph)) return null;
-  const pending = paragraph.segments.filter((segment) => segment.textReview);
-  const allConfirmed = pending.length > 0 && pending.every((segment) => confirmedIds.includes(segment.clipId));
-  return <section aria-label={`候选 ${candidateNumber} 台词试听确认`} className="min-w-0 space-y-3 rounded-lg border border-amber-200/20 bg-amber-200/[0.04] p-3">
-    <div className="space-y-1">
-      <p className="text-xs font-semibold text-amber-100">切点已确认 · 台词待试听</p>
-      <p className="break-words text-xs leading-5 text-studio-muted">识别文字存在字差。请逐句听原声，确认台词完整后采用。</p>
-    </div>
-    <ol className="min-w-0 space-y-3">
-      {pending.map((segment) => {
-        const index = paragraph.clipIds.indexOf(segment.clipId);
-        const audio = resolvePlayableAssetUri(segment.asset.uri);
-        const review = segment.textReview!;
-        const sourceDifferent = review.reason === "same_tone_substitution" && review.sourcePrefix !== review.expected;
-        const expectedLength = Array.from(review.expected).length;
-        const finalText = normalizeVoiceSentenceParticleText(review.final.transcript);
-        const leftText = review.left ? normalizeVoiceSentenceParticleText(review.left.transcript) : undefined;
-        const leftDifferent = Boolean(leftText && (review.reason === "same_tone_substitution" ? leftText !== review.expected : Array.from(leftText).length < expectedLength));
-        const finalDifferent = review.reason === "same_tone_substitution" ? finalText !== review.expected : Array.from(finalText).length < expectedLength;
-        const locations = [sourceDifferent ? "源定位" : "", leftDifferent ? "切点左侧" : "", finalDifferent ? "裁后识别" : ""].filter(Boolean);
-        return <li key={segment.clipId} className="min-w-0 space-y-2 border-t border-amber-200/10 pt-2">
-          <p className="break-words text-xs leading-5 text-studio-text">短句 {index + 1} · {segment.text}</p>
-          <p className="text-xs leading-5 text-amber-100">{review.reason === "same_tone_substitution" ? "同音字待试听确认" : "句尾语气词待试听确认"}</p>
-          {audio ? <VoicePreview src={audio} label={`候选 ${candidateNumber} 短句 ${index + 1} 原声试听`} onPreviewPlay={onPreviewPlay} /> : null}
-          {!finalDifferent ? <p className="break-words text-xs leading-5 text-studio-muted">{sourceDifferent ? "源定位识别有同音字差，裁后识别一致。"
-            : review.reason === "same_tone_substitution" ? "切点左侧识别有同音字差，裁后识别一致。" : "切点左侧漏了句尾语气词；裁后识别已保留语气词。"}</p> : null}
-          {locations.length ? <p className="break-words text-xs leading-5 text-studio-muted">字差位置：{locations.join("、")}</p> : null}
-          {sourceDifferent ? <p className="break-words text-xs leading-5 text-studio-muted">源定位识别：{review.sourcePrefix}</p> : null}
-          <p className="break-words text-xs leading-5 text-studio-muted">裁后识别：{review.final.transcript || "未取得识别文字"}</p>
-          {review.left && review.left.transcript !== review.final.transcript ? <p className="break-words text-xs leading-5 text-studio-muted">切点左侧识别：{review.left.transcript || "未取得识别文字"}</p> : null}
-          {review.reason === "same_tone_substitution" ? <p className="break-words text-xs leading-5 text-amber-100">
-            {review.differences.map((difference) => `${difference.expected} → ${difference.recognized} · 同音同调（${difference.expectedPinyin}）`).join("；")}
-          </p> : null}
-          <label className="flex min-w-0 items-start gap-2 text-xs leading-5 text-studio-text">
-            <input type="checkbox" aria-label={`候选 ${candidateNumber} 短句 ${index + 1} 已听且台词完整`} checked={confirmedIds.includes(segment.clipId)}
-              disabled={disabled || !audio || !onConfirm}
-              className="mt-1 h-3.5 w-3.5 flex-none accent-sky-300" onChange={(event) => {
-                setConfirmedIds((ids) => event.target.checked ? [...ids.filter((id) => id !== segment.clipId), segment.clipId] : ids.filter((id) => id !== segment.clipId));
-              }} />
-            <span>已听原声，确认这句台词完整</span>
-          </label>
-        </li>;
-      })}
-    </ol>
-    <button type="button" aria-label={`确认并采用候选 ${candidateNumber}`} className={`${buttonClass} border-sky-300/30 bg-sky-300/10 text-sky-100`}
-      disabled={disabled || !allConfirmed || !onConfirm} onClick={() => onConfirm?.(candidate, pending.map((segment) => segment.clipId))}>
-      {confirming ? "确认中…" : "确认并采用"}
-    </button>
-  </section>;
-}
-
-function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenerationDisabled, onRegenerateGroup, onPreviewPlay }: {
+function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenerationDisabled, onRegenerateGroup }: {
   candidate: AudioCandidate;
   candidateNumber: number;
   referenceLabel?: string;
   regenerationDisabled: boolean;
   onRegenerateGroup?: VoiceGenerationPanelProps["onRegenerateGroup"];
-  onPreviewPlay: (audio: HTMLAudioElement) => void;
 }) {
   const provenance = candidate.provenance;
+  const forced = Boolean(provenance.forcedSegmentation);
+  const cuttingOnlyParagraph = isCuttingOnlyParagraph(provenance.paragraph);
   const rows: [string, string][] = [
     ["模型", provenance.model],
     ["参考", referenceLabel || provenance.voicePackId],
@@ -342,9 +233,8 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
     if (joins.length > 0) rows.push(["内部拼接停顿", `${joins.map((join) => Number(join.actualDurationMs.toFixed(1))).join(" / ")} ms`]);
   }
   if (provenance.paragraph) {
-    rows.push(["生成范围", "整段原文一次生成"], ["短句切分", provenance.paragraph.checkStatus === "passed"
-      ? `${provenance.paragraph.segments.length} 句 · 检查通过` : isVoiceParagraphManuallyConfirmed(provenance.paragraph) ? "切点已确认 · 台词已试听确认"
-        : provenance.paragraph.checkStatus === "needs_confirmation" ? "切点已确认 · 台词待试听" : "待确认"], ["原音保留", "整段原声，音量与速度保持"]);
+    rows.push(["生成范围", "整段原文一次生成"], ["短句切分", provenance.paragraph.checkStatus !== "review"
+      ? `${provenance.paragraph.segments.length} 句 · ${forced ? "已强制切分，待试听" : "切分完成，待试听"}` : cuttingOnlyParagraph ? "切点未确定，完整原音已保留" : "未保存切片，完整原音已保留"], ["原音保留", "整段原声，音量与速度保持"]);
   }
   if (provenance.runtimeVersion) rows.push(["运行版本", provenance.runtimeVersion]);
   if (provenance.modelIdentity) rows.push(["模型版本", provenance.modelIdentity]);
@@ -357,17 +247,25 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
         <dt className="break-words">{label}</dt><dd className="min-w-0 break-all">{value}</dd>
       </div>)}
     </dl>
+    {provenance.paragraph && provenance.forcedSegmentation?.alignments.some((alignment) => alignment.previousRecognition) ? <div aria-label="强制切分前识别记录" className="mt-3 space-y-2 border-t border-studio-line pt-3">
+      <p className="leading-5">以下是强制切分前保存的识别记录，仅供历史对照。</p>
+      {provenance.forcedSegmentation.alignments.map((alignment) => alignment.previousRecognition ? <VoiceParagraphRecognitionComparison
+        key={alignment.groupIndex} paragraph={{ checkStatus: "review", clipIds: provenance.paragraph!.clipIds, segments: [],
+          failedClipId: alignment.failedClipId ?? provenance.paragraph!.clipIds[0], failureRecognition: alignment.previousRecognition }}
+        expectedText={provenance.paragraph!.text} originalRecording /> : null)}
+    </div> : null}
     {provenance.generationMode === "long_text" && provenance.longText ? <ol className="mt-3 min-w-0 space-y-3 border-t border-studio-line pt-3">
       {provenance.longText.groups.map((group) => {
         const groupNumber = group.index + 1;
         const audio = resolvePlayableAssetUri(group.asset.uri);
         return <li key={group.index} className="min-w-0 space-y-2">
           <p className="font-semibold text-studio-text">内部生成组 {groupNumber}</p>
-          {group.checkStatus === "review" ? <p className="break-words leading-5 text-amber-100">完整原音 · 待试听确认</p> : null}
+          {isCuttingOnlyRecognition(group.recognition) ? <p className={`break-words leading-5 ${group.checkStatus === "review" ? "text-amber-100" : "text-studio-muted"}`}>{group.checkStatus === "review" ? "切点未确定，完整原音已保留。" : group.checkStatus === "passed" ? "切分完成，待试听。" : "已保存原音与定位参考，请试听。"}</p>
+            : group.checkStatus === "review" ? <p className="break-words leading-5 text-amber-100">完整原音 · 待试听确认</p> : null}
           <p title={group.text} className="truncate leading-5">{group.text}</p>
           {audio ? <details className="min-w-0">
             <summary className="cursor-pointer py-1">试听本组</summary>
-            <audio aria-label={`候选 ${candidateNumber} 第 ${groupNumber} 组试听`} controls preload="none" src={audio} onPlay={(event) => onPreviewPlay(event.currentTarget)} className="mt-1 h-9 w-full min-w-0 max-w-full" />
+            <AudioPlayer label={`候选 ${candidateNumber} 第 ${groupNumber} 组试听`} preload="none" src={audio} className="mt-1 w-full min-w-0 max-w-full" />
           </details> : null}
           {onRegenerateGroup ? <button type="button" aria-label={`重生成候选 ${candidateNumber} 第 ${groupNumber} 组`} className={`${buttonClass} text-studio-muted`} disabled={regenerationDisabled} onClick={() => onRegenerateGroup(candidate, group.index)}>重生成内部组</button> : null}
         </li>;
@@ -375,18 +273,19 @@ function CandidateDetails({ candidate, candidateNumber, referenceLabel, regenera
     </ol> : null}
     {provenance.paragraph ? <div className="mt-3 min-w-0 space-y-3 border-t border-studio-line pt-3">
       <p className="break-words leading-5 text-studio-text">{provenance.paragraph.text}</p>
-      <p className="leading-5">{provenance.paragraph.checkStatus === "passed" ? "各短句已通过文字、双侧识别与安静边界检查。采用时同时更新本工作区的整段短句。"
-        : isVoiceParagraphManuallyConfirmed(provenance.paragraph) ? "各短句切点已确认；识别存在字差的台词已由用户试听确认，原识别结果保留。"
-          : provenance.paragraph.checkStatus === "needs_confirmation" ? "各短句切点已确认；部分台词需要试听确认，完整原音与切片均已保留。" : "切分尚未全部通过检查，完整原音已保留。"}</p>
+      <p className="leading-5">{provenance.paragraph.checkStatus !== "review"
+        ? `${forced ? "已强制切分，待试听" : "切分完成，待试听"}。内容是否符合台词由您试听判断；采用时更新本工作区的整段短句。`
+        : cuttingOnlyParagraph ? "切点未确定，完整原音已保留，可试听或下载。" : "未保存完整切片，原音已保留，可试听或下载。"}</p>
       {resolvePlayableAssetUri(provenance.paragraph.sourceAsset.uri) ? <div className="space-y-2">
         <p className="text-studio-text">整段完整原音 · {provenance.paragraph.sourceAsset.duration.toFixed(1)} 秒</p>
-        <VoicePreview src={resolvePlayableAssetUri(provenance.paragraph.sourceAsset.uri)!} label={`候选 ${candidateNumber} 整段完整原音试听`} onPreviewPlay={onPreviewPlay} />
+        <VoicePreview src={resolvePlayableAssetUri(provenance.paragraph.sourceAsset.uri)!} label={`候选 ${candidateNumber} 整段完整原音试听`} />
         <a className={`${buttonClass} inline-flex items-center`} href={`${resolvePlayableAssetUri(provenance.paragraph.sourceAsset.uri)}?download=1`} download>下载整段原音</a>
       </div> : null}
       {provenance.paragraph.segments.length ? <ol aria-label="整段短句切分" className="min-w-0 space-y-3">
         {provenance.paragraph.segments.map((segment, index) => <li key={segment.clipId} className="space-y-1 border-t border-studio-line pt-2">
           <p className="text-studio-text">短句 {index + 1} · {segment.cutStartSeconds.toFixed(2)}–{segment.cutEndSeconds.toFixed(2)} 秒</p>
           <p className="break-words leading-5">{segment.text}</p>
+          {resolvePlayableAssetUri(segment.asset.uri) ? <VoicePreview src={resolvePlayableAssetUri(segment.asset.uri)!} label={`候选 ${candidateNumber} 短句 ${index + 1} 原声试听`} /> : null}
         </li>)}
       </ol> : null}
     </div> : null}
@@ -400,12 +299,10 @@ export function VoiceGenerationPanel({
   paragraphContext,
   options, onOptionsChange, catalog, catalogError, busy, candidates, selectedClip,
   onAdopt, onDiscard, onUndo, canUndo, hasUndo, error, loading = false,
-  generationControl, onRegenerateGroup, onRecheck, recheckingCandidateId, onCancelRecheck,
-  onConfirmText, confirmingCandidateId, onCancelConfirmation,
+  generationControl, onRegenerateGroup, onForceSplit, forceSplittingCandidateId, onCancelForceSplit,
   binaural = false,
   referenceImportBusy = false, onReferenceImportBusyChange, onReferenceImported, onReferenceCatalogRefresh,
 }: VoiceGenerationPanelProps) {
-  const panelRef = useRef<HTMLElement>(null);
   if (selectedClip.type !== "voice" || selectedClip.kind === "silent") return null;
 
   const providers = catalog?.providers ?? [];
@@ -446,12 +343,6 @@ export function VoiceGenerationPanel({
     onOptionsChange({ ...options, voicePackId: next.id, referenceMode: preferredMode(next), ...(isParagraph ? { generationMode: "paragraph" } : {}) });
   }
 
-  function pauseOtherPreviews(current: HTMLAudioElement) {
-    panelRef.current?.querySelectorAll("audio").forEach((audio) => {
-      if (audio !== current) audio.pause();
-    });
-  }
-
   function changeGenerationMode(mode: string) {
     if (settingsDisabled || !provider?.available || !isVox || isParagraph) return;
     if (mode === "clip") onOptionsChange({ ...options, generationMode: "clip" });
@@ -477,16 +368,16 @@ export function VoiceGenerationPanel({
     </label>
     {reference?.audioUrl ? <div className="order-3 min-w-0 max-w-full @[35rem]/reference:order-none" title={`参考片段${reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}`}>
       <p className="sr-only">参考片段{reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}</p>
-      <VoicePreview key={reference.audioUrl} src={reference.audioUrl} label="参考声音试听" onPreviewPlay={pauseOtherPreviews} compact />
+      <VoicePreview key={reference.audioUrl} src={reference.audioUrl} label="参考声音试听" compact />
     </div> : null}
   </>;
 
-  return <section ref={panelRef} aria-label="人声生成设置" className="@container/reference min-w-0 space-y-3">
+  return <section aria-label="人声生成设置" className="@container/reference min-w-0 space-y-3">
     {isVox && onReferenceImported && onReferenceCatalogRefresh && onReferenceImportBusyChange ? <VoiceReferenceImport
       toolbarContent={referenceControls} compactToolbar
       disabled={busy || loading || catalog === null || !provider?.available}
       onImported={onReferenceImported} onCatalogRefresh={onReferenceCatalogRefresh}
-      onBusyChange={onReferenceImportBusyChange} onPreviewPlay={pauseOtherPreviews}
+      onBusyChange={onReferenceImportBusyChange}
     /> : <div className="min-w-0 space-y-2">
       <div className="flex min-w-0 flex-wrap items-center gap-2">{referenceControls}</div>
       {!isVox ? <p className="break-words text-xs leading-5 text-studio-muted">添加参考音频请在“更多生成设置”中选择 VoxCPM2。</p> : null}
@@ -506,56 +397,51 @@ export function VoiceGenerationPanel({
       : loading ? <p role="status" className="text-xs text-studio-muted">正在读取声音…</p> : null}
     {error ? <p role="alert" className="break-words text-xs leading-5 text-amber-100">{error}</p> : null}
 
-    {visibleCandidates.length > 0 ? <div aria-label="生成候选" className="max-h-80 min-w-0 space-y-3 overflow-y-auto">
+    {visibleCandidates.length > 0 ? <div aria-label="生成候选" className="min-w-0 space-y-3">
       {visibleCandidates.map((candidate, index) => {
         const adopted = candidate.asset.assetId === selectedClip.asset.asset_id;
-        const recheckAvailable = candidate.provenance.generationMode === "paragraph" ? Boolean(candidate.provenance.paragraph?.sourceAsset)
-          : candidate.provenance.generationMode === "long_text" && Boolean(candidate.provenance.longText?.plan);
-        const rechecking = recheckingCandidateId === candidate.candidateId;
         const stale = candidate.sourceFingerprint !== (candidate.provenance.generationMode === "paragraph" ? paragraphSourceFingerprint
           : candidate.provenance.generationMode === "long_text" ? windowedSourceFingerprint : sourceFingerprint);
         const paragraphReview = candidate.provenance.paragraph?.checkStatus === "review";
+        const forced = Boolean(candidate.provenance.forcedSegmentation);
+        const forceAvailable = !forced && (candidate.provenance.generationMode === "paragraph" ? paragraphReview
+          : candidate.provenance.generationMode === "long_text" && candidate.provenance.longText?.groups.some((group) => group.checkStatus === "review"));
+        const forcing = forceSplittingCandidateId === candidate.candidateId;
+        const cuttingOnlyParagraph = isCuttingOnlyParagraph(candidate.provenance.paragraph);
         const manuallyConfirmed = Boolean(candidate.provenance.paragraph && isVoiceParagraphManuallyConfirmed(candidate.provenance.paragraph));
-        const paragraphNeedsConfirmation = candidate.provenance.paragraph?.checkStatus === "needs_confirmation" && !manuallyConfirmed;
-        const confirming = confirmingCandidateId === candidate.candidateId;
         const candidateAudio = resolveClipPlaybackUri(selectedClip, binaural, candidate.asset);
         const candidateReference = catalog?.providers.find((item) => item.id === candidate.provenance.provider)?.references.find((item) => item.id === candidate.provenance.voicePackId);
         return <article key={candidate.candidateId} aria-label={`候选 ${index + 1}`} className="min-w-0 space-y-2.5 rounded-lg border border-studio-line bg-black/10 p-3">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <span className="font-semibold text-studio-text">候选 {index + 1}</span>
             <span className="text-studio-muted">{candidate.asset.duration.toFixed(1)} 秒</span>
-            {candidate.provenance.paragraph ? <span className={paragraphReview || paragraphNeedsConfirmation ? "text-amber-100" : "text-sky-100"}>{paragraphReview ? "完整原音 · 切分待确认"
-              : manuallyConfirmed ? "整段切分 · 台词已试听确认" : paragraphNeedsConfirmation ? "整段切分 · 台词待试听" : `整段切分 · ${candidate.provenance.paragraph.segments.length} 句`}</span> : null}
+            {forced ? <span className="text-sky-100">已强制切分，待试听</span> : candidate.provenance.paragraph ? <span className={paragraphReview ? "text-amber-100" : "text-sky-100"}>{paragraphReview ? cuttingOnlyParagraph ? "切点未确定 · 完整原音" : "完整原音 · 未保存切片" : "切分完成，待试听"}</span> : null}
             {adopted ? <span className="text-studio-green">已采用</span> : null}
           </div>
-          {candidateAudio && !paragraphNeedsConfirmation ? <VoicePreview key={candidateAudio} src={candidateAudio} label={`候选 ${index + 1} 试听`} onPreviewPlay={pauseOtherPreviews} /> : null}
+          {candidateAudio ? <VoicePreview key={candidateAudio} src={candidateAudio} label={`候选 ${index + 1} 试听`} /> : null}
+          {manuallyConfirmed ? <p className="text-xs leading-5 text-studio-muted">历史试听确认记录已保存。</p> : null}
           {stale && !adopted ? <p className="break-words text-xs leading-5 text-amber-100">{isParagraph ? "整段文案已修改，请重新生成。" : "文案或后续上下文已修改，请重新生成。"}</p> : null}
           {candidate.qualityWarnings.map((warning, warningIndex) => {
-            const confirmedWarning = manuallyConfirmed && (warning === "短句音频已安全切分，部分文字待试听确认；请逐句确认后采用整段。"
-              || warning === "短句音频已安全切分，但极短句识别漏了句尾语气词；请逐句试听确认后采用整段。");
-            return <p key={warningIndex} role={confirmedWarning ? "status" : "alert"} className={`break-words text-xs leading-5 ${confirmedWarning ? "text-studio-muted" : "text-amber-100"}`}>
-              {confirmedWarning ? "识别文字有差异，已试听确认。" : getVoiceReviewWarningForDisplay(warning, candidate.provenance.longText?.groups)}
+            const historicalTextWarning = warning === "短句音频已安全切分，部分文字待试听确认；请逐句确认后采用整段。"
+              || warning === "短句音频已安全切分，但极短句识别漏了句尾语气词；请逐句试听确认后采用整段。";
+            return <p key={warningIndex} role={historicalTextWarning ? "status" : "alert"} className={`break-words text-xs leading-5 ${historicalTextWarning ? "text-studio-muted" : "text-amber-100"}`}>
+              {historicalTextWarning ? "历史识别文字存在字差，仅供参考；请试听并自行决定是否采用。" : getVoiceReviewWarningForDisplay(warning, candidate.provenance.longText?.groups)}
             </p>;
           })}
           <div className="flex flex-wrap gap-2">
-            {!paragraphNeedsConfirmation ? <button type="button" aria-label={`采用候选 ${index + 1}`} className={`${buttonClass} border-sky-300/30 bg-sky-300/10 text-sky-100`} disabled={actionsDisabled || adopted || stale || paragraphReview} onClick={() => onAdopt(candidate)}>采用</button> : null}
+            <button type="button" aria-label={`采用候选 ${index + 1}`} className={`${buttonClass} border-sky-300/30 bg-sky-300/10 text-sky-100`} disabled={actionsDisabled || adopted || stale || paragraphReview} onClick={() => onAdopt(candidate)}>采用</button>
             {!adopted ? <button type="button" aria-label={`放弃候选 ${index + 1}`} className={`${buttonClass} text-studio-muted`} disabled={actionsDisabled} onClick={() => onDiscard(candidate)}>放弃</button> : null}
-            {onRecheck ? <button type="button" aria-label={`重新识别候选 ${index + 1}`} className={`${buttonClass} text-studio-muted`}
-              disabled={actionsDisabled || stale || !recheckAvailable || rechecking}
-              title={recheckAvailable ? stale ? "文案或后续上下文已修改，暂不能重新识别此候选。" : isParagraph ? "只检查已保存整段原音，不重新生成语音；结果新增为候选。"
-                : "只重新识别已保存的完整原音，结果新增为候选。" : "此候选未保存可核对的分组原音，暂不能重新识别。"}
-              onClick={() => onRecheck(candidate)}>{rechecking ? "重新识别中…" : "重新识别"}</button> : null}
-            {rechecking && onCancelRecheck ? <button type="button" aria-label="取消重新识别" className={`${buttonClass} text-studio-muted`} onClick={onCancelRecheck}>取消识别</button> : null}
-            {confirming && onCancelConfirmation ? <button type="button" aria-label="取消试听确认" className={`${buttonClass} text-studio-muted`} onClick={onCancelConfirmation}>取消确认</button> : null}
+            {onForceSplit && forceAvailable ? <button type="button" aria-label={`强制切分候选 ${index + 1}`} className={`${buttonClass} text-amber-100`}
+              disabled={actionsDisabled || stale || forcing}
+              title="按当前台词强制对齐并切分已保存原音，结果新增为候选；内容仍请试听判断。"
+              onClick={() => onForceSplit(candidate)}>{forcing ? "强制切分中…" : "强制切分"}</button> : null}
+            {forcing && onCancelForceSplit ? <button type="button" aria-label="取消强制切分" className={`${buttonClass} text-studio-muted`} onClick={onCancelForceSplit}>取消强制切分</button> : null}
           </div>
-          <ParagraphTextConfirmation key={`${candidate.candidateId}:${candidate.sourceFingerprint}:${stale}:${JSON.stringify(candidate.provenance.paragraph?.segments)}`}
-            candidate={candidate} candidateNumber={index + 1} disabled={actionsDisabled || adopted || stale} confirming={confirming} onConfirm={onConfirmText} onPreviewPlay={pauseOtherPreviews} />
-          {onRecheck && !recheckAvailable ? <p className="text-xs leading-5 text-studio-muted">未保存{isParagraph ? "整段" : "分组"}原音，暂不能重新识别。</p> : null}
           {candidate.provenance.paragraph ? <VoiceParagraphRecognitionComparison paragraph={candidate.provenance.paragraph}
             expectedText={candidate.provenance.paragraph.text} /> : <VoiceRecognitionComparison groups={candidate.provenance.longText?.groups} />}
           <CandidateDetails candidate={candidate} candidateNumber={index + 1} referenceLabel={candidateReference?.label}
             regenerationDisabled={actionsDisabled || stale || candidate.status !== "ready" || !provider?.available || !longTextAvailable}
-            onRegenerateGroup={isLongText ? onRegenerateGroup : undefined} onPreviewPlay={pauseOtherPreviews} />
+            onRegenerateGroup={isLongText ? onRegenerateGroup : undefined} />
         </article>;
       })}
     </div> : null}
@@ -567,11 +453,11 @@ export function VoiceGenerationPanel({
 
     {currentAudio ? <div className="min-w-0 space-y-2">
       <p className={`text-xs ${selectedClip.audio_stale ? "text-amber-100" : "text-studio-muted"}`}>{selectedClip.audio_stale ? "当前人声 · 文案已更新" : "当前人声"}</p>
-      <VoicePreview key={currentAudio} src={currentAudio} label="当前人声试听" onPreviewPlay={pauseOtherPreviews} />
+      <VoicePreview key={currentAudio} src={currentAudio} label="当前人声试听" />
     </div> : null}
 
     {isVox && projectId ? <OriginalVoiceRecordings key={`${projectId}:${workspaceMode}:${selectedClip.id}:${selectedClip.text}`} projectId={projectId}
-      clipId={selectedClip.id} text={selectedClip.text} workspaceMode={workspaceMode} busy={busy} onPreviewPlay={pauseOtherPreviews} /> : null}
+      clipId={selectedClip.id} text={selectedClip.text} workspaceMode={workspaceMode} busy={busy} /> : null}
 
     <details className="border-t border-studio-line py-3">
       <summary className="cursor-pointer text-xs font-semibold text-studio-muted">更多生成设置</summary>

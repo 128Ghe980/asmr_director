@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { VoiceParagraphRecordingRecognitionSchema, type VoiceGenerationRecording, type VoiceParagraphRecordingRecognition } from "./voice-generation-recording";
-import { VoiceRecognitionSchema, type VoiceRecognition } from "./voice-recognition";
+import { VoiceRecognitionSchema, isCuttingOnlyRecognition, type VoiceRecognition } from "./voice-recognition";
 
 const MAX_JSON_BYTES = 1024 * 1024;
 export const MAX_RECORDING_BYTES = 128 * 1024 * 1024;
@@ -94,6 +94,7 @@ async function wavDuration(filePath: string, size: number): Promise<number | nul
 
 function checkWarning(failure: Record<string, unknown> | undefined, checked: boolean, ended: boolean, analysis?: Record<string, unknown>, recognition?: VoiceRecognition) {
   if (failure) {
+    if (isCuttingOnlyRecognition(recognition)) return "未能确认自动切分的位置；完整原音仍可试听和下载，台词内容由你试听判断。";
     const code = failure.code;
     if (code === "uncertain_word_alignment") return "识别文字未能定位目标句的结束位置；请展开识别对照，并试听完整原音。";
     if (code === "unrecognized_continuation") return "后续台词衔接未能定位，暂未采用裁剪；请展开识别对照，并试听完整原音。";
@@ -110,6 +111,8 @@ function checkWarning(failure: Record<string, unknown> | undefined, checked: boo
     return `当前片段原音（未做分组检查）。${message}`;
   }
   const comparison = recognition?.contentComparison;
+  if (checked && (analysis?.forcedAlignment || analysis?.forcedSegmentation)) return "已强制切分，请试听后决定是否采用。未核验台词内容；这里保留完整原音。";
+  if (checked && isCuttingOnlyRecognition(recognition)) return "切分已完成，未核验台词内容；请试听后决定是否采用。这里保留完整原音。";
   if (checked && comparison?.status === "different") {
     return `目标片段已通过截取检查，但识别结果与源文有差异（相似度 ${(comparison.similarity * 100).toFixed(1)}%），请试听确认。这里保留模型输出的完整原音。`;
   }
@@ -163,7 +166,11 @@ function readParagraphRecognition(plan: z.infer<typeof PlanSchema>, expectedText
 function paragraphCheckWarning(evidence: VoiceParagraphRecordingRecognition, failure: Record<string, unknown> | undefined,
   ended: boolean, analysis?: Record<string, unknown>) {
   if (evidence.checkStatus === "review") return checkWarning(failure ?? { code: evidence.diagnosticCode }, false, ended, analysis, evidence.failureRecognition);
-  if (evidence.checkStatus === "needs_confirmation") return "短句音频已安全切分，部分文字待试听确认；请在候选中逐句确认后采用。这里保留完整原音与实际识别。";
+  if (analysis?.forcedSegmentation) return "已强制切分，请试听后决定是否采用。未核验台词内容；这里保留完整原音。";
+  if (evidence.checkStatus === "needs_confirmation") return "短句音频已安全切分，保留历史识别差异；请试听后决定是否采用。这里保留完整原音与实际识别。";
+  if (evidence.segments.some(segment => isCuttingOnlyRecognition(segment.recognition))) {
+    return `整段已完成 ${evidence.segments.length} 个短句的切分，未核验台词内容；请试听后决定是否采用。这里保留完整原音。`;
+  }
   const differences = evidence.segments.filter((segment) => segment.recognition?.contentComparison?.status === "different");
   if (differences.length) return `整段短句切分检查已完成；其中 ${differences.length} 句存在识别文字差异，请展开逐句对照并试听。这里保留完整原音。`;
   return `整段已通过 ${evidence.segments.length} 个短句的切分检查。这里保留模型输出的完整原音。`;

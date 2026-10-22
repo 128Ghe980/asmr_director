@@ -13,7 +13,6 @@ from pathlib import Path
 import queue
 import re
 import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -26,6 +25,10 @@ import wave
 FPS = 24
 RUNNER_VERSION = 1
 STATE_VERSION = 2
+TAIL_NODE = "901"
+TAIL_SAVE_NODE = "902"
+FRAME_LIMIT_NODE = "903"
+AMBIENT_AUDIO_LIMIT_NODE = "904"
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"}
 CONTINUITY = (
     "<Picture 2> is the final frame of the immediately previous clip and the "
@@ -177,6 +180,8 @@ def prune_graph(graph):
             if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str) and type(value[1]) is int:
                 visit(value[0])
     visit("26")
+    if TAIL_SAVE_NODE in graph:
+        visit(TAIL_SAVE_NODE)
     return {node_id: value for node_id, value in graph.items() if node_id in needed}
 
 
@@ -192,16 +197,35 @@ def build_graph(template, shot, facts, character, audio=None, tail=None, width=1
     graph["20"]["inputs"]["image"] = character
     graph["10"]["inputs"]["noise_seed"] = (seed + shot["order"]) % (2 ** 64)
     graph["11"]["inputs"]["fps"] = FPS
+    if FRAME_LIMIT_NODE in graph:
+        raise BatchError("工作流占用了批跑器帧数节点 903，请更换该自定义节点编号。")
+    graph[FRAME_LIMIT_NODE] = {"class_type": "ImageFromBatch", "inputs": {
+        "image": graph["11"]["inputs"]["images"], "batch_index": 0,
+        "length": facts.get("target_frames", facts["generation_frames"])}}
+    graph["11"]["inputs"]["images"] = [FRAME_LIMIT_NODE, 0]
     if shot["kind"] == "speech":
         graph["24"]["inputs"]["audio"] = audio or "__SPEECH_AUDIO__"
         reference["ref_audios.ref_audio_0"] = ["24", 0]
         graph["11"]["inputs"]["audio"] = ["24", 0]
     else:
-        graph["11"]["inputs"]["audio"] = ["4", 0]
+        if AMBIENT_AUDIO_LIMIT_NODE in graph:
+            raise BatchError("工作流占用了批跑器环境音节点 904，请更换该自定义节点编号。")
+        graph[AMBIENT_AUDIO_LIMIT_NODE] = {"class_type": "TrimAudioDuration", "inputs": {
+            "audio": ["4", 0], "start_index": 0.0,
+            "duration": facts.get("target_frames", min(facts["generation_frames"], 5 * FPS)) / FPS}}
+        graph["11"]["inputs"]["audio"] = [AMBIENT_AUDIO_LIMIT_NODE, 0]
     if tail:
         graph["900"] = {"class_type": "LoadImage", "inputs": {"image": tail}}
         reference["ref_images.ref_image_1"] = ["900", 0]
     graph["26"]["inputs"]["filename_prefix"] = output_prefix or f"asmr-batch/{slug(shot['id'])}"
+    # Keep the user's template bytes/identity unchanged. Only add an output
+    # branch using the same CLF node already present in asmr04.
+    if TAIL_NODE in graph or TAIL_SAVE_NODE in graph:
+        raise BatchError("工作流占用了批跑器末尾帧节点 901/902，请更换这两个自定义节点编号。")
+    graph[TAIL_NODE] = {"class_type": "CLFSelectVideoTailFrames", "inputs": {
+        "video": ["11", 0], "n": 1, "x": 0, "order": "chronological", "out_of_range": "error"}}
+    graph[TAIL_SAVE_NODE] = {"class_type": "SaveImage", "inputs": {
+        "images": [TAIL_NODE, 0], "filename_prefix": graph["26"]["inputs"]["filename_prefix"] + "_tail"}}
     return prune_graph(graph)
 
 
@@ -273,10 +297,10 @@ class ComfyClient:
                 output.flush()
                 os.fsync(output.fileno())
             if temporary.stat().st_size == 0:
-                raise BatchError("ComfyUI 返回了空视频。")
+                raise BatchError("ComfyUI 返回了空素材。")
             os.replace(temporary, target)
         except (urllib.error.URLError, TimeoutError, OSError) as error:
-            raise ApiError("视频下载未完成；保留 prompt_id，恢复时重新下载。") from error
+            raise ApiError("素材下载未完成；保留 prompt_id，恢复时重新下载。") from error
 
 
 def record_submission(record):
@@ -314,6 +338,12 @@ def locate_job(client, entry):
 
 
 def history_result(record):
+    # An auxiliary tail-image failure must never regenerate a finished video.
+    try:
+        saved_video(record)
+        return "succeeded"
+    except BatchError:
+        pass
     status = record.get("status", {})
     if status.get("status_str") == "error":
         return "failed"
@@ -334,99 +364,28 @@ def saved_video(record):
     raise BatchError("SaveVideo 节点 26 没有可下载的视频输出。")
 
 
-def find_ffmpeg(explicit=None):
-    if explicit:
-        candidate = shutil.which(explicit) or str(Path(explicit).expanduser())
-        if not Path(candidate).is_file():
-            raise BatchError("指定的 FFmpeg 文件不存在。")
-        return candidate
-    candidate = shutil.which("ffmpeg")
-    if candidate:
-        return candidate
-    try:
-        import imageio_ffmpeg  # Optional existing package; never installed by this runner.
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except (ImportError, RuntimeError) as error:
-        raise BatchError("找不到 FFmpeg，请用 --ffmpeg 指定 ffmpeg.exe，或在窗口中选择。") from error
+def saved_tail(record):
+    output = (record or {}).get("outputs", {}).get(TAIL_SAVE_NODE, {})
+    for locator in output.get("images", []):
+        if isinstance(locator, dict) and Path(locator.get("filename", "")).suffix.lower() == ".png":
+            return locator
+    return None
 
 
-def run_ffmpeg(executable, arguments, timeout=300):
-    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    try:
-        result = subprocess.run([str(executable), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", *map(str, arguments)],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, creationflags=flags)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise BatchError(f"FFmpeg 未完成：{type(error).__name__}") from error
-    if result.returncode:
-        detail = result.stderr.decode("utf-8", errors="replace")[-1600:]
-        raise BatchError("FFmpeg 处理失败：" + detail)
-
-
-def extract_tail(executable, video, target):
+def copy_saved_video(raw, target, entry=None):
+    """Publish exactly the bytes returned by SaveVideo; no media processing."""
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    run_ffmpeg(executable, ["-sseof", "-2", "-i", video, "-map", "0:v:0", "-an", "-vsync", "0", "-update", "1", target])
-    if not target.is_file() or not target.stat().st_size:
-        raise BatchError("没有提取到上一镜尾帧。")
-    return target
-
-
-def finish_video(executable, raw, target, entry):
-    target = Path(target)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # A closing GUI can leave an encoder finishing in the OS; do not reuse its file.
-    temporary = target.with_name(target.stem + ".part-" + uuid.uuid4().hex + ".mp4")
-    arguments = ["-i", raw]
-    if entry["kind"] == "speech":
-        if entry.get("audio_sha256") and file_hash(entry["audio_snapshot"]) != entry["audio_sha256"]:
-            raise BatchError("已保存的原音快照发生变化，停止封装；不会重新生成模型任务。")
-        arguments += ["-i", entry["audio_snapshot"], "-map", "0:v:0", "-map", "1:a:0"]
-    else:
-        arguments += ["-map", "0:v:0", "-map", "0:a:0"]
-    arguments += ["-t", f"{entry['target_duration']:.12f}", "-r", str(FPS), "-af", "apad",
-                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-                  "-threads", "2", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", temporary]
-    run_ffmpeg(executable, arguments)
-    if not temporary.is_file() or not temporary.stat().st_size:
-        raise BatchError("FFmpeg 没有输出最终视频。")
-    os.replace(temporary, target)
-    return target
-
-
-def concat_videos(executable, clips, target):
-    """Reset per-clip decoded timestamps; AAC packet padding must not add gaps."""
-    target = Path(target)
-    temporary = target.with_name(f"preview.part-{uuid.uuid4().hex}.mp4")
+    temporary = target.with_name(target.name + ".part-" + uuid.uuid4().hex)
     try:
-        if not clips:
-            raise BatchError("顺序预览没有可拼接镜头。")
-        arguments, filters, labels = [], [], []
-        total_frames = 0
-        for index, (source, duration) in enumerate(clips):
-            if type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0:
-                raise BatchError("顺序预览的片段时长无效。")
-            frame_count = max(1, round(duration * FPS))
-            sample_count = round(frame_count / FPS * 48000)
-            total_frames += frame_count
-            arguments += ["-i", source]
-            # Only generated indices/numbers enter the filter expression; file
-            # paths remain separate subprocess arguments, including paths with spaces.
-            filters += [f"[{index}:v:0]trim=end_frame={frame_count},setpts=N/({FPS}*TB)[v{index}]",
-                        f"[{index}:a:0]aresample=48000,aformat=channel_layouts=stereo,apad,"
-                        f"atrim=end_sample={sample_count},asetpts=N/SR/TB[a{index}]"]
-            labels.append(f"[v{index}][a{index}]")
-        filters.append("".join(labels) + f"concat=n={len(clips)}:v=1:a=1[video][audio]")
-        run_ffmpeg(executable, [*arguments, "-filter_complex", ";".join(filters), "-map", "[video]", "-map", "[audio]",
-                               "-t", f"{total_frames / FPS:.12f}", "-frames:v", str(total_frames), "-r", str(FPS),
-                               "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-                               "-threads", "2", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
-                               "-movflags", "+faststart", temporary])
-        if not temporary.is_file() or not temporary.stat().st_size:
-            raise BatchError("FFmpeg 没有输出顺序预览片。")
+        with Path(raw).open("rb") as source, temporary.open("wb") as output:
+            shutil.copyfileobj(source, output, 1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
         os.replace(temporary, target)
-        return target
     finally:
         temporary.unlink(missing_ok=True)
+    return target
 
 
 class RunLock:
@@ -457,12 +416,12 @@ class RunLock:
 
 class BatchRunner:
     def __init__(self, package, *, comfy_url="http://127.0.0.1:8188", character_image=None,
-                 ffmpeg=None, output_root=None, width=1216, height=672, seed=1,
+                 output_root=None, width=1216, height=672, seed=1,
                  retries=1, job_timeout=0, poll_interval=2, missing_grace=12,
                  candidates=1, rerun_candidates=None, request_timeout=30,
                  disconnect_timeout=300, heartbeat_interval=15, status_callback=None, stop_event=None,
                  only=None, rerun=None, dry_run=False, concat=False, log=print, client=None,
-                 finish=finish_video, tail_extractor=extract_tail, concatenator=concat_videos):
+                 publisher=copy_saved_video):
         self.root, self.manifest, self.template, self.template_sha = load_package(package)
         self.shots = self.manifest["shots"]
         self.log = log
@@ -485,10 +444,9 @@ class BatchRunner:
         self.width, self.height, self.seed = width, height, seed
         self.retries, self.job_timeout = retries, job_timeout
         self.poll_interval, self.missing_grace = poll_interval, missing_grace
-        self.dry_run, self.ffmpeg_option = dry_run, ffmpeg
-        self.ffmpeg = None
-        self.finish, self.tail_extractor = finish, tail_extractor
-        self.concat_requested, self.concatenator = concat, concatenator
+        self.dry_run = dry_run
+        self.publisher = publisher
+        self.concat_requested = concat
         self.client = client or ComfyClient(comfy_url, timeout=request_timeout)
         self.character = Path(character_image).expanduser().resolve() if character_image else (
             package_path(self.root, self.manifest["characterReference"]) if self.manifest.get("characterReference") else None)
@@ -672,7 +630,10 @@ class BatchRunner:
             if not isinstance(suffix, str) or not re.fullmatch(r"[0-9a-f]{32}", suffix):
                 raise BatchError("视频输出身份无效，保留已有文件等待检查。")
             name += "_" + suffix
-        return name + ".mp4"
+        extension = entry.get("output_extension", ".mp4")
+        if extension not in VIDEO_EXTENSIONS:
+            raise BatchError("视频输出扩展名无效。")
+        return name + extension
 
     def restore_history(self, shot, candidate, existing, fingerprint):
         if not existing:
@@ -710,10 +671,86 @@ class BatchRunner:
         path = self.state_file(previous["output"])
         return path if previous.get("status") == "succeeded" and not previous.get("input_error") and path.is_file() and file_hash(path) == previous.get("output_sha256") else None
 
+    def download_tail(self, entry):
+        if entry.get("tail"):
+            cached = self.state_file(entry["tail"])
+            if cached.is_file() and file_hash(cached) == entry.get("tail_sha256"):
+                return cached
+        locator = entry.get("remote_tail")
+        if not isinstance(locator, dict) or Path(locator.get("filename", "")).suffix.lower() != ".png":
+            return None
+        target = self.state_file("tails/" + str(entry["submission_id"]) + ".png")
+        self.client.download(locator, target)
+        with target.open("rb") as source:
+            header = source.read(24)
+        if len(header) != 24 or not header.startswith(b"\x89PNG\r\n\x1a\n") or header[12:16] != b"IHDR":
+            raise BatchError("ComfyUI 末尾帧输出不是有效 PNG，保留成品等待恢复。")
+        entry.update({"tail": target.relative_to(self.output).as_posix(), "tail_sha256": file_hash(target)})
+        entry.pop("tail_error", None)
+        self.save()
+        return target
+
+    def previous_tail(self, index, candidate=1):
+        video = self.previous_output(index, candidate)
+        if video is None:
+            return None
+        previous = self.candidate_entry(self.shots[index - 1]["id"], candidate)
+        cached = self.download_tail(previous)
+        if cached:
+            return cached
+        # Old completed batches have no PNG. Submit only the user's video-tail
+        # node, never the H3 generation graph, and persist its own job identity.
+        job = previous.get("tail_job")
+        if job is None:
+            info = self.client.get("/object_info")
+            missing = {"LoadVideo", "CLFSelectVideoTailFrames", "SaveImage"} - set(info)
+            if missing:
+                raise BatchError("ComfyUI 补取末尾帧缺少节点：" + ", ".join(sorted(missing)))
+            uploaded = self.upload(video)
+            identity = uuid.uuid4().hex
+            graph = {"910": {"class_type": "LoadVideo", "inputs": {"file": uploaded}},
+                     TAIL_NODE: {"class_type": "CLFSelectVideoTailFrames", "inputs": {
+                         "video": ["910", 0], "n": 1, "x": 0, "order": "chronological", "out_of_range": "error"}},
+                     TAIL_SAVE_NODE: {"class_type": "SaveImage", "inputs": {
+                         "images": [TAIL_NODE, 0], "filename_prefix": "asmr-batch/tail-recovery/" + identity}}}
+            payload = self.state_file("work/" + identity + "/tail-payload.json")
+            atomic_json(payload, {"prompt": graph, "client_id": identity, "extra_data": {"asmr_batch_submission_id": identity}})
+            job = {"submission_id": identity, "status": "submitting", "source_sha256": file_hash(video),
+                   "payload": payload.relative_to(self.output).as_posix(), "shot_id": previous["shot_id"], "candidate_index": candidate}
+            previous["tail_job"] = job
+            self.save()
+            if self.stop_event.is_set():
+                # Nothing was sent. A later run may safely prepare another job.
+                previous.pop("tail_job")
+                self.save()
+                return None
+            try:
+                job["prompt_id"] = self.client.submit(graph, identity)
+                job["status"] = "running"
+            except ApiError as error:
+                job["status"] = "failed" if error.status in (400, 401, 403, 404, 405, 413, 415, 422) else "unknown"
+                job["last_error"] = str(error)
+            self.save()
+        if job.get("source_sha256") != file_hash(video):
+            raise BatchError("补取末尾帧的原视频已变化，保留原任务等待检查。")
+        if job.get("status") == "failed":
+            raise BatchError("ComfyUI 补取末尾帧失败：" + job.get("last_error", "请查看远端日志"))
+        if job.get("remote_tail"):
+            previous["remote_tail"] = job["remote_tail"]
+            return self.download_tail(previous)
+        result, record = self.wait_job(job)
+        job["status"] = result
+        self.save()
+        if result != "succeeded":
+            raise BatchError("ComfyUI 末尾帧任务尚未确认完成，已保留任务身份。")
+        locator = saved_tail(record)
+        if not locator:
+            raise BatchError("ComfyUI 补取末尾帧任务没有 PNG 输出。")
+        job["remote_tail"] = previous["remote_tail"] = locator
+        self.save()
+        return self.download_tail(previous)
+
     def preflight(self, remote=True):
-        if self.ffmpeg is None:
-            self.ffmpeg = find_ffmpeg(self.ffmpeg_option)
-            run_ffmpeg(self.ffmpeg, ["-version"], timeout=20)
         if not remote or self.remote_preflight_done:
             return
         info = self.client.get("/object_info")
@@ -868,6 +905,8 @@ class BatchRunner:
 
     def collect(self, shot, entry, record=None):
         locator = saved_video(record) if record is not None else entry.get("remote_output")
+        if record is not None and saved_tail(record):
+            entry["remote_tail"] = saved_tail(record)
         if not isinstance(locator, dict) or not isinstance(locator.get("filename"), str):
             raise BatchError("没有已确认成功的视频下载位置，保留任务身份等待恢复。")
         extension = Path(locator["filename"]).suffix.lower()
@@ -875,8 +914,10 @@ class BatchRunner:
             raise BatchError("已保存的视频输出扩展名无效。")
         submission_id = entry.get("submission_id")
         if not isinstance(submission_id, str) or not submission_id:
-            raise BatchError("恢复状态缺少有效的提交身份，停止下载/封装。")
+            raise BatchError("恢复状态缺少有效的提交身份，停止下载/保存。")
         raw = self.state_file("raw/" + submission_id + extension)
+        if extension != ".mp4":
+            entry["output_extension"] = extension
         entry["remote_output"] = locator
         entry["status"] = "downloading"
         self.save()
@@ -891,7 +932,7 @@ class BatchRunner:
             entry["raw_sha256"] = file_hash(raw)
             self.save()
         else:
-            self.log(f"{shot['id']}：完整原始视频已在本地，直接继续封装。")
+            self.log(f"{shot['id']}：完整视频已在本地，直接保存成品。")
         if stop_event is not None and stop_event.is_set():
             self.progress(entry, "paused", resume_phase="downloading")
             return "paused"
@@ -902,16 +943,20 @@ class BatchRunner:
             entry["output_suffix"] = uuid.uuid4().hex
             self.save()
             output = self.output / self.output_name(shot, entry)
-        media_entry = dict(entry)
-        if entry["kind"] == "speech":
-            media_entry["audio_snapshot"] = str(self.state_file(entry["audio_snapshot"]))
-        self.log(f"{shot['id']}：封装最终音画。")
-        self.progress(entry, "encoding")
-        self.finish(self.ffmpeg, raw, output, media_entry)
+        self.log(f"{shot['id']}：保存工作流成品（原字节）。")
+        self.progress(entry, "saving")
+        self.publisher(raw, output, entry)
         entry.update({"status": "succeeded", "output": output.relative_to(self.output).as_posix(), "output_sha256": file_hash(output)})
         entry.pop("last_error", None)
         self.save()
         self.log(f"{shot['id']}：完成 → {output.name}")
+        if record is not None:
+            try:
+                self.download_tail(entry)
+            except (BatchError, OSError) as error:
+                entry["tail_error"] = str(error)
+                self.save()
+                self.log(f"{shot['id']}：视频已保存，末尾帧待恢复：{error}")
         self.progress(entry, "succeeded", output=entry["output"])
         return "succeeded"
 
@@ -923,7 +968,7 @@ class BatchRunner:
         if entry.get("remote_output"):
             # This locator is saved only after confirmed GPU success. Neither a
             # surviving raw file nor a retryable download needs remote history.
-            self.log(f"{shot['id']}：恢复已确认成功的视频，继续下载/封装。")
+            self.log(f"{shot['id']}：恢复已确认成功的视频，继续下载/保存。")
             result, record = "succeeded", None
         else:
             self.log(f"{shot['id']}：恢复已有任务，查询 history/queue。")
@@ -938,7 +983,7 @@ class BatchRunner:
                 # A completed GPU task must never be regenerated to retry a download/encode.
                 entry.update({"status": "downloading", "last_error": str(error)})
                 self.save()
-                self.log(f"{shot['id']}：视频已生成，下载/封装待恢复：{error}")
+                self.log(f"{shot['id']}：视频已生成，下载/保存待恢复：{error}")
                 self.progress(entry, "downloading", last_error=str(error))
                 return "downloading"
         else:
@@ -1034,7 +1079,9 @@ class BatchRunner:
                     previous = self.previous_output(index, candidate)
                     if previous:
                         try:
-                            tail = self.upload(self.tail_extractor(self.ffmpeg, previous, work / "previous-tail.png"))
+                            previous_tail = self.previous_tail(index, candidate)
+                            if previous_tail is not None:
+                                tail = self.upload(previous_tail)
                         except BatchError as error:
                             self.log(f"{label}：上一镜同编号尾帧不可用，改为独立镜头：{error}")
                     else:
@@ -1128,7 +1175,80 @@ class BatchRunner:
     def concat_preview(self, candidate=1):
         clips, identities = [], []
         name = "preview.mp4" if self.candidates == 1 else f"preview-c{candidate:03d}.mp4"
-        preview = self.output / name
+        previous = self.state.get("previews", {}).get(str(candidate), {})
+        if candidate == 1 and previous:
+            self.state["preview"] = previous
+        self.current_task_label = f"候选 {candidate} 顺序预览"
+
+        def collect(receipt, record=None):
+            locator = saved_video(record) if record is not None else receipt.get("remote_output")
+            if (not isinstance(locator, dict) or not isinstance(locator.get("filename"), str)
+                    or Path(locator["filename"]).suffix.lower() not in VIDEO_EXTENSIONS):
+                raise BatchError("顺序预览没有有效的 SaveVideo 下载位置。")
+            receipt.update({"remote_output": locator, "status": "downloading"})
+            self.save()
+            if self.stop_event.is_set():
+                return "paused"
+            target = self.state_file(receipt.get("output", name))
+            if (target.is_file() and receipt.get("output_sha256")
+                    and file_hash(target) == receipt["output_sha256"]):
+                receipt["status"] = "succeeded"
+                receipt.pop("last_error", None)
+                self.save()
+                return "succeeded"
+            extension = Path(locator["filename"]).suffix.lower()
+            if target.suffix.lower() != extension:
+                target = target.with_suffix(extension)
+            # Never replace an old preview, including a file changed outside the runner.
+            while target.exists():
+                target = target.with_name(target.stem + "_" + uuid.uuid4().hex[:12] + target.suffix)
+            receipt["output"] = target.relative_to(self.output).as_posix()
+            receipt.pop("output_sha256", None)
+            self.save()
+            self.progress(receipt, phase="downloading", task_kind="preview")
+            self.client.download(locator, target)
+            receipt.update({"status": "succeeded", "output_sha256": file_hash(target)})
+            receipt.pop("last_error", None)
+            receipt.pop("input_error", None)
+            self.save()
+            self.log(f"完整顺序预览：{target}")
+            return "succeeded"
+
+        def reconcile(receipt):
+            if self.stop_event.is_set():
+                return "paused"
+            if receipt.get("remote_output"):
+                result, record = "succeeded", None
+            else:
+                result, record = self.wait_job(receipt)
+            if result == "paused":
+                return result
+            if result == "succeeded":
+                try:
+                    return collect(receipt, record)
+                except (BatchError, OSError, ValueError) as error:
+                    # A confirmed output can be downloaded again without running Comfy again.
+                    result = "downloading" if receipt.get("remote_output") else "failed"
+                    receipt["last_error"] = str(error)
+            receipt["status"] = result
+            self.save()
+            return result
+
+        def replace_receipt(receipt):
+            history = copy.deepcopy(previous.get("history", []))
+            if previous:
+                history.append({key: copy.deepcopy(value) for key, value in previous.items() if key != "history"})
+            if history:
+                receipt["history"] = history
+            self.set_preview(candidate, receipt)
+            return receipt
+
+        # Reconcile the accepted task before inspecting changed inputs. Missing history
+        # never means that a second concat task is safe to submit.
+        if previous.get("status") in ("submitting", "running", "queued", "unknown", "downloading"):
+            result = reconcile(previous)
+            if result in ("unknown", "downloading", "paused"):
+                return result
         try:
             for shot in self.shots:
                 entry = self.candidate_entry(shot["id"], candidate) or {}
@@ -1143,31 +1263,141 @@ class BatchRunner:
                 duration = entry.get("target_duration")
                 if type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0:
                     raise BatchError(f"镜头 {shot['id']} 的输出时长记录无效。")
-                clips.append((path, duration))
+                clips.append(path)
                 identities.append([shot["id"], entry["fingerprint"], entry["output_sha256"]])
         except (BatchError, OSError, ValueError) as error:
-            self.set_preview(candidate, {"status": "unavailable", "last_error": str(error)})
+            replace_receipt({"status": "unavailable", "last_error": str(error)})
             self.log(f"未生成候选 {candidate} 的顺序预览：{error} 已有 {name} 保留。")
             return "unavailable"
         identity = hashlib.sha256(json.dumps(identities, ensure_ascii=False).encode("utf-8")).hexdigest()
-        previous = self.state.get("previews", {}).get(str(candidate), {})
-        if (previous.get("status") == "succeeded" and previous.get("fingerprint") == identity
-                and previous.get("output") == name and preview.is_file()
-                and file_hash(preview) == previous.get("output_sha256")):
-            self.log(f"候选 {candidate} 已有相同镜头结果的完整顺序预览，跳过合片。")
-            return "succeeded"
+        for old in [previous] + list(reversed(previous.get("history", []))):
+            if old.get("status") != "succeeded" or old.get("fingerprint") != identity or not old.get("output"):
+                continue
+            try:
+                preview = self.state_file(old["output"])
+                intact = preview.is_file() and file_hash(preview) == old.get("output_sha256")
+            except (BatchError, OSError, ValueError):
+                intact = False
+            if intact:
+                if old is not previous:
+                    restored = copy.deepcopy(old)
+                    restored.pop("history", None)
+                    replace_receipt(restored)
+                elif previous.pop("input_error", None) is not None:
+                    self.save()
+                self.log(f"候选 {candidate} 已有相同镜头结果的完整顺序预览，跳过合片。")
+                return "succeeded"
+        if previous.get("fingerprint") == identity and previous.get("remote_output"):
+            return reconcile(previous)
+        receipt = None
         try:
-            self.current_task_label = f"候选 {candidate} 顺序预览"
-            self.progress(phase="preview", candidate_index=candidate)
-            self.concatenator(self.ffmpeg, clips, preview)
-            self.set_preview(candidate, {"status": "succeeded", "fingerprint": identity, "output": name,
-                                        "output_sha256": file_hash(preview), "shot_count": len(clips)})
-            self.log(f"完整顺序预览：{preview}")
-            return "succeeded"
+            if self.stop_event.is_set():
+                return "paused"
+            info = self.client.get("/object_info")
+            if not isinstance(info, dict):
+                raise BatchError("远端节点目录格式无效，暂不生成顺序预览。")
+            required = ["LoadVideo", "ConcatenateVideo", "SaveVideo", "CLFLoadVideoTailFrames",
+                        "ComfyMathExpression", "EmptyAudio", "LoadAudio", "AudioMerge"]
+            if len(clips) > 1:
+                required.append("AudioConcat")
+            missing = [node for node in required if node not in info]
+            if missing:
+                raise BatchError("远端缺少原生预览节点：" + ", ".join(missing) + "；各镜视频已保留。")
+            graph, links, audio_link = {}, [], None
+            for index, path in enumerate(clips):
+                if self.stop_event.is_set():
+                    return "paused"
+                node_id = str(2000 + index)
+                uploaded = self.upload(path)
+                graph[node_id] = {"class_type": "LoadVideo", "inputs": {"file": uploaded}}
+                links.append([node_id, 0])
+                frames, duration, empty, audio, padded = [f"preview_{kind}_{index}" for kind in
+                                                          ("frames", "duration", "empty", "audio", "padded")]
+                # Count actual frames with the streaming path node, rather than
+                # materializing every clip's RGB tensor in Comfy's node cache.
+                graph[frames] = {"class_type": "CLFLoadVideoTailFrames", "inputs": {
+                    "video_path": uploaded, "n": 1, "x": 0, "order": "chronological", "out_of_range": "error"}}
+                graph[duration] = {"class_type": "ComfyMathExpression", "inputs": {
+                    "expression": "a / 24", "values.a": [frames, 2]}}
+                graph[empty] = {"class_type": "EmptyAudio", "inputs": {
+                    "duration": [duration, 0], "sample_rate": 48000, "channels": 2}}
+                graph[audio] = {"class_type": "LoadAudio", "inputs": {"audio": uploaded}}
+                graph[padded] = {"class_type": "AudioMerge", "inputs": {
+                    "audio1": [empty, 0], "audio2": [audio, 0], "merge_method": "add"}}
+                if audio_link is None:
+                    audio_link = [padded, 0]
+                else:
+                    joined = f"preview_audio_concat_{index}"
+                    graph[joined] = {"class_type": "AudioConcat", "inputs": {
+                        "audio1": audio_link, "audio2": [padded, 0], "direction": "after"}}
+                    audio_link = [joined, 0]
+            # Official Autogrow ports are videos.video0..video99. Chain groups
+            # so large projects remain within each native node's 100-input limit.
+            concat_index = 0
+            while len(links) > 1:
+                combined = []
+                for offset in range(0, len(links), 100):
+                    group = links[offset:offset + 100]
+                    if len(group) == 1:
+                        combined.extend(group)
+                        continue
+                    node_id = "concat_" + str(concat_index)
+                    concat_index += 1
+                    inputs = {f"videos.video{index}": link for index, link in enumerate(group)}
+                    inputs["codec"] = "auto"
+                    graph[node_id] = {"class_type": "ConcatenateVideo", "inputs": inputs}
+                    combined.append([node_id, 0])
+                links = combined
+            if concat_index == 0:
+                graph["concat_0"] = {"class_type": "ConcatenateVideo", "inputs": {
+                    "videos.video0": links[0], "codec": "auto"}}
+                links = [["concat_0", 0]]
+            # Each source is fixed at the package's 24 fps. Padding/truncating its
+            # audio to actual frame_count / 24 prevents short AAC tails from
+            # shifting the next clip's sound. Only the final video has this track.
+            graph[links[0][0]]["inputs"]["complete_audio"] = audio_link
+            submission_id = uuid.uuid4().hex
+            graph["26"] = {"class_type": "SaveVideo", "inputs": {
+                "video": links[0], "filename_prefix": f"asmr-batch/{slug(self.manifest['projectId'])}/preview_{candidate:03d}_{submission_id}",
+                "format": "mp4", "format.codec": "auto"}}
+            payload_file = self.work_root / "previews" / submission_id / "payload.json"
+            atomic_json(payload_file, {"prompt": graph, "client_id": submission_id,
+                                      "extra_data": {"asmr_batch_submission_id": submission_id}})
+            if self.stop_event.is_set():
+                return "paused"
+            receipt = replace_receipt({"status": "submitting", "fingerprint": identity, "submission_id": submission_id,
+                "candidate_index": candidate, "shot_count": len(clips), "output": name,
+                "payload": payload_file.relative_to(self.output).as_posix(), "method": "comfy_native",
+                "audio_alignment": "per_clip_frames_24fps"})
+            self.progress(receipt, phase="preview", task_kind="preview")
+            if self.stop_event.is_set():
+                # No POST has happened; this receipt is safe to prepare again.
+                receipt["status"] = "preparing"
+                self.save()
+                return "paused"
+            try:
+                receipt["prompt_id"] = self.client.submit(graph, submission_id)
+                receipt["status"] = "running"
+                self.save()
+            except ApiError as error:
+                receipt["last_error"] = str(error)
+                if error.status in (400, 401, 403, 404, 405, 413, 415, 422):
+                    receipt["status"] = "failed"
+                    self.save()
+                    return "failed"
+                receipt["status"] = "unknown"
+                self.save()
+            return reconcile(receipt)
         except (BatchError, OSError, ValueError) as error:
-            self.set_preview(candidate, {"status": "failed", "last_error": str(error)})
+            if receipt is not None:
+                receipt["last_error"] = str(error)
+                if receipt.get("status") in ("submitting", "running", "queued", "unknown"):
+                    receipt["status"] = "unknown"
+                self.save()
+                return receipt["status"]
+            replace_receipt({"status": "unavailable", "fingerprint": identity, "last_error": str(error)})
             self.log(f"顺序合片失败，已有 {name} 保留；不重新生成镜头：{error}")
-            return "failed"
+            return "unavailable"
 
     def run(self):
         if self.dry_run:
@@ -1229,7 +1459,6 @@ def parser():
     result.add_argument("package", nargs="?", help="包含 project.json 的解压目录")
     result.add_argument("--character-image", help="替换项目角色图")
     result.add_argument("--comfy-url", default="http://127.0.0.1:8188")
-    result.add_argument("--ffmpeg", help="ffmpeg.exe 路径，默认查找 PATH/已有 imageio_ffmpeg")
     result.add_argument("--output-root", type=Path, help="输出/状态/临时目录，默认项目内 outputs")
     result.add_argument("--width", type=int, default=1216)
     result.add_argument("--height", type=int, default=672)
@@ -1243,8 +1472,8 @@ def parser():
     result.add_argument("--only", help="只处理这些镜头，逗号分隔 ID/order")
     result.add_argument("--rerun", help="重做指定镜头；仍先核对未确认的远端任务")
     result.add_argument("--rerun-candidates", help="重做指定候选：镜头ID或编号:候选号，逗号分隔；按最后一个冒号分隔")
-    result.add_argument("--dry-run", action="store_true", help="只准备本地 payload，不联网或运行 FFmpeg/模型")
-    result.add_argument("--concat", action="store_true", help="按候选号生成完整顺序预览；N=1为preview.mp4，N>1为preview-c001.mp4等")
+    result.add_argument("--dry-run", action="store_true", help="只准备本地 payload，不联网或运行模型")
+    result.add_argument("--concat", action="store_true", help="由 ComfyUI 按候选号生成完整顺序预览（需要原生 ConcatenateVideo）")
     return result
 
 
@@ -1289,7 +1518,7 @@ def gui_options(raw, *, dry_run=False, concat=False):
     except argparse.ArgumentTypeError as error:
         raise BatchError(str(error)) from error
     return {"package": values["package"], "character_image": values.get("character_image") or None,
-            "comfy_url": values.get("comfy_url") or "http://127.0.0.1:8188", "ffmpeg": values.get("ffmpeg") or None,
+            "comfy_url": values.get("comfy_url") or "http://127.0.0.1:8188",
             "candidates": candidates, "job_timeout": seconds,
             "only": values.get("only") or None, "rerun": values.get("rerun") or None,
             "rerun_candidates": values.get("rerun_candidates") or None, "dry_run": dry_run, "concat": concat}
@@ -1307,8 +1536,8 @@ def gui_progress_text(progress, elapsed_seconds=0, run_seconds=0):
               "pending": "等待处理", "preparing": "准备素材", "submitting": "提交任务",
               "queued": "远端排队", "queue": "远端排队", "running": "远端生成", "waiting": "等待远端任务",
               "reconciling": "核对已有任务", "reconcile": "核对已有任务", "disconnected": "连接中断，正在恢复",
-              "downloading": "下载与封装", "encoding": "封装视频", "succeeded": "候选已完成", "failed": "候选失败",
-              "unknown": "任务待对账", "stopping": "已要求停止后续提交", "stopped": "已停止后续提交",
+              "downloading": "下载成品", "saving": "保存成品", "succeeded": "候选已完成", "failed": "候选失败",
+              "unknown": "任务待对账", "stopping": "正在停止本批…", "stopped": "本批已停止，可继续",
               "paused": "已停止本地等待，任务可恢复", "input_error": "请检查输入素材",
               "complete": "本轮结束", "completed": "本轮结束", "finished": "本轮结束", "done": "本轮结束",
               "concat": "生成顺序预览", "preview": "生成顺序预览"}
@@ -1339,6 +1568,79 @@ def queue_gui_event(events, event, value):
                 pass
 
 
+def gui_copy_log(text_widget, *, selected=False, clipboard=None):
+    """Copy only requested text; an empty selection must not clear the clipboard."""
+    try:
+        if selected and not text_widget.tag_ranges("sel"):
+            return False
+        content = text_widget.get("sel.first", "sel.last") if selected else text_widget.get("1.0", "end-1c")
+        if not content:
+            return False
+        target = clipboard if clipboard is not None else text_widget
+        target.clipboard_clear()
+        target.clipboard_append(content)
+        return True
+    except Exception:
+        # A destroyed widget or unavailable clipboard must not stop the worker.
+        return False
+
+
+class GuiLogView:
+    """Read-only log actions without moving a reader's viewport or selection."""
+    def __init__(self, widget, *, clipboard=None, max_lines=2000):
+        self.widget = widget
+        self.clipboard = clipboard
+        self.max_lines = max_lines
+        self.selecting = False
+
+    def copy_all(self, event=None):
+        gui_copy_log(self.widget, clipboard=self.clipboard)
+        return "break"
+
+    def copy_selected(self, event=None):
+        gui_copy_log(self.widget, selected=True, clipboard=self.clipboard)
+        return "break"
+
+    def select_all(self, event=None):
+        self.widget.focus_set()
+        self.widget.tag_add("sel", "1.0", "end-1c")
+        return "break"
+
+    def begin_selection(self, event=None):
+        self.selecting = True
+        self.widget.focus_set()
+
+    def end_selection(self, event=None):
+        self.selecting = False
+
+    def bind_shortcuts(self):
+        for sequence in ("<Control-a>", "<Control-A>"):
+            self.widget.bind(sequence, self.select_all)
+        for sequence in ("<Control-c>", "<Control-C>", "<<Copy>>"):
+            self.widget.bind(sequence, self.copy_selected)
+        self.widget.bind("<ButtonPress-1>", self.begin_selection, add="+")
+        self.widget.bind("<ButtonRelease-1>", self.end_selection, add="+")
+
+    def append(self, message):
+        widget = self.widget
+        following = not self.selecting and not widget.tag_ranges("sel") and widget.yview()[1] >= .999
+        top = widget.index("@0,0")
+        widget.configure(state="normal")
+        try:
+            widget.insert("end", str(message) + "\n")
+            # Defer trimming while a reader is inspecting old text; otherwise a
+            # refresh could delete their selected lines or move the scroll anchor.
+            if following:
+                line_count = int(widget.index("end-1c").split(".")[0])
+                if line_count > self.max_lines:
+                    widget.delete("1.0", f"{line_count - self.max_lines + 1}.0")
+                widget.see("end")
+            else:
+                widget.yview(top)
+        finally:
+            widget.configure(state="disabled")
+
+
 def launch_gui():
     try:
         import tkinter as tk
@@ -1353,17 +1655,17 @@ def launch_gui():
     frame = ttk.Frame(window, padding=14)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(1, weight=1)
-    fields = {"package": tk.StringVar(), "character_image": tk.StringVar(), "comfy_url": tk.StringVar(value="http://127.0.0.1:8188"), "ffmpeg": tk.StringVar(),
+    fields = {"package": tk.StringVar(), "character_image": tk.StringVar(), "comfy_url": tk.StringVar(value="http://127.0.0.1:8188"),
               "candidates": tk.StringVar(value="1"), "job_minutes": tk.StringVar(value="0"),
               "only": tk.StringVar(), "rerun": tk.StringVar(), "rerun_candidates": tk.StringVar()}
     dry = tk.BooleanVar(value=False)
     concat_flag = tk.BooleanVar(value=False)
-    for row, (key, label) in enumerate((("package", "项目文件夹"), ("character_image", "角色图（可替换）"), ("comfy_url", "ComfyUI 地址"), ("ffmpeg", "FFmpeg（可留空）"))):
+    for row, (key, label) in enumerate((("package", "项目文件夹"), ("character_image", "角色图（可替换）"), ("comfy_url", "ComfyUI 地址"))):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=fields[key]).grid(row=row, column=1, sticky="ew", padx=8)
         if key != "comfy_url":
             def browse(field=key):
-                value = filedialog.askdirectory(title="选择解压后的项目文件夹") if field == "package" else filedialog.askopenfilename(title="选择角色图" if field == "character_image" else "选择 ffmpeg 可执行文件")
+                value = filedialog.askdirectory(title="选择解压后的项目文件夹") if field == "package" else filedialog.askopenfilename(title="选择角色图")
                 if value:
                     fields[field].set(value)
             ttk.Button(frame, text="选择", command=browse).grid(row=row, column=2)
@@ -1374,7 +1676,7 @@ def launch_gui():
     ttk.Label(controls, text="最长任务等待（分钟，0=不限）").grid(row=0, column=2, sticky="w")
     ttk.Entry(controls, textvariable=fields["job_minutes"], width=10).grid(row=0, column=3, padx=8)
     ttk.Checkbutton(frame, text="只检查项目并准备 payload（不连接 ComfyUI）", variable=dry).grid(row=5, column=0, columnspan=3, sticky="w", pady=4)
-    ttk.Checkbutton(frame, text="全部镜头成功后，按同一候选号生成完整顺序预览片", variable=concat_flag).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
+    ttk.Checkbutton(frame, text="由 ComfyUI 合并顺序预览", variable=concat_flag).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
     advanced = ttk.LabelFrame(frame, text="选填；镜头可用 ID 或序号，候选用 镜头:候选号", padding=8)
     advanced.grid(row=8, column=0, columnspan=3, sticky="ew", pady=5)
     advanced.columnconfigure(1, weight=1)
@@ -1388,9 +1690,26 @@ def launch_gui():
     ttk.Label(frame, text="N=1保持单结果；增加N只补候选，减少N保留已有文件。停止不会取消ComfyUI已提交任务。", wraplength=780).grid(row=9, column=0, columnspan=3, sticky="w", pady=5)
     status_text = tk.StringVar(value="就绪")
     ttk.Label(frame, textvariable=status_text, wraplength=780).grid(row=11, column=0, columnspan=3, sticky="w", pady=5)
-    text_box = tk.Text(frame, height=16, wrap="word", state="disabled")
+    text_box = tk.Text(frame, height=16, wrap="word", state="disabled", takefocus=True, exportselection=False)
     text_box.grid(row=12, column=0, columnspan=3, sticky="nsew", pady=8)
     frame.rowconfigure(12, weight=1)
+    log_view = GuiLogView(text_box)
+    log_view.bind_shortcuts()
+    log_actions = ttk.Frame(frame)
+    log_actions.grid(row=13, column=0, columnspan=3, sticky="w")
+    ttk.Button(log_actions, text="复制全部日志", command=log_view.copy_all).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(log_actions, text="复制选中", command=log_view.copy_selected).grid(row=0, column=1)
+    log_menu = tk.Menu(window, tearoff=False)
+    log_menu.add_command(label="复制全部日志", command=log_view.copy_all)
+    log_menu.add_command(label="复制选中", command=log_view.copy_selected)
+
+    def show_log_menu(event):
+        try:
+            log_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            log_menu.grab_release()
+        return "break"
+    text_box.bind("<Button-3>", show_log_menu)
     events = queue.Queue(maxsize=500)
     running = [False]
     active_stop = [None]
@@ -1403,13 +1722,7 @@ def launch_gui():
         queue_gui_event(events, event, value)
 
     def append_log(message):
-        text_box.configure(state="normal")
-        text_box.insert("end", str(message) + "\n")
-        line_count = int(text_box.index("end-1c").split(".")[0])
-        if line_count > 2000:
-            text_box.delete("1.0", f"{line_count - 2000 + 1}.0")
-        text_box.see("end")
-        text_box.configure(state="disabled")
+        log_view.append(message)
 
     def start():
         if running[0]:
@@ -1426,7 +1739,7 @@ def launch_gui():
         run_finished[0] = None
         progress[0], progress_received[0] = {"phase": "preflight"}, run_started[0]
         button.configure(state="disabled")
-        stop_button.configure(state="normal")
+        stop_button.configure(text="停止", state="normal")
 
         def worker():
             try:
@@ -1443,15 +1756,15 @@ def launch_gui():
     def stop_submissions():
         if active_stop[0] is not None:
             active_stop[0].set()
-        stop_button.configure(state="disabled")
+        stop_button.configure(text="正在停止…", state="disabled")
         progress[0] = {**progress[0], "phase": "stopping"}
-        append_log("已要求停止后续提交；已提交给 ComfyUI 的任务继续运行，下次先对账恢复。")
+        append_log("正在停止本批：停止本地等待与后续提交，当前网络请求结束后退出；已提交的 ComfyUI 任务继续运行，下次先对账恢复。")
 
     actions = ttk.Frame(frame)
-    actions.grid(row=10, column=0, columnspan=3, pady=8)
-    button = ttk.Button(actions, text="开始 / 继续整批", command=start)
+    actions.grid(row=3, column=0, columnspan=3, sticky="w", pady=8)
+    button = ttk.Button(actions, text="开始 / 继续整批", width=22, command=start)
     button.grid(row=0, column=0, padx=5)
-    stop_button = ttk.Button(actions, text="停止后续提交", command=stop_submissions, state="disabled")
+    stop_button = ttk.Button(actions, text="停止", width=14, command=stop_submissions, state="disabled")
     stop_button.grid(row=0, column=1, padx=5)
 
     def tick():
@@ -1465,7 +1778,8 @@ def launch_gui():
                 running[0] = False
                 run_finished[0] = time.monotonic()
                 button.configure(state="normal")
-                stop_button.configure(state="disabled")
+                stop_button.configure(text="停止", state="disabled")
+                active_stop[0] = None
             elif event == "progress":
                 progress[0], progress_received[0] = value, time.monotonic()
             elif event == "result":
@@ -1480,7 +1794,8 @@ def launch_gui():
                 elapsed = float(progress[0].get("elapsed_seconds", 0))
             except (TypeError, ValueError):
                 elapsed = 0
-            status_text.set(gui_progress_text(progress[0], elapsed + now - progress_received[0], now - run_started[0]))
+            display = {**progress[0], "phase": "stopping"} if active_stop[0] is not None and active_stop[0].is_set() else progress[0]
+            status_text.set(gui_progress_text(display, elapsed + now - progress_received[0], now - run_started[0]))
         elif progress[0].get("phase") != "idle":
             end = run_finished[0] or time.monotonic()
             status_text.set(gui_progress_text(progress[0], float(progress[0].get("elapsed_seconds", 0)), end - run_started[0]))

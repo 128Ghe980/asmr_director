@@ -35,7 +35,7 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("adopted voice preview", () => {
   it("prepares adopted-only metadata, exposes the same native WAV for listening and download, and releases it on unmount", async () => {
@@ -73,6 +73,33 @@ describe("adopted voice preview", () => {
     expect(api.fetcher).toHaveBeenCalledWith(url, { method: "DELETE", keepalive: true });
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByLabelText("已采用语音整体试听")).toBeNull();
+  });
+  it("stops shared-player playback at token expiry and releases its URL without reviving it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(new Date("2026-10-20T00:00:00.000Z"));
+    const project = fixture(); const api = mockApi(); const played = vi.fn(); const ref = createRef<HTMLAudioElement>();
+    const view = render(<StrictMode><AcceptedVoicePreview project={project} onPlaybackStart={played}
+      onAudioElementChange={audio => { ref.current = audio; }} /></StrictMode>);
+    fireEvent.click(screen.getByRole("button", { name: "整体预览" }));
+    await api.resolve({ ...response(project), expiresAt: Date.now() + 10_000 });
+    const audio = screen.getByLabelText("已采用语音整体试听") as HTMLAudioElement;
+    const pause = vi.mocked(audio.pause); pause.mockClear();
+    fireEvent.play(audio);
+    expect(played).toHaveBeenCalledOnce(); expect(ref.current).toBe(audio);
+    const deletions = () => api.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE");
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
+    expect(pause).not.toHaveBeenCalled(); expect(deletions()).toHaveLength(0);
+    expect(audio.getAttribute("src")).toBe(url);
+    expect(screen.getByRole("link", { name: "下载整体预览 WAV" }).getAttribute("href")).toBe(`${url}&download=1`);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(pause).toHaveBeenCalled(); expect(audio.getAttribute("src")).toBeNull(); expect(ref.current).toBeNull();
+    expect(screen.queryByLabelText("已采用语音整体试听")).toBeNull(); expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("预览已到期");
+    expect((screen.getByRole("button", { name: "整体预览" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(api.fetcher).toHaveBeenCalledWith(url, { method: "DELETE", keepalive: true });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    view.unmount();
+    expect(deletions()).toHaveLength(1);
   });
   it("cancels pending work and releases a late result without showing it", async () => {
     const api = mockApi(); render(<AcceptedVoicePreview project={fixture()} />);

@@ -25,6 +25,9 @@ node_modules/
 .next-audio-ungenerated-production/
 .next-generation-reliability-production/
 .next-storyboard-continuity-default-production/
+.next-audio-ui-production/
+.next-voice-readiness-production/
+.next-cutting-purpose-production/
 .next-semantic-build/
 .next-batch-build/
 .next-batch-production/

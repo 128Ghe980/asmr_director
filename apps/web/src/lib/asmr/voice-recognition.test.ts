@@ -1,8 +1,50 @@
 import { describe, expect, it } from "vitest";
-import { getVoiceContentDifferences, VoiceContentComparisonSchema, VoiceRecognitionSchema } from "./voice-recognition";
+import { getVoiceContentDifferences, VoiceBoundaryOnlySchema, VoiceContentComparisonSchema, VoiceRecognitionSchema, isCuttingOnlyRecognition } from "./voice-recognition";
 
 const different = { status: "different", similarity: .9, threshold: .9, substitutionCount: 1,
   expected: "回来啦外面是不是很冷", recognized: "回来了外面是不是很冷" };
+
+describe("cutting-only evidence without content certification", () => {
+  const recognition = { analysisMode: "cutting_only", stage: "complete", expectedText: "回来啦。",
+    followingText: "我还没睡。", sourceTranscript: "全文识别可以与词拼接不同", targetTranscript: "回来",
+    sourceWords: [{ text: "回来", start: .2, end: .7 }, { text: "我", start: 1.2, end: 1.4 }] };
+  const boundary = { method: "ordered_word_boundary", alignmentSimilarity: 0, targetEndWordIndex: 0,
+    followingStartWordIndex: 1, contentVerified: false, internalPausePositions: [0, 2] };
+
+  it("stores a located missing/replaced word prefix without certifying content", () => {
+    const parsed = VoiceRecognitionSchema.parse(recognition);
+    expect(isCuttingOnlyRecognition(parsed)).toBe(true);
+    expect(parsed.targetTranscript).toBe("回来");
+    expect(VoiceBoundaryOnlySchema.parse(boundary)).toEqual(boundary);
+    expect(isCuttingOnlyRecognition({})).toBe(false);
+  });
+
+  it("keeps legacy evidence readable but rejects text acceptance attached to the new mode", () => {
+    expect(VoiceRecognitionSchema.safeParse({ stage: "complete", expectedText: "回来啦。",
+      sourceTranscript: "回来了", contentComparison: different }).success).toBe(true);
+    for (const extra of [{ contentComparison: different }, { endpointCandidates: [] },
+      { apiFallback: { status: "selected" } }]) {
+      expect(VoiceRecognitionSchema.safeParse({ ...recognition, ...extra }).success).toBe(false);
+    }
+  });
+
+  it("rejects split-word prefixes and forged pause or certification fields", () => {
+    expect(VoiceRecognitionSchema.safeParse({ ...recognition, targetTranscript: "回" }).success).toBe(false);
+    for (const extra of [{ internalPausePositions: [2, 0] }, { internalPausePositions: [0, 0] },
+      { contentVerified: true }, { targetEndWordIndex: -1 }]) {
+      expect(VoiceBoundaryOnlySchema.safeParse({ ...boundary, ...extra }).success).toBe(false);
+    }
+  });
+
+  it("permits complete-recording retention with no words or useful word timing", () => {
+    const whole = { ...recognition, followingText: "", sourceTranscript: "", targetTranscript: "", sourceWords: [] };
+    expect(VoiceRecognitionSchema.safeParse(whole).success).toBe(true);
+    expect(VoiceRecognitionSchema.safeParse({ ...whole,
+      sourceWords: [{ text: "回", start: 1, end: 1 }, { text: "来", start: .1, end: .2 }] }).success).toBe(true);
+    expect(VoiceBoundaryOnlySchema.safeParse({ ...boundary, method: "whole_recording",
+      targetEndWordIndex: -1, followingStartWordIndex: undefined }).success).toBe(true);
+  });
+});
 
 describe("bounded recognition content comparison", () => {
   it("keeps old recognition records valid without inferring a content match", () => {

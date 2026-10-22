@@ -76,6 +76,20 @@ function manualParagraphCandidate() {
   return { take, context, clip, textReview };
 }
 
+function cuttingOnlyParagraphCandidate() {
+  const fixture = manualParagraphCandidate();
+  const paragraph = fixture.take.provenance.paragraph!;
+  paragraph.checkStatus = "passed";
+  for (const segment of paragraph.segments) {
+    delete segment.textReview;
+    if (segment.recognition) {
+      segment.recognition.analysisMode = "cutting_only";
+      delete segment.recognition.shortSentenceReview;
+    }
+  }
+  return fixture;
+}
+
 function longTextCandidate() {
   const take = candidate();
   const longText: VoiceLongTextResult = {
@@ -139,30 +153,110 @@ afterEach(() => {
 });
 
 describe("voice generation panel", () => {
-  it("requires an unchecked explicit listen confirmation for every flagged native short slice", () => {
-    const { take, context, clip } = manualParagraphCandidate();
-    const onConfirmText = vi.fn();
-    const input = props({ selectedClip: clip, candidates: [take], onConfirmText, options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+  it("offers normal adoption after cutting-only slices despite ASR word differences without extra text confirmation", () => {
+    const { take, context, clip } = cuttingOnlyParagraphCandidate();
+    const input = props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(), onRecheck: vi.fn(),
+      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
     const view = render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
-    const checkbox = screen.getByRole("checkbox", { name: "候选 1 短句 1 已听且台词完整" }) as HTMLInputElement;
-    const confirmation = screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement;
-    expect(checkbox.checked).toBe(false);
-    expect(confirmation.disabled).toBe(true);
-    expect(screen.queryByRole("button", { name: "采用候选 1" })).toBeNull();
-    expect(screen.getByLabelText("候选 1 短句 1 原声试听").getAttribute("src")).toBe("/api/assets/clip/paragraph_first");
-    expect(screen.getByText("裁后识别：回来")).toBeTruthy();
-    fireEvent.click(checkbox);
-    expect(confirmation.disabled).toBe(false);
-    fireEvent.click(confirmation);
-    expect(onConfirmText).toHaveBeenCalledWith(take, [clip.id]);
-    expect(input.onAdopt).not.toHaveBeenCalled();
-    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} busy confirmingCandidateId={take.candidateId} />);
-    expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByRole("button", { name: "确认并采用候选 1" }).textContent).toBe("确认中…");
-    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("切分完成，待试听")).toBeTruthy();
+    expect(screen.getByLabelText("候选 1 试听").getAttribute("src")).toContain("paragraph_first");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "确认并采用候选 1" })).toBeNull();
+    expect(screen.queryByText(/各短句已通过文字|句尾语气词容错通过|台词已试听确认/)).toBeNull();
+    const adopt = screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement;
+    expect(adopt.disabled).toBe(false); fireEvent.click(adopt);
+    expect(input.onAdopt).toHaveBeenCalledWith(take); expect(input.onConfirmText).not.toHaveBeenCalled();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} busy />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
     view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={{ ...context, text: context.text + "已修改。" }} />);
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
-    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("offers force splitting for an ambiguous original without a playback, checkbox or confirmation gate", () => {
+    const { take, context, clip } = cuttingOnlyParagraphCandidate();
+    const paragraph = take.provenance.paragraph!;
+    paragraph.checkStatus = "review";
+    paragraph.failureRecognition = { ...paragraph.segments[0].recognition!, stage: "boundary_check" };
+    paragraph.failedClipId = clip.id; paragraph.diagnosticCode = "ambiguous_boundary"; paragraph.segments = [];
+    take.asset = paragraph.sourceAsset;
+    const input = props({ selectedClip: clip, candidates: [take], onRecheck: vi.fn(), onCancelRecheck: vi.fn(), onForceSplit: vi.fn(), onCancelForceSplit: vi.fn(),
+      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+    const view = render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByText("切点未确定 · 完整原音")).toBeTruthy();
+    expect(screen.getByLabelText("候选 1 试听").getAttribute("src")).toContain("paragraph_source");
+    expect(screen.getByRole("link", { name: "下载整段原音" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /重新切分|重新识别|取消切分/ })).toBeNull();
+    expect(screen.queryByText(/可试听或重新切分/)).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull(); expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "强制切分候选 1" }));
+    expect(input.onForceSplit).toHaveBeenCalledWith(take);
+    expect(input.onRecheck).not.toHaveBeenCalled(); expect(input.onAdopt).not.toHaveBeenCalled();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} busy forceSplittingCandidateId={take.candidateId} />);
+    expect(screen.getByRole("button", { name: "强制切分候选 1" }).textContent).toBe("强制切分中…");
+    expect((screen.getByRole("button", { name: "强制切分候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "取消强制切分" })); expect(input.onCancelForceSplit).toHaveBeenCalledOnce();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={{ ...context, text: context.text + "已修改。" }} />);
+    expect((screen.getByRole("button", { name: "强制切分候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /重新切分|重新识别|取消切分/ })).toBeNull();
+    expect(input.onCancelRecheck).not.toHaveBeenCalled();
+  });
+
+  it("does not offer force splitting for ordinary clips, successful cuts or legacy text-review slices", () => {
+    const input = props({ onForceSplit: vi.fn() });
+    const view = render(<VoiceGenerationPanel {...input} candidates={[candidate()]} />);
+    expect(screen.queryByRole("button", { name: /强制切分/ })).toBeNull();
+    view.rerender(<VoiceGenerationPanel {...input} candidates={[recognitionCandidate({ checkStatus: "passed" })]} />);
+    expect(screen.queryByRole("button", { name: /强制切分/ })).toBeNull();
+    for (const fixture of [paragraphCandidate(), manualParagraphCandidate()]) {
+      view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={fixture.context} candidates={[fixture.take]} />);
+      expect(screen.queryByRole("button", { name: /强制切分/ })).toBeNull();
+    }
+  });
+
+  it("labels forced output as awaiting listening and retains ordinary adoption and historical ASR", () => {
+    const { take, context, clip } = cuttingOnlyParagraphCandidate();
+    take.provenance.forcedSegmentation = { version: 1, method: "ctc_forced", sourceCandidateId: "original_review", createdAt: "2026-10-21T04:00:00.000Z", contentVerified: false,
+      alignments: [{ method: "ctc_forced", mode: "paragraph", groupIndex: 0, sourceAssetId: "paragraph_source", sourceSha256: "a".repeat(64), inputTextSha256: "b".repeat(64),
+        sampleRate: 48_000, sourceFrames: 240_000, contentVerified: false, modelId: "fixture-ctc", modelRevision: "fixture-revision", cutFrames: [144_000],
+        characters: [{ char: "回", startSeconds: .1, endSeconds: .2, score: .00001 }] }] };
+    const input = props({ selectedClip: clip, candidates: [take], onForceSplit: vi.fn() });
+    render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByText("已强制切分，待试听")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /强制切分/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "下载整段原音" })).toBeTruthy();
+    expect(screen.getByText("回来了先坐")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" })); expect(input.onAdopt).toHaveBeenCalledWith(take);
+  });
+
+  it("keeps cutting-only long-text group playback and ordinary adoption without claiming content verification", () => {
+    const evidence: VoiceRecognition = { analysisMode: "cutting_only", stage: "complete", expectedText: "回来啦。",
+      sourceTranscript: "回来先坐", targetTranscript: "回来", followingText: "先坐。" };
+    const take = recognitionCandidate({ checkStatus: "passed", recognition: evidence, transcript: "回来", coverage: .5 });
+    const input = props({ candidates: [take], options: { ...options, provider: "voxcpm2", generationMode: "long_text" } });
+    render(<VoiceGenerationPanel {...input} />);
+    expect(screen.getByLabelText("候选 1 第 1 组试听").getAttribute("src")).toBe("/api/assets/clip/group_0");
+    expect(screen.getAllByText("切分完成，待试听。").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/容错通过|识别文字与源文一致|检查通过/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take);
+  });
+
+  it("offers ordinary adoption of historical text-review slices without requesting another confirmation", () => {
+    const { take, context, clip } = manualParagraphCandidate();
+    const input = props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(), options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+    const view = render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByText("切分完成，待试听")).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "确认并采用候选 1" })).toBeNull();
+    expect(screen.getByLabelText("候选 1 短句 1 原声试听").getAttribute("src")).toBe("/api/assets/clip/paragraph_first");
+    const adopt = screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement;
+    expect(adopt.disabled).toBe(false); fireEvent.click(adopt);
+    expect(input.onAdopt).toHaveBeenCalledWith(take); expect(input.onConfirmText).not.toHaveBeenCalled();
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} busy />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={{ ...context, text: context.text + "已修改。" }} />);
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows saved manual confirmation without claiming automatic text checks passed", () => {
@@ -172,12 +266,12 @@ describe("voice generation panel", () => {
     take.provenance.paragraph!.manualTextConfirmation = { confirmedClipIds: [clip.id], sourceCandidateId: take.candidateId, confirmedAt: "2026-10-14T13:45:00.000Z" };
     const input = props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(), options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
     render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
-    expect(screen.getByText("整段切分 · 台词已试听确认")).toBeTruthy();
+    expect(screen.getByText("历史试听确认记录已保存。")).toBeTruthy();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByText(/各短句已通过文字、双侧识别/)).toBeNull();
     expect(screen.queryByText(/整段已通过 \d+ 个短句/)).toBeNull();
-    expect(screen.getByText("识别文字有差异，已试听确认。")).toBeTruthy();
+    expect(screen.getByText("历史识别文字存在字差，仅供参考；请试听并自行决定是否采用。")).toBeTruthy();
     expect(screen.queryByText(confirmationWarning)).toBeNull();
     expect(screen.getByText("完整原音音量较低。")).toBeTruthy();
     expect(take.qualityWarnings[0]).toBe(confirmationWarning);
@@ -203,26 +297,16 @@ describe("voice generation panel", () => {
       final: { transcript: finalText, words: [{ text: finalText, start: .1, end: 1 }], durationSeconds: 3 } };
     first.recognition = { ...first.recognition!, expectedText: first.text, sourceTranscript: sourceText + "先坐", targetTranscript: finalText,
       sourceWords: [{ text: sourceText, start: .1, end: 1 }, { text: "先坐", start: 3.1, end: 4 }], shortSentenceReview: first.textReview };
-    const onConfirmText = vi.fn();
-    render(<VoiceGenerationPanel {...props({ selectedClip: clip, candidates: [take], onConfirmText,
-      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
-    expect(screen.getByText("同音字待试听确认")).toBeTruthy();
-    expect(screen.getByText(`裁后识别：${finalText}`)).toBeTruthy();
-    expect(screen.getByText("坐 → 做 · 同音同调（zuo4）")).toBeTruthy();
-    if (kind === "source_only") {
-      expect(screen.getByText("源定位识别有同音字差，裁后识别一致。")).toBeTruthy();
-      expect(screen.getByText("源定位识别：过来做")).toBeTruthy();
-      expect(screen.getByText("字差位置：源定位")).toBeTruthy();
-    }
-    if (kind === "left_only") expect(screen.getByText("切点左侧识别有同音字差，裁后识别一致。")).toBeTruthy();
-    if (kind === "final_only") expect(screen.getByText("字差位置：裁后识别")).toBeTruthy();
-    if (kind === "both") expect(screen.getByText("字差位置：源定位、切点左侧、裁后识别")).toBeTruthy();
-    expect(screen.queryByText("句尾语气词待试听确认")).toBeNull();
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
-    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox"));
-    fireEvent.click(screen.getByRole("button", { name: "确认并采用候选 1" }));
-    expect(onConfirmText).toHaveBeenCalledWith(take, [clip.id]);
+    const input = props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(),
+      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+    render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByText("短句识别（历史）").nextElementSibling?.textContent).toBe(finalText);
+    expect(screen.getByText("整段原音识别").nextElementSibling?.textContent).toBe(sourceText + "先坐");
+    expect(screen.getByText(/第 3 字：坐 → 做/)).toBeTruthy();
+    if (leftText !== finalText) expect(screen.getByText("切点左侧识别").nextElementSibling?.textContent).toBe(leftText);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take); expect(input.onConfirmText).not.toHaveBeenCalled();
   });
 
   it("identifies only the missing-particle window when final ASR retained the allowed particle variant", () => {
@@ -232,14 +316,13 @@ describe("voice generation panel", () => {
     first.recognition = { ...first.recognition!, targetTranscript: "回来了", shortSentenceReview: first.textReview };
     render(<VoiceGenerationPanel {...props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(),
       options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
-    expect(screen.getByText("切点左侧漏了句尾语气词；裁后识别已保留语气词。")).toBeTruthy();
-    expect(screen.getByText("字差位置：切点左侧")).toBeTruthy();
-    expect(screen.getByText("裁后识别：回来了")).toBeTruthy();
-    expect(screen.getByText("切点左侧识别：回来")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("短句识别（历史）").nextElementSibling?.textContent).toBe("回来了");
+    expect(screen.getByText("切点左侧识别").nextElementSibling?.textContent).toBe("回来");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("enables confirmation only after every flagged short sentence is explicitly checked", () => {
+  it("keeps every historical text-review slice playable and adopts only on the user ordinary action", () => {
     const { take, context, clip, textReview } = manualParagraphCandidate();
     context.clips[1].text = "坐下啦。";
     context.text = "回来啦。坐下啦。";
@@ -257,16 +340,14 @@ describe("voice generation panel", () => {
       final: { transcript: "坐下", words: [{ text: "坐下", start: .1, end: 1 }], durationSeconds: 2 } };
     second.recognition = { stage: "complete", expectedText: second.text, sourceTranscript: "坐下啦", targetTranscript: "坐下",
       sourceWords: [{ text: "坐下啦", start: .1, end: 1 }], shortSentenceReview: second.textReview };
-    const onConfirmText = vi.fn();
-    render(<VoiceGenerationPanel {...props({ selectedClip: clip, candidates: [take], onConfirmText,
-      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
-    const button = screen.getByRole("button", { name: "确认并采用候选 1" }) as HTMLButtonElement;
-    fireEvent.click(screen.getByRole("checkbox", { name: "候选 1 短句 1 已听且台词完整" }));
-    expect(button.disabled).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox", { name: "候选 1 短句 2 已听且台词完整" }));
-    expect(button.disabled).toBe(false);
-    fireEvent.click(button);
-    expect(onConfirmText).toHaveBeenCalledWith(take, context.clips.map((item) => item.clipId));
+    const input = props({ selectedClip: clip, candidates: [take], onConfirmText: vi.fn(),
+      options: { ...options, provider: "voxcpm2", generationMode: "paragraph" } });
+    render(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={context} />);
+    expect(screen.getByLabelText("候选 1 短句 1 原声试听")).toBeTruthy();
+    expect(screen.getByLabelText("候选 1 短句 2 原声试听")).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull(); expect(input.onAdopt).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take); expect(input.onConfirmText).not.toHaveBeenCalled();
   });
 
   it("keeps the short generation controls and paragraph candidates in their own workspace", () => {
@@ -283,7 +364,7 @@ describe("voice generation panel", () => {
     expect(screen.getByLabelText("整段生成文案").textContent).toContain(context.text);
     expect((screen.getByLabelText("整段生成文案") as HTMLDetailsElement).open).toBe(false);
     expect(screen.getByLabelText("整段生成文案").querySelector("summary")?.textContent).toContain("生成范围");
-    expect(screen.getByText("整段切分 · 2 句")).toBeTruthy();
+    expect(screen.getByText("切分完成，待试听")).toBeTruthy();
     expect(screen.getByLabelText("候选 1 整段完整原音试听").getAttribute("src")).toContain("paragraph_source");
     expect(screen.getByRole("link", { name: "下载整段原音" }).getAttribute("href")).toContain("paragraph_source?download=1");
     expect(screen.getByLabelText("整段短句切分").children).toHaveLength(2);
@@ -298,7 +379,7 @@ describe("voice generation panel", () => {
     expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("整段文案已修改，请重新生成。")).toBeTruthy();
   });
-  it("preserves full originals for review and can recheck them without legacy group regeneration", () => {
+  it("preserves legacy review originals without exposing retry or group regeneration", () => {
     const { take, context } = paragraphCandidate();
     const review = { ...take, asset: take.provenance.paragraph!.sourceAsset,
       provenance: { ...take.provenance, paragraph: { ...take.provenance.paragraph!, checkStatus: "review" as const, segments: [] } } };
@@ -306,12 +387,9 @@ describe("voice generation panel", () => {
     render(<VoiceGenerationPanel {...props({ candidates: [review], onRecheck, onRegenerateGroup: vi.fn(),
       options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh", generationMode: "paragraph" } })} workspaceMode="paragraph" paragraphContext={context} />);
     expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("完整原音 · 切分待确认")).toBeTruthy();
-    const recheck = screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement;
-    expect(recheck.disabled).toBe(false);
-    expect(recheck.title).toContain("只检查已保存整段原音，不重新生成语音");
-    fireEvent.click(recheck);
-    expect(onRecheck).toHaveBeenCalledWith(review);
+    expect(screen.getByText("完整原音 · 未保存切片")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /重新切分|重新识别/ })).toBeNull();
+    expect(onRecheck).not.toHaveBeenCalled();
     expect(screen.queryByText("重生成内部组")).toBeNull();
     expect(screen.getByRole("link", { name: "下载整段原音" })).toBeTruthy();
     expect(screen.queryByText("未保存识别文本")).toBeNull();
@@ -329,7 +407,7 @@ describe("voice generation panel", () => {
     expect(within(disclosure).queryByText("未保存识别文本")).toBeNull();
     expect(within(disclosure).queryByText("本条试听与下载均为完整原音。")).toBeNull();
   });
-  it("shows a saved failed short target on paragraph review candidates and keeps stale rechecks disabled", () => {
+  it("shows saved paragraph failure evidence without exposing a retry for stale candidates", () => {
     const { take, context } = paragraphCandidate();
     const failureRecognition: VoiceRecognition = { stage: "source_alignment", expectedText: context.clips[0].text,
       followingText: context.clips[1].text, sourceTranscript: "已保存的整段识别文字", alignment: { expected: "回来啦", recognizedPrefix: "回来了", reason: "uncertain_word_alignment" } };
@@ -343,7 +421,7 @@ describe("voice generation panel", () => {
     expect(within(disclosure).getByText("识别文字未能定位目标句的结束位置。")).toBeTruthy();
     expect(within(disclosure).queryByText("未保存识别文本")).toBeNull();
     view.rerender(<VoiceGenerationPanel {...input} workspaceMode="paragraph" paragraphContext={{ ...context, text: context.text + "已修改。" }} />);
-    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "重新切分候选 1" })).toBeNull();
   });
   it("scopes original-recording requests to the active audio workspace and resets on tab changes", async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ recordings: [], truncated: false }) });
@@ -379,36 +457,25 @@ describe("voice generation panel", () => {
     expect(within(evidence).getByText("整段原音识别").nextElementSibling?.textContent).toBe(failureRecognition.sourceTranscript);
     expect(within(evidence).queryByText("未保存识别文本")).toBeNull();
   });
-  it("offers re-recognition beside adoption without regenerating and allows an adopted long-text take", () => {
+  it("does not expose a retry entry for saved, adopted or legacy long-text candidates", () => {
     if (selectedClip.type !== "voice") throw new Error("Voice fixture required");
     const take = recognitionCandidate({ text: selectedClip.text, inputText: selectedClip.text, internalPausesMs: [], internalPauseClasses: [] });
     take.provenance.longText.plan = { clauses: [selectedClip.text], groups: [{ start: 0, end: 0, text: selectedClip.text, pauseAfter: "medium" }], clausePauseClasses: [], provider: "rules", warnings: [] };
-    const onRecheck = vi.fn();
-    const input = props({ candidates: [take], onRecheck });
+    const input = props({ candidates: [take], onRecheck: vi.fn(), onCancelRecheck: vi.fn() });
     const view = render(<VoiceGenerationPanel {...input} />);
-    const recheck = screen.getByRole("button", { name: "重新识别候选 1" });
-    expect(recheck.parentElement).toBe(screen.getByRole("button", { name: "采用候选 1" }).parentElement);
-    fireEvent.click(recheck);
-    expect(onRecheck).toHaveBeenCalledWith(take);
-    expect(input.onAdopt).not.toHaveBeenCalled();
-    view.rerender(<VoiceGenerationPanel {...input} selectedClip={{ ...selectedClip, asset: { asset_id: take.asset.assetId, uri: take.asset.uri, duration: take.asset.duration } }} />);
-    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(false);
-    for (const locked of [{ busy: true }, { referenceImportBusy: true }, { loading: true },
-      { candidates: [{ ...take, sourceFingerprint: "stale" }] }]) {
-      view.rerender(<VoiceGenerationPanel {...input} {...locked} />);
-      expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /重新切分|重新识别|取消切分/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
+    expect(input.onAdopt).toHaveBeenCalledWith(take);
+    for (const changes of [
+      { selectedClip: { ...selectedClip, asset: { asset_id: take.asset.assetId, uri: take.asset.uri, duration: take.asset.duration } } },
+      { busy: true, recheckingCandidateId: take.candidateId },
+      { candidates: [candidate()] }, { candidates: [recognitionCandidate({})] },
+    ]) {
+      view.rerender(<VoiceGenerationPanel {...input} {...changes} />);
+      expect(screen.queryByRole("button", { name: /重新切分|重新识别|取消切分/ })).toBeNull();
     }
-    const onCancelRecheck = vi.fn();
-    view.rerender(<VoiceGenerationPanel {...input} busy recheckingCandidateId={take.candidateId} onCancelRecheck={onCancelRecheck} />);
-    expect(screen.getByRole("button", { name: "重新识别候选 1" }).textContent).toBe("重新识别中…");
-    fireEvent.click(screen.getByRole("button", { name: "取消重新识别" }));
-    expect(onCancelRecheck).toHaveBeenCalledOnce();
-    view.rerender(<VoiceGenerationPanel {...input} candidates={[candidate()]} />);
-    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("未保存分组原音，暂不能重新识别。")).toBeTruthy();
-    const legacy = recognitionCandidate({});
-    view.rerender(<VoiceGenerationPanel {...input} candidates={[legacy]} />);
-    expect((screen.getByRole("button", { name: "重新识别候选 1" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText(/暂不能重新识别/)).toBeNull();
+    expect(input.onRecheck).not.toHaveBeenCalled(); expect(input.onCancelRecheck).not.toHaveBeenCalled();
   });
 
   it("corrects only the exact legacy continuation warning for the same review group without mutating its candidate", () => {
@@ -459,7 +526,7 @@ describe("voice generation panel", () => {
     const referenceAudio = screen.getByLabelText("参考声音试听") as HTMLAudioElement;
     const candidateAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
     expect(screen.getByText("参考片段 · 15.0 秒")).toBeTruthy();
-    const paused = mockMediaCall(candidateAudio, "pause"); fireEvent.play(referenceAudio); expect(paused).toHaveBeenCalledOnce();
+    const paused = mockMediaCall(candidateAudio, "pause"); fireEvent.play(candidateAudio); fireEvent.play(referenceAudio); expect(paused).toHaveBeenCalledOnce();
   });
 
   it("keeps successful source and cropped recognition collapsed beside the existing candidate actions", () => {
@@ -478,7 +545,7 @@ describe("voice generation panel", () => {
     expect(within(disclosure).getByText("完整原音识别").nextElementSibling?.textContent).toBe(source);
     expect(within(disclosure).getByText("目标台词").nextElementSibling?.textContent).toBe(target);
     expect(within(disclosure).getByText("裁剪后识别").nextElementSibling?.textContent).toBe(target);
-    expect(within(disclosure).getByText("已提取目标片段：0.12–3.45 秒。")).toBeTruthy();
+    expect(within(disclosure).getByText("截取范围：0.12–3.45 秒。")).toBeTruthy();
     expect(within(disclosure).getByText("检查阶段：检查完成")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "采用候选 1" }));
     expect(input.onAdopt).toHaveBeenCalledWith(take);
@@ -492,7 +559,7 @@ describe("voice generation panel", () => {
     const disclosure = screen.getByText("识别对照").closest("details")!;
     expect(disclosure.open).toBe(false);
     fireEvent.click(screen.getByText("识别对照"));
-    expect(within(disclosure).getByText("已截取目标片段；识别文字与源文有差异。")).toBeTruthy();
+    expect(within(disclosure).getByText("切分完成，待试听。")).toBeTruthy();
     expect(within(disclosure).getByText("截取范围：0.10–2.50 秒。")).toBeTruthy();
     expect(within(disclosure).getByText("文字相似度 90% · 阈值 90%")).toBeTruthy();
     expect(within(disclosure).getByText("第 3 字：啦 → 了")).toBeTruthy();
@@ -727,13 +794,15 @@ describe("voice generation panel", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("shows a spatial failure with retry and keeps other previews paused during the retry", async () => {
+  it("shows spatial retry errors and pauses the current preview only when the retry starts playing", async () => {
     render(<VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()],
       selectedClip: { ...selectedClip, asset: { asset_id: "original", uri: "asset://clip/original", duration: 5 } },
     })} />);
     const audio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
     const current = screen.getByLabelText("当前人声试听") as HTMLAudioElement;
     const pauseCurrent = mockMediaCall(current, "pause");
+    pauseCurrent.mockImplementation(() => current.dispatchEvent(new Event("pause")));
+    fireEvent.play(current);
     const load = mockMediaCall(audio, "load");
     const play = vi.spyOn(audio, "play").mockRejectedValueOnce(new Error("network failure"));
     fireEvent.error(audio);
@@ -741,9 +810,11 @@ describe("voice generation panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试候选 1 试听" }));
     expect(load).toHaveBeenCalledOnce();
     expect(play).toHaveBeenCalledOnce();
-    expect(pauseCurrent).toHaveBeenCalledOnce();
+    expect(pauseCurrent).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "重试候选 1 试听" }));
+    fireEvent.play(audio);
+    expect(pauseCurrent).toHaveBeenCalledOnce();
     fireEvent.canPlay(audio);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
@@ -970,6 +1041,7 @@ describe("voice generation panel", () => {
     expect(groupAudio.preload).toBe("none");
     expect(groupAudio.autoplay).toBe(false);
     const pauses = [...screen.getByRole("region", { name: "人声生成设置" }).querySelectorAll("audio")].map((audio) => mockMediaCall(audio, "pause"));
+    fireEvent.play(wholeAudio);
     fireEvent.play(groupAudio);
     expect(wholeAudio.pause).toHaveBeenCalledOnce();
     expect(groupAudio.pause).not.toHaveBeenCalled();
@@ -1023,7 +1095,7 @@ describe("voice generation panel", () => {
     render(<VoiceGenerationPanel {...props({ candidates: [take], busy: true, error: "本地生成失败。" })} />);
     expect(screen.getByText(take.qualityWarnings[0])).toBeTruthy();
     expect(screen.getByText("本地生成失败。")).toBeTruthy();
-    for (const select of screen.getAllByRole("combobox")) expect((select as HTMLSelectElement).disabled).toBe(true);
+    for (const name of ["人声引擎", "参考声音", "参考模式"]) expect(control(name).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "放弃候选 1" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -1067,7 +1139,7 @@ describe("voice generation panel", () => {
     expect(settings.contains(control("参考模式"))).toBe(true);
   });
 
-  it("pauses the other previews when one current or candidate audio starts playing", () => {
+  it("pauses the previous active preview without touching idle current or candidate audio", () => {
     const first = candidate();
     render(<VoiceGenerationPanel {...props({
       selectedClip: { ...selectedClip, asset: { asset_id: "original", uri: "asset://clip/original", duration: 5 } },
@@ -1080,12 +1152,17 @@ describe("voice generation panel", () => {
     const pauseFirst = mockMediaCall(firstAudio, "pause");
     const pauseSecond = mockMediaCall(secondAudio, "pause");
 
+    fireEvent.play(original);
+    expect(pauseFirst).not.toHaveBeenCalled();
+    expect(pauseSecond).not.toHaveBeenCalled();
     fireEvent.play(firstAudio);
     expect(pauseOriginal).toHaveBeenCalledOnce();
-    expect(pauseSecond).toHaveBeenCalledOnce();
+    expect(pauseSecond).not.toHaveBeenCalled();
     expect(pauseFirst).not.toHaveBeenCalled();
+    fireEvent.play(secondAudio);
+    expect(pauseFirst).toHaveBeenCalledOnce();
     fireEvent.play(original);
     expect(pauseFirst).toHaveBeenCalledOnce();
-    expect(pauseSecond).toHaveBeenCalledTimes(2);
+    expect(pauseSecond).toHaveBeenCalledOnce();
   });
 });
