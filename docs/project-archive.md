@@ -6,9 +6,9 @@
 
 AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
 
-## 2026-10-22 — 音频工作台与原生视频批跑器发布检查中
+## 2026-10-22 — 音频工作台版本及仓库主页介绍已推送
 
-按用户要求整理本会话播放器/就绪/识别切分/强制切分/顿号及原生视频批跑器和停止按钮，补根README与仓库介绍。此前17份相关文档连同新发布记录纳入，另会话空间工作台/渲染/Qwen增量排除；选定index独立验证进行中，不预填测试数或提交推送成功。真实SHA、About结果见Git及本轮发布收据，不重启3001或跑模型；AudioQualityV1进行中/SFX暂停，旧历史记录保留。[发布记录](records/2026-10-22-audio-workbench-and-native-video-release.md)。
+开发分支已推385267c2d7e6101b4feb8b216fc32790d369a617，含本会话播放器/就绪/切分/强制切分/顿号/native runner与停止按钮及相关记录；默认分支另推README单文件42359fd04377aa58364752f7b13bd751ee2aa91b，未合并代码或换默认分支，About与公开状态实核。独立选定84文件/600blob验证通过1941Vitest/3条件跳过、309Python/0跳过、类型/lint/build/实际ZIP；跳过项及缺原音/远端H3/完整合片仍未验收。26项另会话空间/渲染/Qwen改动原字节保持，3001PID27408与模型未动；本四文档随后纯记录提交，最终HEAD看Git/发布收据。AudioQualityV1进行中/SFX暂停，旧历史保留。[发布记录](records/2026-10-22-audio-workbench-and-native-video-release.md)。
 
 ## 2026-10-21 — 无本地FFmpeg视频批跑完成验证与更新包
 

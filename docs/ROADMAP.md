@@ -6,7 +6,7 @@ Last updated: 2026-10-22
 
 ## 当前优先级
 
-2026-10-22按用户要求记录并发布本会话音频工作台/原生视频批跑器改动，补根README和仓库简述；选定index独立树的完整验证正在进行，测试数量、真实提交/远端SHA及About结果待Git与发布收据确认。空间工作台/渲染/Qwen另会话增量排除，不重启3001或跑新模型。Audio Quality V1进行中/SFX暂停，不新增路线系统或阶段。[发布记录](records/2026-10-22-audio-workbench-and-native-video-release.md)。
+2026-10-22已推送音频工作台/原生视频批跑器版本385267c（开发分支），另给旧默认分支仅新增README提交42359fd，未合并代码或切换默认分支；About简介与公开状态实核。选定84文件/600blob独立验证：1941Vitest通过/3条件跳过、309Python全过，类型/lint/build/实际ZIP集成通过。空间/符号链接/真实ASR跳过项及缺原音/远端H3/完整合片不称已验收，26项另会话改动保持，不重启3001或跑新模型。本四文档另作记录同步提交，最终HEAD看Git及发布收据。Audio Quality V1进行中/SFX暂停，不新增阶段。[发布记录](records/2026-10-22-audio-workbench-and-native-video-release.md)。
 
 2026-10-21无本地FFmpeg批跑器完成：直接保存Comfy成品、CLF远端取尾帧，新环境镜头图内裁图音≤5秒，对白原音直连；模板/旧指纹/状态兼容，旧成品不追改。可选native合片逐镜补轨，缺能力只影响预览。97Python/31web及类型/lint/diff、真实CPU媒体与hidden Tk通过，实际ZIP解压9payload核验；三文件更新包已生成，不含项目/工作流/素材/outputs，3001动态导出新运行器无需重启。342范围外源码/HEAD/index保持；用户远端H3/完整合片未跑，无生产写入/提交推送。该更新完成，Audio Quality V1进行中/SFX暂停、无新路线。[记录](records/2026-10-21-native-comfy-video-runner.md)。
 
