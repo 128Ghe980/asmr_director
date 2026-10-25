@@ -7,4 +7,7 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   esbuild: { jsx: "automatic" },
+  test: {
+    setupFiles: [fileURLToPath(new URL("./test/setup-project-temp.ts", import.meta.url))],
+  },
 });

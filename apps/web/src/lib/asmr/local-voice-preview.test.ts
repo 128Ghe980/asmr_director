@@ -9,7 +9,7 @@ import { decodePcmWav, writePcm16Wav } from "./pcm-audio";
 
 let root: string, tempRoot: string, config: LocalRuntimeConfig;
 beforeEach(async () => {
-  const base = process.platform === "win32" ? "I:/AI" : tmpdir();
+  const base = tmpdir();
   await mkdir(base, { recursive: true }); root = await mkdtemp(path.join(base, "asmr-preview-test-")); tempRoot = path.join(root, "exports");
   config = { runtimeRoot: root, clipAssetRoot: path.join(root, "clips"), mixAssetRoot: path.join(root, "mix"), gptSovitsBaseUrl: "unused", voicePackPath: "unused" };
   await mkdir(config.clipAssetRoot, { recursive: true });

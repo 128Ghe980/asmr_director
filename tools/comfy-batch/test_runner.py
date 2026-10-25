@@ -19,7 +19,8 @@ import wave
 import zlib
 
 SOURCE = Path(__file__).resolve().parent
-TEST_ROOT = Path(os.environ.get("ASMR_BATCH_TEST_ROOT", "I:/AI/asmr-director-video-batch/2026-10-15/candidates-qa")) if Path("I:/").is_dir() else Path(tempfile.gettempdir())
+DEFAULT_ROOT = Path("I:/AI/asmr_director/qa/video-batch/2026-10-15/candidates-qa") if Path("I:/").is_dir() else SOURCE.parents[1] / ".local/tmp/comfy-batch"
+TEST_ROOT = Path(os.environ.get("ASMR_BATCH_TEST_ROOT", DEFAULT_ROOT))
 SPEC = importlib.util.spec_from_file_location("comfy_batch_runner", SOURCE / "runner.py")
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)

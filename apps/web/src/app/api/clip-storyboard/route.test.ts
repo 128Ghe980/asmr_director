@@ -8,7 +8,7 @@ import { writePcm16Wav } from "../../../lib/asmr/pcm-audio";
 import { createClipVideoSourceFingerprint } from "../../../lib/asmr/video-plan";
 import { POST } from "./route";
 
-const base = path.resolve(process.platform === "win32" ? "I:/AI" : tmpdir());
+const base = path.resolve(tmpdir());
 let root: string;
 const generated = { title: "轻声迎接", visual: "S1 stands in the same warm kitchen, matching the reference appearance and outfit.", action: "S1 gently gestures toward the counter.", camera: "Static medium close-up with a visible mouth." };
 function request(body: unknown) { return new Request("http://localhost/api/clip-storyboard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }

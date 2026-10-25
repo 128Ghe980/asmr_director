@@ -16,7 +16,9 @@ SPEC.loader.exec_module(builder)
 
 class VerifyExistingTest(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='voxcpm2-receipt-')
+        test_root = Path("I:/AI/asmr_director/qa/voxcpm2-runtime/tests") if Path("I:/").is_dir() else Path(__file__).resolve().parents[2] / ".local/tmp/voxcpm2-runtime/tests"
+        test_root.mkdir(parents=True, exist_ok=True)
+        self.directory = tempfile.TemporaryDirectory(prefix='voxcpm2-receipt-', dir=test_root)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.paths = {

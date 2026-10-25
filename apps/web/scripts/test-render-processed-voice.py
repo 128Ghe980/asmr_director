@@ -132,7 +132,8 @@ class SignalTests(unittest.TestCase):
 
 class RequestTests(unittest.TestCase):
     def setUp(self):
-        base = Path(os.environ.get("ASMR_POST_PROCESSING_TEST_ROOT", tempfile.gettempdir()))
+        default_root = Path("I:/AI/asmr_director/qa/audio-post-processing/python-tests") if Path("I:/").is_dir() else Path(__file__).resolve().parents[3] / ".local/tmp/audio-post-processing"
+        base = Path(os.environ.get("ASMR_POST_PROCESSING_TEST_ROOT", default_root))
         base.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix="processed-python-", dir=base)
         self.root = Path(self.temp.name)

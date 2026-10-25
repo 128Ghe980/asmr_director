@@ -35,7 +35,7 @@ ANALYSIS_HELPER = REPO / "apps/web/scripts/analyze-voice-group.py"
 PLAN_HELPER = REPO / "apps/web/src/lib/asmr/voice-longtext-plan.ts"
 LEGACY_ASR_HELPER = Path("I:/AI/voxcpm2-evaluation/tools/package-clause16-edge-opening-comparison.py")
 PROFILE = RUNTIME / "audio-quality-v1/voxcpm2/profile.json"
-DEFAULT_OUTPUT = Path("I:/AI/asmr-director-distance-listening/2026-09-14-colloquial-source")
+DEFAULT_OUTPUT = Path("I:/AI/asmr_director/qa/distance-listening/2026-09-14-colloquial-source")
 GROUPS = [
     "你躺好了吗？枕头不舒服的话，就挪一挪。",
     "被子盖到这里可以吗？脚别露在外面，会有点凉。",

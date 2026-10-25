@@ -19,7 +19,7 @@ comparison = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = comparison
 SPEC.loader.exec_module(comparison)
 
-DEFAULT_ROOT = Path("I:/AI/asmr-director-forced-alignment/2026-10-16/qa") if Path("I:/").is_dir() else Path(tempfile.gettempdir())
+DEFAULT_ROOT = Path("I:/AI/asmr_director/qa/forced-alignment/2026-10-16/qa") if Path("I:/").is_dir() else Path(__file__).resolve().parents[2] / ".local/tmp/forced-alignment"
 TEST_ROOT = Path(os.environ.get("ASMR_ALIGNMENT_TEST_ROOT", DEFAULT_ROOT))
 
 

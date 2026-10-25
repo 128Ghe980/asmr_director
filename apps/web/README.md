@@ -101,7 +101,7 @@ D 使用原 HRTF＋近场 DVF＋房间反射方案。单声道人声在 48 kHz �
 Python 需要 `numpy`、`scipy`、`soundfile`、`h5py`、`pyloudnorm`。本机既有空间环境和 Viking A 文件可直接复用。SOFA、Python 环境和派生 WAV 保留在仓库外。磁盘紧张时，例如在 `apps/web/.env.local` 设置以下路径后重启服务：
 
 ```dotenv
-ASMR_SPATIAL_CACHE_ROOT=I:/AI/asmr-director-runtime/assets/spatial
+ASMR_SPATIAL_CACHE_ROOT=I:/AI/asmr_director/cache/spatial-cache
 # 若复用默认 Python/HRTF，无需填写这两项。
 # ASMR_SPATIAL_PYTHON=D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/.venv/Scripts/python.exe
 # ASMR_SPATIAL_HRTF=D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/hrtf/viking/subj_A.sofa
@@ -159,7 +159,7 @@ faster-whisper-large-v3 CPU/int8，模型需已存在，识别期间不自动下
 
 ```dotenv
 # 不设置时位于 VoxCPM2 profile 旁的 references/imported。
-ASMR_VOICE_REFERENCE_ROOT=I:/AI/asmr-director-voice-references
+ASMR_VOICE_REFERENCE_ROOT=I:/AI/asmr_director/runtime/voice-references
 # 默认使用 PATH 中的 ffmpeg；其他位置可指定完整可执行文件路径。
 ASMR_VOICE_REFERENCE_FFMPEG=C:/Users/Yuki1/AppData/Local/Programs/Python/Python311/Scripts/ffmpeg.exe
 ```
@@ -176,7 +176,7 @@ ASMR_VOICE_REFERENCE_FFMPEG=C:/Users/Yuki1/AppData/Local/Programs/Python/Python3
 
 直接生成和长文分组均为当前片段创建一个完整候选，台词上限 500 字符。服务器固定 CFG 2、timesteps 10、temperature 1、GPU layers 0 并启用 low-VRAM；这个组合仍使用 GPU。每次 CLI 的步数按输入长度设为 120–600，默认超时 5 分钟。达到步数上限或接近静音的有效 WAV 仍交付，提示可能未读完或接近静音。原始文件在格式/质量判断前发布；即使原生进程报错，有已完成文件也保留供试听或下载。无法解码的文件仍可下载检查，不伪装成可采用候选。长文另外逐组做本地 ASR，整体任务上限 30 分钟；技术检查通过也不代替用户听感验收。候选来源记录实际 seed/参数、CLI SHA256、模型文件名/大小/修改时间和参考内容 SHA256。
 
-`ASMR_VOICE_WORK_ROOT` 可指定新原生临时文件 `runs`、ASR 临时文件 `analysis-runs`、完整原音及计划 `long-text/<运行ID>` 的根目录；未配置时使用外部 runtime 下 `voxcpm2-product`。本机配置为 `I:/AI/asmr-director-voice-work`，旧 D 盘原音仍可读取，不移动或删除。跨服务进程的排他锁为 `locks/voxcpm2-generation.lock`，一次长文任务持锁覆盖分组、所有 TTS 和 ASR，并登记所有活动子进程 PID，全部确认退出才释放。支持最多一个 TTS 与一个 ASR 的有限流水线，最多提前生成一组；迟到的真实退出也会补发已写出的原音。取消/超时会终止当前 CLI 或 ASR 进程，确认退出后才清理临时目录并释放锁。如果服务崩溃或进程终止无法确认，保留锁；维护时先核实锁中的服务 PID 和子进程 PID 都已退出，再移除这个具体锁文件。不要在仍有子进程运行时删除锁。旧试听实验目录不自动迁移或修改。
+`ASMR_VOICE_WORK_ROOT` 可指定新原生临时文件 `runs`、ASR 临时文件 `analysis-runs`、完整原音及计划 `long-text/<运行ID>` 的根目录；未配置时使用外部 runtime 下 `voxcpm2-product`。本机配置为 `I:/AI/asmr_director/runtime/voice-work`，旧 D 盘原音仍可读取，不移动或删除。跨服务进程的排他锁为 `locks/voxcpm2-generation.lock`，一次长文任务持锁覆盖分组、所有 TTS 和 ASR，并登记所有活动子进程 PID，全部确认退出才释放。支持最多一个 TTS 与一个 ASR 的有限流水线，最多提前生成一组；迟到的真实退出也会补发已写出的原音。取消/超时会终止当前 CLI 或 ASR 进程，确认退出后才清理临时目录并释放锁。如果服务崩溃或进程终止无法确认，保留锁；维护时先核实锁中的服务 PID 和子进程 PID 都已退出，再移除这个具体锁文件。不要在仍有子进程运行时删除锁。旧试听实验目录不自动迁移或修改。
 
 
 文本分组与语音检查环境准备并行，同一任务复用环境探测。`ASMR_VOICE_PIPELINE=auto|serial|overlap` 控制有限流水线，auto 要求至少 8 GiB 可用内存和 8 个可用逻辑 CPU。`ASMR_VOICE_ASR_REUSE=auto|off|always` 控制单任务内识别模型复用；auto 至少 8 GiB 空闲才驻留，组后低于 6 GiB 就释放。默认均为 auto；本机内存紧张时采用串行/非驻留。2026-09-20 真实复用验证加载峰值 RSS 3.46 GiB，最低剩余内存 0.48 GiB，不能承诺本机开启大模型并行会更快。

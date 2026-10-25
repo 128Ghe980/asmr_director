@@ -1,0 +1,167 @@
+{
+  "title": "H3 原生 ASMR · 12 种常见触发音试听",
+  "sources": [
+    {
+      "title": "MiniMax 官方 H3 Prompt Writing 技能",
+      "url": "https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/SKILL.md",
+      "checkedOn": "2026-10-25"
+    },
+    {
+      "title": "MiniMax 官方基础模式提示词指南（T2VA / I2VA / FL2VA / L2VA）",
+      "url": "https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/base-en.txt",
+      "checkedOn": "2026-10-25"
+    },
+    {
+      "title": "MiniMax 官方全参考模式提示词指南（Ref2VA，模式边界核对）",
+      "url": "https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/ref-en.txt",
+      "checkedOn": "2026-10-25"
+    }
+  ],
+  "durationSeconds": 5,
+  "triggers": [
+    {
+      "id": "wood_tapping",
+      "order": 1,
+      "title": "木盒轻敲",
+      "category": "敲击",
+      "listeningFocus": "木质短促的笃声；每次手指接触与起音是否对应，停手后是否自然收住。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of a small closed walnut box on a dark felt mat, lit by a soft side light that reveals the wood grain. Only an adult's right hand with short natural nails and the box are framed. The camera holds a static shot throughout. The index and middle fingernails alternate gentle taps on the lid at a slow, relaxed pace, lifting clear between contacts and allowing brief quiet pauses. Each contact produces a quiet rounded wooden tok with a short dry decay. The tapping continues in this unhurried rhythm while the box stays in place. Near the end, the hand comes to rest beside the box, leaving a brief still moment as the last tap fades. The person remains silent.",
+        "overall_soundscape": "Close, softly rounded wooden taps have slightly different pitches at adjacent contact points. Faint indoor room tone remains well below the taps, with little room reverberation and a brief quiet gap after each contact.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "glass_tapping",
+      "order": 2,
+      "title": "玻璃杯轻敲",
+      "category": "敲击",
+      "listeningFocus": "轻细玻璃叮声与短尾音；是否出现过强尖峰、夸张长鸣或接触错位。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of an empty, thick-walled clear glass tumbler resting upright on a folded cotton cloth. Soft side lighting outlines the rim against a plain dark background. Only an adult's right hand with short natural nails enters the frame. The camera holds a static shot throughout. The index fingernail repeatedly taps the outside wall very lightly at an even, slow pace, lifting away and pausing briefly after each contact. Each visible contact makes a small delicate glass tink that fades before the next tap. Near the end, the hand withdraws slightly and stays still, allowing the last sound to settle while the tumbler remains upright. The person remains silent.",
+        "overall_soundscape": "Gentle glass tinks sound close and restrained, with thin, brief ringing tails rather than heavy impacts. Very faint indoor room tone sits underneath, leaving the spaces between the taps clearly audible.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "soft_brushing",
+      "order": 3,
+      "title": "软刷扫布",
+      "category": "刷拂",
+      "listeningFocus": "刷毛接触的连续细沙声；声音应随刷动渐强渐弱，离开布面时停止。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of a wide, soft cosmetic brush resting above taut beige linen on a tabletop. An adult's right hand holds the plain wooden handle; only the hand, brush, and linen are visible. Soft daylight reveals the separate bristles and woven threads. The camera holds a static shot throughout. The hand makes slow, gentle strokes from left to right across the linen, lifting and returning the brush above the surface between strokes with brief pauses. The bristles bend slightly against the fabric, producing a fine airy shhh during each stroke and becoming quiet while lifted. Near the end, the brush lifts clear and stays still for a brief settling moment. The person remains silent.",
+        "overall_soundscape": "Soft, close brushing swishes reveal a fine grainy texture beneath their airy surface. Each swish grows gently as the bristles press down and diminishes as they lift, over a low, steady indoor room tone.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "page_turning",
+      "order": 4,
+      "title": "薄纸翻页",
+      "category": "纸张",
+      "listeningFocus": "翻页的轻脆摩擦与落页声；弯曲、翻过、落平三个阶段是否听得出来。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up from a slightly elevated angle of an open blank notebook with thin cream paper on a plain wooden desk. An adult's left hand steadies the lower left edge while the right hand approaches a page corner. Soft daylight reveals the paper fibers. The camera holds a static shot throughout. The right hand slowly turns the pages from right to left, handling a single page at a time: lifting the corner, bending the sheet into a shallow arc, and letting it settle flat before reaching for the next page. A delicate dry rustle follows each moving page and ends in a soft flutter. The turns continue at a relaxed pace with brief pauses. Near the end, the last turned page settles and both hands remain still. The person remains silent.",
+        "overall_soundscape": "Each close, light paper rustle changes from a fine sliding texture to a brief flutter and a soft landing. Faint room tone continues underneath, with quiet gaps while the pages lie flat between turns.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "paper_crinkling",
+      "order": 5,
+      "title": "薄牛皮纸揉响",
+      "category": "纸张",
+      "listeningFocus": "细密且不均匀的纸张脆响；是否保留压皱和松开两段变化，避免爆裂感。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of two adult hands holding a small, already loosely crumpled sheet of thin brown kraft paper above a felt-covered table. Warm diffuse light reveals the folds against a plain background. The camera holds a static shot throughout. The fingers slowly compress the paper inward, creating quiet irregular crackles as the folds bend, then gradually relax their grip so the folds open slightly with lighter answering rustles. These small compress-and-release motions repeat at an unhurried pace with brief pauses, keeping the paper centered in the frame. Near the end, the hands gently release the last compression and hold the paper still as its rustling subsides. The person remains silent.",
+        "overall_soundscape": "Close, delicate paper crackles arrive in small uneven clusters during compression, followed by softer rustles as the grip relaxes. A faint indoor room tone remains underneath, and the sound settles when the hands stop.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "fabric_rubbing",
+      "order": 6,
+      "title": "棉布轻揉",
+      "category": "织物",
+      "listeningFocus": "柔软低频的布料摩擦；与纸声、刷声是否有可辨认的材质区别。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of two adult hands gently holding a folded piece of soft cotton jersey on a pale tabletop. The fabric has visible fine knit loops and a plain muted blue color. Diffuse side lighting gives the folds a soft edge. The camera holds a static shot throughout. The fingers slowly slide the folded layers against each other in small, gentle rubbing motions, relaxing the cloth and pausing briefly between passes. A soft, low shff follows each slide while the cloth bunches slightly and relaxes. The movements continue at a calm, regular pace. Near the end, the hands release the folds and come to rest, allowing the last friction sound to fade. Only the hands and cloth are framed, and the person remains silent.",
+        "overall_soundscape": "Soft, close cloth friction has a muted, fine-textured shuffling sound with gently rounded beginnings and endings. Low room tone remains underneath, and the brief pauses between rubbing motions are quiet.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "comb_teeth",
+      "order": 7,
+      "title": "梳齿轻拨",
+      "category": "弹拨",
+      "listeningFocus": "梳齿依次回弹的细小哒声；逐齿节奏是否与移动手指一致。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of a small wide-toothed plastic comb held horizontally by an adult's left hand above a dark felt mat. The teeth and an approaching right thumbnail are clearly visible in soft side light. The camera holds a static shot throughout. The right thumbnail moves slowly along the tips of the comb teeth, gently flexing and releasing each tooth in turn. Each release makes a small dry tik, forming an even sequence that follows the thumbnail's motion. After each pass, the thumb lifts clear, returns to the starting side, and pauses briefly before another slow pass. Near the end, it lifts away after completing a pass and both hands remain still as the ticks subside. The person remains silent.",
+        "overall_soundscape": "A close sequence of small, lightly resonant plastic ticks has a regular, relaxed pace and short decay. Faint room tone stays underneath, becoming more noticeable after the final tooth is released.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "keyboard_typing",
+      "order": 8,
+      "title": "键盘慢按",
+      "category": "机械按压",
+      "listeningFocus": "按下与回弹的短双层声；是否自然克制、有明确按键起止。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up from a shallow overhead angle of an adult's right index and middle fingers above a compact mechanical keyboard with plain blank keycaps on a thick felt desk mat. Soft neutral light shows the short travel of the keys. The camera holds a static shot throughout. The fingers alternate slow, separated presses on adjacent keys, fully releasing each key and allowing a brief pause before the next press. Each downward motion produces a muted rounded thock followed by a lighter return click as the key rises. The keypresses continue at this relaxed pace. Near the end, the last key rises and the fingers hover still for a brief quiet finish. Only the hand and keyboard are visible, and the person remains silent.",
+        "overall_soundscape": "Close, subdued keypresses each have a rounded low attack and a small higher release click. A quiet indoor room tone fills the gaps, with little resonance from the padded desk.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "water_pouring",
+      "order": 9,
+      "title": "细流倒水",
+      "category": "液体",
+      "listeningFocus": "细水流与液面上升的音色变化；停倒后是否只留下少量水滴声。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of a small clear glass pitcher containing a modest amount of water, held by an adult's right hand above a much larger clear glass bowl with only a shallow layer of water inside. The bowl rests on a folded cotton cloth against a plain dark background and has ample space for all the pitcher's water. Soft side light reveals the stream and water surface. The camera holds a static shot throughout. The hand makes gentle repeated tilts, releasing brief, narrow trickles into the bowl and returning the pitcher upright for a short pause between pours. Soft trickling and small liquid burbles follow each stream while the level remains well below the rim. Near the end, the pitcher stays upright as the last drops fall and the ripples settle. The person remains silent.",
+        "overall_soundscape": "Close, gentle trickles carry small rounded splashes and subtle changes in liquid resonance. Each stream stops with a few lighter drops and a quiet pause, over faint, steady room tone.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "water_mist",
+      "order": 10,
+      "title": "细雾喷瓶",
+      "category": "气流与水雾",
+      "listeningFocus": "短而柔和的喷雾嘶声、泵头回弹；可见水雾与嘶声是否同时出现。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up of an adult's right hand holding a small clear pump atomizer filled with water, aimed sideways into open air against a plain dark background. Soft side lighting reveals the fine water mist. The camera holds a static shot throughout. The index finger slowly depresses and fully releases the pump, pausing while the mist disperses before repeating the motion at an unhurried pace. Each press releases a short, delicate fan of mist with a soft pssh; each return gives a tiny pump click. The bottle stays upright. Near the end, the finger releases the pump and the hand rests while the final mist disperses. Only the hand and bottle are visible, and the person remains silent.",
+        "overall_soundscape": "Brief, close mist sprays have soft airy starts and short fading tails, each followed by a small subdued pump return click. The quiet gaps and final settling moment contain only faint room tone.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "soap_shaving",
+      "order": 11,
+      "title": "皂片轻刮",
+      "category": "刮削",
+      "listeningFocus": "细腻干脆的刮削声与皂屑落下声；接触持续时间是否吻合，是否出现多余碎裂。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up from a slightly elevated angle of a thick rectangular pale green bar of soap resting on a small wooden board. An adult's left hand steadies the far edge while the right hand holds a small flat soap-carving blade against the near surface, clear of the left fingers. Soft diffuse light reveals the matte soap texture. The camera holds a static shot throughout. The blade makes slow, shallow passes that shave thin strips from the top surface, curling each shaving ahead of its edge. A fine dry scrape follows each pass, ending in a tiny crumbly tick when the strip separates and drops onto the board. The blade lifts and repositions with a brief pause between passes. Near the end, it lifts clear and remains still while the last shaving settles. The person remains silent.",
+        "overall_soundscape": "Close, fine-grained dry scrapes continue while the blade moves, with tiny brittle details as the soap curls. Small soft landing sounds follow the separated shavings, with faint indoor room tone audible between passes and at the end.",
+        "non_diegetic_music": "N/A"
+      }
+    },
+    {
+      "id": "sand_tracing",
+      "order": 12,
+      "title": "细沙慢划",
+      "category": "颗粒",
+      "listeningFocus": "轻微颗粒摩擦与沙粒回落；持续沙声是否跟随手指，停下后是否安静。",
+      "prompt": {
+        "integrated_multimodal_description": "[Shot 1] Live-action close-up from a shallow overhead angle of a shallow wooden tray filled with a level layer of fine dry sand. An adult's right index fingertip rests lightly in the sand near the left side. Soft raking light makes individual grains and small ridges visible. The camera holds a static shot throughout. The fingertip draws short, slow curved furrows through neighboring patches of sand, lifting and pausing briefly before starting each new line. A small ridge forms ahead of the finger while loose grains fall back along each groove, producing a quiet granular shhh that follows the movement. Near the end, the finger lifts clear and stays still while the remaining loose grains settle. Only the hand and tray are visible, and the person remains silent.",
+        "overall_soundscape": "Close, restrained granular rustles contain many tiny dry contacts that merge into a fine continuous texture while the finger moves. Each pass tapers to a few settling grains and faint room tone when the finger lifts.",
+        "non_diegetic_music": "N/A"
+      }
+    }
+  ]
+}

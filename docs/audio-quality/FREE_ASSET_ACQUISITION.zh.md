@@ -39,8 +39,8 @@
 另生成独立的 `audition.wav` 供试听页默认播放：仅调整增益，以 -30 dBFS RMS 为比较目标并将峰值限制在 -6 dBFS。页面详情显示实际增益并保留干声播放链接。个别下载预览原始音量非常低（慢速搓手 RMS 约 -79 dBFS、短刷擦约 -63 dBFS），试听需要大幅放大，底噪/量化问题应重点听辨；该处理不能修复素材品质，也不将副本自动采用到工程。
 
 ```powershell
-& 'C:/Users/Yuki1/AppData/Local/Programs/Python/Python311/python.exe' tools/sfx-library/prepare_listening.py --root 'I:/AI/asmr-director-sfx-expansion/2026-10-04/listening' --sources tools/sfx-library/sources.json --existing 'D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/licensed-assets/manifest.json' --direct
-& 'C:/Users/Yuki1/AppData/Local/Programs/Python/Python311/python.exe' tools/distance-listening/serve.py 'I:/AI/asmr-director-sfx-expansion/2026-10-04/listening' --port 8768
+& 'C:/Users/Yuki1/AppData/Local/Programs/Python/Python311/python.exe' tools/sfx-library/prepare_listening.py --root 'I:/AI/asmr_director/qa/sfx-expansion/2026-10-04/listening' --sources tools/sfx-library/sources.json --existing 'D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/licensed-assets/manifest.json' --direct
+& 'C:/Users/Yuki1/AppData/Local/Programs/Python/Python311/python.exe' tools/distance-listening/serve.py 'I:/AI/asmr_director/qa/sfx-expansion/2026-10-04/listening' --port 8768
 ```
 
 工具使用 Python 3.9+ 标准库和 PATH 中的 ffmpeg（可用 `--ffmpeg` 指定）；本机采用 Python 3.11。`--direct` 仅对该命令忽略环境代理，不修改系统网络设置。本机旧 Anaconda 的环境代理连接失败，直接 HTTPS 已验证可用。

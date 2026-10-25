@@ -2,9 +2,25 @@
 
 记录日期：2026-06-14
 
-最后更新：2026-10-25
+最后更新：2026-10-26
 
 AI/上下文压缩恢复入口：`docs/AI_HANDOFF.md`
+
+## 2026-10-26：H3 与目录整理发布交接
+
+2026-10-26 发布交接：H3 原生 ASMR 12 类触发音、自定义时长和目录整理作为本次版本提交到 `codex/voxcpm2-product-generation`；具体 commit/远端状态查 Git 与 `I:/AI/asmr_director/qa/handoff/2026-10-26/publication.json`。下一步是目标 ComfyUI 机器实际批跑并试听，真实 H3 调用仍为 0。唯一外置根 `I:/AI/asmr_director`；当前包、服务入口、验证边界及 27 个有意保留的旧工作区路径见[本次交接](records/2026-10-26-h3-storage-handoff.md)。不要全量暂存遗留 spatial-studio/Qwen 工作，也不要从脏主工作区替换常驻服务。
+
+## 2026-10-26：项目目录整理与清理
+
+2026-10-26 按用户要求完成项目存储收敛：85 个 I:/AI 平级项目目录及本轮 I:/temp 的 6 项 H3 产物归入唯一数据根 `I:/AI/asmr_director`，旧散根为 0；清理 25 个纯 webpack 缓存和 1 个已验证重复展开包，释放约 3.30 GiB。模型、用户输入和音频保留。目录规则同步全局 AGENTS 与项目 STORAGE/AGENT/管理文档；测试输出默认值、运行配置、26 个 junction 和 H3 包路径同步。136 项 Python、19 项 Vitest 和 17 项服务 HTTP/内容哈希核验通过。当前 H3 包为 `I:/AI/asmr_director/artifacts/h3-asmr/H3-ASMR-12-custom-duration.zip`。这是 Audio Quality V1 内的工程维护，路线不变。[完整记录](records/2026-10-26-project-storage-cleanup.md)；[目录规则](STORAGE.md)。历史段落中的旧绝对路径通过数据根 `storage-map.json` 查新位置，不可再作为输出路径。
+
+## 2026-10-25 — H3 原生 ASMR 自定义时长
+
+按用户补充将固定默认5秒扩展为GUI/CLI自定义小数时长、留空使用逐镜清单；12提示词不再固定秒数或总次数。打包器全局/单类/default时长选择同步API与manual，运行覆盖不改项目，旧结果保留、改回历史复用。新包 `I:/temp/H3-ASMR-12-custom-duration.zip`，旧包保留。114运行器+22转换、1网页ZIP接入、hidden Tk、72payload及48mock提交/切回复用通过，真实H3调用0。没有部署/提交推送，阶段保持。[追加记录](records/2026-10-25-native-h3-asmr-batch.md#同日追加--自定义每条时长)。
+
+## 2026-10-25 — H3 原生 ASMR 12 类触发音试跑包
+
+按用户指定工作流保留模型和采样配置，忽略原 prompt，按官方三字段新写12类无对白触发音。现有便携运行器新增显式文生模式，无角色图/音频输入/CLF尾帧和音轨后处理，候选/稳定种子/停止恢复保留，原参考包兼容。交付 `I:/temp/H3-ASMR-12.zip`，N=1/2/3为12/24/36条；每条原生124帧≈5.167秒，另附12手动工作流和试听重点。108运行器、13转换、1真实ZIP接入、24payload与24模拟提交/复跑通过；原JSON保留，旧prompt不进入实际payload。真实H3调用0、音质未验，3001未重启、无提交推送。Audio Quality V1内实验，其他SFX仍暂停。[记录](records/2026-10-25-native-h3-asmr-batch.md)。
 
 ## 2026-10-25 — 分镜与音频后处理版本发布交接
 

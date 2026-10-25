@@ -12,14 +12,14 @@
 
 - 原生源码：`I:/AI/voxcpm2-evaluation/src/llama.cpp-omni-pinned`
 - 缓存构建：`I:/AI/voxcpm2-evaluation/src/build-cuda-vs2017`
-- COPY fallback 资产：`I:/AI/asmr-director-whole-script-compare/2026-10-11-tea/decoder-fallback`
+- COPY fallback 资产：`I:/AI/asmr_director/qa/whole-script-compare/2026-10-11-tea/decoder-fallback`
 - VS2017 Community 的 MSVC `14.16.27023`、`vcvars64.bat`，Windows SDK `10.0.17763.0` 的 `rc.exe`，CUDA `11.6` 库。
 
 暂停模型任务后，在新的外部目录构建；以下路径是示例，已有完整构建目录不会被覆盖：
 
 ```powershell
-py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr-director-generation-reliability/2026-10-19/native-fixed-reproduce --prepare
-py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr-director-generation-reliability/2026-10-19/native-fixed-reproduce --build
+py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr_director/qa/generation-reliability/2026-10-19/native-fixed-reproduce --prepare
+py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr_director/qa/generation-reliability/2026-10-19/native-fixed-reproduce --build
 ```
 
 `--prepare` 只写小型源码副本、diff 和收据。`--build` 重编一份 C++ runtime 对象，生成小型 runtime LIB，直接引用既有其他对象/库和已验证 COPY fallback，链接独立 `voxcpm2-cli-reliability.exe`，最后仅运行 `--help`。原 CLI 的 `--help` 返回 1 是既有行为；脚本同时验证 Usage 内容，不把它当作模型失败。构建不会运行模型或替换产品入口。
@@ -32,7 +32,7 @@ py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr-directo
 
 2026-10-19 首个隔离构建为：
 
-- 构建原输出：`I:/AI/asmr-director-generation-reliability/2026-10-19/native-fixed/voxcpm2-cli-reliability.exe`；真实对照后已移至稳定运行目录 `I:/AI/asmr-director-runtimes/voxcpm2/reliability-20261019/voxcpm2-cli.exe`，移动收据为同实验根的 `runtime-location.json`。原构建收据保留当时路径；不要对已移动的原输出目录运行 `--verify-existing`。
+- 构建原输出：`I:/AI/asmr_director/qa/generation-reliability/2026-10-19/native-fixed/voxcpm2-cli-reliability.exe`；真实对照后已移至稳定运行目录 `I:/AI/asmr_director/runtime/engines/voxcpm2/reliability-20261019/voxcpm2-cli.exe`，移动收据为同实验根的 `runtime-location.json`。原构建收据保留当时路径；不要对已移动的原输出目录运行 `--verify-existing`。
 - SHA256：`feba01044885d494bb428ec61d9db9626f728a482dc8fc51a84b6dbf5fec4c80`
 - 本构建工具执行 0 次模型推理；真实多文案对照由外部统一串行运行。
 

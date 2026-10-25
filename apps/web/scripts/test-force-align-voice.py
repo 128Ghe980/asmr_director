@@ -198,7 +198,7 @@ class TextAndCutTests(unittest.TestCase):
 
 class RequestTests(unittest.TestCase):
     def setUp(self):
-        root = Path(tempfile.gettempdir()) / "asmr-force-align-voice-tests"
+        root = Path("I:/AI/asmr_director/qa/force-split/python-tests") if Path("I:/").is_dir() else Path(__file__).resolve().parents[3] / ".local/tmp/force-split"
         root.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=root, prefix="protocol-")
         self.directory = Path(self.temporary.name)

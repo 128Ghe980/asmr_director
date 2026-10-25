@@ -6,7 +6,7 @@ import { StoredZipWriter, ZipLimitError } from "./stored-zip";
 
 let root: string;
 beforeEach(async () => {
-  const base = process.platform === "win32" ? "I:/AI" : tmpdir();
+  const base = tmpdir();
   await mkdir(base, { recursive: true });
   root = await mkdtemp(path.join(base, "asmr-zip-test-"));
 });

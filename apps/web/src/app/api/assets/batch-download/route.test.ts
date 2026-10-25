@@ -19,7 +19,7 @@ const bytes = Uint8Array.from([80, 75, 3, 4, 5, 6]);
 const readyUrls = new Set<string>();
 let root: string, archive: PreparedBatchDownload, cleanup: Mock<() => Promise<void>>;
 beforeEach(async () => {
-  const base = process.platform === "win32" ? "I:/AI" : tmpdir();
+  const base = tmpdir();
   await mkdir(base, { recursive: true });
   root = await mkdtemp(path.join(base, "asmr-batch-route-"));
   const filePath = path.join(root, "audio.zip");

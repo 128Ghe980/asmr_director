@@ -15,7 +15,9 @@ SPEC.loader.exec_module(helper)
 
 class ReferenceTranscriptionTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        test_root = Path("I:/AI/asmr_director/qa/voice-reference-transcription/python-tests") if Path("I:/").is_dir() else Path(__file__).resolve().parents[3] / ".local/tmp/voice-reference-transcription/python-tests"
+        test_root.mkdir(parents=True, exist_ok=True)
+        self.directory = tempfile.TemporaryDirectory(dir=test_root)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.source = self.root / "segment.wav"

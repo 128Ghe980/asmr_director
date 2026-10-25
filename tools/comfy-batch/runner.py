@@ -25,6 +25,8 @@ import wave
 FPS = 24
 RUNNER_VERSION = 1
 STATE_VERSION = 2
+TEXT_TO_VIDEO = "text-to-video"
+REFERENCE_TO_VIDEO = "reference-to-video"
 TAIL_NODE = "901"
 TAIL_SAVE_NODE = "902"
 FRAME_LIMIT_NODE = "903"
@@ -100,6 +102,11 @@ def load_package(folder):
         raise BatchError("不支持的项目包格式，需要 asmr-video-package version 1。")
     if not isinstance(manifest.get("projectId"), str) or not manifest["projectId"]:
         raise BatchError("projectId 必须是非空文字。")
+    generation_mode = manifest.get("generationMode", REFERENCE_TO_VIDEO)
+    if generation_mode not in (REFERENCE_TO_VIDEO, TEXT_TO_VIDEO):
+        raise BatchError("generationMode 必须为 reference-to-video 或 text-to-video。")
+    if generation_mode == TEXT_TO_VIDEO and manifest.get("characterReference") is not None:
+        raise BatchError("文生视频项目不使用 characterReference 角色图。")
     shots = manifest.get("shots")
     if not isinstance(shots, list) or not shots:
         raise BatchError("项目包没有镜头。")
@@ -113,8 +120,13 @@ def load_package(folder):
             raise BatchError("镜头 id/order 必须唯一，order 必须为正整数。")
         if shot.get("kind") not in ("speech", "ambient") or shot.get("referenceMode") not in ("new", "continuous"):
             raise BatchError(f"镜头 {shot['id']} 的 kind/referenceMode 无效。")
+        if generation_mode == TEXT_TO_VIDEO and (shot["kind"] != "ambient" or shot["referenceMode"] != "new"
+                or shot.get("audio") is not None or shot.get("characterReference") is not None):
+            raise BatchError(f"文生视频镜头 {shot['id']} 只支持 ambient/new，不使用音频或角色参考。")
         if not isinstance(shot.get("prompt"), str) or not shot["prompt"].strip():
             raise BatchError(f"镜头 {shot['id']} 缺少完整提示词。")
+        if generation_mode == TEXT_TO_VIDEO:
+            native_duration_frames(duration)
         if type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0:
             raise BatchError(f"镜头 {shot['id']} 的时长无效。")
         if shot["kind"] == "speech" and not isinstance(shot.get("audio"), str):
@@ -129,13 +141,45 @@ def load_package(folder):
         raise BatchError(f"工作流不是有效 JSON：{error}") from error
     if not isinstance(template, dict) or "nodes" in template:
         raise BatchError("工作流需要 API 格式，不能使用带 nodes/links 的界面工作流。")
-    for node_id, expected in {"22": "MiniMaxH3ReferenceToVideo", "11": "CreateVideo", "26": "SaveVideo", "20": "LoadImage", "24": "LoadAudio", "4": "VAEDecodeAudio", "10": "RandomNoise"}.items():
+    required = {"22": "MiniMaxH3ReferenceToVideo", "11": "CreateVideo", "26": "SaveVideo", "4": "VAEDecodeAudio", "10": "RandomNoise"}
+    if generation_mode != TEXT_TO_VIDEO:
+        required.update({"20": "LoadImage", "24": "LoadAudio"})
+    for node_id, expected in required.items():
         if template.get(node_id, {}).get("class_type") != expected:
             raise BatchError(f"API 模板需要节点 {node_id} ({expected})。")
+    if generation_mode == TEXT_TO_VIDEO:
+        active = prune_graph(template, include_tail=False)
+        if any(node["class_type"] in ("LoadImage", "LoadAudio", "ImageFromBatch", "TrimAudioDuration")
+               or node["class_type"].startswith("CLF") for node in active.values()):
+            raise BatchError("文生视频模板不能包含素材加载、裁剪或 CLF 尾帧处理节点。")
+        reference = template["22"]["inputs"]
+        if any(key.startswith(("ref_images", "ref_audios", "ref_videos", "ref_video_audios")) for key in reference):
+            raise BatchError("文生视频模板不能连接图像、音频或视频参考。")
+        if template["11"]["inputs"].get("audio") != ["4", 0] or template["11"]["inputs"].get("fps") != FPS:
+            raise BatchError("文生视频模板需要 CreateVideo 以 24 fps 直连节点 4 的 H3 原生音频。")
     return root, manifest, template, file_hash(template_path)
 
 
-def shot_facts(root, shot):
+def native_duration_frames(value):
+    """Validate before multiplication/rounding, then apply the source H3 rule."""
+    try:
+        if isinstance(value, bool):
+            raise ValueError("boolean duration")
+        duration = float(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise BatchError("每条时长必须是大于 0 的有限秒数。") from error
+    if not math.isfinite(duration) or duration <= 0:
+        raise BatchError("每条时长必须是大于 0 的有限秒数。")
+    if duration > 3600 / FPS:
+        raise BatchError("请求时长超过 H3 单次 3600 帧输入上限，请缩短每条时长。")
+    frames = max(5, round(duration * FPS))
+    frames += (5 - frames) % 17
+    if frames > 3600:
+        raise BatchError("时长对齐后超过 H3 单次 3600 帧输入上限，请缩短每条时长。")
+    return duration, frames
+
+
+def shot_facts(root, shot, generation_mode=REFERENCE_TO_VIDEO):
     audio_path = None
     audio_sha = None
     if shot["kind"] == "speech":
@@ -156,18 +200,23 @@ def shot_facts(root, shot):
         audio_sha = file_hash(audio_path)
         target_frames = max(1, math.ceil(duration * FPS - 1e-9))
     else:
-        duration = min(float(shot["durationSeconds"]), 5.0)
-        target_frames = max(1, math.floor(duration * FPS + 1e-9))
+        if generation_mode == TEXT_TO_VIDEO:
+            duration, target_frames = native_duration_frames(shot["durationSeconds"])
+        else:
+            duration = min(float(shot["durationSeconds"]), 5.0)
+            target_frames = max(1, math.floor(duration * FPS + 1e-9))
     generation_frames = max(5, target_frames)
     generation_frames += (5 - generation_frames) % 17
     if generation_frames > 3600:
         raise BatchError("本镜超过 H3 单次 3600 帧输入上限，请先在项目中拆成较短镜头。")
+    if generation_mode == TEXT_TO_VIDEO:
+        target_frames = generation_frames
     return {"kind": shot["kind"], "audio_path": audio_path, "audio_sha256": audio_sha,
             "source_duration": duration, "target_frames": target_frames,
             "target_duration": target_frames / FPS, "generation_frames": generation_frames}
 
 
-def prune_graph(graph):
+def prune_graph(graph, include_tail=True):
     needed = set()
 
     def visit(node_id):
@@ -180,14 +229,24 @@ def prune_graph(graph):
             if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str) and type(value[1]) is int:
                 visit(value[0])
     visit("26")
-    if TAIL_SAVE_NODE in graph:
+    if include_tail and TAIL_SAVE_NODE in graph:
         visit(TAIL_SAVE_NODE)
     return {node_id: value for node_id, value in graph.items() if node_id in needed}
 
 
-def build_graph(template, shot, facts, character, audio=None, tail=None, width=1216, height=672, seed=1, output_prefix=None):
+def build_graph(template, shot, facts, character=None, audio=None, tail=None, width=None, height=None, seed=1, output_prefix=None,
+                generation_mode=REFERENCE_TO_VIDEO):
     graph = copy.deepcopy(template)
     reference = graph["22"]["inputs"]
+    if generation_mode == TEXT_TO_VIDEO:
+        reference.update({"prompt": shot["prompt"].strip(), "length": facts["generation_frames"]})
+        for dimension, value in (("width", width), ("height", height)):
+            if value is not None:
+                reference[dimension] = value
+        graph["10"]["inputs"]["noise_seed"] = (seed + shot["order"]) % (2 ** 64)
+        graph["26"]["inputs"]["filename_prefix"] = output_prefix or f"asmr-batch/{slug(shot['id'])}"
+        return prune_graph(graph, include_tail=False)
+    width, height = 1216 if width is None else width, 672 if height is None else height
     for key in list(reference):
         if key.startswith(("ref_images", "ref_audios", "ref_videos", "ref_video_audios")):
             del reference[key]
@@ -416,16 +475,27 @@ class RunLock:
 
 class BatchRunner:
     def __init__(self, package, *, comfy_url="http://127.0.0.1:8188", character_image=None,
-                 output_root=None, width=1216, height=672, seed=1,
+                 output_root=None, width=None, height=None, seed=1, duration_seconds=None,
                  retries=1, job_timeout=0, poll_interval=2, missing_grace=12,
                  candidates=1, rerun_candidates=None, request_timeout=30,
                  disconnect_timeout=300, heartbeat_interval=15, status_callback=None, stop_event=None,
                  only=None, rerun=None, dry_run=False, concat=False, log=print, client=None,
                  publisher=copy_saved_video):
         self.root, self.manifest, self.template, self.template_sha = load_package(package)
+        self.generation_mode = self.manifest.get("generationMode", REFERENCE_TO_VIDEO)
+        self.text_to_video = self.generation_mode == TEXT_TO_VIDEO
         self.shots = self.manifest["shots"]
+        if duration_seconds is not None:
+            if not self.text_to_video:
+                raise BatchError("自定义每条时长仅支持文生视频；参考视频项目按原音频和镜头时长运行。")
+            duration_seconds, _ = native_duration_frames(duration_seconds)
+            self.shots = copy.deepcopy(self.shots)
+            for shot in self.shots:
+                shot["durationSeconds"] = duration_seconds
         self.log = log
-        if width <= 0 or height <= 0 or width % 32 or height % 32:
+        if not self.text_to_video:
+            width, height = 1216 if width is None else width, 672 if height is None else height
+        if any(type(value) is not int or value <= 0 or value % 32 for value in (width, height) if value is not None):
             raise BatchError("宽高必须为 32 的正整数倍。")
         if (not isinstance(candidates, int) or isinstance(candidates, bool) or candidates < 1):
             raise BatchError("每镜候选数必须是正整数。")
@@ -448,11 +518,13 @@ class BatchRunner:
         self.publisher = publisher
         self.concat_requested = concat
         self.client = client or ComfyClient(comfy_url, timeout=request_timeout)
+        if self.text_to_video and character_image:
+            raise BatchError("文生视频不使用角色图，请清空角色图选项。")
         self.character = Path(character_image).expanduser().resolve() if character_image else (
             package_path(self.root, self.manifest["characterReference"]) if self.manifest.get("characterReference") else None)
         if self.character and not self.character.is_file():
             raise BatchError("角色参考图不存在。")
-        if self.character is None and not dry_run:
+        if self.character is None and not dry_run and not self.text_to_video:
             raise BatchError("项目没有角色图，请在窗口选择，或传入 --character-image 图片路径。")
         self.character_sha = file_hash(self.character) if self.character else "missing-character"
         self.output = Path(output_root).expanduser().resolve() if output_root else self.root / "outputs"
@@ -585,6 +657,11 @@ class BatchRunner:
                     "durationSeconds": facts["source_duration"], "audio": facts["audio_sha256"],
                     "character": self.character_sha, "template": self.template_sha,
                     "width": self.width, "height": self.height, "seed": self.seed}
+        if self.text_to_video:
+            identity.update({"generationMode": TEXT_TO_VIDEO, "character": None,
+                             "generationFrames": facts["generation_frames"], "fps": FPS,
+                             "width": self.width if self.width is not None else self.template["22"]["inputs"]["width"],
+                             "height": self.height if self.height is not None else self.template["22"]["inputs"]["height"]})
         # Preserve the exact v1 identity for candidate 1, generation 0.
         # Candidate count is deliberately absent: increasing N only adds slots.
         if candidate != 1 or generation != 0:
@@ -760,7 +837,9 @@ class BatchRunner:
             if self.only is not None and shot["id"] not in self.only:
                 continue
             # Preflight only the active graph; speech does not need audio decode.
-            graph = build_graph(self.template, shot, {"generation_frames": 124}, "placeholder", tail="placeholder" if shot["referenceMode"] == "continuous" else None)
+            graph = build_graph(self.template, shot, {"generation_frames": 124}, "placeholder",
+                                tail="placeholder" if shot["referenceMode"] == "continuous" else None,
+                                width=self.width, height=self.height, generation_mode=self.generation_mode)
             active_graphs.append(graph)
             classes.update(node["class_type"] for node in graph.values())
         missing = sorted(classes - set(info))
@@ -1004,7 +1083,7 @@ class BatchRunner:
             recovered = result == "succeeded"
         if self.stop_event.is_set():
             return
-        facts = shot_facts(self.root, shot)
+        facts = shot_facts(self.root, shot, self.generation_mode)
         if existing and existing.pop("input_error", None) is not None:
             self.save()
         force = (self.rerun is not None and shot_id in self.rerun) or (shot_id, candidate) in self.rerun_candidates
@@ -1061,11 +1140,13 @@ class BatchRunner:
             work.mkdir(parents=True, exist_ok=True)
             try:
                 self.progress(entry, phase="preparing")
-                character_snapshot = work / ("character" + self.character.suffix.lower())
-                shutil.copyfile(self.character, character_snapshot)
-                if file_hash(character_snapshot) != self.character_sha:
-                    raise BatchError("角色图在批次启动后发生变化，请重新运行以使用新图。")
-                character = self.upload(character_snapshot)
+                character = None
+                if not self.text_to_video:
+                    character_snapshot = work / ("character" + self.character.suffix.lower())
+                    shutil.copyfile(self.character, character_snapshot)
+                    if file_hash(character_snapshot) != self.character_sha:
+                        raise BatchError("角色图在批次启动后发生变化，请重新运行以使用新图。")
+                    character = self.upload(character_snapshot)
                 audio = None
                 if facts["audio_path"]:
                     snapshot = work / "speech.wav"
@@ -1088,7 +1169,8 @@ class BatchRunner:
                         self.log(f"{label}：相邻上一镜同编号没有成功输出，改为独立镜头。")
                 entry["effective_reference_mode"] = "continuous" if tail else "new"
                 graph = build_graph(self.template, shot, facts, character, audio, tail, self.width, self.height, self.seed,
-                                    f"asmr-batch/{slug(self.manifest['projectId'])}/{shot['order']:03d}_{entry['submission_id']}")
+                                    f"asmr-batch/{slug(self.manifest['projectId'])}/{shot['order']:03d}_{entry['submission_id']}",
+                                    generation_mode=self.generation_mode)
                 graph["10"]["inputs"]["noise_seed"] = entry["seed"]
                 payload_file = work / "payload.json"
                 atomic_json(payload_file, {"prompt": graph, "client_id": entry["submission_id"], "extra_data": {"asmr_batch_submission_id": entry["submission_id"]}})
@@ -1106,7 +1188,9 @@ class BatchRunner:
                     entry["attempt_count"] -= 1
                     self.save()
                     return
-                self.log(f"{label}：提交（{entry['attempt_count']}/{self.retries + 1}），{facts['generation_frames']} 帧，seed={entry['seed']}。")
+                duration_note = (f"请求 {facts['source_duration']:g} 秒，对齐后 {facts['target_duration']:.3f} 秒，"
+                                 if self.text_to_video else "")
+                self.log(f"{label}：提交（{entry['attempt_count']}/{self.retries + 1}），{duration_note}{facts['generation_frames']} 帧，seed={entry['seed']}。")
                 try:
                     entry["prompt_id"] = self.client.submit(graph, entry["submission_id"])
                     entry["status"] = "running"
@@ -1147,12 +1231,13 @@ class BatchRunner:
         for index, shot in enumerate(self.shots):
             if self.only is not None and shot["id"] not in self.only:
                 continue
-            facts = shot_facts(self.root, shot)
+            facts = shot_facts(self.root, shot, self.generation_mode)
             for candidate in range(1, self.candidates + 1):
                 tail = (f"__PREVIOUS_SUCCESSFUL_TAIL_C{candidate:03d}__.png"
                         if index > 0 and shot["referenceMode"] == "continuous" else None)
                 graph = build_graph(self.template, shot, facts, "__CHARACTER_IMAGE__",
-                                    shot.get("audio"), tail, self.width, self.height, self.seed)
+                                    shot.get("audio"), tail, self.width, self.height, self.seed,
+                                    generation_mode=self.generation_mode)
                 actual_seed = self.seed_for(shot, candidate)
                 graph["10"]["inputs"]["noise_seed"] = actual_seed
                 name = f"{shot['order']:03d}" + (f"_c{candidate:03d}" if self.candidates > 1 else "")
@@ -1160,10 +1245,14 @@ class BatchRunner:
                 atomic_json(target, {"prompt": graph, "_dry_run": {
                     "shotId": shot["id"], "candidateIndex": candidate, "seed": actual_seed,
                     "fingerprint": self.fingerprint(shot, facts, candidate),
+                    **({"requestedDurationSeconds": facts["source_duration"]} if self.text_to_video else {}),
                     "targetDurationSeconds": facts["target_duration"], "generationFrames": facts["generation_frames"],
-                    "note": "占位上传名称；连续参考取相邻上一镜同编号候选的实际成功输出。"}})
+                    "note": ("文生视频：无需上传素材；保留 H3 原生画面和音轨，按对齐帧数完整保存。" if self.text_to_video
+                             else "占位上传名称；连续参考取相邻上一镜同编号候选的实际成功输出。")}})
                 prepared.append(str(target))
-                self.log(f"{shot['id']} / 候选 {candidate}：dry-run payload → {target}")
+                duration_note = (f"请求 {facts['source_duration']:g} 秒，对齐后 {facts['target_duration']:.3f} 秒；"
+                                 if self.text_to_video else "")
+                self.log(f"{shot['id']} / 候选 {candidate}：{duration_note}dry-run payload → {target}")
         return {"dry_run": prepared}
 
     def set_preview(self, candidate, receipt):
@@ -1173,6 +1262,11 @@ class BatchRunner:
         self.save()
 
     def concat_preview(self, candidate=1):
+        if self.text_to_video:
+            reason = "文生视频触发音以独立片段保存；本模式不生成顺序合片。"
+            self.set_preview(candidate, {"status": "unavailable", "last_error": reason})
+            self.log(reason)
+            return "unavailable"
         clips, identities = [], []
         name = "preview.mp4" if self.candidates == 1 else f"preview-c{candidate:03d}.mp4"
         previous = self.state.get("previews", {}).get(str(candidate), {})
@@ -1460,8 +1554,10 @@ def parser():
     result.add_argument("--character-image", help="替换项目角色图")
     result.add_argument("--comfy-url", default="http://127.0.0.1:8188")
     result.add_argument("--output-root", type=Path, help="输出/状态/临时目录，默认项目内 outputs")
-    result.add_argument("--width", type=int, default=1216)
-    result.add_argument("--height", type=int, default=672)
+    result.add_argument("--width", type=int, help="覆盖宽度；参考模式默认 1216，文生视频默认使用工作流")
+    result.add_argument("--height", type=int, help="覆盖高度；参考模式默认 672，文生视频默认使用工作流")
+    result.add_argument("--duration-seconds", type=positive_duration_seconds,
+                        help="文生视频每条请求时长（秒）；省略则用各镜头时长，按 H3 帧数规则对齐")
     result.add_argument("--seed", type=int, default=1)
     result.add_argument("--retries", type=int, default=1, help="明确技术失败后的最大重试次数")
     result.add_argument("--candidates", type=positive_integer, default=1, help="每镜候选数 N；默认 1，增加 N 只补缺少候选")
@@ -1504,6 +1600,13 @@ def positive_seconds(value):
     return number
 
 
+def positive_duration_seconds(value):
+    try:
+        return native_duration_frames(value)[0]
+    except BatchError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def gui_options(raw, *, dry_run=False, concat=False):
     """Validate editable text before starting any thread, file access or request."""
     values = {key: str(value).strip() for key, value in raw.items()}
@@ -1515,11 +1618,12 @@ def gui_options(raw, *, dry_run=False, concat=False):
         seconds = minutes * 60
         if not math.isfinite(seconds):
             raise argparse.ArgumentTypeError("最长等待时间过大。")
+        duration_seconds = positive_duration_seconds(values["duration_seconds"]) if values.get("duration_seconds") else None
     except argparse.ArgumentTypeError as error:
         raise BatchError(str(error)) from error
     return {"package": values["package"], "character_image": values.get("character_image") or None,
             "comfy_url": values.get("comfy_url") or "http://127.0.0.1:8188",
-            "candidates": candidates, "job_timeout": seconds,
+            "candidates": candidates, "job_timeout": seconds, "duration_seconds": duration_seconds,
             "only": values.get("only") or None, "rerun": values.get("rerun") or None,
             "rerun_candidates": values.get("rerun_candidates") or None, "dry_run": dry_run, "concat": concat}
 
@@ -1641,6 +1745,11 @@ class GuiLogView:
             widget.configure(state="disabled")
 
 
+def gui_default_package():
+    folder = Path(__file__).resolve().parent
+    return str(folder) if (folder / "project.json").is_file() else ""
+
+
 def launch_gui():
     try:
         import tkinter as tk
@@ -1655,12 +1764,12 @@ def launch_gui():
     frame = ttk.Frame(window, padding=14)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(1, weight=1)
-    fields = {"package": tk.StringVar(), "character_image": tk.StringVar(), "comfy_url": tk.StringVar(value="http://127.0.0.1:8188"),
-              "candidates": tk.StringVar(value="1"), "job_minutes": tk.StringVar(value="0"),
+    fields = {"package": tk.StringVar(value=gui_default_package()), "character_image": tk.StringVar(), "comfy_url": tk.StringVar(value="http://127.0.0.1:8188"),
+              "candidates": tk.StringVar(value="1"), "job_minutes": tk.StringVar(value="0"), "duration_seconds": tk.StringVar(),
               "only": tk.StringVar(), "rerun": tk.StringVar(), "rerun_candidates": tk.StringVar()}
     dry = tk.BooleanVar(value=False)
     concat_flag = tk.BooleanVar(value=False)
-    for row, (key, label) in enumerate((("package", "项目文件夹"), ("character_image", "角色图（可替换）"), ("comfy_url", "ComfyUI 地址"))):
+    for row, (key, label) in enumerate((("package", "项目文件夹"), ("character_image", "角色图（文生视频无需）"), ("comfy_url", "ComfyUI 地址"))):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=fields[key]).grid(row=row, column=1, sticky="ew", padx=8)
         if key != "comfy_url":
@@ -1675,6 +1784,10 @@ def launch_gui():
     ttk.Entry(controls, textvariable=fields["candidates"], width=8).grid(row=0, column=1, padx=(8, 20))
     ttk.Label(controls, text="最长任务等待（分钟，0=不限）").grid(row=0, column=2, sticky="w")
     ttk.Entry(controls, textvariable=fields["job_minutes"], width=10).grid(row=0, column=3, padx=8)
+    duration_controls = ttk.Frame(controls)
+    duration_controls.grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
+    ttk.Label(duration_controls, text="每条时长（秒，留空用项目；文生视频）").grid(row=0, column=0, sticky="w")
+    ttk.Entry(duration_controls, textvariable=fields["duration_seconds"], width=12).grid(row=0, column=1, padx=8)
     ttk.Checkbutton(frame, text="只检查项目并准备 payload（不连接 ComfyUI）", variable=dry).grid(row=5, column=0, columnspan=3, sticky="w", pady=4)
     ttk.Checkbutton(frame, text="由 ComfyUI 合并顺序预览", variable=concat_flag).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
     advanced = ttk.LabelFrame(frame, text="选填；镜头可用 ID 或序号，候选用 镜头:候选号", padding=8)

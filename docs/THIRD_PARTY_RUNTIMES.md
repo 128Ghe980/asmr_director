@@ -10,7 +10,7 @@ This file records external runtime projects and model assets used during local e
 
 The [author's model card](https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn) lists Apache-2.0. HF revision `99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd`; the public ModelScope same-author mirror revision `dc70e032dd023312c750ac50ba03ade725fd8016` provides identical weight bytes. The single PyTorch checkpoint is 1,276,296,151 bytes, SHA256 `de031fd4b29e0c0667e5346450fadfe1326c89936b888b59c4ede608db763ee4`, verified in full after resuming from the mirror. Config/tokenizer files and the model card were verified against HF Git-blob metadata. No Flax duplicate, new Python package, model weight or private WAV is vendored into Git.
 
-External root: `I:/AI/asmr-director-forced-alignment/2026-10-16`; reuse `env-comfyui-clone/python.exe` with Torch/TorchAudio 2.8.0+cu129 and Transformers 4.50.0. Inference is offline CUDA fp16 with processor normalization and attention mask; CTC path calculation uses CPU float32. Unsupported characters are rejected rather than replaced with unknown/wildcard/interpolated times. Given-text alignment scores are not recognition accuracy or proof of complete speech. Original 48kHz PCM, existing Whisper checks and explicit user confirmation remain separate; no product provider or candidate state is changed. TorchAudio's CTC interface is deprecated in 2.8, so this recipe records that existing version rather than upgrading the environment.
+External root: `I:/AI/asmr_director/runtime/forced-alignment/2026-10-16`; reuse `env-comfyui-clone/python.exe` with Torch/TorchAudio 2.8.0+cu129 and Transformers 4.50.0. Inference is offline CUDA fp16 with processor normalization and attention mask; CTC path calculation uses CPU float32. Unsupported characters are rejected rather than replaced with unknown/wildcard/interpolated times. Given-text alignment scores are not recognition accuracy or proof of complete speech. Original 48kHz PCM, existing Whisper checks and explicit user confirmation remain separate; no product provider or candidate state is changed. TorchAudio's CTC interface is deprecated in 2.8, so this recipe records that existing version rather than upgrading the environment.
 
 
 ## AudioLDM2 — isolated personal-care SFX experiment
@@ -28,8 +28,8 @@ and [中文](audio-quality/MODEL_SFX_TEST.zh.md).
   LFS bytes came from the public `AI-ModelScope/audioldm2` mirror at revision
   `87e064c5ba53208c9abccd31359dcb2c4c86fce1`, after official size/SHA matching;
   the receipt preserves each source. Download completion did not establish inference support.
-- Runtime/cache root: `I:/AI/asmr-director-sfx-model-test/runtime`; experiment
-  evidence root: `I:/AI/asmr-director-sfx-model-test/2026-10-04`.
+- Runtime/cache root: `I:/AI/asmr_director/runtime/sfx-model-test/runtime`; experiment
+  evidence root: `I:/AI/asmr_director/runtime/sfx-model-test/2026-10-04`.
 - Existing read-only CUDA environment: GPT-SoVITS `env-comfyui-clone/python.exe`,
   Python 3.12.8, torch 2.8.0+cu129, diffusers 0.35.2, transformers 4.50.0,
   accelerate 1.10.1, NumPy 1.26.4, SciPy 1.16.1. No package changes for this test.
@@ -91,7 +91,7 @@ Repository policy:
 
 ## VoxCPM2 / llama.cpp-omni native CLI
 
-2026-10-19 stability build: [reproducible patch and build notes](../tools/voxcpm2-runtime/README.en.md), [中文说明](../tools/voxcpm2-runtime/README.zh.md). The local F32 ResidualLM KV capacity now follows the actual BaseLM context: low-VRAM 4096 uses 64MiB instead of the fixed 512MiB. The isolated executable is stored at `I:/AI/asmr-director-runtimes/voxcpm2/reliability-20261019/voxcpm2-cli.exe`, SHA256 `feba01044885d494bb428ec61d9db9626f728a482dc8fc51a84b6dbf5fec4c80`. It reuses the previously tested Aug30 cached components/COPY fallback; it is not solely a one-line modification of the Aug25 default binary. Weights and selected references remain external and unchanged. Two same-component, same-seed control WAVs match exactly; this does not establish that every historical initialization failure has the same cause. Production activation and batch evidence are recorded separately in the dated development record.
+2026-10-19 stability build: [reproducible patch and build notes](../tools/voxcpm2-runtime/README.en.md), [中文说明](../tools/voxcpm2-runtime/README.zh.md). The local F32 ResidualLM KV capacity now follows the actual BaseLM context: low-VRAM 4096 uses 64MiB instead of the fixed 512MiB. The isolated executable is stored at `I:/AI/asmr_director/runtime/engines/voxcpm2/reliability-20261019/voxcpm2-cli.exe`, SHA256 `feba01044885d494bb428ec61d9db9626f728a482dc8fc51a84b6dbf5fec4c80`. It reuses the previously tested Aug30 cached components/COPY fallback; it is not solely a one-line modification of the Aug25 default binary. Weights and selected references remain external and unchanged. Two same-component, same-seed control WAVs match exactly; this does not establish that every historical initialization failure has the same cause. Production activation and batch evidence are recorded separately in the dated development record.
 
 Optional Windows resource diagnostics use the existing Python's base interpreter with `-I -S -B` and standard-library Windows APIs; no Torch/model import or dependency installation. `GetPerformanceInfo` supplies global commit/physical figures, `GetProcessMemoryInfo` supplies native process figures, and `nvidia-smi` supplies whole-device observations. Missing data remain unknown. The monitor only controls its own GPU query process, never the native model; setup/shutdown have a total 2.5-second request wait bound. CUDA OOM, host allocation failure and cuBLAS initialization remain separate error classes.
 

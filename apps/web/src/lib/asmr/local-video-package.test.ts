@@ -9,7 +9,7 @@ import { writePcm16Wav } from "./pcm-audio";
 import { StoredZipWriter } from "./stored-zip";
 import { createClipVideoSourceFingerprint } from "./video-plan";
 
-const base = process.platform === "win32" ? "I:/AI/asmr-director-video-package-tests" : tmpdir();
+const base = process.platform === "win32" ? "I:/AI/asmr_director/qa/video-package-tests" : tmpdir();
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5V0AAAAASUVORK5CYII=", "base64");
 let root: string, tempRoot: string, runnerRoot: string, config: LocalRuntimeConfig;
 beforeEach(async () => {

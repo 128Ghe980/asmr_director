@@ -5,6 +5,7 @@ This project has a fixed roadmap and a separate project-management rulebook. Bef
 1. `docs/ROADMAP.md`
 2. `docs/PROJECT_MANAGEMENT.md`
 3. `docs/AI_HANDOFF.md`
+4. `docs/STORAGE.md` before creating outputs, running tests, moving or deleting files.
 
 Also check current git status and recent project history before deciding what should happen next.
 
@@ -21,3 +22,4 @@ Also check current git status and recent project history before deciding what sh
 - After meaningful work, update the relevant docs.
 - New important specs need both English and Chinese versions.
 - Completion claims require verification evidence.
+- Storage is project-scoped: use `I:/AI/asmr_director/{artifacts,qa,runtime,service,cache,archive,tmp}` for external data, or repository `.local/tmp` for small local fallback files. Never create project outputs in `I:/temp` or new `I:/AI/asmr-director-*` siblings. `I:/AI` is a shared parent for many projects. Old absolute paths in historical evidence are not current output instructions; resolve them through `I:/AI/asmr_director/storage-map.json`.

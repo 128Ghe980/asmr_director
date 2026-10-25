@@ -11,7 +11,7 @@ const python = process.env.ASMR_VIDEO_PACKAGE_TEST_PYTHON;
 
 describe.skipIf(!python)("real package to portable Python runner", () => {
   it("extracts the exported single-audio package and dry-runs all speech/ambient/continuation modes without a server", async () => {
-    const base = path.resolve(process.env.ASMR_VIDEO_PACKAGE_TEST_ROOT ?? "I:/AI/asmr-director-video-batch/2026-10-15/qa");
+    const base = path.resolve(process.env.ASMR_VIDEO_PACKAGE_TEST_ROOT ?? "I:/AI/asmr_director/qa/video-batch/2026-10-15/qa");
     await mkdir(base, { recursive: true });
     const root = await mkdtemp(path.join(base, "portable-smoke-"));
     const assets = path.join(root, "assets"), extracted = path.join(root, "package"), output = path.join(extracted, "outputs");

@@ -56,6 +56,6 @@ AudioLDM2 权重许可 CC-BY-NC-SA-4.0，本轮独立非商用实验，不入生
 2026-10-05 拒绝；原定试听关注动作辨识、刺耳感、意外人声或音乐、种子间变化、
 长段重复手势。未来新候选最初才标为待听审。
 
-证据根 `I:/AI/asmr-director-sfx-model-test/2026-10-04`，权重与缓存也在 I 盘
+证据根 `I:/AI/asmr_director/runtime/sfx-model-test/2026-10-04`，权重与缓存也在 I 盘
 独立 runtime。大文件不进 Git；只读复用已有 CUDA 环境，不改依赖。见
 [来源记录](../THIRD_PARTY_RUNTIMES.md)，实验记录区分完成项和下载进度。

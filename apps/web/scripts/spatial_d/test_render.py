@@ -71,7 +71,9 @@ class TrajectoryTests(unittest.TestCase):
 
 class AudioTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        test_root = Path("I:/AI/asmr_director/qa/spatial-d/python-tests") if Path("I:/").is_dir() else Path(__file__).resolve().parents[4] / ".local/tmp/spatial-d/python-tests"
+        test_root.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=test_root)
         self.root = Path(self.temp.name)
         self.path = self.root / 'input.wav'
         self.hrtf = self.root / 'test.sofa'

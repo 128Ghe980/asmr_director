@@ -1646,7 +1646,9 @@ class PersistentWorkerTests(unittest.TestCase):
 
 class RecognitionDiagnosticsTests(unittest.TestCase):
     def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory()
+        test_root = Path("I:/AI/asmr_director/qa/voice-group-analysis/python-tests") if Path("I:/").is_dir() else Path(__file__).resolve().parents[3] / ".local/tmp/voice-group-analysis/python-tests"
+        test_root.mkdir(parents=True, exist_ok=True)
+        self.scratch = tempfile.TemporaryDirectory(dir=test_root)
         self.addCleanup(self.scratch.cleanup)
         root = Path(self.scratch.name)
         self.request = root / "request.json"

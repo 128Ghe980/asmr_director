@@ -74,7 +74,7 @@ existing remote takes were rejected on 2026-10-05. The original review criteria
 were action identity, harshness, unintended voice/music, variation between seeds
 and repeated gestures in longer clips; future candidates would initially be pending.
 
-Artifact root: `I:/AI/asmr-director-sfx-model-test/2026-10-04`; weights/cache on
+Artifact root: `I:/AI/asmr_director/runtime/sfx-model-test/2026-10-04`; weights/cache on
 the same I-drive runtime root. Large binaries stay outside Git. Reuse the existing
 CUDA environment without changing packages. The [runtime provenance](../THIRD_PARTY_RUNTIMES.md)
 and experiment record distinguish completed tests from download progress.

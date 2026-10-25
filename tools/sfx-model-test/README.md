@@ -51,10 +51,10 @@ Example (PowerShell, after verified weights exist):
 
 ```powershell
 $taskPython = 'D:/CodexWorkplace/asmr_director_runtime/engines/gpt-sovits/env-comfyui-clone/python.exe'
-$taskModel = 'I:/AI/asmr-director-sfx-model-test/runtime/cache/models/cvssp--audioldm2--c8e7e189d324425c05c4c2f81214041ef4107983'
-$taskOutput = 'I:/AI/asmr-director-sfx-model-test/2026-10-04'
+$taskModel = 'I:/AI/asmr_director/runtime/sfx-model-test/runtime/cache/models/cvssp--audioldm2--c8e7e189d324425c05c4c2f81214041ef4107983'
+$taskOutput = 'I:/AI/asmr_director/runtime/sfx-model-test/2026-10-04'
 $taskRevision = 'c8e7e189d324425c05c4c2f81214041ef4107983'
-$env:PYTHONPYCACHEPREFIX = 'I:/AI/asmr-director-sfx-model-test/runtime/pycache'
+$env:PYTHONPYCACHEPREFIX = 'I:/AI/asmr_director/runtime/sfx-model-test/runtime/pycache'
 & $taskPython tools/sfx-model-test/generate.py --model-path $taskModel --revision $taskRevision --artifact-root $taskOutput --categories ear_brushing --seeds 104729
 & $taskPython tools/sfx-model-test/generate.py --model-path $taskModel --revision $taskRevision --artifact-root $taskOutput
 & $taskPython tools/sfx-model-test/generate.py --model-path $taskModel --revision $taskRevision --artifact-root $taskOutput --categories ear_brushing massage --duration 24

@@ -1,10 +1,18 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-10-25
+Last updated: 2026-10-26
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 当前优先级
+
+2026-10-26 发布交接：H3 原生 ASMR 12 类触发音、自定义时长和目录整理作为本次版本提交到 `codex/voxcpm2-product-generation`；具体 commit/远端状态查 Git 与 `I:/AI/asmr_director/qa/handoff/2026-10-26/publication.json`。下一步是目标 ComfyUI 机器实际批跑并试听，真实 H3 调用仍为 0。唯一外置根 `I:/AI/asmr_director`；当前包、服务入口、验证边界及 27 个有意保留的旧工作区路径见[本次交接](records/2026-10-26-h3-storage-handoff.md)。不要全量暂存遗留 spatial-studio/Qwen 工作，也不要从脏主工作区替换常驻服务。
+
+2026-10-26 按用户要求完成项目存储收敛：85 个 I:/AI 平级项目目录及本轮 I:/temp 的 6 项 H3 产物归入唯一数据根 `I:/AI/asmr_director`，旧散根为 0；清理 25 个纯 webpack 缓存和 1 个已验证重复展开包，释放约 3.30 GiB。模型、用户输入和音频保留。目录规则同步全局 AGENTS 与项目 STORAGE/AGENT/管理文档；测试输出默认值、运行配置、26 个 junction 和 H3 包路径同步。136 项 Python、19 项 Vitest 和 17 项服务 HTTP/内容哈希核验通过。当前 H3 包为 `I:/AI/asmr_director/artifacts/h3-asmr/H3-ASMR-12-custom-duration.zip`。这是 Audio Quality V1 内的工程维护，路线不变。[完整记录](records/2026-10-26-project-storage-cleanup.md)；[目录规则](STORAGE.md)。历史段落中的旧绝对路径通过数据根 `storage-map.json` 查新位置，不可再作为输出路径。
+
+2026-10-25 同日按用户补充增加原生 ASMR 自定义时长：窗口和 `--duration-seconds` 支持小数秒，留空逐镜使用项目时长；12提示词去掉固定秒数/次数，打包器及手动工作流同步选择值，按源帧数规则对齐。新版 `I:/temp/H3-ASMR-12-custom-duration.zip` 保留旧包；114运行器+22转换测试、1网页ZIP接入、72payload和48mock提交/切回历史复用通过，真实H3调用0。Audio Quality V1内实验及其他SFX暂停保持。[追加记录](records/2026-10-25-native-h3-asmr-batch.md#同日追加--自定义每条时长)。
+
+2026-10-25 按用户要求准备 H3 原生 ASMR 12 类触发音试跑包，工作流原 prompt 不作参考，全部按官方 T2VA 三字段重写。复用批跑器新增无参考文生模式，保持原模型/20 步/竖屏和原生音轨，12×N 候选可停止恢复；交付 `I:/temp/H3-ASMR-12.zip`。108 运行器及 13 转换测试、1 真实网页 ZIP 接入、24 payload 和 24 模拟任务/复跑均通过；真实 H3 调用 0，听感待目标机实跑。此实验属于当前 Audio Quality V1，其他 SFX 模型工作仍暂停、不新增顶层阶段。[记录](records/2026-10-25-native-h3-asmr-batch.md)。
 
 2026-10-25发布交接：本会话累计音频显式后处理、分镜全稿上下文/整批校对/重新生成与诊断、语义台词保留、操作结果窗口及空镜/检查器界面修复整理为同一开发分支版本。最终完整回归2160通过/0失败/3条件跳过（163文件）、实际后处理Python19通过、类型/完整src lint退出0（1已有未使用导入警告）；首次完整测试1处首次POST等待失败、隔离17通过及完整复测证据保留，不称根因已修。应用树f8e4329a与运行构建X5v7do9VMxFCgxLxrIEdt一致，复用已验构建、3001不重启，7JS/1CSS及425生产metadata核对通过。27另会话路径排除并保持，无用户工程存储或新增模型调用。AudioQualityV1继续进行/SFX暂停；发布状态以Git HEAD/远端和QA publication.json为准。[发布交接](records/2026-10-25-storyboard-audio-finishing-release.md)。
 

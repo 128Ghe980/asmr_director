@@ -12,7 +12,7 @@ const prepare = vi.mocked(prepareVoicePreview), bytes = Uint8Array.from([82, 73,
 let root: string, preview: PreparedVoicePreview, cleanup: Mock<() => Promise<void>>;
 const urls = new Set<string>();
 beforeEach(async () => {
-  const base = process.platform === "win32" ? "I:/AI" : tmpdir(); await mkdir(base, { recursive: true });
+  const base = tmpdir(); await mkdir(base, { recursive: true });
   root = await mkdtemp(path.join(base, "asmr-preview-route-")); const filePath = path.join(root, "preview.wav"); await writeFile(filePath, bytes);
   cleanup = vi.fn(async () => {}); preview = { filePath, filename: "生日_已采用语音预览.wav", clipCount: 2, skippedCount: 3, duration: 12.5, size: bytes.length, cleanup };
   prepare.mockReset(); prepare.mockResolvedValue(preview);

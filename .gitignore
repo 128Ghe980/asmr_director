@@ -40,6 +40,7 @@ out/
 dist/
 coverage/
 __pycache__/
+.local/
 *.pyc
 .env
 .env.*

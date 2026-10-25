@@ -15,7 +15,7 @@ vi.mock("@/lib/asmr/local-video-package", async importOriginal => ({
 const prepare = vi.mocked(prepareVideoPackage);
 const bytes = Uint8Array.from([80, 75, 3, 4, 5, 6]);
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5V0AAAAASUVORK5CYII=", "base64");
-const base = process.platform === "win32" ? "I:/AI/asmr-director-video-package-tests" : tmpdir();
+const base = process.platform === "win32" ? "I:/AI/asmr_director/qa/video-package-tests" : tmpdir();
 const urls = new Set<string>();
 let root: string, archive: PreparedBatchDownload;
 beforeEach(async () => {

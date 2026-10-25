@@ -17,7 +17,8 @@ SOURCE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("native_tail_runner", SOURCE / "runner.py")
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
-ROOT = Path(os.environ.get("ASMR_BATCH_TEST_ROOT", str(Path(tempfile.gettempdir()) / "asmr-comfy-batch-native-tail-tests")))
+DEFAULT_ROOT = Path("I:/AI/asmr_director/qa/video-batch/native-tail-tests") if Path("I:/").is_dir() else Path(__file__).resolve().parents[2] / ".local/tmp/comfy-batch/native-tail-tests"
+ROOT = Path(os.environ.get("ASMR_BATCH_TEST_ROOT", DEFAULT_ROOT))
 
 
 def png(value=23):

@@ -9,7 +9,7 @@ import { AUDIO_POST_PROCESSING_RENDERER_VERSION } from "./audio-post-processing-
 import { planAudioPostProcessing, renderAudioPostProcessing } from "./audio-post-processing-service";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 
-const base = path.resolve(process.env.ASMR_TEST_TEMP_ROOT ?? "I:/AI/asmr-director-audio-post-processing/2026-10-23/tests");
+const base = path.resolve(process.env.ASMR_TEST_TEMP_ROOT ?? "I:/AI/asmr_director/qa/audio-post-processing/2026-10-23/tests");
 const env = { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "test-only-key", ASMR_PLANNER_API_MODEL: "test-model" };
 let root: string, config: LocalRuntimeConfig;
 beforeEach(async () => {

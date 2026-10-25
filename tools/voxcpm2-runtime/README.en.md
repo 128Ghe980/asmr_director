@@ -12,14 +12,14 @@ Requirements are Windows, Python 3's standard library and these existing externa
 
 - Native sources: `I:/AI/voxcpm2-evaluation/src/llama.cpp-omni-pinned`
 - Cached build: `I:/AI/voxcpm2-evaluation/src/build-cuda-vs2017`
-- COPY fallback assets: `I:/AI/asmr-director-whole-script-compare/2026-10-11-tea/decoder-fallback`
+- COPY fallback assets: `I:/AI/asmr_director/qa/whole-script-compare/2026-10-11-tea/decoder-fallback`
 - VS2017 Community MSVC `14.16.27023`, `vcvars64.bat`, Windows SDK `10.0.17763.0` `rc.exe`, and CUDA `11.6` libraries.
 
 Wait for model jobs to finish, then use a fresh external output directory. Existing completed builds are never overwritten:
 
 ```powershell
-py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr-director-generation-reliability/2026-10-19/native-fixed-reproduce --prepare
-py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr-director-generation-reliability/2026-10-19/native-fixed-reproduce --build
+py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr_director/qa/generation-reliability/2026-10-19/native-fixed-reproduce --prepare
+py -3 -B tools/voxcpm2-runtime/build_native_fixed.py --output I:/AI/asmr_director/qa/generation-reliability/2026-10-19/native-fixed-reproduce --build
 ```
 
 `--prepare` writes only small source copies, the diff and a receipt. `--build` compiles one C++ runtime object, creates a small runtime library, links cached objects/libraries and the verified COPY fallback directly into `voxcpm2-cli-reliability.exe`, then invokes only `--help`. The original CLI returns 1 for help; the script accepts that established behavior and verifies the Usage text. It performs no inference or production replacement.
@@ -32,7 +32,7 @@ Outputs use about 191MiB plus tool temporary space. The first build on 2026-10-1
 
 The first isolated artifact on 2026-10-19 is:
 
-- Original build output: `I:/AI/asmr-director-generation-reliability/2026-10-19/native-fixed/voxcpm2-cli-reliability.exe`; after real comparisons it was moved to the stable runtime path `I:/AI/asmr-director-runtimes/voxcpm2/reliability-20261019/voxcpm2-cli.exe`. The experiment root's `runtime-location.json` records that move. The build receipt retains its original paths; do not run `--verify-existing` against the moved-away original output.
+- Original build output: `I:/AI/asmr_director/qa/generation-reliability/2026-10-19/native-fixed/voxcpm2-cli-reliability.exe`; after real comparisons it was moved to the stable runtime path `I:/AI/asmr_director/runtime/engines/voxcpm2/reliability-20261019/voxcpm2-cli.exe`. The experiment root's `runtime-location.json` records that move. The build receipt retains its original paths; do not run `--verify-existing` against the moved-away original output.
 - SHA256: `feba01044885d494bb428ec61d9db9626f728a482dc8fc51a84b6dbf5fec4c80`
 - This builder ran zero model inferences. Real multi-text comparisons are orchestrated separately and serially.
 

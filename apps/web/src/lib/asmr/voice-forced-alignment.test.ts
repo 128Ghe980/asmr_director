@@ -46,7 +46,7 @@ describe("forced CTC timing bridge", () => {
   });
 
   async function fixture() {
-    const base = process.env.TEMP || "I:/AI/asmr-director-force-split/2026-10-21/bridge-qa";
+    const base = process.env.TEMP || "I:/AI/asmr_director/qa/force-split/2026-10-21/bridge-qa";
     await mkdir(base, { recursive: true });
     const root = await mkdtemp(path.join(base, "force-bridge-"));
     const model = path.join(root, "model"); await mkdir(model); await writeFile(path.join(model, "config.json"), "{}");

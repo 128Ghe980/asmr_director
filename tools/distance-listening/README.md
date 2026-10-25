@@ -58,7 +58,7 @@ Design and algorithm survey: [English](../../docs/superpowers/specs/2026-09-14-d
 ```powershell
 $audioPython = 'D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/.venv/Scripts/python.exe'
 $originalListening = 'D:/CodexWorkplace/asmr_director_runtime/distance-listening/2026-09-13'
-$refinedListening = 'I:/AI/asmr-director-distance-listening/2026-09-14'
+$refinedListening = 'I:/AI/asmr_director/qa/distance-listening/2026-09-14'
 & $audioPython tools/distance-listening/refine.py --reference $originalListening --output $refinedListening
 & $audioPython tools/distance-listening/verify.py $refinedListening
 & $audioPython tools/distance-listening/verify_refinement.py $refinedListening
@@ -81,7 +81,7 @@ $audioPython = 'D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/.venv/S
 $originalListening = 'D:/CodexWorkplace/asmr_director_runtime/distance-listening/2026-09-13'
 $motionSource = 'I:/AI/voxcpm2-evaluation/listening/longtext-deepseek-class-local-pause-20260904/03_deepseek_class_local_rule.wav'
 $motionAsr = 'I:/AI/voxcpm2-evaluation/evidence/longtext-deepseek-class-local-pause-asr.json'
-$motionOutput = 'I:/AI/asmr-director-distance-listening/2026-09-14-d-long-motion'
+$motionOutput = 'I:/AI/asmr_director/qa/distance-listening/2026-09-14-d-long-motion'
 & $audioPython tools/distance-listening/long_motion.py --reference $originalListening --source $motionSource --asr-evidence $motionAsr --output $motionOutput
 & $audioPython tools/distance-listening/verify.py $motionOutput
 & $audioPython tools/distance-listening/verify_long_motion.py $motionOutput
@@ -92,7 +92,7 @@ $motionOutput = 'I:/AI/asmr-director-distance-listening/2026-09-14-d-long-motion
 With that server running, run browser verification in another terminal:
 
 ```powershell
-node tools/distance-listening/browser-check.cjs 'I:/AI/asmr-director-distance-listening/2026-09-14-d-long-motion' http://127.0.0.1:8769/
+node tools/distance-listening/browser-check.cjs 'I:/AI/asmr_director/qa/distance-listening/2026-09-14-d-long-motion' http://127.0.0.1:8769/
 ```
 
 `long_motion.py` preserves the original D renderer/HRTF/DVF hashes and records 353 trajectory keyframes. `motion_convolution.py` computes the crossfaded convolution locally while retaining signal history and tails; it changes computation, not the D room preset. `test_long_motion.py` and `test_motion_convolution.py` cover trajectory and convolution behavior. `verify_long_motion.py` checks held endpoints against complete static D convolution and verifies unchanged source text and original code.
@@ -109,8 +109,8 @@ Once source generation and its final ASR have succeeded, reproduce the spatial o
 
 ```powershell
 $audioPython = 'D:/CodexWorkplace/asmr_director_runtime/audio-quality-v1/.venv/Scripts/python.exe'
-$newVoiceRoot = 'I:/AI/asmr-director-distance-listening/2026-09-14-colloquial-source'
-$newMotionOutput = 'I:/AI/asmr-director-distance-listening/2026-09-14-d-colloquial-motion'
+$newVoiceRoot = 'I:/AI/asmr_director/qa/distance-listening/2026-09-14-colloquial-source'
+$newMotionOutput = 'I:/AI/asmr_director/qa/distance-listening/2026-09-14-d-colloquial-motion'
 & $audioPython tools/distance-listening/long_motion.py --reference 'D:/CodexWorkplace/asmr_director_runtime/distance-listening/2026-09-13' --source "$newVoiceRoot/colloquial-final.wav" --asr-evidence "$newVoiceRoot/final-asr.json" --source-metadata "$newMotionOutput/source-metadata.json" --output $newMotionOutput
 & $audioPython tools/distance-listening/verify.py $newMotionOutput
 & $audioPython tools/distance-listening/verify_long_motion.py $newMotionOutput

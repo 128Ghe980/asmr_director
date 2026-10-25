@@ -11,7 +11,7 @@ import { createClipH3Prompt, createClipVideoSourceFingerprint } from "./video-pl
 
 let root: string, tempRoot: string, config: LocalRuntimeConfig;
 beforeEach(async () => {
-  const base = process.platform === "win32" ? "I:/AI/asmr-director-storyboard-export/2026-10-03/test-temp" : tmpdir();
+  const base = process.platform === "win32" ? "I:/AI/asmr_director/qa/storyboard-export/2026-10-03/test-temp" : tmpdir();
   await mkdir(base, { recursive: true });
   root = await mkdtemp(path.join(base, "storyboard-batch-"));
   tempRoot = path.join(root, "exports");

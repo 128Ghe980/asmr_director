@@ -1,6 +1,10 @@
 # ASMR 视频批跑器
 
+**H3 原生 ASMR 试跑包**：新增显式文生视频模式，用原工作流直接生成触发音和画面，支持每类多个候选及断点继续。文生模式可在窗口「每条时长」或 CLI `--duration-seconds` 自定义秒数，留空使用项目每镜时长；普通参考分镜包不接受此覆盖。该模式不需要角色图或输入音频、不取尾帧、不裁剪原生音轨，默认使用原工作流的分辨率。专用说明 `ASMR_BATCH.zh.md` 和提示词 `ASMR_PROMPTS.zh.md` 随 12 类原生试跑包提供，也保存在开发仓库 `tools/comfy-batch/`；普通网页导出的参考分镜包不附带这些实验材料。以下角色图、连续参考和环境镜头裁至 5 秒的说明适用于原有参考分镜项目包。
+
 使用 Python 标准库调用已运行的 ComfyUI，不需要安装 pip 包。双击 `run.bat` 打开窗口，选择**解压后的项目文件夹**、角色参考图、ComfyUI 地址和每镜候选数 N 后开始；窗口在后台执行任务。项目中已有角色图时可直接使用，也可在窗口替换。没有 Tk 的 Python 可使用下方命令行。
+
+本项目本机的交付包放在 `I:/AI/asmr_director/artifacts/`，验证文件放在 `I:/AI/asmr_director/qa/`；默认成品及状态仍保存在所选包内的 `outputs/`。所有项目输出均保存在 `I:/AI/asmr_director/` 目录内。复制到另一台主机时，包内相对路径保持可用。
 
 运行前需要：本机 Python 3.10+，以及已经运行、能手动执行这套 H3 工作流的目标 ComfyUI。**本机不需要 FFmpeg、ffprobe、PyAV 或 pip 包**；媒体处理都在目标 ComfyUI 内完成。目标主机须已安装你在 `asmr04` 使用的 CLF 尾帧节点，并有对应原生视频、图像节点；环境镜头还需 `TrimAudioDuration`。程序会预检所需节点，不安装节点、下载模型或启动 ComfyUI。默认地址是 `http://127.0.0.1:8188`。
 
@@ -38,15 +42,15 @@
 ## 命令行
 
 ```bat
-python runner.py "I:\我的项目" --comfy-url http://127.0.0.1:8188
-python runner.py "I:\我的项目" --character-image "I:\角色.png"
-python runner.py "I:\我的项目" --dry-run
-python runner.py "I:\我的项目" --only shot_2,003
-python runner.py "I:\我的项目" --rerun shot_2
-python runner.py "I:\我的项目" --candidates 3
-python runner.py "I:\我的项目" --candidates 3 --rerun-candidates "shot_2:2,003:1"
-python runner.py "I:\我的项目" --candidates 3 --job-timeout 0 --concat
-python runner.py "I:\我的项目" --concat
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --comfy-url http://127.0.0.1:8188
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --character-image "I:\角色.png"
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --dry-run
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --only shot_2,003
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --rerun shot_2
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --candidates 3
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --candidates 3 --rerun-candidates "shot_2:2,003:1"
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --candidates 3 --job-timeout 0 --concat
+python runner.py "I:\AI\asmr_director\artifacts\我的项目" --concat
 ```
 
 `--candidates` 是每镜候选数，默认 1，须为正整数。增加 N 只补缺少的候选，减少 N 保留已有文件；相同输入和候选号继续使用稳定种子。旧版单候选状态自动接入候选 1，不因此重新生成。`--only` 和 `--rerun` 接受逗号分隔的镜头 ID 或 `order` 编号；前者只处理指定镜头，后者重做指定镜头的本次候选。`--rerun-candidates` 只重做指定候选，例如 `shot_2:2,003:1`。镜头 ID 含冒号时按最后一个冒号分隔，例如 `scene:two:2` 表示镜头 `scene:two` 的候选 2。所有重做都先对账已有未确认任务。
