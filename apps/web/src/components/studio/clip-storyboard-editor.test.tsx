@@ -2,7 +2,7 @@
 
 import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { demoProject } from "@/lib/asmr/mock-project";
 import type { AsmrProject, TimelineClip } from "@/lib/asmr/schema";
@@ -95,6 +95,8 @@ function readBlob(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsText(blob); });
 }
 
+beforeEach(() => { vi.spyOn(window, "confirm").mockReturnValue(true); });
+
 afterEach(() => {
   cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks();
   if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard); else Reflect.deleteProperty(navigator, "clipboard");
@@ -102,6 +104,37 @@ afterEach(() => {
 });
 
 describe("ClipStoryboardEditor current-audio workflow", () => {
+  it.each(["current", "stale", "silent"] as const)("asks before replacing an existing %s storyboard and keeps it when declined", async (kind) => {
+    const project = fixture(), clip = voices(project)[1];
+    if (kind === "silent") { clip.kind = "silent"; clip.duration = 3; clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending"; }
+    const original = withShot(project);
+    if (kind === "stale") original.sourceFingerprint = "old-storyboard-source";
+    if (kind === "silent") Object.assign(original, { kind: "silent", duration: 3, audio: undefined, ambientSound: "Quiet room tone." });
+    const preserved = structuredClone(original);
+    const result = { ...shotFixture(project), title: "Replacement storyboard",
+      ...(kind === "silent" ? { kind: "silent" as const, duration: 3, audio: undefined, ambientSound: "Soft wind outside." } : {}) };
+    const api = mockApi(); api.respond(Response.json({ storyboard: result }));
+    const view = await mountEditor(project);
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    expect(generationButton().disabled).toBe(false);
+    fireEvent.click(generationButton());
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/(?=.*重新生成)(?=.*本段)/));
+    expect(api.posts).toHaveLength(0); expect(view.onSave).not.toHaveBeenCalled();
+    expect(project.videoPlan!.shots[clip.id]).toEqual(preserved);
+    expect(control("本段分镜标题").value).toBe(preserved.title);
+    fireEvent.click(generationButton());
+    await waitFor(() => expect(view.onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, result));
+    expect(window.confirm).toHaveBeenCalledTimes(2); expect(api.posts).toHaveLength(1);
+  });
+
+  it("generates a first storyboard without asking to replace anything", async () => {
+    const project = fixture(), result = shotFixture(project), api = mockApi();
+    api.respond(Response.json({ storyboard: result })); const view = await mountEditor(project);
+    fireEvent.click(control("新镜头")); fireEvent.click(generationButton());
+    await waitFor(() => expect(view.onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, result));
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
   it("keeps reference explanations collapsed while showing a blocking continuity reason directly", async () => {
     const project = fixture(); mockApi(); await mountEditor(project);
     const summary = screen.getByText("镜头参考说明"), explanation = summary.closest("details")!;
@@ -260,7 +293,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     expect(onSave).toHaveBeenCalledTimes(1); expect(control("本段分镜画面").value).toBe(original.visual);
   });
 
-  it.each(["text", "audio", "scene", "mode", "project identity", "selected clip"])("cancels pending generation after the %s changes and rejects late output", async (kind) => {
+  it.each(["text", "audio", "scene", "mode", "project identity", "selected clip", "following dialogue", "other storyboard"])("cancels pending generation after the %s changes and rejects late output", async (kind) => {
     const project = fixture(); const clipId = voices(project)[1].id; const original = withShot(project); const api = mockApi(); const late = deferred<Response>(); api.respond(late.promise);
     const view = await mountEditor(project); fireEvent.click(generationButton()); await screen.findByRole("button", { name: "取消生成" });
     const changed = structuredClone(project); const clip = voices(changed)[1];
@@ -268,12 +301,29 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     if (kind === "audio") clip.asset = { asset_id: "new_adopted_asset", uri: "asset://clip/new_adopted_asset", duration: 8.8 };
     if (kind === "scene") changed.videoPlan!.sceneDescription = "A different room with a blue window.";
     if (kind === "mode") changed.videoPlan!.referenceModes = { [clipId]: "continuous" };
+    if (kind === "following dialogue") voices(changed)[2].text = "先把茶杯放下，再把毛巾递给我。";
+    if (kind === "other storyboard") withShot(changed, voices(changed)[2].id).action = "S1 leaves the cup on the table and keeps both hands free.";
     if (kind === "project identity") changed.project_id = "different_current_project";
     view.update(changed, kind === "selected clip" ? voices(changed)[2].id : clipId);
     expect(api.posts[0].signal?.aborted).toBe(true);
     await act(async () => { late.resolve(Response.json({ storyboard: shotFixture(project) })); await late.promise; });
     expect(view.onSave).not.toHaveBeenCalled();
     if (kind !== "selected clip") expect(control("本段分镜画面").value).toBe(original.visual);
+  });
+
+  it("keeps a narrative request valid through unrelated engineering waits and sound settings", async () => {
+    const project = fixture(); withShot(project);
+    const api = mockApi(), late = deferred<Response>(); api.respond(late.promise);
+    const view = await mountEditor(project); fireEvent.click(generationButton());
+    await screen.findByRole("button", { name: "取消生成" });
+    const changed = structuredClone(project);
+    for (const clip of voices(changed)) { clip.start += 20; clip.duration += 5; clip.pause_after = 9; clip.volume_db = -12; }
+    changed.timeline.mixing.binaural = !changed.timeline.mixing.binaural;
+    view.update(changed);
+    expect(api.posts[0].signal?.aborted).toBe(false);
+    const result = shotFixture(project);
+    await act(async () => { late.resolve(Response.json({ storyboard: result })); await late.promise; });
+    await waitFor(() => expect(view.onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, result));
   });
 
   it.each(["continuous", "new"] as const)("a previous-shot hand edit cancels a pending %s shot", async (referenceMode) => {
@@ -291,6 +341,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const project = fixture(); const shot = withShot(project); shot.visual = "My existing manual visual must remain.";
     const api = mockApi(); api.respond(kind === "server failure" ? Response.json({ error: "分镜模型暂时无法连接。" }, { status: 502 }) : Response.json({ storyboard: shotFixture(project) }));
     const view = await mountEditor(project, voices(project)[1].id, kind !== "save rejection"); fireEvent.click(generationButton()); await screen.findByRole("alert");
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/(?=.*重新生成)(?=.*本段)/));
     expect(control("本段分镜画面").value).toBe(shot.visual);
     if (kind === "save rejection") expect(view.onSave).toHaveBeenCalledOnce(); else expect(view.onSave).not.toHaveBeenCalled();
     expect(generationButton().disabled).toBe(false);

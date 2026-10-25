@@ -70,7 +70,7 @@ describe("canonical source sentences", () => {
     expect(committed.speechWorkspace!.paragraph.clips.slice(0, 3).every((clip) => !clip.asset.uri)).toBe(true);
   });
 
-  it("limits blur normalization to the requested source and never splits silent descriptions", () => {
+  it("limits explicit legacy normalization to the requested source and never splits silent descriptions", () => {
     const project = fixture();
     voices(project)[2].text = "第一句。第二句。";
     const normalized = normalizeSpeechSentences(project, "unchanged");
@@ -80,17 +80,19 @@ describe("canonical source sentences", () => {
     expect(normalizeSpeechSentences(project, "silent")).toBe(project);
   });
 
-  it("uses the same short reference units when a paragraph word edit touches a legacy multi-sentence source", () => {
+  it("keeps a multi-sentence semantic unit intact when editing one word in its paragraph", () => {
     const project = switchSpeechWorkspace(ensureSpeechWorkspaces(fixture(true)), "paragraph");
     const group = getSpeechParagraphs(project)[0];
     const changed = replaceParagraphScript(project, group.id, group.text.replace("先喝茶", "先喝热茶"));
     expect(getSpeechParagraphs(changed)[0].text).toBe(group.text.replace("先喝茶", "先喝热茶"));
-    expect(voices(changed).slice(0, 3).map((clip) => clip.text)).toEqual(["你回来啦，门口的灯亮着。", "先喝热茶！", "“晚安。”  "]);
+    expect(voices(changed).map((clip) => clip.id)).toEqual(voices(project).map((clip) => clip.id));
+    expect(voices(changed)[0].text).toBe("你回来啦，门口的灯亮着。先喝热茶！“晚安。”  ");
     expect(changed.speechWorkspace!.short.clips.map((clip) => clip.text)).toEqual(voices(changed).map((clip) => clip.text));
-    expect(changed.speechWorkspace!.short.clips.slice(0, 3).every((clip) => !clip.asset.uri)).toBe(true);
-    expect(voices(changed)[3].kind).toBe("silent");
-    expect(changed.speechWorkspace!.short.clips[2].start + changed.speechWorkspace!.short.clips[2].duration).toBe(12);
-    expect(changed.speechWorkspace!.short.clips.slice(3)).toEqual(project.speechWorkspace!.short.clips.slice(1));
+    expect(changed.speechWorkspace!.short.clips[0]).toMatchObject({ audio_stale: true, asset: { asset_id: "old_whole" } });
+    expect(voices(changed)[1].kind).toBe("silent");
+    expect(changed.speechWorkspace!.short.clips[0].start + changed.speechWorkspace!.short.clips[0].duration).toBe(12);
+    expect(changed.speechWorkspace!.short.clips.slice(1)).toEqual(project.speechWorkspace!.short.clips.slice(1));
+    expect(changed.speechWorkspace!.groups).toEqual(project.speechWorkspace!.groups);
   });
 
   it("keeps ordinary short word edits and independent old takes while syncing the copy", () => {
@@ -108,7 +110,7 @@ describe("canonical source sentences", () => {
     expect(changed.speechWorkspace!.paragraph.clips[0]).toMatchObject({ audio_stale: true, asset: { asset_id: "paragraph_sentence" }, text: voices(changed)[0].text });
   });
 
-  it("clears a legacy source boundary rewrite even when the new sentences reuse the same number of IDs", () => {
+  it("merges a cross-unit rewrite into one user unit and clears its audio in both workspaces", () => {
     const source = fixture(true);
     const first = voices(source)[0];
     source.timeline.tracks = source.timeline.tracks.map((track) => track.track_type === "voice" ? { ...track, clips: [
@@ -120,7 +122,9 @@ describe("canonical source sentences", () => {
     project = captureSpeechWorkspace(project);
     const group = getSpeechParagraphs(project)[0];
     const replaced = replaceParagraphScript(project, group.id, "先歇一会儿。等我把水端过来。" );
-    expect(getSpeechParagraphs(replaced)[0].clipIds).toEqual(group.clipIds);
+    expect(getSpeechParagraphs(replaced)[0].clipIds).toEqual([group.clipIds[0]]);
+    expect(voices(replaced).map((clip) => clip.text)).toEqual(["先歇一会儿。等我把水端过来。"]);
+    expect(voices(replaced)[0].start + voices(replaced)[0].duration).toBe(12);
     expect(replaced.speechWorkspace!.short.clips.every((clip) => !clip.asset.uri && !clip.audio_stale)).toBe(true);
     expect(replaced.speechWorkspace!.paragraph.clips.every((clip) => !clip.asset.uri && !clip.audio_stale)).toBe(true);
   });
@@ -176,7 +180,7 @@ describe("canonical source sentences", () => {
     expect(AsmrProjectSchema.safeParse(normalized).success).toBe(true);
   });
 
-  it("keeps explicit paragraph limits after a rewrite retaining the same source IDs", () => {
+  it("preserves a 600-character user rewrite in one unit without inventing cuts to fit engine limits", () => {
     const project = fixture();
     voices(project)[0].text = "先坐下。喝杯茶。";
     const paragraph = switchSpeechWorkspace(ensureSpeechWorkspaces(normalizeSpeechSentences(project)), "paragraph");
@@ -184,10 +188,12 @@ describe("canonical source sentences", () => {
     const originalIds = group.clipIds;
     const text = `${"甲".repeat(300)}。${"乙".repeat(300)}。`;
     const replaced = replaceParagraphScript(paragraph, group.id, text);
-    const replacedGroups = getSpeechParagraphs(replaced).slice(0, 2);
-    expect(replacedGroups.map((item) => item.text).join("")).toBe(text);
-    expect(replacedGroups.flatMap((item) => item.clipIds)).toEqual(originalIds);
-    expect(replacedGroups.every((item) => item.text.length <= 500)).toBe(true);
+    const replacedGroup = getSpeechParagraphs(replaced)[0];
+    expect(replacedGroup.text).toBe(text);
+    expect(replacedGroup.clipIds).toEqual([originalIds[0]]);
+    expect(replacedGroup.id).toBe(group.id);
+    expect(replacedGroup.clips[0].text.length).toBeGreaterThan(500);
     expect(replaced.speechWorkspace!.short.clips.map((clip) => clip.text)).toEqual(voices(replaced).map((clip) => clip.text));
+    expect(AsmrProjectSchema.safeParse(replaced).success).toBe(true);
   });
 });

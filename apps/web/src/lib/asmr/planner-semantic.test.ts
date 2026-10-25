@@ -36,6 +36,43 @@ describe("planner semantic units", () => {
     expect(draft).not.toHaveProperty("segmentation");
   });
 
+  it("preserves a model unit beyond writing targets without regrouping its punctuation", () => {
+    const text = "  回来啦。我还没睡，就猜你快到了。" + "先别急着说话，坐在这里缓一缓。我就在旁边陪你。".repeat(5) + "  ";
+    expect(text.length).toBeGreaterThan(100);
+    expect(text.length).toBeLessThanOrEqual(500);
+    const input = { ...draft, sections: [{ ...draft.sections[0], text }] };
+    const before = structuredClone(input);
+    const preserved = normalizePlannerSemanticDraft(input, { preserveUnitBoundaries: true });
+    expect(preserved.sections).toEqual([{ ...input.sections[0], pauseAfterSeconds: .35 }]);
+    expect(input).toEqual(before);
+    // Explicit legacy conversion is still available, but generation never opts into it.
+    expect(normalizePlannerSemanticDraft(input).sections.length).toBeGreaterThan(1);
+  });
+
+  it("expands compact model units without changing their boundaries or shared metadata", () => {
+    const { id, title, emotion, style, pace, direction, soundSuggestions, position } = draft.sections[0];
+    const metadata = { id, title, emotion, style, pace, direction, soundSuggestions, position };
+    const units = [
+      { text: "你累了吧？先歇会儿，饭马上就好。", pauseAfter: "short" as const },
+      { text: "先慢慢呼吸。我就在这里。".repeat(12), pauseAfter: "long" as const },
+    ];
+    const compact = PlannerGeneratedDraftSchema.parse({ title: draft.title, scene: draft.scene, character: draft.character, groups: [{ ...metadata, units }] });
+    const expanded = expandPlannerGeneratedDraft(compact);
+    expect(expanded.sections.map(section => [section.id, section.text, section.pauseAfterSeconds])).toEqual([
+      ["unit_001", units[0].text, .18], ["unit_002", units[1].text, .6],
+    ]);
+    for (const section of expanded.sections) expect(section).toMatchObject({ direction: metadata.direction, position: metadata.position });
+  });
+
+  it("retains the existing per-unit and total-unit capability limits without automatic splitting", () => {
+    const base = draft.sections[0];
+    const exact = normalizePlannerSemanticDraft({ ...draft, sections: [{ ...base, text: "嗯。".repeat(250) }] }, { preserveUnitBoundaries: true });
+    expect(exact.sections).toHaveLength(1);
+    expect(exact.sections[0].text).toHaveLength(500);
+    expect(() => normalizePlannerSemanticDraft({ ...draft, sections: [{ ...base, text: "嗯。".repeat(250) + "嗯" }] }, { preserveUnitBoundaries: true })).toThrow("500");
+    expect(() => normalizePlannerSemanticDraft({ ...draft, sections: Array.from({ length: 201 }, (_, index) => ({ ...base, id: `unit_${index}`, text: "嗯。" })) }, { preserveUnitBoundaries: true })).toThrow("200");
+  });
+
   it("falls back to shared clause grouping for oversized units without losing any punctuation, whitespace or speech", () => {
     const text = "  价格是 3.5 元，先放在这儿。\n" + "别着急，我把灯挪过来。这里坐着舒服些，你慢慢挑。".repeat(18) + "  ";
     const split = splitPlannerSemanticText(text);

@@ -90,7 +90,7 @@ describe("two speech workspaces with shared source", () => {
     expect(voices(replaced)[2]).toEqual(voices(paragraph)[2]);
   });
 
-  it("naturally separates new sentences typed after clearing a paragraph and keeps both pages synchronized", () => {
+  it("keeps a user-edited unit intact while typing punctuation after clearing a paragraph", () => {
     let paragraph = fillParagraph(ensureSpeechWorkspaces(fixture()));
     const groupId = getSpeechParagraphs(paragraph)[0].id;
     paragraph = replaceParagraphScript(paragraph, groupId, "");
@@ -98,31 +98,33 @@ describe("two speech workspaces with shared source", () => {
     for (const text of ["雨", "雨停了", "雨停了。", "雨停了。先", "雨停了。先喝茶。", "雨停了。先喝茶。晚安！"]) {
       paragraph = replaceParagraphScript(paragraph, groupId, text);
       expect(getSpeechParagraphs(paragraph)[0].text).toBe(text);
+      expect(getParagraphGroup(paragraph, "voice_0").map((clip) => clip.id)).toEqual(["voice_0"]);
       expect(paragraph.speechWorkspace!.short.clips.map((clip) => clip.text)).toEqual(voices(paragraph).map((clip) => clip.text));
     }
-    expect(getParagraphGroup(paragraph, "voice_0").map((clip) => clip.text)).toEqual(["雨停了。", "先喝茶。", "晚安！"]);
+    expect(getParagraphGroup(paragraph, "voice_0").map((clip) => clip.text)).toEqual(["雨停了。先喝茶。晚安！"]);
     expect(voices(paragraph)[0].asset.asset_id).toBeNull();
     expect(paragraph.speechWorkspace!.short.clips[0].asset.asset_id).toBeNull();
     expect(AsmrProjectSchema.safeParse(paragraph).success).toBe(true);
   });
 
-  it("turns a legacy multi-sentence source into actual short units when editing its paragraph", () => {
+  it("preserves a model-defined multi-sentence unit and its stale take when editing one word", () => {
     const source = fixture();
     voices(source)[0].text = "先坐一会儿。我给你倒茶。";
     const paragraph = fillParagraph(ensureSpeechWorkspaces(source));
     const before = structuredClone(voices(paragraph));
     const replaced = replaceParagraphScript(paragraph, getSpeechParagraphs(paragraph)[0].id, "先坐一会儿。我给你倒热茶。我给你倒茶。");
-    expect(voices(replaced)).toHaveLength(4);
-    expect(voices(replaced).slice(0, 3).map((clip) => clip.text)).toEqual(["先坐一会儿。", "我给你倒热茶。", "我给你倒茶。"]);
-    expect(voices(replaced)[0]).toMatchObject({ id: before[0].id, start: before[0].start, asset: { asset_id: null } });
-    expect(voices(replaced)[1].asset.asset_id).toBeNull();
-    expect(voices(replaced)[1].start + voices(replaced)[1].duration).toBe(before[0].start + before[0].duration);
-    expect(voices(replaced)[2]).toEqual({ ...before[1], audio_stale: true });
-    expect(voices(replaced)[3]).toEqual(before[2]);
+    expect(voices(replaced)).toHaveLength(3);
+    expect(voices(replaced).slice(0, 2).map((clip) => clip.text)).toEqual(["先坐一会儿。我给你倒热茶。", "我给你倒茶。"]);
+    expect(voices(replaced)[0]).toMatchObject({ id: before[0].id, start: before[0].start, duration: before[0].duration,
+      audio_stale: true, asset: { asset_id: "paragraph_0" } });
+    expect(voices(replaced)[1]).toEqual({ ...before[1], audio_stale: true });
+    expect(voices(replaced)[2]).toEqual(before[2]);
+    expect(replaced.speechWorkspace!.short.clips[0]).toMatchObject({ audio_stale: true, asset: { asset_id: "short_0" } });
+    expect(replaced.speechWorkspace!.short.clips[1].asset.asset_id).toBe("short_1");
     expect(replaced.speechWorkspace!.short.clips.map((clip) => clip.text)).toEqual(voices(replaced).map((clip) => clip.text));
   });
 
-  it("merges a shorter whole-paragraph rewrite at a natural sentence boundary instead of cutting a word", () => {
+  it("keeps a shorter whole-paragraph rewrite as one user-edited unit", () => {
     const paragraph = fillParagraph(ensureSpeechWorkspaces(fixture()));
     const group = getSpeechParagraphs(paragraph)[0];
     const replaced = replaceParagraphScript(paragraph, group.id, "雨停了。");
@@ -138,27 +140,102 @@ describe("two speech workspaces with shared source", () => {
     expect(AsmrProjectSchema.safeParse(replaced).success).toBe(true);
   });
 
-  it("uses complete sentences for a full rewrite and keeps Chinese punctuation, quotes and whitespace exact", () => {
+  it("keeps a full rewrite as one unit with punctuation, quotes and whitespace exact", () => {
     const paragraph = fillParagraph(ensureSpeechWorkspaces(fixture()));
     const group = getSpeechParagraphs(paragraph)[0];
     const text = "雨停了。 先喝茶！“晚安。”";
     const replaced = replaceParagraphScript(paragraph, group.id, text);
-    expect(getParagraphGroup(replaced, "voice_0").map((clip) => clip.text)).toEqual(["雨停了。 ", "先喝茶！", "“晚安。”"]);
+    expect(getParagraphGroup(replaced, "voice_0").map((clip) => clip.text)).toEqual([text]);
     expect(getSpeechParagraphs(replaced)[0].text).toBe(text);
-    expect(getParagraphGroup(replaced, "voice_0").slice(0, 2).map((clip) => clip.id)).toEqual(["voice_0", "voice_1"]);
+    expect(getParagraphGroup(replaced, "voice_0").map((clip) => clip.id)).toEqual(["voice_0"]);
     expect(new Set(voices(replaced).map((clip) => clip.id)).size).toBe(voices(replaced).length);
     expect(replaced.speechWorkspace!.short.clips.map((clip) => clip.text)).toEqual(voices(replaced).map((clip) => clip.text));
     expect(voices(replaced).at(-1)).toEqual(voices(paragraph).at(-1));
     expect(AsmrProjectSchema.safeParse(replaced).success).toBe(true);
   });
 
-  it("keeps a many-sentence rewrite valid by limiting each target group to 32 natural cuts", () => {
+  it("does not invent 40 source units or paragraph groups from a many-sentence rewrite", () => {
     const paragraph = fillParagraph(ensureSpeechWorkspaces(fixture()));
     const group = getSpeechParagraphs(paragraph)[0];
     const text = "嗯。".repeat(40);
     const replaced = replaceParagraphScript(paragraph, group.id, text);
-    expect(getSpeechParagraphs(replaced).slice(0, 2).map((item) => item.clips.length)).toEqual([32, 8]);
-    expect(getSpeechParagraphs(replaced).slice(0, 2).map((item) => item.text).join("")).toBe(text);
+    expect(getSpeechParagraphs(replaced)[0].clips.length).toBe(1);
+    expect(getSpeechParagraphs(replaced)[0].text).toBe(text);
+    expect(getSpeechParagraphs(replaced).map((item) => item.id)).toEqual(getSpeechParagraphs(paragraph).map((item) => item.id));
+    expect(AsmrProjectSchema.safeParse(replaced).success).toBe(true);
+  });
+
+  it("merges only the edited range while preserving surrounding units, bank-specific spans and the final wait", () => {
+    const source = fixture();
+    const base = voices(source)[0];
+    const texts = ["别急。", "茶在这里。", "拿稳杯子。", "我就在这里。", "雨".repeat(80) + "。"];
+    source.timeline.tracks = source.timeline.tracks.map(track => track.track_type === "voice" ? { ...track,
+      clips: texts.map((text, index) => ({ ...structuredClone(base), id: `voice_${index}`, text,
+        start: [0, 10, 20, 40, 50][index], duration: 5, pause_after: index === 2 ? 2.75 : 5,
+        asset: { asset_id: `short_${index}`, uri: `asset://clip/short_${index}`, duration: 5 } })) } : track);
+    let paragraph = fillParagraph(ensureSpeechWorkspaces(source));
+    Object.assign(voices(paragraph)[1], { start: 12, duration: 7, asset: { asset_id: "paragraph_1", uri: "asset://clip/paragraph_1", duration: 7 } });
+    Object.assign(voices(paragraph)[2], { start: 25, duration: 8, asset: { asset_id: "paragraph_2", uri: "asset://clip/paragraph_2", duration: 8 } });
+    paragraph = captureSpeechWorkspace(paragraph);
+    const before = structuredClone(paragraph);
+    const group = getSpeechParagraphs(paragraph)[0];
+    const editedUnit = "我把水放好。先试一小口，好吗？";
+    const replaced = replaceParagraphScript(paragraph, group.id, texts[0] + editedUnit + texts[3]);
+    expect(voices(replaced).map(clip => clip.id)).toEqual(["voice_0", "voice_1", "voice_3", "voice_4"]);
+    expect(voices(replaced).map(clip => clip.text)).toEqual([texts[0], editedUnit, texts[3], texts[4]]);
+    expect(getSpeechParagraphs(replaced)[0].id).toBe(group.id);
+    for (const mode of ["short", "paragraph"] as const) {
+      const bank = replaced.speechWorkspace![mode], oldBank = before.speechWorkspace![mode];
+      const merged = bank.clips.find(clip => clip.id === "voice_1")!;
+      const oldFirst = oldBank.clips.find(clip => clip.id === "voice_1")!, oldLast = oldBank.clips.find(clip => clip.id === "voice_2")!;
+      expect(merged.start).toBe(oldFirst.start);
+      expect(merged.start + merged.duration).toBe(oldLast.start + oldLast.duration);
+      expect(merged.pause_after).toBe(2.75);
+      expect(merged.asset.uri).toBeNull();
+      expect(merged.audio_stale).toBeUndefined();
+      for (const id of ["voice_0", "voice_3", "voice_4"]) {
+        const unchanged = bank.clips.find(clip => clip.id === id)!, old = oldBank.clips.find(clip => clip.id === id)!;
+        expect([unchanged.text, unchanged.start, unchanged.duration, unchanged.pause_after, unchanged.asset])
+          .toEqual([old.text, old.start, old.duration, old.pause_after, old.asset]);
+      }
+    }
+    expect(paragraph).toEqual(before);
+    expect(AsmrProjectSchema.safeParse(replaced).success).toBe(true);
+    const restored = restoreSharedSpeechScript(replaced, before);
+    expect(voices(restored).map(clip => [clip.id, clip.text])).toEqual(voices(before).map(clip => [clip.id, clip.text]));
+    expect(restored.speechWorkspace!.short.clips.find(clip => clip.id === "voice_2")!.asset.asset_id).toBe("short_2");
+    expect(restored.speechWorkspace!.paragraph.clips.find(clip => clip.id === "voice_2")!.asset.asset_id).toBe("paragraph_2");
+  });
+
+  it("repackages whole source units when their paragraph exceeds capacity without cutting either unit", () => {
+    const source = fixture();
+    voices(source)[0].text = "甲".repeat(100) + "。";
+    voices(source)[1].text = "乙".repeat(200) + "。";
+    const initialized = ensureSpeechWorkspaces(source);
+    initialized.speechWorkspace!.groups = [
+      { id: "shared_paragraph", clipIds: ["voice_0", "voice_1"] },
+      { id: "unchanged_paragraph", clipIds: ["voice_2"] },
+    ];
+    const paragraph = fillParagraph(initialized), before = structuredClone(paragraph);
+    const group = getSpeechParagraphs(paragraph)[0];
+    const editedFirst = "甲".repeat(400) + "。";
+    const replaced = replaceParagraphScript(paragraph, group.id, editedFirst + voices(paragraph)[1].text);
+    const groups = getSpeechParagraphs(replaced);
+    expect(groups.slice(0, 2).map(item => item.clipIds)).toEqual([["voice_0"], ["voice_1"]]);
+    expect(groups[0].id).toBe(group.id);
+    expect(groups.slice(0, 2).every(item => item.text.length <= 500)).toBe(true);
+    expect(voices(replaced).map(clip => [clip.id, clip.text])).toEqual([
+      ["voice_0", editedFirst], ["voice_1", voices(paragraph)[1].text], ["voice_2", voices(paragraph)[2].text],
+    ]);
+    for (const mode of ["short", "paragraph"] as const) {
+      const bank = replaced.speechWorkspace![mode], oldBank = before.speechWorkspace![mode];
+      expect(bank.clips.map(clip => clip.asset)).toEqual(oldBank.clips.map(clip => clip.asset));
+      expect(bank.clips[0].audio_stale).toBe(true);
+      expect(bank.clips[2]).toEqual(oldBank.clips[2]);
+    }
+    expect(voices(replaced)[1].audio_stale).toBe(true);
+    expect(replaced.speechWorkspace!.short.clips[1].audio_stale).toBeUndefined();
+    expect(paragraph).toEqual(before);
     expect(AsmrProjectSchema.safeParse(replaced).success).toBe(true);
   });
 

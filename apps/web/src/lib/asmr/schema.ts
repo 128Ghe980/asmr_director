@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ProjectVideoPlanSchema } from "./video-plan";
+import { AudioPostProcessingSchema } from "./audio-post-processing-schema";
 
 export const ProjectStatusSchema = z.enum([
   "draft",
@@ -202,6 +203,7 @@ export const SpeechWorkspaceBankSchema = z.object({
   emotion_curve: z.array(EmotionCurvePointSchema).min(1),
   mixing: ProjectMixingSchema,
   videoPlan: ProjectVideoPlanSchema.optional().catch(undefined),
+  audioPostProcessing: AudioPostProcessingSchema.optional().catch(undefined),
   exports: ProjectExportsSchema,
   mixFingerprint: z.string().optional(),
 });
@@ -232,6 +234,7 @@ export const AsmrProjectSchema = z.object({
   emotion_curve: z.array(EmotionCurvePointSchema).min(1),
   // Damaged optional video metadata must not discard an existing audio project.
   videoPlan: ProjectVideoPlanSchema.optional().catch(undefined),
+  audioPostProcessing: AudioPostProcessingSchema.optional().catch(undefined),
   speechWorkspace: SpeechWorkspaceSchema.optional(),
   timeline: z.object({
     tracks: TimelineTracksSchema,

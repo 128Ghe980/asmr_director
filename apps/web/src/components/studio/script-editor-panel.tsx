@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, Clapperboard, Link2, MoreHorizontal, Plus, ScanLine, Scissors, Sparkles, Undo2, VolumeX } from "lucide-react";
+import { ArrowDown, ArrowUp, Clapperboard, Film, Link2, MoreHorizontal, Plus, ScanLine, Scissors, Sparkles, Undo2 } from "lucide-react";
 import type { AsmrProject, TimelineClip } from "@/lib/asmr/schema";
 import type { ClipPatch } from "@/lib/asmr/edit-project";
 import { getVoiceGapAfter, type VoiceClipMoveDirection } from "@/lib/asmr/voice-segments";
@@ -26,8 +26,6 @@ type ScriptEditorPanelProps = {
   audioStatesStatus?: "loading" | "ready" | "error";
   onSelectClip: (clipId: string) => void;
   onUpdateClip: (clipId: string, patch: ClipPatch) => void;
-  onNormalizeSentences?: (clipId?: string) => void;
-  canNormalizeSentences?: boolean;
   onAddClip: (afterClipId?: string) => void;
   onAddSilentClip?: (afterClipId?: string) => void;
   onSilentDurationChange?: (clipId: string, seconds: number) => void;
@@ -79,14 +77,13 @@ function GapInput({ value, label, onChange }: { value: number; label: string; on
   </label>;
 }
 
-export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, notice, batchActions, workspaceTabs, paragraphBody, audioStates, audioStatesStatus = "ready", onSelectClip, onUpdateClip, onNormalizeSentences, canNormalizeSentences, onAddClip, onAddSilentClip, onSilentDurationChange, onDeleteClip, onSplitClip, onMergeClip, onMoveClip, onGapChange, onRewriteClip, onUndo, onOpenStoryboard, onReferenceModeChange, referenceModeBusy = false }: ScriptEditorPanelProps) {
+export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, notice, batchActions, workspaceTabs, paragraphBody, audioStates, audioStatesStatus = "ready", onSelectClip, onUpdateClip, onAddClip, onAddSilentClip, onSilentDurationChange, onDeleteClip, onSplitClip, onMergeClip, onMoveClip, onGapChange, onRewriteClip, onUndo, onOpenStoryboard, onReferenceModeChange, referenceModeBusy = false }: ScriptEditorPanelProps) {
   const clips = flattenClips(project);
   const voices = clips.filter((clip) => clip.type === "voice");
   const storyboardProgress = useMemo(() => getStudioStoryboardProgress(project), [project]);
   const [selection, setSelection] = useState<{ clipId: string; text: string; start: number; end: number }>();
   const [rewrite, setRewrite] = useState<{ clipId: string; text: string; start: number; end: number }>();
   const cards = useRef(new Map<string, HTMLElement>());
-  const changedText = useRef(new Set<string>());
   useEffect(() => {
     const card = selectedClipId ? cards.current.get(selectedClipId) : undefined;
     const scroller = card?.closest("[data-script-scroll]");
@@ -99,10 +96,9 @@ export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, noti
   return <section aria-label="文案与分段" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-studio-line bg-studio-panel/88">
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-studio-line px-3 py-2">
       <div>{workspaceTabs ?? <h2 className="text-sm font-semibold">文案与分段</h2>}</div>
-      <div className="flex items-center gap-1.5"><button type="button" aria-label="撤回编辑" title="撤回文案编辑" className={buttonClass} disabled={!canUndo} onClick={onUndo}><Undo2 className="h-3.5 w-3.5" /></button><button type="button" aria-label="新增一段" className={buttonClass} onClick={() => onAddClip(selectedClipId ?? voices.at(-1)?.id)}><Plus className="h-3.5 w-3.5" />台词</button>{onAddSilentClip && <button type="button" aria-label="新增无对白镜头" className={`${buttonClass} text-violet-200`} onClick={() => onAddSilentClip(selectedClipId ?? voices.at(-1)?.id)}><VolumeX className="h-3.5 w-3.5" />无对白</button>}</div>
+      <div className="flex items-center gap-1.5"><button type="button" aria-label="撤回编辑" title="撤回文案编辑" className={buttonClass} disabled={!canUndo} onClick={onUndo}><Undo2 className="h-3.5 w-3.5" /></button><button type="button" aria-label="新增一段" className={buttonClass} onClick={() => onAddClip(selectedClipId ?? voices.at(-1)?.id)}><Plus className="h-3.5 w-3.5" />台词</button>{onAddSilentClip && <button type="button" aria-label="新增无对白镜头" className={`${buttonClass} text-violet-200`} onClick={() => onAddSilentClip(selectedClipId ?? voices.at(-1)?.id)}><Film className="h-3.5 w-3.5" />无对白</button>}</div>
     </div>
     {batchActions && <div className="shrink-0">{batchActions}</div>}
-    {!paragraphBody && canNormalizeSentences && onNormalizeSentences && <div className="flex shrink-0 items-center justify-between gap-2 border-b border-studio-line/60 px-3 py-2"><p className="text-[11px] text-studio-muted">还有长段未拆成短句</p><button type="button" className={buttonClass} disabled={busy} onClick={() => onNormalizeSentences()} title="按自然句界切分，两页同步；原音频保存在编辑历史"><Scissors className="h-3.5 w-3.5" />切短句</button></div>}
     <div data-script-scroll className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-3 py-2">
       {notice && <p role="status" className="rounded-lg bg-sky-300/5 px-3 py-2 text-xs leading-5 text-sky-100">{notice}</p>}
       {paragraphBody}
@@ -129,18 +125,28 @@ export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, noti
         const rowColumns = onMoveClip
           ? showReferenceMode ? "grid-cols-[22px_minmax(0,1fr)_48px_32px_32px]" : onOpenStoryboard ? "grid-cols-[22px_minmax(0,1fr)_48px_32px]" : "grid-cols-[22px_minmax(0,1fr)_48px]"
           : showReferenceMode ? "grid-cols-[22px_minmax(0,1fr)_32px_32px]" : onOpenStoryboard ? "grid-cols-[22px_minmax(0,1fr)_32px]" : "grid-cols-[22px_minmax(0,1fr)]";
-        return <article key={clip.id} ref={(node) => { if (node) cards.current.set(clip.id, node); else cards.current.delete(clip.id); }} className={`min-w-0 rounded-md px-1.5 py-1 transition-colors ${isSelected ? "bg-sky-300/[0.045]" : "hover:bg-white/[0.02]"}`}>
+        const textField = <textarea aria-label={silent ? "无对白镜头描述" : isSelected ? "台词" : `第 ${index + 1} 段台词`} value={clip.text} rows={1}
+          onFocus={() => onSelectClip(clip.id)}
+          onSelect={(event) => { const node = event.currentTarget; setSelection({ clipId: clip.id, text: clip.text, start: node.selectionStart, end: node.selectionEnd }); }}
+          onChange={(event) => { setSelection(undefined); onUpdateClip(clip.id, { text: event.target.value }); }}
+          className={`block min-h-8 w-full min-w-0 resize-none rounded border px-1.5 py-0.5 text-sm leading-7 outline-none [field-sizing:content] ${silent
+            ? `text-violet-50/90 focus:border-violet-300/45 ${isSelected ? "border-violet-300/15 bg-black/10" : "border-transparent bg-transparent"}`
+            : isSelected ? "border-sky-300/25 bg-black/10 focus:border-sky-300/50" : "border-transparent bg-transparent"}`} />;
+        return <article key={clip.id} data-clip-kind={silent ? "silent" : "speech"} aria-label={silent ? `第 ${index + 1} 段无对白镜头` : undefined} ref={(node) => { if (node) cards.current.set(clip.id, node); else cards.current.delete(clip.id); }} className={`min-w-0 transition-colors ${silent
+          ? `my-2 rounded-lg border border-l-2 bg-linear-to-r px-2 py-2 ${isSelected ? "border-violet-300/30 border-l-violet-300/75 from-violet-300/10 to-violet-300/[0.025]" : "border-violet-300/15 border-l-violet-300/40 from-violet-300/[0.055] to-violet-300/[0.015] hover:border-violet-300/25"}`
+          : `rounded-md px-1.5 py-1 ${isSelected ? "bg-sky-300/[0.045]" : "hover:bg-white/[0.02]"}`}`}>
           <div className={`grid min-w-0 items-start gap-2 ${rowColumns}`}>
-          <button type="button" aria-label={`选择第 ${index + 1} 段`} aria-pressed={isSelected} title={audioStates ? audioStateLabel : undefined} className={`flex min-h-8 flex-col items-center justify-center gap-1 text-[11px] tabular-nums ${isSelected ? "font-semibold" : "font-medium"} ${knownState?.number ?? (isSelected ? "text-sky-100" : "text-studio-muted/60")}`} onClick={() => onSelectClip(clip.id)}>
-            {silent ? <VolumeX className="h-3 w-3 text-violet-200" /> : audioStates && <span role="img" aria-label={`第 ${index + 1} 段音频状态：${audioStateLabel}`} data-audio-state={knownState ? audioState : "unknown"} className={`h-1.5 w-1.5 shrink-0 rounded-full ${knownState ? `ring-2 ${knownState.dot}` : "border border-slate-400/40"}`} />}
+          <button type="button" aria-label={`选择第 ${index + 1} 段`} aria-pressed={isSelected} title={silent ? "无对白镜头 · 画面与环境声" : audioStates ? audioStateLabel : undefined} className={`flex min-h-8 flex-col items-center justify-center gap-1 text-[11px] tabular-nums ${isSelected ? "font-semibold" : "font-medium"} ${silent ? "text-violet-200" : knownState?.number ?? (isSelected ? "text-sky-100" : "text-studio-muted/60")}`} onClick={() => onSelectClip(clip.id)}>
+            {silent ? <Film className="h-3.5 w-3.5 text-violet-200/80" aria-hidden="true" /> : audioStates && <span role="img" aria-label={`第 ${index + 1} 段音频状态：${audioStateLabel}`} data-audio-state={knownState ? audioState : "unknown"} className={`h-1.5 w-1.5 shrink-0 rounded-full ${knownState ? `ring-2 ${knownState.dot}` : "border border-slate-400/40"}`} />}
             <span>{String(index + 1).padStart(2, "0")}</span>
           </button>
-          <textarea aria-label={silent ? "无对白镜头描述" : isSelected ? "台词" : `第 ${index + 1} 段台词`} value={clip.text} rows={1}
-            onFocus={() => onSelectClip(clip.id)}
-            onSelect={(event) => { const node = event.currentTarget; setSelection({ clipId: clip.id, text: clip.text, start: node.selectionStart, end: node.selectionEnd }); }}
-            onChange={(event) => { setSelection(undefined); changedText.current.add(clip.id); onUpdateClip(clip.id, { text: event.target.value }); }}
-            onBlur={() => { if (changedText.current.delete(clip.id) && !silent) onNormalizeSentences?.(clip.id); }}
-            className={`block min-h-8 w-full min-w-0 resize-none rounded border px-1.5 py-0.5 text-sm leading-7 outline-none [field-sizing:content] ${isSelected ? "border-sky-300/25 bg-black/10 focus:border-sky-300/50" : "border-transparent bg-transparent"}`} />
+          {silent ? <div className="min-w-0">
+            <div className="mb-1 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 px-1.5">
+              <span className="shrink-0 rounded border border-violet-300/15 bg-violet-300/[0.07] px-1.5 py-0.5 text-[10px] font-medium leading-none tracking-wide text-violet-100/90">无对白镜头</span>
+              <span className="shrink-0 text-[10px] tabular-nums text-violet-200/60">{Number(clip.duration.toFixed(1))} 秒</span>
+            </div>
+            {textField}
+          </div> : textField}
           {onMoveClip && <div data-clip-move-controls className="flex h-8 w-12 shrink-0 items-center rounded-md border border-studio-line/60">
             {(["up", "down"] as const).map((direction) => <button key={direction} type="button" aria-label={`${direction === "up" ? "上移" : "下移"}第 ${index + 1} 段`} title={`${direction === "up" ? "上移" : "下移"}本段（保留已采用音频）`} disabled={busy || (direction === "up" ? index === 0 : index === voices.length - 1)} onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); onMoveClip(clip.id, direction); }} className="flex h-8 w-6 items-center justify-center rounded text-studio-muted/65 hover:bg-white/5 hover:text-sky-100 focus-visible:outline-2 focus-visible:outline-sky-300 disabled:cursor-not-allowed disabled:opacity-25">{direction === "up" ? <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />}</button>)}
           </div>}
@@ -148,7 +154,7 @@ export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, noti
           {showReferenceMode ? <button type="button" aria-label={referenceTitle} title={referenceTitle} aria-pressed={referenceMode === "continuous"} data-reference-mode={referenceMode} disabled={index === 0 || referenceModeBusy} onClick={(event) => { event.stopPropagation(); onReferenceModeChange?.(clip.id, nextReferenceMode); }} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-45 ${referenceMode === "continuous" ? "border-violet-300/25 bg-violet-300/10 text-violet-200 hover:bg-violet-300/20 focus-visible:outline-violet-300" : "border-cyan-300/20 bg-cyan-300/5 text-cyan-200 hover:bg-cyan-300/15 focus-visible:outline-cyan-300"}`}>{referenceMode === "continuous" ? <Link2 className="h-3.5 w-3.5" aria-hidden="true" /> : <ScanLine className="h-3.5 w-3.5" aria-hidden="true" />}</button> : null}
           </div>
           {isSelected && <div className="ml-[30px] mt-1 space-y-2 pb-1">
-            <div className="flex flex-wrap items-center gap-2"><span className="text-[11px] tabular-nums text-studio-muted">{formatTimeRange(clip.start, clip.duration)}</span>{silent ? <span className="text-[11px] text-violet-200">无对白 · 仅分镜</span> : knownState && clip.generation.status !== "asset_generating" && clip.generation.status !== "asset_failed" ? <span className={`inline-flex h-6 shrink-0 items-center rounded-full border px-2.5 text-[11px] font-semibold ${knownState.badge}`}>{knownState.label}</span> : <StatusBadge status={clip.generation.status} />}</div>
+            <div className="flex flex-wrap items-center gap-2"><span className="text-[11px] tabular-nums text-studio-muted">{formatTimeRange(clip.start, clip.duration)}</span>{silent ? <span className="text-[11px] text-violet-200/75">画面与环境声</span> : knownState && clip.generation.status !== "asset_generating" && clip.generation.status !== "asset_failed" ? <span className={`inline-flex h-6 shrink-0 items-center rounded-full border px-2.5 text-[11px] font-semibold ${knownState.badge}`}>{knownState.label}</span> : <StatusBadge status={clip.generation.status} />}</div>
             {hasRange && <p className="text-xs text-sky-100">已选 {range!.end - range!.start} 字：<span className="break-words">{clip.text.slice(range!.start, range!.end).slice(0, 100)}{range!.end - range!.start > 100 ? "…" : ""}</span></p>}
             {!silent && (canSplit || hasRange) && <div className="flex flex-wrap gap-2">
               <button type="button" className={buttonClass} title={clip.asset.uri ? "拆分后需重新生成涉及片段；原音可从历史版本恢复" : undefined} disabled={!canSplit} onClick={() => range && onSplitClip(clip.id, range.start, range.end)}><Scissors className="h-3.5 w-3.5" />{hasRange ? "选区独立成段" : "在光标处分段"}</button>
@@ -156,8 +162,8 @@ export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, noti
               <button type="button" className={buttonClass} disabled={!clip.text.trim()} onClick={() => setRewrite(hasRange ? range : { clipId: clip.id, text: clip.text, start: 0, end: clip.text.length })}><Sparkles className="h-3.5 w-3.5" />{hasRange ? "AI 改写选区" : "AI 改写本段"}</button>
             </div>}
             <div className="flex flex-wrap items-center justify-between gap-2">
-              {silent && onSilentDurationChange ? <label className="flex items-center gap-2 text-xs text-studio-muted">镜头时长<input aria-label="无对白镜头时长" type="number" min="0.5" max="600" step="0.5" value={clip.duration} onChange={(event) => { const value = Number(event.target.value); if (value >= 0.5 && value <= 600) onSilentDurationChange(clip.id, value); }} className="w-16 rounded-md border border-studio-line bg-black/20 px-2 py-1" />秒</label> : gap !== null && <GapInput key={`${clip.id}:${gap}`} value={gap} label={`第 ${index + 1} 段后等待秒数`} onChange={(seconds) => onGapChange(clip.id, seconds)} />}
-              <details className="relative"><summary aria-label="本段更多操作" className={`${buttonClass} cursor-pointer list-none`}><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-20 mt-1 grid min-w-36 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">
+              {silent && onSilentDurationChange ? <label className="flex items-center gap-2 text-xs text-violet-200/75">镜头时长<input aria-label="无对白镜头时长" type="number" min="0.5" max="600" step="0.5" value={clip.duration} onChange={(event) => { const value = Number(event.target.value); if (value >= 0.5 && value <= 600) onSilentDurationChange(clip.id, value); }} className="w-16 rounded-md border border-violet-300/20 bg-black/10 px-2 py-1 text-violet-100 outline-none focus:border-violet-300/45" />秒</label> : gap !== null && <GapInput key={`${clip.id}:${gap}`} value={gap} label={`第 ${index + 1} 段后等待秒数`} onChange={(seconds) => onGapChange(clip.id, seconds)} />}
+              <details className="relative ml-auto"><summary aria-label="本段更多操作" className={`${buttonClass} cursor-pointer list-none`}><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-20 mt-1 grid min-w-36 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">
                 {!silent && <button type="button" className={buttonClass} disabled={!clip.text.trim()} onClick={() => setRewrite({ clipId: clip.id, text: clip.text, start: 0, end: clip.text.length })}><Sparkles className="h-3.5 w-3.5" />AI 改写本段</button>}
                 <button className={buttonClass} type="button" onClick={() => onAddClip(clip.id)}>下方插入台词</button>{onAddSilentClip && <button className={buttonClass} type="button" onClick={() => onAddSilentClip(clip.id)}>下方插入无对白</button>}
                 {!silent && <button className={buttonClass} type="button" disabled={index === voices.length - 1 || voices[index + 1]?.kind === "silent"} onClick={() => onMergeClip(clip.id)}>合并下一段</button>}

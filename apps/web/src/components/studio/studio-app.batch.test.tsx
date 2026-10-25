@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { StrictMode, type ReactNode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
@@ -15,6 +15,8 @@ import { StudioApp } from "./studio-app";
 import { INSUFFICIENT_STORAGE, LocalStorageError } from "@/lib/asmr/local-storage-error";
 
 const bridgeFactory = vi.hoisted(() => vi.fn());
+const dialogMethods = ["showModal", "close"] as const;
+const dialogDescriptors = dialogMethods.map(name => Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, name));
 vi.mock("@/lib/asmr/local-generation-bridge", () => ({ createLocalGenerationBridge: bridgeFactory }));
 vi.mock("./project-workspace", () => ({
   ProjectWorkspace: ({ children, project }: { children: ReactNode; project: AsmrProject }) => <div><output data-testid="current-project">{JSON.stringify(project)}</output>{children}</div>,
@@ -62,6 +64,11 @@ function storedProject(fallback: AsmrProject): AsmrProject {
 }
 
 function currentProject(): AsmrProject { return JSON.parse(screen.getByTestId("current-project").textContent!); }
+function openResults() {
+  fireEvent.click(screen.getByRole("button", { name: "查看结果" }));
+  return screen.getByRole("dialog", { name: "操作结果" });
+}
+function closeResults() { fireEvent.click(within(screen.getByRole("dialog", { name: "操作结果" })).getByRole("button", { name: "关闭操作结果" })); }
 
 function shotFor(project: AsmrProject, clipId: string, title = "A newly generated moment"): ClipVideoStoryboard {
   const clip = voices(project).find((item) => item.id === clipId)!;
@@ -154,12 +161,17 @@ async function advanceAudioBatchInterval(calls: readonly unknown[], completedCal
 }
 
 beforeEach(() => {
+  for (const name of dialogMethods) Object.defineProperty(HTMLDialogElement.prototype, name, { configurable: true, writable: true,
+    value: vi.fn(function (this: HTMLDialogElement) { this.open = name === "showModal"; }) });
   window.localStorage.clear(); bridgeFactory.mockReset();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
   vi.stubEnv("NEXT_PUBLIC_ASMR_GENERATION_MODE", "local");
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
+  dialogMethods.forEach((name, index) => { const descriptor = dialogDescriptors[index]; if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, name, descriptor); else Reflect.deleteProperty(HTMLDialogElement.prototype, name); });
+});
 
 describe("StudioApp batch generation with simulated bridge and HTTP", () => {
   it("updates storyboard markers from saved prompts and dialogue edits, including the linked next paragraph", async () => {
@@ -229,10 +241,12 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     const second = generation.calls[1];
     await act(async () => { second.onUpdate({ type: "failed", job: { ...second.job, status: "failed" }, error: new LocalStorageError().message, errorCode: INSUFFICIENT_STORAGE }); });
     expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
-    const notice = screen.getByText(/批量生成已停止：成功 0 · 失败 2/).textContent;
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const notice = within(openResults()).getByText(/批量生成已停止：成功 0 · 失败 2/).textContent;
     expect(notice).toContain(new LocalStorageError().message);
     expect(notice).not.toContain("模型暂不可用");
     expect(notice).toContain("还有 1 段未处理");
+    closeResults();
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(generation.calls).toHaveLength(2);
   });
@@ -249,7 +263,8 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     const call = generation.calls[1];
     await act(async () => { call.onUpdate({ type: "failed", job: { ...call.job, status: "failed" }, error: new LocalStorageError().message, errorCode: INSUFFICIENT_STORAGE }); });
     expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
-    expect(screen.getByText(/批量生成已停止：成功 1 · 失败 1/).textContent).toContain("还有 1 段未处理");
+    expect(within(openResults()).getByText(/批量生成已停止：成功 1 · 失败 1/).textContent).toContain("还有 1 段未处理");
+    closeResults();
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(generation.calls).toHaveLength(2);
     expect(storedProject(project)).toEqual(project);
@@ -292,6 +307,9 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     await act(async () => {});
     expect(generation.calls).toHaveLength(1);
     expect(generation.calls[0].request).toMatchObject({ clipId: voices(project)[0].id, reason: "regenerate", voiceOptions });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
+    expect(screen.getByRole("progressbar", { name: "音频批量进度" })).toBeTruthy();
     await act(async () => { generation.finishCandidate(0); });
     await advanceAudioBatchInterval(generation.calls, 1);
     expect(voices(currentProject())[0].asset).toEqual(voices(project)[0].asset);
@@ -326,8 +344,10 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     for (const name of ["音频全部生成", "音频全部重新生成", "分镜全部生成", "分镜全部重新生成"]) {
       expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
     }
-    expect(screen.getByRole("group", { name: "批量生成" }).textContent).toContain("成功 1 · 失败 1");
-    expect(screen.getByRole("group", { name: "批量生成" }).textContent).toContain("桥接启动失败");
+    expect(screen.getByRole("status", { name: "操作结果摘要" }).textContent).toContain("成功 1 · 失败 1");
+    expect(screen.getByRole("status", { name: "操作结果摘要" }).textContent).not.toContain("桥接启动失败");
+    expect(within(openResults()).getByRole("region", { name: "批量生成结果" }).textContent).toContain("桥接启动失败");
+    closeResults();
     expect(storedProject(project)).toEqual(project);
     expect(api.candidates).toHaveLength(1);
   });
@@ -340,6 +360,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     let view = await mount(project);
     fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
+    expect(window.confirm).not.toHaveBeenCalled();
     expect(api.posts[0].body).toMatchObject({ project, clipId: voices(project)[1].id, provider: "api", includePrevious: true, referenceMode: "continuous" });
     await act(async () => { api.finishShot(0); });
     await waitFor(() => expect(storedProject(project).videoPlan?.shots[voices(project)[1].id]?.title).toBe("A newly generated moment"));
@@ -350,9 +371,80 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     view.unmount(); view = await mount(project);
     expect(currentProject().videoPlan?.shots[manual.clipId]).toEqual(manual);
     expect(currentProject().videoPlan?.shots[voices(project)[1].id]?.title).toBe("A newly generated moment");
-    expect((screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("button", { name: "分镜全部生成" }).textContent).toContain("重新生成分镜");
     expect(api.posts).toHaveLength(1);
     view.unmount();
+  });
+
+  it.each(["primary", "more"] as const)("declines existing-storyboard replacement from %s without requests or project changes", async (entry) => {
+    const project = fixtureProject([0, 1]);
+    for (const clip of voices(project).slice(0, 2)) project.videoPlan!.shots[clip.id] = shotFor(project, clip.id, "Keep existing " + clip.id);
+    seed(project); const api = mockApi(); const generation = mockBridge(api.candidates); await mount(project);
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    const button = screen.getByRole("button", { name: entry === "primary" ? "分镜全部生成" : "分镜全部重新生成" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false); fireEvent.click(button); await act(async () => {});
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/(?=.*重新生成)(?=.*已有分镜)/));
+    expect(api.posts).toHaveLength(0); expect(generation.calls).toHaveLength(0);
+    expect(storedProject(project)).toEqual(project); expect(currentProject()).toEqual(project);
+    expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
+  });
+
+  it("regenerates from the primary action after confirmation and preserves an old shot when its request fails", async () => {
+    const project = fixtureProject([0, 1]), [first, second] = voices(project);
+    for (const clip of [first, second]) project.videoPlan!.shots[clip.id] = shotFor(project, clip.id, "Old manual " + clip.id);
+    const keptSecond = structuredClone(project.videoPlan!.shots[second.id]);
+    seed(project); const api = mockApi(); const generation = mockBridge(api.candidates); await mount(project);
+    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/(?=.*重新生成)(?=.*已有分镜)/));
+    expect(api.posts[0].body.clipId).toBe(first.id); expect(storedProject(project)).toEqual(project);
+    await act(async () => { api.finishShot(0, "Confirmed replacement first shot"); });
+    await waitFor(() => expect(api.posts).toHaveLength(2)); expect(api.posts[1].body.clipId).toBe(second.id);
+    await act(async () => { api.posts[1].resolve(Response.json({ error: "分镜模型暂时不可用。" }, { status: 502 })); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());
+    const saved = storedProject(project);
+    expect(saved.videoPlan!.shots[first.id].title).toBe("Confirmed replacement first shot");
+    expect(saved.videoPlan!.shots[second.id]).toEqual(keptSecond); expect(saved.timeline).toEqual(project.timeline);
+    expect(screen.getByRole("status", { name: "操作结果摘要" }).textContent).toContain("成功 1 · 失败 1");
+    expect(generation.calls).toHaveLength(0);
+  });
+
+  it("identifies every failed script segment and distinguishes a model failure from its following continuity failure", async () => {
+    const project = fixtureProject([0, 1, 2]), [first, second, third] = voices(project);
+    first.id = "snow_voice_003"; second.id = "snow_voice_015"; third.id = "snow_voice_099";
+    second.text = "擦擦脸，外面风雪大。"; third.text = "喝点热的，先暖暖手。";
+    project.videoPlan!.shots[first.id] = { ...shotFor(project, first.id, "Original first"), referenceMode: "new" };
+    for (const clip of [second, third]) project.videoPlan!.shots[clip.id] = {
+      ...shotFor(project, clip.id, "Keep original " + clip.id), referenceMode: "continuous",
+      ...getClipStoryboardReferenceContext(project, clip.id, "continuous"),
+    };
+    const originalSecond = structuredClone(project.videoPlan!.shots[second.id]);
+    const originalThird = structuredClone(project.videoPlan!.shots[third.id]);
+    seed(project); const api = mockApi(); const generation = mockBridge(api.candidates); await mount(project);
+    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    await waitFor(() => expect(api.posts).toHaveLength(1));
+    await act(async () => { api.finishShot(0, "New first shot retained"); });
+    await waitFor(() => expect(api.posts).toHaveLength(2));
+    await act(async () => { api.posts[1].resolve(Response.json({ error: "模型分镜结构不正确，请重试。" }, { status: 502 })); });
+    const summary = await screen.findByRole("status", { name: "操作结果摘要" });
+    expect(summary.textContent).toContain("批量生成完成：成功 1 · 失败 2");
+    expect(summary.textContent).not.toContain("擦擦脸");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText(/第 2 段“擦擦脸/)).toBeNull();
+    const requestsBeforeViewing = vi.mocked(fetch).mock.calls.length;
+    const notice = within(openResults()).getByText(/^批量生成完成：成功 1 · 失败 2/);
+    expect(notice.textContent).toContain("\n第 2 段“擦擦脸，外面风雪大。”：模型分镜结构不正确，请重试。");
+    expect(notice.textContent).toContain("\n第 3 段“喝点热的，先暖暖手。”：连续镜头需要上一段的可用分镜，请先生成或更新上一段。");
+    expect(notice.classList.contains("whitespace-pre-line")).toBe(true);
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(requestsBeforeViewing);
+    closeResults();
+    expect(api.posts.map(post => post.body.clipId)).toEqual([first.id, second.id]);
+    const saved = storedProject(project);
+    expect(saved.videoPlan!.shots[first.id].title).toBe("New first shot retained");
+    expect(saved.videoPlan!.shots[second.id]).toEqual(originalSecond);
+    expect(saved.videoPlan!.shots[third.id]).toEqual(originalThird);
+    expect(saved.timeline).toEqual(project.timeline); expect(generation.calls).toHaveLength(0);
   });
 
   it("serially regenerates all eligible storyboards with fresh project snapshots and never creates audio", async () => {
@@ -431,6 +523,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     await mount(project);
     fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
+    expect(window.confirm).not.toHaveBeenCalled();
     expect(api.posts[0].body).toMatchObject({ clipId: first.id, referenceMode: "new", includePrevious: false });
     expect((screen.getByRole("button", { name: /第 2 段：连续镜头，点击切换/ }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { api.finishShot(0, "First fresh scene"); });
@@ -462,7 +555,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     await waitFor(() => expect(api.posts).toHaveLength(1));
     await act(async () => { api.posts[0].resolve(Response.json({ storyboard: { ...shotFor(project, firstId), referenceMode: "continuous" } })); });
     await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());
-    expect(screen.getByRole("group", { name: "批量生成" }).textContent).toContain("失败 1");
+    expect(screen.getByRole("status", { name: "操作结果摘要" }).textContent).toContain("失败 1");
     expect(storedProject(project)).toEqual(project);
   });
 });

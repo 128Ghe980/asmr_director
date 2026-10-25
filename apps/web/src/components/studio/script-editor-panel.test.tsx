@@ -48,6 +48,24 @@ function saveShot(project: AsmrProject, clip: VoiceClip, patch: Partial<ClipVide
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+describe("语义台词编辑", () => {
+  it("keeps multi-sentence dialogue editable without a normalization reminder or blur split", () => {
+    const input = fixture();
+    const clip = input.project.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];
+    clip.text = "回来啦。我还没睡，就猜你快到了。";
+    input.selectedClipId = clip.id;
+    render(<ScriptEditorPanel {...input} />);
+    expect(screen.queryByText("有台词包含多句，可按需拆分")).toBeNull();
+    expect(screen.queryByText("还有长段未拆成短句")).toBeNull();
+    expect(screen.queryByRole("button", { name: "切短句" })).toBeNull();
+    const field = screen.getByRole("textbox", { name: "台词" });
+    fireEvent.change(field, { target: { value: "回来啦。我一直等着你。先暖暖手。" } });
+    fireEvent.blur(field);
+    expect(input.onUpdateClip).toHaveBeenCalledExactlyOnceWith(clip.id, { text: "回来啦。我一直等着你。先暖暖手。" });
+    expect(input.onSplitClip).not.toHaveBeenCalled();
+  });
+});
+
 describe("台词上下调整", () => {
   it("exposes compact controls on every voice row and forwards the displayed clip identity", () => {
     const input = fixture();

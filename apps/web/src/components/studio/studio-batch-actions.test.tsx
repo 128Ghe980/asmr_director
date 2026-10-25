@@ -31,6 +31,47 @@ function openMoreActions() {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("studio batch actions", () => {
+  it("offers manual whole-batch review in more actions only when all storyboards are current", () => {
+    const props = fixture(), review = vi.fn();
+    const view = render(<StudioBatchActions {...props} storyboardReview={{ ready: false, reason: "请补齐当前分镜。", busy: false }} onReviewStoryboards={review} />);
+    expect(screen.getByRole("button", { name: "整批校对" }).closest("details")!.open).toBe(false);
+    openMoreActions();
+    expect((screen.getByRole("button", { name: "整批校对" }) as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(<StudioBatchActions {...props} storyboardReview={{ ready: true, reason: "", busy: false }} onReviewStoryboards={review} />);
+    fireEvent.click(screen.getByRole("button", { name: "整批校对" })); expect(review).toHaveBeenCalledOnce(); expect(props.onRun).not.toHaveBeenCalled();
+  });
+  it("shows cancellable review progress while excluding generation and post-processing", () => {
+    const cancel = vi.fn();
+    render(<StudioBatchActions {...fixture()} storyboardReview={{ ready: true, reason: "", busy: true }} onCancelStoryboardReview={cancel}
+      postProcessing={{ ready: true, reason: "" }} onGeneratePostProcessing={vi.fn()} />);
+    expect(screen.getByText("整批校对中…")).toBeTruthy();
+    for (const name of ["音频全部生成", "分镜全部生成", "生成后处理"]) expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "取消整批校对" })); expect(cancel).toHaveBeenCalledOnce();
+  });
+  it("places explicit post-processing immediately after storyboard and explains missing inputs", () => {
+    const props = fixture();
+    const onGenerate = vi.fn();
+    const view = render(<StudioBatchActions {...props} postProcessing={{ ready: false, reason: "请先补齐全部当前分镜。" }} onGeneratePostProcessing={onGenerate} />);
+    const button = screen.getByRole("button", { name: "生成后处理" }) as HTMLButtonElement;
+    expect(screen.getByRole("group", { name: "批量分镜" }).nextElementSibling).toBe(button);
+    expect(button.disabled).toBe(true);
+    expect(button.title).toContain("补齐全部当前分镜");
+    view.rerender(<StudioBatchActions {...props} postProcessing={{ ready: true, reason: "" }} onGeneratePostProcessing={onGenerate} />);
+    fireEvent.click(button);
+    expect(onGenerate).toHaveBeenCalledOnce();
+    expect(props.onRun).not.toHaveBeenCalled();
+  });
+
+  it.each(["planning", "rendering"] as const)("keeps post-processing cancellation available while mutually excluding generation: %s", (phase) => {
+    const props = fixture();
+    const cancel = vi.fn();
+    render(<StudioBatchActions {...props} postProcessing={{ ready: true, reason: "", progress: { phase, total: 3, completed: 1, failed: 0 } }} onCancelPostProcessing={cancel} />);
+    expect((screen.getByRole("button", { name: "音频全部生成" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("status").textContent).toContain(phase === "planning" ? "正在设计后处理" : "完成 1/3");
+    fireEvent.click(screen.getByRole("button", { name: "取消后处理" }));
+    expect(cancel).toHaveBeenCalledOnce();
+  });
   it("labels all five actions distinctly, shows their eligible counts, and forwards the selected action", () => {
     const props = fixture();
     render(<StudioBatchActions {...props} />);
@@ -58,17 +99,31 @@ describe("studio batch actions", () => {
     openMoreActions();
     for (const { action, name } of actions) {
       const button = screen.getByRole("button", { name }) as HTMLButtonElement;
-      expect(button.disabled).toBe(props.counts[action] === 0);
+      expect(button.disabled).toBe(action === "storyboard_missing" ? false : props.counts[action] === 0);
       fireEvent.click(button);
     }
-    expect(props.onRun).toHaveBeenCalledTimes(2);
+    expect(props.onRun).toHaveBeenCalledTimes(3);
     expect(props.onRun).toHaveBeenNthCalledWith(1, "audio_all");
     expect(props.onRun).toHaveBeenNthCalledWith(2, "storyboard_all");
+    expect(props.onRun).toHaveBeenNthCalledWith(3, "storyboard_all");
     view.rerender(<StudioBatchActions {...props} counts={{ ...props.counts, audio_missing: 1, audio_ungenerated: 2 }} />);
     fireEvent.click(screen.getByRole("button", { name: "音频全部生成" }));
     expect(props.onRun).toHaveBeenLastCalledWith("audio_missing");
     fireEvent.click(screen.getByRole("button", { name: "生成未生成" }));
     expect(props.onRun).toHaveBeenLastCalledWith("audio_ungenerated");
+  });
+
+  it("keeps the primary storyboard action available for regeneration when nothing is missing", () => {
+    const props = fixture(); props.counts.storyboard_missing = 0;
+    const view = render(<StudioBatchActions {...props} />);
+    const button = screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toContain("重新生成分镜");
+    expect(button.textContent).toContain(String(props.counts.storyboard_all));
+    fireEvent.click(button); expect(props.onRun).toHaveBeenCalledExactlyOnceWith("storyboard_all");
+    view.rerender(<StudioBatchActions {...props} counts={{ ...props.counts, storyboard_all: 0 }} />);
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button); expect(props.onRun).toHaveBeenCalledOnce();
   });
 
   it("honors an external busy state even when all five counts are positive", () => {
@@ -148,14 +203,14 @@ describe("studio batch actions", () => {
     expect(props.onRun).not.toHaveBeenCalled();
   });
 
-  it("updates storyboard progress and leaves a completion notice without keeping actions locked", () => {
+  it("updates storyboard progress and unlocks actions after completion", () => {
     const props = fixture();
     const view = render(<StudioBatchActions {...props} progress={{ action: "storyboard_missing", total: 3, completed: 0, succeeded: 0, failed: 0, skipped: 0 }} />);
     expect(screen.getByRole("status").textContent).toBe("分镜 · 完成 0/3");
     view.rerender(<StudioBatchActions {...props} progress={{ action: "storyboard_missing", total: 3, completed: 2, succeeded: 2, failed: 0, skipped: 0 }} />);
     expect(screen.getByRole("progressbar", { name: "分镜批量进度" }).getAttribute("aria-valuenow")).toBe("2");
-    view.rerender(<StudioBatchActions {...props} notice="分镜完成 3/3" />);
-    expect(screen.getByRole("status").textContent).toBe("分镜完成 3/3");
+    view.rerender(<StudioBatchActions {...props} />);
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));

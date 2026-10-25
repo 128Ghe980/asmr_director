@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, open, realpath, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { renderConciseH3Prompt } from "./h3-prompt";
 import { resolveClipAssetPath } from "./local-asset-store";
 import { BatchDownloadError, type PreparedBatchDownload } from "./local-batch-download";
@@ -7,6 +8,8 @@ import type { LocalRuntimeConfig } from "./local-runtime-config";
 import type { AsmrProject } from "./schema";
 import { StoredZipWriter, ZipLimitError } from "./stored-zip";
 import { getVideoPackageFilename, getVideoPackageShots, VideoPackageValidationError, type VideoPackageSourceShot } from "./video-package";
+import { getCurrentAudioPostProcessingReceipts } from "./audio-post-processing";
+import { readPreparedAudioSource } from "./prepared-audio-source";
 
 export const MAX_VIDEO_REFERENCE_BYTES = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 128 * 1024 * 1024;
@@ -27,7 +30,7 @@ export type VideoPackageManifest = {
   }[];
 };
 type Dependencies = { reference?: Uint8Array; tempRoot?: string; runnerRoot?: string; maxArchiveBytes?: number };
-type AudioSource = { filePath: string; size: number; mtimeMs: number; duration: number };
+type AudioSource = { filePath: string; size: number; mtimeMs: number; duration: number; outputSha256?: string };
 
 function checkCancelled(signal?: AbortSignal) {
   if (signal?.aborted) throw new BatchDownloadError("已取消视频项目包导出。", 499);
@@ -65,7 +68,7 @@ async function readBytes(file: FileHandle, offset: number, count: number, signal
 }
 
 /** Inspect PCM headers in small reads; exporting never allocates a decoded sample buffer. */
-async function pcmDuration(file: FileHandle, size: number, signal?: AbortSignal): Promise<number> {
+async function pcmDuration(file: FileHandle, size: number, signal?: AbortSignal, maximumSeconds = 600): Promise<number> {
   const header = await readBytes(file, 0, 12, signal);
   if (header.toString("ascii", 0, 4) !== "RIFF" || header.toString("ascii", 8, 12) !== "WAVE"
     || header.readUInt32LE(4) !== size - 8) throw new Error("Invalid WAV header");
@@ -91,22 +94,23 @@ async function pcmDuration(file: FileHandle, size: number, signal?: AbortSignal)
     || sampleRate < 8000 || sampleRate > 192000 || blockAlign !== channels * bits / 8
     || byteRate !== sampleRate * blockAlign || dataBytes % blockAlign !== 0) throw new Error("Unsupported PCM WAV");
   const duration = dataBytes / blockAlign / sampleRate;
-  if (!Number.isFinite(duration) || duration <= 0 || duration > 600) throw new Error("Invalid audio duration");
+  if (!Number.isFinite(duration) || duration <= 0 || duration > maximumSeconds) throw new Error("Invalid audio duration");
   return duration;
 }
 
-async function inspectAudio(entry: VideoPackageSourceShot, config: LocalRuntimeConfig, signal?: AbortSignal): Promise<AudioSource> {
+async function inspectAudio(entry: VideoPackageSourceShot, config: LocalRuntimeConfig, signal?: AbortSignal,
+  preparedAssetId?: string): Promise<AudioSource> {
   let file: FileHandle | undefined;
   try {
-    const filePath = resolveClipAssetPath(entry.clip.asset.asset_id!, config);
+    const filePath = resolveClipAssetPath(preparedAssetId ?? entry.clip.asset.asset_id!, config);
     const [root, resolved] = await Promise.all([realpath(config.clipAssetRoot), realpath(filePath)]);
     if (!isWithin(root, resolved)) throw new BatchDownloadError(`第 ${entry.index} 段的音频路径无效。`, 400);
     file = await open(resolved, "r");
     const before = await file.stat();
     if (!before.isFile()) throw new BatchDownloadError(`第 ${entry.index} 段的已采用音频不可用。`, 404);
-    if (before.size > MAX_SOURCE_BYTES) throw new BatchDownloadError(`第 ${entry.index} 段音频过大（上限 128 MiB）。`, 413);
+    if (before.size > MAX_SOURCE_BYTES * (preparedAssetId ? 4 : 1)) throw new BatchDownloadError(`第 ${entry.index} 段音频过大。`, 413);
     let duration: number;
-    try { duration = await pcmDuration(file, before.size, signal); }
+    try { duration = await pcmDuration(file, before.size, signal, preparedAssetId ? 600.65 + 1 / 48000 : 600); }
     catch (error) {
       checkCancelled(signal);
       if (error instanceof BatchDownloadError) throw error;
@@ -155,12 +159,16 @@ async function addAudio(writer: StoredZipWriter, name: string, source: AudioSour
   try {
     const before = await file.stat();
     if (before.size !== source.size || before.mtimeMs !== source.mtimeMs) throw new BatchDownloadError(`第 ${index} 段音频已变化，请重新导出。`, 409);
+    const outputHash = source.outputSha256 ? createHash("sha256") : undefined;
     async function* chunks() {
       for (let offset = 0; offset < source.size; offset += 64 * 1024) {
-        yield await readBytes(file, offset, Math.min(64 * 1024, source.size - offset), signal);
+        const bytes = await readBytes(file, offset, Math.min(64 * 1024, source.size - offset), signal);
+        outputHash?.update(bytes);
+        yield bytes;
       }
     }
     await writer.add(name, chunks());
+    if (outputHash && outputHash.digest("hex") !== source.outputSha256) throw new BatchDownloadError(`第 ${index} 段后处理音频已变化，请重新生成后处理。`, 409);
     const after = await file.stat();
     if (after.size !== source.size || after.mtimeMs !== source.mtimeMs) throw new BatchDownloadError(`第 ${index} 段音频已变化，请重新导出。`, 409);
   } finally { await file.close().catch(() => {}); }
@@ -183,11 +191,21 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
   const sources = new Map<number, AudioSource>();
   let inputBytes = (reference?.length ?? 0) + runner.reduce((sum, file) => sum + file.bytes.length, 0);
   const maxArchiveBytes = dependencies.maxArchiveBytes ?? MAX_ARCHIVE_BYTES;
+  const speechShots = shots.filter(entry => entry.clip.kind !== "silent");
+  const receipts = getCurrentAudioPostProcessingReceipts(project);
+  const usePrepared = speechShots.length > 0 && speechShots.every(entry => receipts.has(entry.clip.id));
   // Complete preflight happens before any ZIP is created; errors cannot silently omit a shot.
   for (const entry of shots) {
     checkCancelled(signal);
     if (entry.clip.kind !== "silent") {
-      const source = await inspectAudio(entry, config, signal);
+      const preparedAudio = usePrepared ? await readPreparedAudioSource(project, entry.clip.id, config, signal, false) : undefined;
+      if (usePrepared && !preparedAudio) throw new BatchDownloadError("后处理结果已更新，请重新生成后处理。", 422);
+      const source = await inspectAudio(entry, config, signal, preparedAudio?.asset.assetId);
+      if (preparedAudio) {
+        if (source.filePath !== preparedAudio.filePath || source.size !== preparedAudio.size || source.mtimeMs !== preparedAudio.mtimeMs)
+          throw new BatchDownloadError(`第 ${entry.index} 段后处理音频已变化，请重新生成后处理。`, 409);
+        source.outputSha256 = preparedAudio.receipt.outputSha256;
+      }
       sources.set(entry.index, source); inputBytes += source.size;
     }
   }

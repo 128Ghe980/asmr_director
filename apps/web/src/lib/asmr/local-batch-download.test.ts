@@ -6,18 +6,19 @@ import { BatchDownloadError, prepareBatchDownload } from "./local-batch-download
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { demoProject } from "./mock-project";
 import { decodePcmWav, writePcm16Wav } from "./pcm-audio";
-import { SpatialAudioError, type RenderSpatialClipInput } from "./spatial-audio";
+import { makePreparedAudioFixture } from "./post-processing-test-fixtures";
+import { StoredZipWriter } from "./stored-zip";
 
 let root: string, tempRoot: string, config: LocalRuntimeConfig;
 beforeEach(async () => {
-  const base = process.platform === "win32" ? "I:/AI" : tmpdir();
+  const base = tmpdir();
   await mkdir(base, { recursive: true });
   root = await mkdtemp(path.join(base, "asmr-batch-test-"));
   tempRoot = path.join(root, "exports");
   config = { runtimeRoot: root, clipAssetRoot: path.join(root, "clips"), mixAssetRoot: path.join(root, "mix"), gptSovitsBaseUrl: "http://unused", voicePackPath: "unused" };
   await mkdir(config.clipAssetRoot, { recursive: true });
 });
-afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
 
 function projectWithVoice(binaural = false) {
   const project = structuredClone(demoProject);
@@ -54,7 +55,7 @@ function zipEntries(bytes: Buffer) {
 }
 
 describe("complete adopted batch archive", () => {
-  it("pairs complete byte-identical originals with full-length processed clips and a truthful manifest", async () => {
+  it("exports byte-identical complete originals without implicitly generating post-processing", async () => {
     const raw = writePcm16Wav(new Float32Array(4800).fill(.2), 48000);
     await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), raw);
     const archive = await prepareBatchDownload(projectWithVoice(), config, undefined, { tempRoot });
@@ -62,50 +63,42 @@ describe("complete adopted batch archive", () => {
     expect(archive.clipCount).toBe(1);
     expect(archive.size).toBe(bytes.length);
     const rawEntry = [...entries].find(([name]) => name.includes("/无后处理/"))!;
-    const processedEntry = [...entries].find(([name]) => name.includes("/后处理/"))!;
-    expect(rawEntry[0].split("/").at(-1)).toBe(processedEntry[0].split("/").at(-1));
+    expect([...entries].some(([name]) => name.includes("/后处理/"))).toBe(false);
     expect(rawEntry[1]).toEqual(Buffer.from(raw));
-    const processed = decodePcmWav(processedEntry[1]);
-    expect(processed.samples.length / 2 / processed.sampleRate).toBe(.1);
-    expect(processed.samples[0]).toBeCloseTo(0, 5);
-    expect(processed.samples[1]).toBeCloseTo(.2 * Math.pow(10, -6 / 20), 4);
     const manifest = JSON.parse(new TextDecoder().decode([...entries].find(([name]) => name.endsWith("导出清单.json"))![1]));
-    expect(manifest.clips[0]).toMatchObject({ assetId: "adopted", processing: "basic_processing", spatialized: false, durationSeconds: .1 });
+    expect(manifest.clips[0]).toMatchObject({ assetId: "adopted", processing: "not_generated", spatialized: false, durationSeconds: .1 });
+    expect(manifest.clips[0]).not.toHaveProperty("processedPath");
     await archive.cleanup();
     expect(await readdir(tempRoot)).toEqual([]);
     expect(await readFile(path.join(config.clipAssetRoot, "adopted.wav"))).toEqual(Buffer.from(raw));
   });
 
-  it("exports original D over the full source and retains its 650 ms tail without applying fades twice", async () => {
-    await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), writePcm16Wav(new Float32Array(4800).fill(.2), 48000));
-    const spatial = writePcm16Wav(new Float32Array(36000 * 2).fill(.2), 48000, 2);
-    const renderSpatial = vi.fn(async (input: RenderSpatialClipInput) => { void input; return { wav: spatial, spatialized: true }; });
-    const project = projectWithVoice(true);
-    const voice = project.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];
-    voice.fade_in = .05; voice.fade_out = .05;
-    const archive = await prepareBatchDownload(project, config, undefined, { tempRoot, renderSpatial });
-    expect(renderSpatial).toHaveBeenCalledWith(expect.objectContaining({ assetId: "adopted", fadeInSeconds: .05, fadeOutSeconds: .05 }));
-    expect(renderSpatial.mock.calls[0][0]).not.toHaveProperty("durationSeconds");
+  it("copies the prepared D result including its tail without applying gain or fades twice", async () => {
+    const { project, processed: prepared } = await makePreparedAudioFixture(config, 1);
+    const archive = await prepareBatchDownload(project, config, undefined, { tempRoot });
     const entries = zipEntries(await readFile(archive.filePath));
     const processed = decodePcmWav([...entries].find(([name]) => name.includes("/后处理/"))![1]);
     expect(processed.samples.length / 2 / processed.sampleRate).toBe(.75);
-    expect(processed.samples[0]).toBeCloseTo(.2 * Math.pow(10, -6 / 20), 4);
-    expect(processed.samples.at(-1)).toBeCloseTo(.2 * Math.pow(10, -6 / 20), 4);
+    expect([...entries].find(([name]) => name.includes("/后处理/"))![1]).toEqual(prepared);
+    expect(processed.samples[0]).toBeCloseTo(.04, 4);
+    expect(processed.samples.at(-1)).toBeCloseTo(.02, 4);
     const manifest = JSON.parse(new TextDecoder().decode([...entries].find(([name]) => name.endsWith("导出清单.json"))![1]));
-    expect(manifest.clips[0]).toMatchObject({ processing: "original_d_binaural", spatialized: true, durationSeconds: .75 });
+    expect(manifest.clips[0]).toMatchObject({ processing: "prepared_audio", spatialized: true, durationSeconds: .75 });
     await archive.cleanup();
   });
 
-  it("allows existing stereo sources but never labels a mono fallback as successful spatial processing", async () => {
+  it("exports mono and stereo originals even when no explicit processing result exists", async () => {
     const raw = writePcm16Wav(new Float32Array(9600).fill(.1), 48000, 2);
     await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), raw);
-    const archive = await prepareBatchDownload(projectWithVoice(true), config, undefined, { tempRoot, renderSpatial: vi.fn(async () => ({ wav: raw, spatialized: false })) });
+    const archive = await prepareBatchDownload(projectWithVoice(true), config, undefined, { tempRoot });
     const entries = zipEntries(await readFile(archive.filePath));
     const manifest = JSON.parse(new TextDecoder().decode([...entries].find(([name]) => name.endsWith("导出清单.json"))![1]));
-    expect(manifest.clips[0]).toMatchObject({ processing: "stereo_source", spatialized: false });
+    expect(manifest.clips[0]).toMatchObject({ processing: "not_generated", spatialized: false });
     await archive.cleanup();
     const mono = writePcm16Wav(new Float32Array(4800).fill(.1), 48000);
-    await expect(prepareBatchDownload(projectWithVoice(true), config, undefined, { tempRoot, renderSpatial: vi.fn(async () => ({ wav: mono, spatialized: false })) })).rejects.toMatchObject({ statusCode: 503 });
+    await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), mono);
+    const monoArchive = await prepareBatchDownload(projectWithVoice(true), config, undefined, { tempRoot });
+    await monoArchive.cleanup();
     expect(await readdir(tempRoot)).toEqual([]);
   });
 
@@ -120,23 +113,22 @@ describe("complete adopted batch archive", () => {
     await expect(prepareBatchDownload(project, config, undefined, { tempRoot })).rejects.toMatchObject({ statusCode: 400 });
     await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), writePcm16Wav(new Float32Array(4800), 48000));
     await expect(prepareBatchDownload(projectWithVoice(), config, undefined, { tempRoot, maxArchiveBytes: 100 })).rejects.toMatchObject({ statusCode: 413 });
-    // Raw fits the limit, but both paired files do not: partial archive is cleaned up.
-    await expect(prepareBatchDownload(projectWithVoice(), config, undefined, { tempRoot, maxArchiveBytes: 12000 })).rejects.toMatchObject({ statusCode: 413 });
+    // The source fits, but ZIP metadata does not: the partial archive is cleaned.
+    await expect(prepareBatchDownload(projectWithVoice(), config, undefined, { tempRoot, maxArchiveBytes: 10000 })).rejects.toMatchObject({ statusCode: 413 });
     expect(await readdir(tempRoot)).toEqual([]);
     await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), new Uint8Array(44));
     await expect(prepareBatchDownload(projectWithVoice(), config, undefined, { tempRoot })).rejects.toMatchObject({ statusCode: 422 });
     expect(await readdir(tempRoot)).toEqual([]);
   });
 
-  it("propagates cancellation and spatial failures while removing the incomplete ZIP", async () => {
+  it("propagates cancellation and removes an incomplete ZIP without processing audio", async () => {
     const controller = new AbortController();
     controller.abort();
     await expect(prepareBatchDownload(projectWithVoice(), config, controller.signal, { tempRoot })).rejects.toBeInstanceOf(BatchDownloadError);
     await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), writePcm16Wav(new Float32Array(4800), 48000));
-    await expect(prepareBatchDownload(projectWithVoice(true), config, undefined, { tempRoot, renderSpatial: vi.fn(async () => { throw new SpatialAudioError("空间处理不可用。", 503); }) })).rejects.toMatchObject({ statusCode: 503, message: "空间处理不可用。" });
-    expect(await readdir(tempRoot)).toEqual([]);
     const active = new AbortController();
-    await expect(prepareBatchDownload(projectWithVoice(true), config, active.signal, { tempRoot, renderSpatial: vi.fn(async () => { active.abort(); throw new Error("cancel"); }) })).rejects.toMatchObject({ statusCode: 499 });
+    vi.spyOn(StoredZipWriter.prototype, "add").mockImplementationOnce(async () => { active.abort(); throw new Error("cancel"); });
+    await expect(prepareBatchDownload(projectWithVoice(true), config, active.signal, { tempRoot })).rejects.toMatchObject({ statusCode: 499 });
     expect(await readdir(tempRoot)).toEqual([]);
   });
 });

@@ -84,10 +84,9 @@ function VoicePreview({ src, label, compact = false }: {
   label: string;
   compact?: boolean;
 }) {
-  const spatial = src.startsWith("/api/assets/spatial/");
   return <AudioPlayer src={src} label={label} compact={compact}
-    waitingLabel={spatial ? "正在准备空间试听…" : "正在准备试听…"}
-    errorLabel={spatial ? "空间试听暂不可用。可重试，或关闭双耳空间后试听原声。" : "试听暂不可用，请重试。"} />;
+    waitingLabel="正在准备试听…"
+    errorLabel="试听暂不可用，请重试。" />;
 }
 
 function OriginalVoiceRecordings({ projectId, clipId, text, workspaceMode, busy }: {

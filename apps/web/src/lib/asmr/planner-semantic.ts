@@ -23,7 +23,7 @@ export function expandPlannerGeneratedDraft(value: z.infer<typeof PlannerGenerat
   })));
   return normalizePlannerSemanticDraft(PlannerDraftSchema.parse({
     title: value.title, scene: value.scene, character: value.character, sections,
-  }));
+  }), { preserveUnitBoundaries: true });
 }
 
 // The same semantic and pause vocabulary used by the long-text voice planner.
@@ -31,6 +31,7 @@ export const PLANNER_SEMANTIC_GUIDANCE = [
   "groups[].units 必须是按朗读顺序连续排列的语义短单元，不是章节或几大段。通常每个单元 2 至 3 个子句、约 10 至 50 字；一个完整动作确实不能分开时最多 4 个子句。",
   "子句按逗号、句末标点等自然停顿划分，不是 2 至 3 个完整复句。比如‘回来啦。我还没睡，就猜你快到了。’是 3 个子句；后面的换鞋、挂外套、坐下应另起一个单元。",
   "同一动作或未完成的意思放在同一单元，完整意思结束或动作、场景、情绪自然转换时再分开；不要在每个逗号处机械拆分，也不要重复前后文。",
+  "短句是较短的语义或语气台词单元，不限定为一个完整句子；一个单元可以包含多个句号，不按每个句号机械拆分。",
   "每个单元都将直接显示为一条可编辑台词并成为一个音频片段。全文串联必须自然完整，没有重复、缺句或大纲。",
   "pauseAfter: short=紧密承接、同一动作或意思未说完；medium=普通完整句之间的自然换气；long=明显意群、场景或情绪转换。长停顿只在确实需要时使用。",
 ].join("\n");
@@ -45,8 +46,8 @@ function pauseClass(text: string): PlannerSection["pauseAfter"] {
   return "short";
 }
 
-/** Conservative punctuation fallback for oversized model units and explicit
- * legacy-draft conversion. The model makes the semantic decisions first; this
+/** Punctuation-based grouping for explicit legacy-draft conversion only.
+ * Generated model units retain their own semantic boundaries. This utility
  * never rewrites text or splits words merely to meet a character count. */
 export function splitPlannerSemanticText(text: string): string[] {
   const clauses: string[] = [];
@@ -89,11 +90,11 @@ export function splitPlannerSemanticText(text: string): string[] {
   return groups;
 }
 
-export function normalizePlannerSemanticDraft(draft: PlannerDraft, options: { preserveSectionPauses?: boolean } = {}): PlannerDraft {
+export function normalizePlannerSemanticDraft(draft: PlannerDraft, options: { preserveSectionPauses?: boolean; preserveUnitBoundaries?: boolean } = {}): PlannerDraft {
   const usedIds = new Set(draft.sections.map((section) => section.id));
   let nextId = 1;
   const sections = draft.sections.flatMap((section) => {
-    const texts = splitPlannerSemanticText(section.text);
+    const texts = options.preserveUnitBoundaries ? [section.text] : splitPlannerSemanticText(section.text);
     return texts.map((text, index): PlannerSection => {
       if (text.length > 500) throw new Error("单个语义短句超过 500 字，请在自然停顿处分段。");
       let id = section.id;

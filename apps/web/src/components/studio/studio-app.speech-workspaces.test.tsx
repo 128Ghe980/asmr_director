@@ -13,7 +13,6 @@ import { PlannerBriefSchema, type PlannerBrief, type PlannerDraft } from "@/lib/
 import { createInitialProjectLibrary, getCurrentLibraryEntry, loadProjectLibrary, saveProjectLibrary } from "@/lib/asmr/project-library";
 import { AsmrProjectSchema, type AsmrProject, type TimelineClip } from "@/lib/asmr/schema";
 import { captureSpeechWorkspace, ensureSpeechWorkspaces, getSpeechWorkspaceProject, switchSpeechWorkspace } from "@/lib/asmr/speech-workspace";
-import { splitSpeechSentences } from "@/lib/asmr/speech-sentences";
 import type { VoiceGenerationPanelProps } from "./voice-generation-panel";
 import { StudioApp } from "./studio-app";
 
@@ -40,7 +39,7 @@ vi.mock("./clip-storyboard-editor", () => ({ ClipStoryboardEditor: ({ clipId }: 
   <output data-testid="storyboard-clip">{clipId}</output> }));
 
 const plannerBrief = PlannerBriefSchema.parse({ theme: "雨夜喝茶" });
-const plannerDraft: PlannerDraft = { title: "测试 AI 创意", scene: "雨夜客厅", character: { role: "朋友", personality: ["温柔"], speechStyle: ["轻声"] },
+const plannerDraft: PlannerDraft = { segmentation: "semantic", title: "测试 AI 创意", scene: "雨夜客厅", character: { role: "朋友", personality: ["温柔"], speechStyle: ["轻声"] },
   sections: ["先坐一会儿。我给你倒一杯茶。", "雨停了，窗外很安静。你先喝茶。"].map((text, index) => ({ id: `section_${index}`, title: "欢迎", text,
     emotion: "gentle", style: "whisper", pace: "slow", direction: "", soundSuggestions: "", pauseAfter: "short",
     position: { pan: 0, distance: "near", movement: "static" } })) };
@@ -105,49 +104,42 @@ describe("StudioApp paged speech workspaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "采用测试 AI 创意" }));
     await waitFor(() => expect(current().title).toBe("测试 AI 创意"));
     expect(current().speechWorkspace!.activeMode).toBe("short");
-    expect(current().speechWorkspace!.short.clips.map((clip) => clip.text)).toEqual(plannerDraft.sections.flatMap((section) => splitSpeechSentences(section.text)));
-    expect(voices(current())).toHaveLength(4);
+    expect(current().speechWorkspace!.short.clips.map((clip) => clip.text)).toEqual(plannerDraft.sections.map((section) => section.text));
+    expect(voices(current())).toHaveLength(2);
     expect(current().speechWorkspace!.paragraph.clips.map((clip) => clip.id)).toEqual(current().speechWorkspace!.short.clips.map((clip) => clip.id));
     expect(current().speechWorkspace!.paragraph.clips.every((clip) => clip.asset.uri === null)).toBe(true);
     expect(current().speechWorkspace!.groups).toHaveLength(1);
     expect(bridgeFactory).not.toHaveBeenCalled();
   });
 
-  it("actually splits a legacy long source in both pages and protects complete original takes in history", async () => {
+  it("loads and switches a multi-sentence semantic unit without reminders or changing either bank's adopted takes", async () => {
     const project = fixture();
     voices(project)[0].text = "先坐一会儿。我给你倒茶。";
     project.speechWorkspace!.short.clips[0].text = voices(project)[0].text;
     project.speechWorkspace!.paragraph.clips[0].text = voices(project)[0].text;
+    const before = structuredClone(project);
     saveProjectLibrary(window.localStorage, createInitialProjectLibrary(project));
     mockApi(); await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "切短句" }));
-    expect(voices(current()).map((clip) => clip.text)).toEqual(["先坐一会儿。", "我给你倒茶。", "我给你倒茶。"]);
-    expect(voices(current()).slice(0, 2).every((clip) => clip.asset.uri === null)).toBe(true);
-    expect(voices(current())[2].asset.asset_id).toBe("short_1");
+    expect(screen.queryByRole("button", { name: "切短句" })).toBeNull();
+    expect(screen.queryByText("有台词包含多句，可按需拆分")).toBeNull();
+    expect(voices(current()).map(clip => [clip.id, clip.text, clip.asset])).toEqual(voices(before).map(clip => [clip.id, clip.text, clip.asset]));
     fireEvent.click(screen.getByRole("tab", { name: "整段" }));
-    expect(voices(current()).slice(0, 2).every((clip) => clip.asset.uri === null)).toBe(true);
-    expect(voices(current())[2].asset.asset_id).toBe("paragraph_1");
-    expect(screen.getByRole("textbox", { name: "整段 1 文案" })).toHaveProperty("value", "先坐一会儿。我给你倒茶。我给你倒茶。");
-    const saved = getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, project));
-    expect(saved.revisions.at(-1)!.project.speechWorkspace!.short.clips[0].asset.asset_id).toBe("short_0");
-    expect(saved.revisions.at(-1)!.project.speechWorkspace!.paragraph.clips[0].asset.asset_id).toBe("paragraph_0");
-    fireEvent.click(screen.getByRole("button", { name: "撤回编辑" }));
-    expect(voices(current())).toHaveLength(2);
-    expect(current().speechWorkspace!.short.clips[0].asset.asset_id).toBe("short_0");
-    expect(current().speechWorkspace!.paragraph.clips[0].asset.asset_id).toBe("paragraph_0");
+    expect(voices(current()).map(clip => [clip.id, clip.text, clip.asset])).toEqual(before.speechWorkspace!.paragraph.clips.map(clip => [clip.id, clip.text, clip.asset]));
+    fireEvent.click(screen.getByRole("tab", { name: "短句" }));
+    expect(voices(current()).map(clip => [clip.id, clip.text, clip.asset])).toEqual(voices(before).map(clip => [clip.id, clip.text, clip.asset]));
   });
 
-  it("syncs short-page typing immediately and commits new sentence boundaries after editing ends", async () => {
+  it("syncs short-page typing while preserving the semantic unit after blur", async () => {
     const project = fixture(); mockApi(); await mount(project);
     const field = screen.getByRole("textbox", { name: "台词" });
     fireEvent.change(field, { target: { value: "先坐一会儿。雨停了。" } });
     expect(voices(current())).toHaveLength(2);
     expect(current().speechWorkspace!.paragraph.clips[0].text).toBe("先坐一会儿。雨停了。");
     fireEvent.blur(field);
-    expect(voices(current()).map((clip) => clip.text)).toEqual(["先坐一会儿。", "雨停了。", "我给你倒茶。"]);
+    expect(voices(current()).map((clip) => clip.text)).toEqual(["先坐一会儿。雨停了。", "我给你倒茶。"]);
     expect(current().speechWorkspace!.paragraph.clips.map((clip) => clip.text)).toEqual(voices(current()).map((clip) => clip.text));
-    expect(voices(current())[2].asset.asset_id).toBe("short_1");
-    expect(current().speechWorkspace!.paragraph.clips[2].asset.asset_id).toBe("paragraph_1");
+    expect(voices(current())[1].asset.asset_id).toBe("short_1");
+    expect(current().speechWorkspace!.paragraph.clips[1].asset.asset_id).toBe("paragraph_1");
   });
 
   it("syncs short and paragraph copy in both directions while retaining each workspace's adopted assets", async () => {
@@ -214,6 +206,8 @@ describe("StudioApp paged speech workspaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "下方插入无对白" }));
     await waitFor(() => expect(voices(current())).toHaveLength(3));
     const silent = voices(current())[1];
+    expect(silent.text).toBe("待设计：根据前后剧情安排自然衔接的无对白画面。");
+    expect(current().speechWorkspace!.paragraph.clips[1].text).toBe(silent.text);
     expect(silent.kind).toBe("silent");
     expect(screen.getByTestId("storyboard-clip").textContent).toBe(silent.id);
     expect(current().speechWorkspace!.paragraph.clips[1].id).toBe(silent.id);
@@ -222,6 +216,63 @@ describe("StudioApp paged speech workspaces", () => {
     expect(screen.getByRole("textbox", { name: "无对白镜头描述" })).toBeTruthy();
     expect(voices(current()).filter((clip) => clip.kind !== "silent").map((clip) => clip.asset.asset_id)).toEqual(["paragraph_0", "paragraph_1"]);
     expect(voices(current()).filter((clip) => clip.kind !== "silent").every((clip) => !clip.audio_stale)).toBe(true);
+    expect(bridgeFactory).not.toHaveBeenCalled();
+  });
+
+  it.each(["short", "paragraph"] as const)("shows the matching inspector for ordinary %s list selections after inserting a silent shot", async (mode) => {
+    const project = fixture(); mockApi(); await mount(project);
+    fireEvent.click(screen.getByRole("button", { name: "下方插入无对白" }));
+    await waitFor(() => expect(voices(current())).toHaveLength(3));
+    const silent = voices(current())[1];
+    expect(screen.getByTestId("storyboard-clip").textContent).toBe(silent.id);
+    if (mode === "paragraph") fireEvent.click(screen.getByRole("tab", { name: "整段" }));
+
+    const selectSpeech = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "选择第 3 段" : "选择整段 3" }));
+    const selectSilent = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "选择第 2 段" : "无对白镜头" }));
+    const focusSpeech = () => fireEvent.focus(mode === "short"
+      ? screen.queryByRole("textbox", { name: "第 3 段台词" }) ?? screen.getByRole("textbox", { name: "台词" })
+      : screen.getByRole("textbox", { name: "整段 3 文案" }));
+    const openSpeechStoryboard = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "第 3 段视频分镜" : "整段内短句 1 分镜" }));
+    const expectAudio = () => {
+      expect(screen.getByRole("tab", { name: "声音" }).getAttribute("aria-selected")).toBe("true");
+      expect(screen.getByRole("tabpanel", { name: "声音" })).toBeTruthy();
+      expect(screen.getByTestId("voice-options")).toBeTruthy();
+      expect(screen.queryByTestId("storyboard-clip")).toBeNull();
+    };
+    const expectStoryboard = (clipId: string) => {
+      expect(screen.getByRole("tab", { name: "分镜" }).getAttribute("aria-selected")).toBe("true");
+      expect(screen.getByRole("tabpanel", { name: "分镜" })).toBeTruthy();
+      expect(screen.getByTestId("storyboard-clip").textContent).toBe(clipId);
+      expect(screen.queryByRole("tabpanel", { name: "声音" })).toBeNull();
+    };
+
+    selectSpeech();
+    expectAudio();
+    selectSilent();
+    expectStoryboard(silent.id);
+    focusSpeech();
+    expectAudio();
+    openSpeechStoryboard();
+    expectStoryboard("voice_1");
+    selectSpeech();
+    expectAudio();
+    openSpeechStoryboard();
+    expectStoryboard("voice_1");
+    focusSpeech();
+    expectAudio();
+    expect(bridgeFactory).not.toHaveBeenCalled();
+  });
+
+  it("returns paragraph body focus to audio without replacing the selected inner sentence", async () => {
+    const project = fixture(); mockApi(); await mount(project);
+    fireEvent.click(screen.getByRole("tab", { name: "整段" }));
+    fireEvent.click(screen.getByRole("button", { name: "整段内短句 2 分镜" }));
+    expect(screen.getByTestId("storyboard-clip").textContent).toBe("voice_1");
+    fireEvent.focus(screen.getByRole("textbox", { name: "整段 1 文案" }));
+    expect(screen.getByRole("tab", { name: "声音" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel", { name: "声音" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    expect(screen.getByTestId("storyboard-clip").textContent).toBe("voice_1");
     expect(bridgeFactory).not.toHaveBeenCalled();
   });
 

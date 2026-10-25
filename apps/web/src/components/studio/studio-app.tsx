@@ -49,7 +49,7 @@ import { adoptAudioCandidate, canUndoLastAudioCandidate, getLastAudioCandidateAc
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
 import { getVoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
 import { getVoiceParagraphContext } from "@/lib/asmr/voice-paragraph-context";
-import { captureSpeechWorkspace, ensureSpeechWorkspaces, getParagraphGroup, getSpeechWorkspaceMode, getSpeechWorkspaceProject, hasSharedSpeechScriptChanges, hasUnsplitSpeechSentences, mergeSpeechWorkspaceProject, normalizeSpeechSentences, replaceParagraphScript, restoreSharedSpeechScript, restoreSpeechWorkspaceArrangement, switchSpeechWorkspace, syncSharedSpeechScript } from "@/lib/asmr/speech-workspace";
+import { captureSpeechWorkspace, ensureSpeechWorkspaces, getParagraphGroup, getSpeechWorkspaceMode, getSpeechWorkspaceProject, hasSharedSpeechScriptChanges, mergeSpeechWorkspaceProject, replaceParagraphScript, restoreSharedSpeechScript, restoreSpeechWorkspaceArrangement, switchSpeechWorkspace, syncSharedSpeechScript } from "@/lib/asmr/speech-workspace";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import type { VoiceReferenceImportResult } from "./voice-reference-import";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
@@ -88,9 +88,14 @@ import type { PlannerBrief, PlannerDraft } from "@/lib/asmr/planner";
 import { addSilentClip, setSilentClipDuration, addVoiceClip, deleteVoiceClip, getVoiceGapAfter, mergeVoiceClipWithNext, moveVoiceClip, setVoiceGapAfter, splitVoiceClip, type VoiceClipMoveDirection } from "@/lib/asmr/voice-segments";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
-import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getClipStoryboardReferenceMode, getPreviousVoiceClip, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
+import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getClipStoryboardReferenceMode, getPreviousVoiceClip, getUsableClipH3Prompts, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
+import { applyStoryboardReview, getStoryboardReviewFingerprint, getStoryboardReviewSummary, StoryboardReviewSchema, type StoryboardReview } from "@/lib/asmr/storyboard-review";
+import { createStoryboardGenerationContextFingerprint } from "@/lib/asmr/storyboard-context";
 import { getStudioBatchTargets, runStudioBatchQueue, waitForStudioVoiceGeneration, type StudioBatchAction } from "@/lib/asmr/studio-batch-generation";
 import { getStudioAudioProgress } from "@/lib/asmr/studio-audio-overview";
+import { applyAudioPostProcessingPlan, applyAudioPostProcessingResult, createAudioPostProcessingInputFingerprint,
+  getAudioPostProcessingClips, getAudioPostProcessingSummary } from "@/lib/asmr/audio-post-processing";
+import { AudioPostProcessingReceiptSchema, AudioPostProcessingSchema } from "@/lib/asmr/audio-post-processing-schema";
 
 import { ClipInspector } from "./clip-inspector";
 import { ClipStoryboardEditor } from "./clip-storyboard-editor";
@@ -100,14 +105,18 @@ import { PlannerPanel } from "./planner-panel";
 import { ProjectWorkspace } from "./project-workspace";
 import { ScriptEditorPanel } from "./script-editor-panel";
 import { ParagraphScriptList } from "./paragraph-script-list";
-import { StudioBatchActions, type StudioBatchProgress } from "./studio-batch-actions";
+import { StudioBatchActions, type StudioBatchProgress, type AudioPostProcessingProgress } from "./studio-batch-actions";
+import { StudioOperationResults } from "./studio-operation-results";
 import { TimelinePanel } from "./timeline-panel";
 import { ValidationPanel } from "./validation-panel";
 import { AcceptedVoicePreview } from "./accepted-voice-preview";
+import { AudioPostProcessingPanel } from "./audio-post-processing-panel";
+import { StoryboardReviewPanel, type StoryboardReviewResult } from "./storyboard-review-panel";
 
 type StudioAppProps = {
   project: AsmrProject;
 };
+class PostProcessingSaveError extends Error {}
 
 function defaultClipId(project: AsmrProject) {
   const clips = flattenClips(project);
@@ -220,6 +229,28 @@ export function StudioApp({ project }: StudioAppProps) {
   const [batchProgress, setBatchProgress] = useState<StudioBatchProgress>();
   const [batchNotice, setBatchNotice] = useState<string>();
   const batchRunRef = useRef<{ controller: AbortController; projectId: string; jobId?: string } | null>(null);
+  const [storyboardReviewBusy, setStoryboardReviewBusy] = useState(false);
+  const [storyboardReviewNotice, setStoryboardReviewNotice] = useState<string>();
+  const [storyboardReviewResult, setStoryboardReviewResult] = useState<StoryboardReviewResult>();
+  const storyboardReviewRunRef = useRef<{ controller: AbortController; projectId: string; mode: SpeechWorkspaceMode; fingerprint: string; session: number } | null>(null);
+  const handleCancelStoryboardReview = useCallback((notify = true) => {
+    const run = storyboardReviewRunRef.current;
+    if (!run) return;
+    storyboardReviewRunRef.current = null; run.controller.abort(); setStoryboardReviewBusy(false);
+    if (notify) setStoryboardReviewNotice("已取消整批校对，已有分镜保持。");
+  }, []);
+  const [postProcessingProgress, setPostProcessingProgress] = useState<AudioPostProcessingProgress>();
+  const [postProcessingNotice, setPostProcessingNotice] = useState<string>();
+  const postProcessingRunRef = useRef<{ controller: AbortController; projectId: string; mode: SpeechWorkspaceMode;
+    expectedProject: string; inputFingerprint: string; session: number; stoppedReason?: string } | null>(null);
+  const handleCancelPostProcessing = useCallback((notify = true) => {
+    const run = postProcessingRunRef.current;
+    if (!run) return;
+    postProcessingRunRef.current = null;
+    run.controller.abort();
+    setPostProcessingProgress(undefined);
+    if (notify) setPostProcessingNotice("已取消后处理，已完成结果和原音已保留。");
+  }, []);
   const [singleStoryboardBusy, setSingleStoryboardBusy] = useState(false);
   const singleStoryboardBusyRef = useRef(false);
   const storyboardProviderRef = useRef<"api" | "ollama" | null>(null);
@@ -257,7 +288,7 @@ export function StudioApp({ project }: StudioAppProps) {
   const activeMixFingerprint = editableProject.speechWorkspace ? editableProject.speechWorkspace[speechMode].mixFingerprint : projectMixFingerprint;
   const generationRuntimeStateRef = useRef(emptyGenerationRuntimeState);
   const handleReferenceImportBusyChange = useCallback((busy: boolean) => {
-    if (busy && (batchRunRef.current || candidateRecheckRunRef.current || candidateActionBusy || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob))) return false;
+    if (busy && (storyboardReviewRunRef.current || postProcessingRunRef.current || batchRunRef.current || candidateRecheckRunRef.current || candidateActionBusy || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob))) return false;
     if (busy) referenceImportModeRef.current = getSpeechWorkspaceMode(editableProjectRef.current);
     referenceImportBusyRef.current = busy;
     setReferenceImportBusy(busy);
@@ -298,7 +329,10 @@ export function StudioApp({ project }: StudioAppProps) {
   const currentLibraryEntry = projectLibrary.projects.find(
     (entry) => entry.projectId === editableProject.project_id,
   );
-  const voiceBusy = Boolean(batchProgress) || candidateActionBusy || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const voiceBusy = storyboardReviewBusy || Boolean(postProcessingProgress) || Boolean(batchProgress) || candidateActionBusy || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId) || Object.values(generationRuntimeState.jobsById).some(isActiveGenerationJob);
+  const postProcessingSummary = useMemo(() => getAudioPostProcessingSummary(editableProject), [editableProject]);
+  const storyboardReviewSummary = useMemo(() => getStoryboardReviewSummary(editableProject), [editableProject]);
+  const storyboardReviewFingerprint = useMemo(() => getStoryboardReviewFingerprint(editableProject), [editableProject]);
   const batchCounts = useMemo(() => Object.fromEntries(
     (["audio_missing", "audio_ungenerated", "audio_all", "storyboard_missing", "storyboard_all"] as const)
       .map((action) => [action, getStudioBatchTargets(editableProject, action, voiceCandidates).length]),
@@ -399,6 +433,21 @@ export function StudioApp({ project }: StudioAppProps) {
   );
 
   useEffect(() => { editableProjectRef.current = editableProject; }, [editableProject]);
+  useEffect(() => {
+    const run = storyboardReviewRunRef.current;
+    if (run && (editableProject.project_id !== run.projectId || getSpeechWorkspaceMode(editableProject) !== run.mode
+      || getStoryboardReviewFingerprint(editableProject) !== run.fingerprint)) {
+      handleCancelStoryboardReview(false);
+      setStoryboardReviewNotice("剧情或分镜已修改，已停止整批校对；已有分镜保持。");
+    }
+  }, [editableProject, handleCancelStoryboardReview]);
+  useEffect(() => {
+    const run = postProcessingRunRef.current;
+    if (run && JSON.stringify(editableProject) !== run.expectedProject) {
+      handleCancelPostProcessing(false);
+      setPostProcessingNotice("工程或处理设置已修改，已停止后处理；已完成结果和原音保留。");
+    }
+  }, [editableProject, handleCancelPostProcessing]);
 
   useEffect(() => () => {
     handleCancelCandidateRecheck(false);
@@ -489,6 +538,9 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function handleSpeechModeChange(mode: SpeechWorkspaceMode) {
     const current = editableProjectRef.current;
+    handleCancelStoryboardReview(false); setStoryboardReviewResult(undefined); setStoryboardReviewNotice(undefined);
+    handleCancelPostProcessing(false);
+    setPostProcessingNotice(undefined);
     handleCancelCandidateRecheck(false);
     const next = switchSpeechWorkspace(current, mode, current.speechWorkspace ? {} : { mixFingerprint: projectMixFingerprint });
     audioRef.current?.pause();
@@ -905,6 +957,9 @@ export function StudioApp({ project }: StudioAppProps) {
   useEffect(() => {
     const windowedJobs = windowedVoiceJobsRef.current;
     return () => {
+      storyboardReviewRunRef.current?.controller.abort(); storyboardReviewRunRef.current = null;
+      postProcessingRunRef.current?.controller.abort();
+      postProcessingRunRef.current = null;
       batchRunRef.current?.controller.abort();
       batchRunRef.current = null;
       generationSessionRef.current += 1;
@@ -931,6 +986,9 @@ export function StudioApp({ project }: StudioAppProps) {
   }, []);
 
   function clearGenerationSession() {
+    handleCancelStoryboardReview(false); setStoryboardReviewResult(undefined); setStoryboardReviewNotice(undefined);
+    handleCancelPostProcessing(false);
+    setPostProcessingNotice(undefined);
     handleCancelCandidateRecheck(false);
     batchRunRef.current?.controller.abort();
     batchRunRef.current = null;
@@ -1253,7 +1311,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function startSelectedClipGeneration(optionsOverride?: VoiceGenerationOptions, longTextRetry?: LongTextRetry, target?: { project: AsmrProject; clipId: string }) {
-    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current) return;
+    if (storyboardReviewRunRef.current || postProcessingRunRef.current || referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current) return;
     const generationProject = target?.project ?? editableProject;
     const generationClip = target ? flattenClips(generationProject).find((clip) => clip.id === target.clipId) : selectedClip;
     const control = target ? getGenerationView({ project: generationProject, selectedClip: generationClip, runtimeState: generationRuntimeStateRef.current, selectedClipHasValidationIssues: Object.keys(getClipFieldValidationIssues(generationProject, target.clipId, getProjectValidationIssues(generationProject))).length > 0, projectMixFingerprint }).selectedClipControl : generationView.selectedClipControl;
@@ -1354,7 +1412,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleGenerateProjectMix() {
-    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || voiceBusy) return;
+    if (storyboardReviewRunRef.current || postProcessingRunRef.current || referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || voiceBusy) return;
     if (generationView.projectMixControl.disabled) {
       return;
     }
@@ -1622,6 +1680,12 @@ export function StudioApp({ project }: StudioAppProps) {
     }
   }
 
+  function handleSelectClip(clipId: string) {
+    const clip = flattenClips(editableProjectRef.current).find((item) => item.id === clipId);
+    setSelectedClipId(clipId);
+    setInspectorTab(clip?.type === "voice" && clip.kind === "silent" ? "storyboard" : "audio");
+  }
+
   function handleAddVoice(afterClipId?: string) {
     const result = addVoiceClip(editableProjectRef.current, afterClipId);
     commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已添加一段，直接输入台词即可。");
@@ -1640,14 +1704,6 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function handleParagraphScript(groupId: string, text: string) {
     commitScriptEdit(replaceParagraphScript(editableProjectRef.current, groupId, text), activeClipId, "文案与短句已同步；旧音频可从编辑历史恢复。", true, true);
-  }
-
-  function handleNormalizeSentences(clipId?: string) {
-    const current = editableProjectRef.current;
-    const initialized = ensureSpeechWorkspaces(current);
-    const normalized = normalizeSpeechSentences(initialized, clipId);
-    if (normalized === initialized) return;
-    commitScriptEdit(normalized, clipId ?? activeClipId, "已切为短句并同步两页；原长段音频保存在编辑历史。", true, true);
   }
 
   function handleUndoScriptEdit() {
@@ -1729,7 +1785,7 @@ export function StudioApp({ project }: StudioAppProps) {
   }
 
   function handleStoryboardReferenceModeChange(clipId: string, mode: StoryboardReferenceMode) {
-    if (batchRunRef.current || candidateRecheckRunRef.current || singleStoryboardBusyRef.current || candidateActionBusy
+    if (storyboardReviewRunRef.current || postProcessingRunRef.current || batchRunRef.current || candidateRecheckRunRef.current || singleStoryboardBusyRef.current || candidateActionBusy
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
     const current = editableProjectRef.current;
     if (!flattenClips(current).some((clip) => clip.id === clipId && clip.type === "voice")) return;
@@ -1748,6 +1804,7 @@ export function StudioApp({ project }: StudioAppProps) {
     const run = batchRunRef.current;
     if (!run) return;
     run.controller.abort();
+    handleCancelStoryboardReview();
     if (run.jobId) {
       candidateJobIdsRef.current.delete(run.jobId);
       windowedVoiceJobsRef.current.delete(run.jobId);
@@ -1758,8 +1815,159 @@ export function StudioApp({ project }: StudioAppProps) {
     setBatchNotice("已停止后续排队，正在取消当前生成。");
   }
 
+  function saveStoryboardRevision(next: AsmrProject) {
+    const library = updateLibraryProject(projectLibraryRef.current, next);
+    try { saveProjectLibrary(window.localStorage, library); }
+    catch { setStorageAvailable(false); throw new Error("校对修订未能保存，已有分镜保持。请释放浏览器存储空间后重试。"); }
+    editableProjectRef.current = next; projectLibraryRef.current = library;
+    setProjectLibrary(library); setEditableProject(next); setStorageAvailable(true);
+  }
+
+  function applyReview(review: StoryboardReview, automatic: boolean) {
+    const current = editableProjectRef.current;
+    if (getStoryboardReviewFingerprint(current) !== review.inputFingerprint) throw new Error("剧情或分镜已修改，请重新整批校对。");
+    const next = applyStoryboardReview(current, review);
+    if (review.changes.length) saveStoryboardRevision(next);
+    setStoryboardReviewResult({ review, automatic, applied: true, afterFingerprint: getStoryboardReviewFingerprint(next) });
+    setStoryboardReviewNotice(review.changes.length ? `已应用 ${review.changes.length} 镜校对修订，可展开查看或撤回；原音保留。` : "整批校对完成，未建议修改分镜。");
+  }
+
+  function handleApplyStoryboardReview() {
+    if (voiceBusy || singleStoryboardBusyRef.current || referenceImportBusyRef.current || !storyboardReviewResult || storyboardReviewResult.applied) return;
+    try { applyReview(storyboardReviewResult.review, false); }
+    catch (error) { setStoryboardReviewNotice(error instanceof Error ? error.message : "校对修订未能应用，已有分镜保持。"); }
+  }
+
+  function handleUndoStoryboardReview() {
+    const result = storyboardReviewResult, current = editableProjectRef.current;
+    if (voiceBusy || singleStoryboardBusyRef.current || referenceImportBusyRef.current || !result?.applied) return;
+    if (getStoryboardReviewFingerprint(current) !== result.afterFingerprint) { setStoryboardReviewNotice("分镜或其来源已修改，不能撤回这次校对。"); return; }
+    try {
+      const inverse: StoryboardReview = { inputFingerprint: getStoryboardReviewFingerprint(current), notes: [],
+        changes: result.review.changes.map(change => ({ ...change, before: change.after, after: change.before })) };
+      saveStoryboardRevision(applyStoryboardReview(current, inverse));
+      setStoryboardReviewResult(undefined); setStoryboardReviewNotice("已撤回本次校对修订，当前音频和处理设置保留。");
+    } catch (error) { setStoryboardReviewNotice(error instanceof Error ? error.message : "校对修订未能撤回。"); }
+  }
+
+  async function reviewStoryboards(automatic = false, editableIds?: string[]) {
+    if (!hasLoadedStorage || storyboardReviewRunRef.current || postProcessingRunRef.current || referenceImportBusyRef.current
+      || candidateRecheckRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
+      || (!automatic && batchRunRef.current) || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
+    const project = structuredClone(editableProjectRef.current), summary = getStoryboardReviewSummary(project);
+    if (!summary.ready) { setStoryboardReviewNotice(`${automatic ? "本轮未自动校对" : "暂时无法整批校对"}：${summary.reason}可补齐后在更多操作中整批校对。`); return; }
+    const currentIds = getUsableClipH3Prompts(project), editableClipIds = (editableIds ?? [...currentIds.keys()]).filter(id => currentIds.has(id));
+    if (!editableClipIds.length) { if (automatic) setStoryboardReviewNotice("本轮没有未修改的新分镜需要自动校对，可在更多操作中手动整批校对。"); return; }
+    const run = { controller: new AbortController(), projectId: project.project_id, mode: getSpeechWorkspaceMode(project),
+      fingerprint: getStoryboardReviewFingerprint(project), session: generationSessionRef.current };
+    storyboardReviewRunRef.current = run; setStoryboardReviewBusy(true); setStoryboardReviewNotice(undefined); setStoryboardReviewResult(undefined);
+    const active = () => storyboardReviewRunRef.current === run && !run.controller.signal.aborted && generationSessionRef.current === run.session
+      && editableProjectRef.current.project_id === run.projectId && getSpeechWorkspaceMode(editableProjectRef.current) === run.mode
+      && getStoryboardReviewFingerprint(editableProjectRef.current) === run.fingerprint;
+    try {
+      const response = await fetch("/api/storyboard-review", { method: "POST", headers: { "content-type": "application/json" }, signal: run.controller.signal,
+        body: JSON.stringify({ project, editableClipIds }) });
+      const body = await response.json().catch(() => null);
+      if (!active()) return;
+      if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "整批校对暂不可用，请稍后重试。");
+      const parsed = StoryboardReviewSchema.safeParse(body?.review);
+      if (!parsed.success || parsed.data.inputFingerprint !== run.fingerprint || parsed.data.changes.some(change => !editableClipIds.includes(change.clipId))) throw new Error("校对结果与本次分镜不一致，已有分镜保持。");
+      // Validate the entire proposed patch atomically before exposing or applying it.
+      applyStoryboardReview(editableProjectRef.current, parsed.data);
+      if (automatic) applyReview(parsed.data, true);
+      else { setStoryboardReviewResult({ review: parsed.data, automatic: false, applied: false }); setStoryboardReviewNotice("整批校对完成，请查看改动后决定是否应用。"); }
+    } catch (error) {
+      if (active()) setStoryboardReviewNotice(`整批校对未完成：${error instanceof Error ? error.message : "请稍后重试。"}已有分镜保留，可继续后处理或导出。`);
+    } finally { if (storyboardReviewRunRef.current === run) { storyboardReviewRunRef.current = null; setStoryboardReviewBusy(false); } }
+  }
+
+  async function handleGeneratePostProcessing() {
+    if (!hasLoadedStorage || storyboardReviewRunRef.current || postProcessingRunRef.current || referenceImportBusyRef.current || candidateRecheckRunRef.current
+      || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
+      || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
+    const initial = structuredClone(editableProjectRef.current);
+    const summary = getAudioPostProcessingSummary(initial);
+    if (!summary.ready) { setPostProcessingNotice(summary.reason); return; }
+    const run = { controller: new AbortController(), projectId: initial.project_id, mode: getSpeechWorkspaceMode(initial),
+      expectedProject: JSON.stringify(initial), inputFingerprint: createAudioPostProcessingInputFingerprint(initial),
+      session: generationSessionRef.current, stoppedReason: undefined as string | undefined };
+    postProcessingRunRef.current = run;
+    setPostProcessingNotice(undefined);
+    setPostProcessingProgress({ phase: "planning", total: summary.total, completed: 0, failed: 0 });
+    const active = () => postProcessingRunRef.current === run && !run.controller.signal.aborted && run.session === generationSessionRef.current;
+    const currentInput = () => {
+      const current = editableProjectRef.current;
+      if (!active()) throw new Error("后处理已取消。");
+      if (current.project_id !== run.projectId || getSpeechWorkspaceMode(current) !== run.mode
+        || JSON.stringify(current) !== run.expectedProject || createAudioPostProcessingInputFingerprint(current) !== run.inputFingerprint) {
+        run.stoppedReason = "工程或处理设置已修改，已停止后处理；已完成结果和原音保留。";
+        run.controller.abort();
+        throw new Error(run.stoppedReason);
+      }
+      return current;
+    };
+    const persistResult = (next: AsmrProject) => {
+      const library = updateLibraryProject(projectLibraryRef.current, next);
+      try { saveProjectLibrary(window.localStorage, library); }
+      catch {
+        setStorageAvailable(false);
+        run.stoppedReason = "后处理记录未能保存，已停止后续处理。请释放浏览器存储空间后重试；原音和已保存结果保留。";
+        run.controller.abort();
+        throw new PostProcessingSaveError(run.stoppedReason);
+      }
+      run.expectedProject = JSON.stringify(next);
+      editableProjectRef.current = next;
+      projectLibraryRef.current = library;
+      setProjectLibrary(library);
+      setEditableProject(next);
+      setStorageAvailable(true);
+    };
+    const request = async (url: string, project: AsmrProject, clipId?: string) => {
+      const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, signal: run.controller.signal,
+        body: JSON.stringify(clipId ? { project, clipId } : { project, provider: "api" }) });
+      const value: unknown = await response.json().catch(() => null);
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("后处理服务返回无效，请重试。");
+      const body = value as Record<string, unknown>;
+      if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "后处理未完成，请重试。");
+      return body;
+    };
+    try {
+      const body = await request("/api/audio-post-processing/plan", initial);
+      const current = currentInput();
+      const processing = AudioPostProcessingSchema.safeParse(body.processing);
+      if (!processing.success) throw new Error("后处理规划资料不完整，请重新生成。");
+      persistResult(applyAudioPostProcessingPlan(current, processing.data));
+      const clipIds = getAudioPostProcessingClips(editableProjectRef.current).filter(clip => clip.kind !== "silent").map(clip => clip.id);
+      const failures: string[] = [];
+      let completed = 0;
+      for (const [index, clipId] of clipIds.entries()) {
+        const snapshot = structuredClone(currentInput());
+        setPostProcessingProgress({ phase: "rendering", total: clipIds.length, completed, failed: failures.length, currentClipId: clipId });
+        try {
+          // Even current receipts reach the backend so a missing or changed cached
+          // file can be repaired without re-planning or generating the voice again.
+          const rendered = await request("/api/audio-post-processing/render", snapshot, clipId);
+          const receipt = AudioPostProcessingReceiptSchema.safeParse(rendered.receipt);
+          if (!receipt.success) throw new Error("本镜后处理资料不完整，请重试。");
+          persistResult(applyAudioPostProcessingResult(currentInput(), clipId, receipt.data));
+        } catch (error) {
+          if (!active() || error instanceof PostProcessingSaveError) throw error;
+          failures.push(`第 ${index + 1} 镜：${error instanceof Error ? error.message : "后处理失败"}`);
+        }
+        completed += 1;
+        if (active()) setPostProcessingProgress({ phase: "rendering", total: clipIds.length, completed, failed: failures.length });
+      }
+      if (active()) setPostProcessingNotice(`后处理结束：完成 ${completed - failures.length}/${clipIds.length} 镜${failures.length ? `，失败 ${failures.length} 镜。${failures[0]}` : "。可试听、下载独立结果或整体成品。"}原音保持。`);
+    } catch (error) {
+      if (postProcessingRunRef.current === run) setPostProcessingNotice(run.stoppedReason
+        || (run.controller.signal.aborted ? "已取消后处理，已完成结果和原音已保留。" : error instanceof Error ? error.message : "后处理未完成，请重试。"));
+    } finally {
+      if (postProcessingRunRef.current === run) { postProcessingRunRef.current = null; setPostProcessingProgress(undefined); }
+    }
+  }
+
   async function handleRunBatch(action: StudioBatchAction) {
-    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
+    if (storyboardReviewRunRef.current || postProcessingRunRef.current || referenceImportBusyRef.current || candidateRecheckRunRef.current || batchRunRef.current || candidateActionBusy || singleStoryboardBusyRef.current
       || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
     if (action.startsWith("audio") && voiceSettingsStatus !== "ready") {
       setBatchNotice(voiceCatalogError || "正在读取声音设置，请稍候再生成。");
@@ -1773,6 +1981,8 @@ export function StudioApp({ project }: StudioAppProps) {
     const mode = getSpeechWorkspaceMode(initial);
     const clipIds = getStudioBatchTargets(initial, action, voiceCandidates);
     if (!clipIds.length) return;
+    if (action === "storyboard_all" && clipIds.some(id => Object.hasOwn(initial.videoPlan?.shots ?? {}, id))
+      && !window.confirm(`重新生成当前页 ${clipIds.length} 个分镜？已有分镜及手动修改将在生成成功后替换，失败的镜头保留原分镜。`)) return;
     const audio = action.startsWith("audio");
     const options = structuredClone(voiceOptions);
     const run = { controller: new AbortController(), projectId: initial.project_id, jobId: undefined as string | undefined };
@@ -1782,6 +1992,7 @@ export function StudioApp({ project }: StudioAppProps) {
     if (audio) setVoiceError(undefined);
     setBatchProgress({ action, total: clipIds.length, completed: 0, succeeded: 0, failed: 0, skipped: 0 });
     const session = generationSessionRef.current;
+    const generatedStoryboards = new Map<string, string>();
     try {
       if (audio) {
         const engine = voiceCatalog?.providers.find((item) => item.id === options.provider);
@@ -1881,6 +2092,7 @@ export function StudioApp({ project }: StudioAppProps) {
             || JSON.stringify(snapshot.videoPlan?.shots[clipId] ?? null) !== originalShots.get(clipId)) return "skipped";
           const referenceContext = getClipStoryboardReferenceContext(snapshot, clipId, referenceMode);
           const includePrevious = Boolean(referenceContext);
+          const contextFingerprint = createStoryboardGenerationContextFingerprint(snapshot);
           if (referenceMode === "continuous" && !referenceContext) throw new Error("连续镜头需要上一段的可用分镜，请先生成或更新上一段。");
           const response = await fetch("/api/clip-storyboard", {
             method: "POST", headers: { "content-type": "application/json" }, signal,
@@ -1892,6 +2104,7 @@ export function StudioApp({ project }: StudioAppProps) {
           const shot = ClipVideoStoryboardSchema.parse(body.storyboard);
           const current = editableProjectRef.current.speechWorkspace ? getSpeechWorkspaceProject(editableProjectRef.current, mode) : editableProjectRef.current;
           if (current.project_id !== run.projectId || createClipVideoSourceFingerprint(current, clipId) !== fingerprint
+            || createStoryboardGenerationContextFingerprint(current) !== contextFingerprint
             || getClipStoryboardReferenceMode(current, clipId) !== referenceMode
             || JSON.stringify(current.videoPlan?.shots[clipId] ?? null) !== originalShots.get(clipId)
             || JSON.stringify(getClipStoryboardReferenceContext(current, clipId, referenceMode)) !== JSON.stringify(referenceContext)) return "skipped";
@@ -1901,6 +2114,7 @@ export function StudioApp({ project }: StudioAppProps) {
             throw new Error("分镜结果与当前段落或音频不一致，请重新生成。");
           }
           if (!handleSaveClipStoryboard(run.projectId, shot, mode)) return "skipped";
+          generatedStoryboards.set(clipId, JSON.stringify(editableProjectRef.current.videoPlan?.shots[clipId]));
           return "completed";
         },
       });
@@ -1908,8 +2122,27 @@ export function StudioApp({ project }: StudioAppProps) {
         const details = [`成功 ${result.succeeded}`, ...(result.failed ? [`失败 ${result.failed}`] : []), ...(result.skipped ? [`跳过 ${result.skipped}`] : [])].join(" · ");
         const outcome = result.state === "cancelled" ? "已取消批量生成" : result.state === "stopped" ? "批量生成已停止" : "批量生成完成";
         const remaining = result.state === "stopped" ? ` 还有 ${result.total - result.completed} 段未处理。` : "";
-        const failure = result.state === "stopped" ? result.failures[result.failures.length - 1] : result.failures[0];
-        setBatchNotice(`${outcome}：${details}。${remaining}${audio && options.provider === "voxcpm2" && result.succeeded ? "可逐段试听并采用新候选。" : ""}${failure ? ` ${failure.message}` : ""}`);
+        const scriptClips = initial.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []);
+        const failures = audio ? result.state === "stopped" ? result.failures.slice(-1) : result.failures.slice(0, 1) : result.failures;
+        const failureDetails = failures.map(({ clipId, message }) => {
+          if (audio) return message;
+          const index = scriptClips.findIndex(clip => clip.id === clipId);
+          const text = Array.from(scriptClips[index]?.text.trim().replace(/\s+/gu, " ") ?? "");
+          const excerpt = text.slice(0, 24).join("") + (text.length > 24 ? "…" : "");
+          const label = index < 0 ? clipId : `第 ${index + 1} 段${excerpt ? `“${excerpt}”` : ""}`;
+          return `${label}：${message}`;
+        }).join("\n");
+        setBatchNotice(`${outcome}：${details}。${remaining}${audio && options.provider === "voxcpm2" && result.succeeded ? "可逐段试听并采用新候选。" : ""}${failureDetails ? `${audio ? " " : "\n"}${failureDetails}` : ""}`);
+        if (!audio && result.state === "completed" && !signal.aborted && generatedStoryboards.size
+          && session === generationSessionRef.current && editableProjectRef.current.project_id === run.projectId
+          && getSpeechWorkspaceMode(editableProjectRef.current) === mode) {
+          const editableIds = [...generatedStoryboards].filter(([id, json]) => JSON.stringify(editableProjectRef.current.videoPlan?.shots[id]) === json).map(([id]) => id);
+          setBatchProgress(undefined);
+          // Generation has ended. The review owns its own cancellation token;
+          // a slow aborted review must not keep the completed queue locked.
+          batchRunRef.current = null;
+          await reviewStoryboards(true, editableIds);
+        }
       }
     } catch (error) {
       if (batchRunRef.current === run) setBatchNotice(signal.aborted ? "已取消批量生成。" : error instanceof Error ? error.message : "批量生成失败，请重试。");
@@ -2086,24 +2319,36 @@ export function StudioApp({ project }: StudioAppProps) {
         <div className="h-full min-h-0 min-w-0">
           <ScriptEditorPanel
             workspaceTabs={<div role="tablist" aria-label="语音生成方式" className="inline-flex rounded-lg bg-black/15 p-0.5">{([['short', '短句'], ['paragraph', '整段']] as const).map(([mode, label]) => <button key={mode} type="button" role="tab" aria-selected={speechMode === mode} aria-label={label} onClick={() => handleSpeechModeChange(mode)} title={mode === "short" ? "原有流程：短句 + 长生成取前部" : "整段一次生成，检查后切成短句"} className={`min-h-8 rounded-md px-4 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-sky-300 ${speechMode === mode ? "bg-sky-300/12 text-sky-100 shadow-sm" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`}>{label}</button>)}</div>}
-            paragraphBody={speechMode === "paragraph" ? <ParagraphScriptList project={editableProject} selectedClipId={activeClipId} onSelectClip={setSelectedClipId} onUpdateParagraph={handleParagraphScript} onUpdateClip={handleUpdateClip} onDurationChange={handleSilentDuration} onOpenStoryboard={(id) => { setSelectedClipId(id); setInspectorTab("storyboard"); setEditorPanel(1); }} onDeleteClip={(id) => { const result = deleteVoiceClip(editableProjectRef.current, id); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除镜头。"); }} /> : undefined}
+            paragraphBody={speechMode === "paragraph" ? <ParagraphScriptList project={editableProject} selectedClipId={activeClipId} onSelectClip={handleSelectClip} onUpdateParagraph={handleParagraphScript} onUpdateClip={handleUpdateClip} onDurationChange={handleSilentDuration} onOpenStoryboard={(id) => { setSelectedClipId(id); setInspectorTab("storyboard"); setEditorPanel(1); }} onDeleteClip={(id) => { const result = deleteVoiceClip(editableProjectRef.current, id); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除镜头。"); }} /> : undefined}
             audioStates={audioProgress.byClip} audioStatesStatus={audioOverviewStatus}
             key={editableProject.project_id}
             batchActions={<>
-              <StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} audioSettingsStatus={voiceSettingsStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} notice={batchNotice} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch} />
+              <StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} audioSettingsStatus={voiceSettingsStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch}
+                postProcessing={{ ready: postProcessingSummary.ready, reason: postProcessingSummary.reason, progress: postProcessingProgress }} onGeneratePostProcessing={() => void handleGeneratePostProcessing()} onCancelPostProcessing={() => handleCancelPostProcessing()}
+                storyboardReview={{ ready: storyboardReviewSummary.ready, reason: storyboardReviewSummary.reason, busy: storyboardReviewBusy }} onReviewStoryboards={() => void reviewStoryboards()} onCancelStoryboardReview={() => handleCancelStoryboardReview()} />
+              {(batchNotice || storyboardReviewResult || storyboardReviewNotice || editableProject.audioPostProcessing || postProcessingNotice) && <StudioOperationResults key={`${editableProject.project_id}:${speechMode}`}
+                summary={[
+                  batchNotice?.split(/[\n。]/, 1)[0],
+                  storyboardReviewResult ? storyboardReviewResult.review.changes.length ? `校对${storyboardReviewResult.applied ? "已应用" : "待应用"} ${storyboardReviewResult.review.changes.length} 镜` : "校对完成：无修订" : storyboardReviewNotice?.split(/[\n。]/, 1)[0],
+                  postProcessingNotice?.split(/[\n。]/, 1)[0] ?? (editableProject.audioPostProcessing ? `后处理 ${postProcessingSummary.completed}/${postProcessingSummary.total} 镜` : undefined),
+                ].filter(Boolean).join(" · ")}>
+                {batchNotice && <section aria-label="批量生成结果" className="min-w-0 border-b border-studio-line px-3 py-3"><h3 className="mb-1 text-xs font-semibold text-studio-text">批量生成结果</h3><p role="status" className="whitespace-pre-line break-words text-xs leading-6 text-studio-muted">{batchNotice}</p></section>}
+                <StoryboardReviewPanel result={storyboardReviewResult} notice={storyboardReviewNotice} disabled={voiceBusy || singleStoryboardBusy || referenceImportBusy}
+                  current={storyboardReviewResult?.review.inputFingerprint === storyboardReviewFingerprint}
+                  canUndo={Boolean(storyboardReviewResult?.applied && storyboardReviewResult.afterFingerprint === storyboardReviewFingerprint)} onApply={handleApplyStoryboardReview} onUndo={handleUndoStoryboardReview} />
+                <AudioPostProcessingPanel project={editableProject} busy={!hasLoadedStorage || Boolean(postProcessingProgress)} notice={postProcessingNotice} />
+              </StudioOperationResults>}
               <AcceptedVoicePreview project={editableProject} disabled={!hasLoadedStorage} onAudioElementChange={handlePreviewAudioChange} onPlaybackStart={() => audioRef.current?.pause()} />
             </>}
             project={displayProject}
             selectedClipId={activeClipId}
-            onSelectClip={setSelectedClipId}
+            onSelectClip={handleSelectClip}
             onReferenceModeChange={handleStoryboardReferenceModeChange}
             referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)}
             busy={voiceBusy || referenceImportBusy || singleStoryboardBusy || Boolean(batchProgress)}
             canUndo={scriptHistory.length > 0}
             notice={scriptNotice}
             onUpdateClip={handleUpdateClip}
-            onNormalizeSentences={handleNormalizeSentences}
-            canNormalizeSentences={speechMode === "short" && hasUnsplitSpeechSentences(editableProject)}
             onAddClip={(after) => handleAddVoice(speechMode === "paragraph" && after ? getParagraphGroup(editableProjectRef.current, after).at(-1)?.id ?? after : after)}
             onAddSilentClip={(after) => handleAddSilent(speechMode === "paragraph" && after ? getParagraphGroup(editableProjectRef.current, after).at(-1)?.id ?? after : after)}
             onSilentDurationChange={handleSilentDuration}
@@ -2157,7 +2402,7 @@ export function StudioApp({ project }: StudioAppProps) {
             ) : undefined}
             fieldValidationIssues={selectedClipValidationIssues}
             selectedClip={displaySelectedClip}
-            selectedClipGeneration={referenceImportBusy || forceSplittingCandidateId || confirmingCandidateId ? { ...generationView.selectedClipControl, disabled: true, disabledReason: confirmingCandidateId ? "正在保存试听确认" : forceSplittingCandidateId ? "正在强制切分已保存的原音" : "正在处理参考音频" } : selectedClip?.type === "voice" && voiceSettingsStatus !== "ready" ? { ...generationView.selectedClipControl, disabled: true, disabledReason: voiceCatalogError || "正在读取声音设置…" } : generationView.selectedClipControl}
+            selectedClipGeneration={storyboardReviewBusy || postProcessingProgress || referenceImportBusy || forceSplittingCandidateId || confirmingCandidateId ? { ...generationView.selectedClipControl, disabled: true, disabledReason: storyboardReviewBusy ? "整批校对中" : postProcessingProgress ? "正在生成后处理" : confirmingCandidateId ? "正在保存试听确认" : forceSplittingCandidateId ? "正在强制切分已保存的原音" : "正在处理参考音频" } : selectedClip?.type === "voice" && voiceSettingsStatus !== "ready" ? { ...generationView.selectedClipControl, disabled: true, disabledReason: voiceCatalogError || "正在读取声音设置…" } : generationView.selectedClipControl}
             selectedClipSlot={previewSummary.selectedClipSlot}
             onApplyDirectorPreset={handleApplyDirectorPreset}
             onGenerateSelectedClip={handleGenerateSelectedClip}
@@ -2167,12 +2412,12 @@ export function StudioApp({ project }: StudioAppProps) {
           />
           </div>
           <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
-            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${speechMode}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={Boolean(batchProgress) || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={(id, shot) => handleSaveClipStoryboard(id, shot, speechMode)} onEdit={handleEditClipStoryboard} /> : null}
+            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${speechMode}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={storyboardReviewBusy || Boolean(postProcessingProgress) || Boolean(batchProgress) || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={(id, shot) => handleSaveClipStoryboard(id, shot, speechMode)} onEdit={handleEditClipStoryboard} /> : null}
           </div>
         </div>
       </EditorPanels>
       <div className="flex min-h-0 min-w-0 flex-col gap-1">
-        <TimelinePanel project={displayProject} selectedClipId={activeClipId} onSelectClip={setSelectedClipId} expanded={timelineExpanded} onExpandedChange={setTimelineExpanded} />
+        <TimelinePanel project={displayProject} selectedClipId={activeClipId} onSelectClip={handleSelectClip} expanded={timelineExpanded} onExpandedChange={setTimelineExpanded} />
         <details className="relative shrink-0 rounded-md border border-studio-line bg-studio-panel/60 px-3 py-1"><summary className="cursor-pointer text-xs text-studio-muted">情绪与工程检查{validationIssues.length ? ` · ${validationIssues.length} 项待检查` : ""}</summary><div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-[60dvh] space-y-3 overflow-y-auto rounded-lg border border-studio-line bg-studio-panel p-3 shadow-2xl"><EmotionCurve project={editableProject} /><ValidationPanel issues={validationIssues} /></div></details>
       </div>
       </div>

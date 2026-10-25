@@ -9,8 +9,9 @@ import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { getMissingProjectMixClipIds } from "./project-mix-state";
 import { renderProjectMixWav } from "./project-mix-renderer";
 import type { AsmrProject } from "./schema";
-import { renderSpatialClip } from "./spatial-audio";
 import { decodePcmWav } from "./pcm-audio";
+import { getCurrentAudioPostProcessingReceipts } from "./audio-post-processing";
+import { readPreparedAudioSource } from "./prepared-audio-source";
 
 export type GenerateLocalProjectMixInput = {
   project: AsmrProject;
@@ -37,6 +38,9 @@ export async function generateLocalProjectMix({
     );
   }
 
+  const voices = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []).filter(clip => clip.kind !== "silent");
+  const receipts = getCurrentAudioPostProcessingReceipts(project);
+  const usePrepared = voices.length > 0 && voices.every(clip => receipts.has(clip.id));
   const wav = await renderProjectMixWav({
     project,
     sampleRate,
@@ -46,9 +50,13 @@ export async function generateLocalProjectMix({
         throw new Error(`Missing project mix clip asset id: ${clip.id}`);
       }
 
-      if (clip.type === "voice" && project.timeline.mixing.binaural) {
-        return renderSpatialClip({ assetId: clip.asset.asset_id, position: clip.position,
-          durationSeconds: clip.duration, fadeInSeconds: clip.fade_in, fadeOutSeconds: clip.fade_out, config, signal });
+      if (clip.type === "voice") {
+        if (usePrepared) {
+          const prepared = await readPreparedAudioSource(project, clip.id, config, signal);
+          if (!prepared) throw new Error("后处理结果已更新，请重新生成后处理。");
+          return { wav: prepared.wav, spatialized: project.timeline.mixing.binaural, prepared: true };
+        }
+        return { wav: await readFile(resolveClipAssetPath(clip.asset.asset_id, config)), spatialized: false, original: true };
       }
       return readFile(resolveClipAssetPath(clip.asset.asset_id, config));
     },

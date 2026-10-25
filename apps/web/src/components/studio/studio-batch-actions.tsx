@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioLines, Clapperboard, LoaderCircle, MoreHorizontal, X } from "lucide-react";
+import { AudioLines, Clapperboard, LoaderCircle, MoreHorizontal, WandSparkles, X } from "lucide-react";
 
 import type { StudioBatchAction } from "@/lib/asmr/studio-batch-generation";
 import type { StudioAudioOverview } from "@/lib/asmr/studio-audio-overview";
@@ -16,6 +16,14 @@ export type StudioBatchProgress = {
   waitingBetweenItems?: boolean;
 };
 
+export type AudioPostProcessingProgress = {
+  phase: "planning" | "rendering";
+  total: number;
+  completed: number;
+  failed: number;
+  currentClipId?: string;
+};
+
 type StudioBatchActionsProps = {
   counts: Record<StudioBatchAction, number>;
   audioOverview?: StudioAudioOverview;
@@ -23,9 +31,14 @@ type StudioBatchActionsProps = {
   audioSettingsStatus?: "loading" | "ready" | "error";
   disabled?: boolean;
   progress?: StudioBatchProgress;
-  notice?: string;
   onRun: (action: StudioBatchAction) => void;
   onCancel: () => void;
+  postProcessing?: { ready: boolean; reason: string; progress?: AudioPostProcessingProgress };
+  onGeneratePostProcessing?: () => void;
+  onCancelPostProcessing?: () => void;
+  storyboardReview?: { ready: boolean; reason: string; busy: boolean };
+  onReviewStoryboards?: () => void;
+  onCancelStoryboardReview?: () => void;
 };
 
 const groups = [
@@ -52,8 +65,9 @@ const groups = [
   },
 ] as const;
 
-export function StudioBatchActions({ counts, audioOverview, overviewStatus = "ready", audioSettingsStatus = "ready", disabled = false, progress, notice, onRun, onCancel }: StudioBatchActionsProps) {
-  const active = progress !== undefined;
+export function StudioBatchActions({ counts, audioOverview, overviewStatus = "ready", audioSettingsStatus = "ready", disabled = false, progress, onRun, onCancel, postProcessing, onGeneratePostProcessing, onCancelPostProcessing, storyboardReview, onReviewStoryboards, onCancelStoryboardReview }: StudioBatchActionsProps) {
+  const active = progress !== undefined || Boolean(postProcessing?.progress) || Boolean(storyboardReview?.busy);
+  const regenerateStoryboards = counts.storyboard_missing === 0 && counts.storyboard_all > 0;
   const total = Math.max(0, progress?.total ?? 0);
   const completed = Math.min(total, Math.max(0, progress?.completed ?? 0));
   const audio = progress?.action.startsWith("audio");
@@ -78,15 +92,31 @@ export function StudioBatchActions({ counts, audioOverview, overviewStatus = "re
     </div>}
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className={`flex gap-1.5 ${group.label === "音频" ? "min-w-[16rem] flex-[2]" : "min-w-[7rem] flex-1"}`}>
-          {group.actions.filter(({ primary }) => primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title}
-            disabled={disabled || active || counts[action] <= 0 || (action.startsWith("audio") && audioSettingsStatus !== "ready") || (action === "audio_ungenerated" && overviewStatus !== "ready")} onClick={() => onRun(action)}
+          {group.actions.filter(({ primary }) => primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={action === "storyboard_missing" && regenerateStoryboards ? "当前分镜均已生成，确认后重新生成当前页全部可用分镜。" : title}
+            disabled={disabled || active || (action === "storyboard_missing" && regenerateStoryboards ? counts.storyboard_all : counts[action]) <= 0 || (action.startsWith("audio") && audioSettingsStatus !== "ready") || (action === "audio_ungenerated" && overviewStatus !== "ready")} onClick={() => onRun(action === "storyboard_missing" && regenerateStoryboards ? "storyboard_all" : action)}
             className={`inline-flex min-h-8 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-35 ${group.buttonTone}`}>
-            <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{action === "audio_ungenerated" && overviewStatus !== "ready" ? "—" : counts[action]}</span>
+            <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{action === "storyboard_missing" && regenerateStoryboards ? "重新生成分镜" : label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{action === "audio_ungenerated" && overviewStatus !== "ready" ? "—" : action === "storyboard_missing" && regenerateStoryboards ? counts.storyboard_all : counts[action]}</span>
           </button>)}
       </div>)}
-      <details className="relative"><summary aria-label="批量更多操作" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-studio-line text-studio-muted hover:bg-white/5"><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-30 mt-1 grid w-44 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">{groups.flatMap((group) => group.actions.filter(({ primary }) => !primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title} disabled={disabled || active || counts[action] <= 0 || (action.startsWith("audio") && audioSettingsStatus !== "ready")} onClick={() => onRun(action)} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">{label} · {counts[action]}</button>))}</div></details>
+      {postProcessing && <button type="button" aria-label="生成后处理"
+        title={postProcessing.ready ? "根据已采用原音和全部分镜设计音场，再逐镜生成独立处理结果；原音保留。" : postProcessing.reason}
+        disabled={disabled || active || !postProcessing.ready || Boolean(postProcessing.progress) || !onGeneratePostProcessing}
+        onClick={onGeneratePostProcessing}
+        className="inline-flex min-h-8 min-w-[7rem] flex-1 items-center justify-center gap-1.5 rounded-md border border-teal-300/20 bg-teal-300/[0.06] px-2.5 text-xs font-medium text-teal-100 hover:bg-teal-300/12 focus-visible:outline-2 focus-visible:outline-teal-300 disabled:cursor-not-allowed disabled:opacity-35">
+        {postProcessing.progress ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <WandSparkles className="h-3.5 w-3.5" aria-hidden="true" />}
+        <span className="whitespace-nowrap">{postProcessing.progress?.phase === "planning" ? "正在设计…" : postProcessing.progress ? "正在后处理…" : "生成后处理"}</span>
+      </button>}
+      <details className="relative"><summary aria-label="批量更多操作" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-studio-line text-studio-muted hover:bg-white/5"><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-30 mt-1 grid w-44 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">{groups.flatMap((group) => group.actions.filter(({ primary }) => !primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={title} disabled={disabled || active || counts[action] <= 0 || (action.startsWith("audio") && audioSettingsStatus !== "ready")} onClick={() => onRun(action)} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">{label} · {counts[action]}</button>))}
+        {storyboardReview && <button type="button" aria-label="整批校对" title={storyboardReview.ready ? "检查整批剧情与动作衔接，先预览修订，再决定是否应用。" : storyboardReview.reason}
+          disabled={disabled || active || !storyboardReview.ready || !onReviewStoryboards} onClick={onReviewStoryboards} className="min-h-8 rounded px-2 text-left text-xs text-studio-muted hover:bg-white/5 disabled:opacity-35">整批校对</button>}
+      </div></details>
     </div>
     {audioSettingsStatus !== "ready" && <p role="status" className="mt-2 text-[11px] leading-5 text-studio-muted">{audioSettingsStatus === "loading" ? "正在读取声音设置…" : "声音设置读取失败，请刷新重试。"}</p>}
+    {storyboardReview?.busy && <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-violet-100"><p role="status">整批校对中…</p><button type="button" aria-label="取消整批校对" onClick={onCancelStoryboardReview} className="min-h-7 rounded px-1.5 text-studio-muted hover:bg-white/5">取消</button></div>}
+    {postProcessing?.progress && <div className="mt-2 flex min-w-0 items-center justify-between gap-2 text-[11px] text-teal-100">
+      <p role="status">{postProcessing.progress.phase === "planning" ? "正在设计后处理…" : `后处理 · 完成 ${postProcessing.progress.completed}/${postProcessing.progress.total}${postProcessing.progress.failed ? ` · 失败 ${postProcessing.progress.failed}` : ""}`}</p>
+      <button type="button" onClick={onCancelPostProcessing} aria-label="取消后处理" className="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-studio-muted hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-teal-300"><X className="h-3 w-3" aria-hidden="true" />取消</button>
+    </div>}
     {progress && <div className="mt-2 space-y-1.5">
       <div className="flex min-w-0 items-center justify-between gap-2 text-[11px]">
         <p role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-studio-muted"><span className={`inline-flex items-center gap-1.5 ${audio ? "text-sky-100" : "text-violet-100"}`}><LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />{audio ? "音频" : "分镜"} · 完成 {completed}/{total}</span>{result && <span>{result}</span>}{progress.waitingBetweenItems && <span>任务间隔中（5 秒）</span>}</p>
@@ -96,6 +126,5 @@ export function StudioBatchActions({ counts, audioOverview, overviewStatus = "re
         <div className={`h-full rounded-full transition-[width] ${audio ? "bg-sky-300/65" : "bg-violet-300/65"}`} style={{ width: `${total > 0 ? completed / total * 100 : 0}%` }} />
       </div>
     </div>}
-    {notice && <p role="status" className="mt-2 break-words text-[11px] leading-5 text-studio-muted">{notice}</p>}
   </div>;
 }

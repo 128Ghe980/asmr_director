@@ -24,9 +24,13 @@ export async function POST(request: Request) {
     catch { throw new VoicePreviewError("请提供有效的工程 JSON。", 400); }
     const project = AsmrProjectSchema.safeParse(body && typeof body === "object" && "project" in body ? body.project : undefined);
     if (!project.success) throw new VoicePreviewError("工程格式无效，请检查后重试。", 400);
+    const audioVersion = body && typeof body === "object" && "audioVersion" in body ? body.audioVersion : "original";
+    if (audioVersion !== "original" && audioVersion !== "processed") throw new VoicePreviewError("试听音频类型无效。", 400);
     if (state.__asmrVoicePreviewPreparing) throw new VoicePreviewError("正在整理另一份语音预览，请稍后重试。", 429);
     assertVoicePreviewCapacity(); state.__asmrVoicePreviewPreparing = true; ownsSlot = true;
-    prepared = await prepareVoicePreview(project.data, getLocalRuntimeConfig(), request.signal);
+    prepared = audioVersion === "processed"
+      ? await prepareVoicePreview(project.data, getLocalRuntimeConfig(), request.signal, { audioVersion })
+      : await prepareVoicePreview(project.data, getLocalRuntimeConfig(), request.signal);
     check(request);
     const metadata = registerVoicePreview(prepared);
     registeredUrl = metadata.audioUrl; prepared = undefined;

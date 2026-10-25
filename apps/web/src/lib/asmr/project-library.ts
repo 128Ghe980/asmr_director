@@ -1,5 +1,5 @@
 import type { AsmrProject, SpeechWorkspaceMode } from "./schema";
-import { ensureSpeechWorkspaces, getSpeechWorkspaceMode, normalizeSpeechSentences } from "./speech-workspace";
+import { ensureSpeechWorkspaces, getSpeechWorkspaceMode } from "./speech-workspace";
 import {
   PlannerSourceSchema,
   compilePlannerDraft,
@@ -498,7 +498,7 @@ export function adoptPlannerDraft(
   if (source.sceneDescription !== undefined) {
     compiled.videoPlan = { version: 1, sceneDescription: source.sceneDescription, shots: {} };
   }
-  const project = ensureSpeechWorkspaces(normalizeSpeechSentences(compiled));
+  const project = ensureSpeechWorkspaces(compiled);
   const protectedLibrary = createProjectRevision(
     library,
     library.currentProjectId,

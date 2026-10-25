@@ -6,7 +6,7 @@ import { resolveClipAssetPath } from "./local-asset-store";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { renderProcessedClipWav } from "./project-mix-renderer";
 import type { AsmrProject } from "./schema";
-import { MAX_SPATIAL_DURATION_SECONDS, renderSpatialClip, SpatialAudioError, type SpatialClipResult } from "./spatial-audio";
+import { readPreparedAudioSource } from "./prepared-audio-source";
 import { StoredZipWriter, ZipLimitError } from "./stored-zip";
 
 const MAX_SOURCE_BYTES = 128 * 1024 * 1024;
@@ -23,7 +23,6 @@ export class BatchDownloadError extends Error {
 type Dependencies = {
   tempRoot?: string;
   maxArchiveBytes?: number;
-  renderSpatial?: typeof renderSpatialClip;
 };
 
 export type PreparedBatchDownload = {
@@ -77,7 +76,7 @@ function inspectSource(wav: Uint8Array, spatialized = false) {
     if (![1, 2].includes(channels) || format !== 1 || ![16, 24].includes(bits)
       || sampleRate < 8000 || sampleRate > 192000 || blockAlign !== channels * bits / 8 || !dataSize || dataSize % blockAlign) throw new Error("Unsupported WAV");
     const duration = dataSize / blockAlign / sampleRate;
-    if (duration > MAX_SPATIAL_DURATION_SECONDS + (spatialized ? .65 : 0)) throw new BatchDownloadError("批量下载暂支持每段最长 10 分钟的音频。", 413);
+    if (duration > 600 + (spatialized ? .65 + 1 / 48000 : 0)) throw new BatchDownloadError("批量下载暂支持每段最长 10 分钟的音频。", 413);
     return { duration, channels };
   } catch (error) {
     if (error instanceof BatchDownloadError) throw error;
@@ -132,12 +131,12 @@ export async function prepareBatchDownload(
       clipCount: clips.length, binaural: project.timeline.mixing.binaural,
       notes: [
         "仅包含当前工程已生成并采用的片段，不含未采用候选、原始生成长窗口、历史版本或整段混音。",
-        "无后处理保留已采用素材的完整原始 WAV 字节；后处理保留完整源时长，人声双耳处理另保留 650 ms 房间尾声。",
-        "后处理使用当前片段音量、淡入淡出与适用的空间位置设置；不加工程主响度归一或整段混音限幅，也不按时间线裁短或重复音频。",
+        "无后处理保留已采用素材的完整原始 WAV 字节；人声后处理仅附已显式生成且当前有效的成品，保留其文件原字节。",
+        "下载不调用 AI 或临时执行人声空间渲染；缺少或过期的后处理请先点击生成后处理。",
       ],
       clips: [] as {
         clipId: string; assetId: string; type: string; startSeconds: number;
-        rawPath: string; processedPath: string; processing: string; spatialized: boolean;
+        rawPath: string; processedPath?: string; processing: string; spatialized: boolean;
         durationSeconds: number; processingNote: string;
         settings: { volumeDb: number; fadeInSeconds: number; fadeOutSeconds: number; position: typeof clips[number]["clip"]["position"] };
       }[],
@@ -151,34 +150,33 @@ export async function prepareBatchDownload(
       finally { originalStream.destroy(); }
       checkCancelled(signal);
       const clip = entry.clip;
-      let loaded: SpatialClipResult;
-      let processing: string, processingNote: string;
-      if (clip.type === "voice" && project.timeline.mixing.binaural) {
-        loaded = await (dependencies.renderSpatial ?? renderSpatialClip)({
-          assetId: entry.assetId, position: clip.position,
-          fadeInSeconds: clip.fade_in, fadeOutSeconds: clip.fade_out, config, signal,
-        });
-        if (!loaded.spatialized) {
-          const original = inspectSource(loaded.wav);
-          if (original.channels !== 2) throw new BatchDownloadError("人声空间处理未完成，请检查本机空间处理环境后重试。", 503);
+      let processed: Uint8Array | undefined;
+      let spatialized = false, duration: number, processing: string, processingNote: string;
+      if (clip.type === "voice") {
+        const preparedAudio = await readPreparedAudioSource(project, clip.id, config, signal);
+        if (preparedAudio) {
+          processed = preparedAudio.wav;
+          spatialized = project.timeline.mixing.binaural;
+          duration = inspectSource(processed, true).duration;
+          processing = "prepared_audio";
+          processingNote = "直接保存已生成后处理成品，不重复空间、音量或淡入淡出处理。";
+        } else {
+          duration = inspectSource(await readFile(sources[index].filePath, { signal })).duration;
+          processing = "not_generated";
+          processingNote = "当前没有有效后处理成品，仅附原音；请在分镜完成后点击生成后处理。";
         }
-        processing = loaded.spatialized ? "original_d_binaural" : "stereo_source";
-        processingNote = loaded.spatialized ? "原 D 双耳空间处理，保留完整 650 ms 尾声，并应用片段音量。"
-          : "源文件已为立体声，保留原双声道，不重复双耳空间处理；应用片段音量与淡入淡出。";
       } else {
-        loaded = { wav: await readFile(sources[index].filePath, { signal }), spatialized: false };
+        const loaded = { wav: await readFile(sources[index].filePath, { signal }), spatialized: false };
+        duration = inspectSource(loaded.wav).duration;
+        processed = await renderProcessedClipWav({ ...clip, start: 0, duration }, loaded, signal);
         processing = "basic_processing";
-        processingNote = clip.type === "voice" ? "工程双耳处理关闭；应用音量、淡入淡出与适用的单声道声像/距离/运动设置。"
-          : "应用音量、淡入淡出与适用的单声道声像/距离/运动设置；不使用人声 D 双耳处理。";
+        processingNote = "非人声素材沿用音量、淡入淡出和普通声像处理。";
       }
       checkCancelled(signal);
-      // D appends 650 ms; all other files keep their real source duration.
-      const duration = inspectSource(loaded.wav, loaded.spatialized).duration;
-      const processed = await renderProcessedClipWav({ ...clip, start: 0, duration }, loaded, signal);
-      await writer.add(processedPath, processed);
+      if (processed) await writer.add(processedPath, processed);
       manifest.clips.push({
         clipId: clip.id, assetId: entry.assetId, type: clip.type, startSeconds: clip.start,
-        rawPath, processedPath, processing, spatialized: loaded.spatialized,
+        rawPath, ...(processed ? { processedPath } : {}), processing, spatialized,
         durationSeconds: duration, processingNote,
         settings: { volumeDb: clip.volume_db, fadeInSeconds: clip.fade_in, fadeOutSeconds: clip.fade_out, position: clip.position },
       });
@@ -193,7 +191,6 @@ export async function prepareBatchDownload(
   } catch (error) {
     if (signal?.aborted) throw new BatchDownloadError("已取消批量下载。", 499);
     if (error instanceof BatchDownloadError) throw error;
-    if (error instanceof SpatialAudioError) throw new BatchDownloadError(error.message, error.statusCode);
     if (error instanceof ZipLimitError) throw new BatchDownloadError(error.message, 413);
     throw new BatchDownloadError("批量音频整理失败，请检查本地素材与缓存空间后重试。", 500);
   } finally {

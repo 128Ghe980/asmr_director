@@ -14,6 +14,7 @@ function bankSnapshot(project: AsmrProject, mixFingerprint?: string): SpeechWork
     supportingTracks: structuredClone(project.timeline.tracks.filter((track) => track.track_type !== "voice")),
     emotion_curve: structuredClone(project.emotion_curve), mixing: structuredClone(project.timeline.mixing),
     ...(project.videoPlan ? { videoPlan: structuredClone(project.videoPlan) } : {}),
+    ...(project.audioPostProcessing ? { audioPostProcessing: structuredClone(project.audioPostProcessing) } : {}),
     exports: structuredClone(project.exports), ...(mixFingerprint !== undefined ? { mixFingerprint } : {}),
   };
 }
@@ -57,14 +58,18 @@ export function getSpeechWorkspaceMode(project: AsmrProject): SpeechWorkspaceMod
   return project.speechWorkspace?.activeMode ?? "short";
 }
 
+/** @deprecated Legacy sentence-boundary utility, not the definition of short
+ * semantic units. Do not use during adoption, editing or workspace navigation. */
 export function hasUnsplitSpeechSentences(project: AsmrProject): boolean {
   return voices(project).some((clip) => clip.kind !== "silent" && splitSpeechSentences(clip.text).length > 1);
 }
 
-/** Split source units, never their audio. A full old recording cannot become
+/** @deprecated Legacy compatibility/experiments only, not the definition of
+ * short units. Never call automatically during adoption, editing or navigation.
+ * Split source units, never their audio. A full old recording cannot become
  * the first shorter sentence's take. The caller protects the complete project
  * in edit history before this operation on a project with existing results.
- * An optional ID limits blur edits to the edited source unit.
+ * An optional ID limits an explicit legacy transformation to one source unit.
  */
 export function normalizeSpeechSentences(project: AsmrProject, clipId?: string): AsmrProject {
   const original = voices(project);
@@ -152,6 +157,7 @@ export function ensureSpeechWorkspaces(project: AsmrProject): AsmrProject {
     asset: { asset_id: null, uri: null, duration: null },
   })) } as Exclude<TimelineTrack, { track_type: "voice" }>));
   if (paragraph.videoPlan) paragraph.videoPlan = { ...paragraph.videoPlan, shots: {} };
+  delete paragraph.audioPostProcessing;
   paragraph.exports = paragraph.exports.map((entry) => ({ ...entry, status: "not_started", uri: null }));
   delete paragraph.mixFingerprint;
   return { ...project, speechWorkspace: { version: 1, activeMode: "short", short, paragraph, groups: createSpeechParagraphGroups(short.clips) } };
@@ -180,6 +186,8 @@ export function restoreSpeechWorkspaceBank(project: AsmrProject, mode: SpeechWor
   };
   if (bank.videoPlan) next.videoPlan = structuredClone(bank.videoPlan);
   else delete next.videoPlan;
+  if (bank.audioPostProcessing) next.audioPostProcessing = structuredClone(bank.audioPostProcessing);
+  else delete next.audioPostProcessing;
   return next;
 }
 
@@ -326,9 +334,9 @@ export function syncSharedSpeechScript(previous: AsmrProject, next: AsmrProject)
   return { ...captured, speechWorkspace: { ...captured.speechWorkspace!, [otherMode]: otherBank } };
 }
 
-/** Word edits retain original boundaries. A rewrite spanning several source
- * sentences uses only complete natural sentences and reuses affected IDs in
- * order; a shorter rewrite merges units rather than cutting inside a word.
+/** Preserve existing semantic units during word edits. A rewrite spanning
+ * units replaces only that affected range with one user-edited unit; punctuation
+ * is part of the dialogue and never invents new source boundaries.
  */
 export function replaceParagraphScript(project: AsmrProject, groupId: string, replacement: string): AsmrProject {
   const initialized = ensureSpeechWorkspaces(project);
@@ -355,27 +363,17 @@ export function replaceParagraphScript(project: AsmrProject, groupId: string, re
   const edited = Array.from(affected[0].text).slice(0, prefix - starts[first]).join("")
     + newChars.slice(prefix, newEnd).join("")
     + Array.from(affected.at(-1)!.text).slice(oldEnd - starts[last]).join("");
-  const texts = splitSpeechSentences(edited);
-  const partitionChanged = texts.length !== affected.length || affected.some((clip) => splitSpeechSentences(clip.text).length > 1);
-  const reserved = new Set(initialized.timeline.tracks.flatMap((track) => track.clips.map((clip) => clip.id)));
+  const partitionChanged = affected.length > 1;
   const total = Math.max(.1, affected.at(-1)!.start + affected.at(-1)!.duration - affected[0].start);
-  const textLength = Math.max(1, texts.reduce((sum, text) => sum + Array.from(text).length, 0));
-  let offset = 0;
-  const replacements = texts.map((text, index): VoiceClip => {
-    const existing = affected[index];
-    let id = existing?.id;
-    if (!id) { do { id = `voice_${crypto.randomUUID()}`; } while (reserved.has(id)); reserved.add(id); }
-    if (first === last && texts.length === 1) return { ...affected[0], text };
-    const start = affected[0].start + total * offset / textLength;
-    offset += Array.from(text).length;
-    const end = index === texts.length - 1 ? affected[0].start + total : affected[0].start + total * offset / textLength;
-    const duration = Math.max(.01, end - start);
-    return { ...(existing ?? blankClip(affected[0])), id, text, start, duration, semantic_unit: true,
-      pause_after: index === texts.length - 1 ? affected.at(-1)!.pause_after ?? 0 : 0,
-      fade_in: Math.min(affected[0].fade_in, duration), fade_out: Math.min(affected[0].fade_out, duration) };
-  });
+  const textLength = Math.max(1, Array.from(edited).length);
+  const replacements: VoiceClip[] = [partitionChanged
+    ? { ...blankClip(affected[0]), text: edited, duration: total, semantic_unit: true,
+      pause_after: affected.at(-1)!.pause_after ?? 0,
+      fade_in: Math.min(affected[0].fade_in, total), fade_out: Math.min(affected[0].fade_out, total) }
+    : { ...affected[0], text: edited }];
   const changedIds = new Set(affected.map((clip) => clip.id));
   const replacementMembers = [...members.slice(0, first), ...replacements, ...members.slice(last + 1)];
+  // Paragraph capacity groups pack whole source units; they never split one.
   const replacementGroups: SpeechWorkspace["groups"] = [];
   let chunk: VoiceClip[] = [];
   let chunkCharacters = 0;

@@ -304,7 +304,7 @@ export function addSilentClip(project: AsmrProject, afterClipId?: string, option
   const edit = addVoiceClip(project, afterClipId);
   if (!edit.selectedClipId) return edit;
   const silent = replaceVoices(edit.project, voices(edit.project).map((clip) => clip.id === edit.selectedClipId ? {
-    ...clip, kind: "silent", text: options.description?.trim() || "轻轻放下水杯，镜头停留在桌边。",
+    ...clip, kind: "silent", text: options.description?.trim() || "待设计：根据前后剧情安排自然衔接的无对白画面。",
     semantic_unit: false, audio_stale: undefined, fade_in: 0, fade_out: 0,
   } : clip));
   return { ...edit, project: fitVoiceSegmentTiming(silent, edit.selectedClipId, duration) };

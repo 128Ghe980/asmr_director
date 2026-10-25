@@ -293,6 +293,19 @@ describe("adopting planner drafts", () => {
     expect(new Set(clipIds).size).toBe(clipIds.length);
   });
 
+  it("adopts multi-sentence semantic units without changing their boundaries or pauses", () => {
+    const draft = plannerFixture(); draft.segmentation = "semantic";
+    draft.sections[0].text = "回来啦。我还没睡，就猜你快到了。";
+    const original = structuredClone(draft);
+    const library = adoptPlannerDraft(createInitialProjectLibrary(demoProject, firstTime), PlannerBriefSchema.parse({ theme: "书店" }), draft, secondTime);
+    const project = library.projects.find(entry => entry.projectId === library.currentProjectId)!.project;
+    const clips = project.timeline.tracks.find(track => track.track_type === "voice")!.clips;
+    expect(clips.map(clip => clip.text)).toEqual(draft.sections.map(section => section.text));
+    expect(clips.every(clip => clip.semantic_unit)).toBe(true);
+    expect(project.speechWorkspace!.paragraph.clips.map(clip => [clip.id, clip.text, clip.pause_after])).toEqual(clips.map(clip => [clip.id, clip.text, clip.pause_after]));
+    expect(draft).toEqual(original);
+  });
+
   it("fails adoption atomically if the edited draft is invalid", () => {
     const initial = createInitialProjectLibrary(demoProject, firstTime);
     const before = structuredClone(initial);

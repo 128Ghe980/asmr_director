@@ -1,10 +1,32 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-10-22
+Last updated: 2026-10-25
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 当前优先级
+
+2026-10-25发布交接：本会话累计音频显式后处理、分镜全稿上下文/整批校对/重新生成与诊断、语义台词保留、操作结果窗口及空镜/检查器界面修复整理为同一开发分支版本。最终完整回归2160通过/0失败/3条件跳过（163文件）、实际后处理Python19通过、类型/完整src lint退出0（1已有未使用导入警告）；首次完整测试1处首次POST等待失败、隔离17通过及完整复测证据保留，不称根因已修。应用树f8e4329a与运行构建X5v7do9VMxFCgxLxrIEdt一致，复用已验构建、3001不重启，7JS/1CSS及425生产metadata核对通过。27另会话路径排除并保持，无用户工程存储或新增模型调用。AudioQualityV1继续进行/SFX暂停；发布状态以Git HEAD/远端和QA publication.json为准。[发布交接](records/2026-10-25-storyboard-audio-finishing-release.md)。
+
+2026-10-25 21:04HKT更新3001 buildX5v7do9VMxFCgxLxrIEdt/PID40512：普通选台词打开声音、选空镜打开分镜，显式分镜入口保持；整段正文回声音保留内部短句。末段更多菜单加自动左距保持靠右。38相关测试、类型/四文件lint/串行build通过；350/560左栏四张实际组件+生产CSS截图测得菜单右边差0px，编译HTTP及生产7JS SHA通过，425生产文件metadata/27范围外工作/HEAD/空索引保持。并只读说明段后等待不进单段WAV或视频包、空镜视频使用H3环境音；没有改变这些音频规则。0真实模型/浏览器工程存储/提交推送，未重跑整站。AudioQualityV1继续进行/SFX暂停。[记录](records/2026-10-25-inspector-selection-and-audio-semantics.md)。
+
+2026-10-23 16:17HKT更新3001 buildfpr53mPMdamym3uwQBPhs/PID22456：无对白镜头在短句/整段工作区统一淡紫渐变、左侧强调线、Film图标、常驻类型与时长，选中边框加强、详情写画面与环境声；仅两组件展示，无API/工程/批跑器变化。32原有相关测试、类型/两文件lint/串行build、隔离560/350左栏八张实际组件+生产CSS截图及编译HTTP通过；生产7JS SHA、356文件metadata/27范围外工作/HEAD/空索引保持。0真实模型/浏览器工程存储/提交推送，未重跑整站。AudioQualityV1继续进行/SFX暂停。[记录](records/2026-10-23-silent-shot-card-style.md)。
+
+2026-10-23 15:25HKT更新3001 buildCzaj77uIbBZiiD2gleTT2/PID28524：修正新增无对白镜头硬编码水杯/桌边动作；改中性待设计说明，分镜API再按完整剧情与上下文落实画面/底噪，用户具体意图保留，不新增插入API。只影响之后新增，旧描述/用户当前第4镜未自动修改或浏览器核对。153相关测试、类型/5文件lint/串行build、编译JS/CSS及生产7JS SHA通过，356生产文件/27范围外工作/HEAD/空索引保持。0真实模型/浏览器写入/提交推送，未重跑整站或真实视频质量认证。AudioQualityV1继续进行/SFX暂停。[记录](records/2026-10-23-silent-insertion-default.md)。
+
+2026-10-23 14:22HKT更新3001 buildCAoGgXLFVz5Z6allgGTBY/PID36452：纠正短句为语义/语气台词单元，可含多个句号。API原提示正确但采用/失焦/整段编辑曾按句号重切，现撤下提醒和自动重切，compact/flat模型合法unit也不被保底规则覆盖。单unit编辑保留、跨unit仅合并影响范围，paragraph按完整units打包容量、两bank资产及撤回保护保留；旧项目不自动迁移。210相关测试、类型/13文件lint/串行build、两次编译HTTP模拟回放和生产7JS SHA通过；356素材/27范围外工作/HEAD/空索引保持。0真实模型/浏览器工程写入/提交推送，未重跑整站或真实视觉。AudioQualityV1继续进行/SFX暂停。[记录](records/2026-10-23-semantic-speech-units.md)。
+
+2026-10-23 07:01HKT更新3001 buildf-R8bSLnL1Vxldyh1_V7-/PID41536：左侧批量/校对/后处理结果收成单行摘要，查看结果打开原生模态，完整错误/应用撤回/试听下载保留；进度取消原位，关闭只清试听资源、切工程/工作区关闭。多句提示改准确，无字数阈值且不阻止生成，拆文案需重生成涉及音频，算法不改。115相关测试、类型/10文件lint/串行build、编译JS/CSS及生产7JS SHA通过，356素材、27范围外工作、HEAD/空索引保持。0真实模型/浏览器工程写入/提交推送；CUA仍os3，无真实视觉验收，未重跑整站。AudioQualityV1继续进行/SFX暂停。[记录](records/2026-10-23-compact-operation-results.md)。
+
+2026-10-23 06:37HKT分镜长度修复完成并更新3001（buildJu3OhO7xM_P4a6GlQrMGQ/PID37868）：生成/校对接收复用保存边界800/600/400，320/180/120仅写作建议，不截断/重写/修复重试，严格字段/来源/原音/单次API保持。两份日志337/198原回复在生成、校对和编译HTTP回放通过；149相关测试、完整类型/四文件lint/串行build、七服务JS SHA通过，332素材和27范围外改动保持。0真实模型/当前工程重跑/浏览器写入/提交推送；不称整站重测或24镜质量认证。父阶段继续进行/SFX暂停，无新路线。[记录](records/2026-10-23-storyboard-direction-length-bounds.md)。
+
+2026-10-23 06:21HKT分镜失败诊断小修完成并更新3001（buildNnCZxeHZv8PB7LiaPVmuz/PID19776）：模型字段错误显示具体原因并有界留日志，批次逐条显示失败镜号/台词/各自原因，生成规则/一次API保持。用户这次22成功2失败的历史准确字段未保存，不能倒查或归因于长度；校对是全current未齐而未调用。39后台+35前台+32相邻测试、类型/相关lint/build/编译HTTP与7生产JS通过，332文件保持；0真实模型/项目重跑/浏览器工程写入/提交推送。父阶段继续进行/SFX暂停。[记录](records/2026-10-23-storyboard-failure-diagnostics.md)。
+
+2026-10-23 06:02HKT已有分镜重新生成功能完成并部署3001（build9qjXKJbCCq-mG1N_P1U2E/PID40900）：全部已有时顶部按钮可重生成，顶部/更多/单镜重做均先确认，补缺与首次生成不提示，失败保留旧分镜。97定向及46相邻测试、完整类型/七文件lint/独立构建/预览与生产7JS SHA通过；全src lint首次原生退出未完成，不声称整站重跑。332生产文件保持，0模型/浏览器工程写入/提交推送。父阶段继续进行/SFX暂停，不新增路线。[记录](records/2026-10-23-storyboard-regeneration-confirmation.md)。
+
+2026-10-23 05:41HKT全稿分镜上下文与整批校对功能完成并部署3001（build1ETviLRkyWf4Eoh_QTcpY/PID40976）：全稿语义与动作状态，自动仅本批未手改新镜，手动更多操作预览→应用，逆补丁撤回保留音频/DSP；失败取消不设新门槛。真实8调用（逐镜3+校对5），前4轮不足保留；最终仅006毛巾交接1合理修订，24原WAV SHA保持，不称全24无遗漏/H3通过。内部shotNumber映射+稀疏after合并，对外合同不变。全量2083/0/3（162文件），最终合同定向251/0/0（16文件）、类型/全src lint/独立2048MiB串行build过，重叠不累加、不称最终合同整站重跑；ZIP→runner干跑和编译HTTP8场景/4mockAPI/0新增模型过。生产200/7JS字节/三POST-only405、332生产size+mtime、638blob/27范围外SHA/HEAD/空索引保持。用户旧分镜/浏览器工程未动，未提交推送；未验真实浏览器视觉或远端视频执行。AudioQualityV1继续进行/SFX暂停，不新增阶段。[记录](records/2026-10-23-storyboard-context-and-review.md)。
+
+2026-10-23 04:25HKT分镜后显式音频后处理已部署3001（build Z0pV5XluzH0XapvZhehW9/PID18348）：原音直接试听，分镜齐备后点「生成后处理」，DeepSeek整批规划、CPU D逐镜处理，保留原音与两工作区结果；空镜动作可承接新位置。播放/导出不隐式处理，完整成品才进视频/混音，旧mix正确提示需重混；100镜300字FP中位145.75→2.378ms。前整站2018/0/3（156文件），最终优化版定向207/0/0（20文件）、19Python、类型/lint/独立串行构建通过；并行全量/构建曾内存中断，未声称最终整站重跑。真实API1/CPU共7、最终23HTTP/7.3秒精确PCM/ZIP及7服务JS字节通过；合成源、0真实TTS/ASR/生产生成，332生产size/mtime及27范围外SHA/HEAD/空索引保持。CUA初始化失败，用户素材听感/远端H3/完整合片未测；未提交推送。功能完成，AudioQualityV1仍进行中/SFX暂停，无新阶段。[记录](records/2026-10-23-explicit-audio-post-processing.md)。
 
 2026-10-22已推送音频工作台/原生视频批跑器版本385267c（开发分支），另给旧默认分支仅新增README提交42359fd，未合并代码或切换默认分支；About简介与公开状态实核。选定84文件/600blob独立验证：1941Vitest通过/3条件跳过、309Python全过，类型/lint/build/实际ZIP集成通过。空间/符号链接/真实ASR跳过项及缺原音/远端H3/完整合片不称已验收，26项另会话改动保持，不重启3001或跑新模型。本四文档另作记录同步提交，最终HEAD看Git及发布收据。Audio Quality V1进行中/SFX暂停，不新增阶段。[发布记录](records/2026-10-22-audio-workbench-and-native-video-release.md)。
 

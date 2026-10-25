@@ -5,18 +5,11 @@ const localClipAssetPrefix = "asset://clip/";
 const localMixAssetPrefix = "asset://mix/";
 
 export function resolveClipPlaybackUri(
-  clip: TimelineClip, binaural: boolean,
+  clip: TimelineClip, _binaural: boolean,
   asset: { uri: string | null; duration: number | null } = clip.asset,
 ): string | undefined {
-  if (!binaural || clip.type !== "voice" || !asset.uri?.startsWith(localClipAssetPrefix)) {
-    return resolvePlayableAssetUri(asset.uri);
-  }
-  const params = new URLSearchParams({
-    position: JSON.stringify(clip.position),
-    duration: String(asset === clip.asset ? clip.duration : asset.duration ?? clip.duration),
-    fadeIn: String(clip.fade_in), fadeOut: String(clip.fade_out),
-  });
-  return `/api/assets/spatial/${encodeURIComponent(asset.uri.slice(localClipAssetPrefix.length))}?${params}`;
+  // Listening never starts rendering. Processed assets have their own explicit result.
+  return resolvePlayableAssetUri(asset.uri);
 }
 
 export function isLocalClipAssetUri(uri: string | null | undefined): boolean {

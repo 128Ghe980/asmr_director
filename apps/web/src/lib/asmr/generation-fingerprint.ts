@@ -2,6 +2,7 @@ import type { AsmrProject, TimelineClip } from "./schema";
 import { flattenClips } from "./view-model";
 import { SPATIAL_RENDER_VERSION } from "./spatial-settings";
 import type { VoiceGenerationContext } from "./voice-generation-context";
+import { getAudioPostProcessingClips, getCurrentAudioPostProcessingReceipts } from "./audio-post-processing";
 
 type ClipGenerationFingerprintInput = {
   id: string;
@@ -21,6 +22,18 @@ type ProjectMixExportType = "wav";
 
 type ProjectMixFingerprintInput = {
   spatial_renderer?: string;
+  voice_delivery?: {
+    version: "explicit-voice-v1";
+    mode: "original" | "processed";
+    processed?: Array<{
+      clipId: string;
+      asset: { uri: string; duration: number };
+      sourceSha256: string;
+      outputSha256: string;
+      settingsFingerprint: string;
+      rendererVersion: string;
+    }>;
+  };
   project_id: string;
   duration: number;
   exportType: ProjectMixExportType;
@@ -139,12 +152,28 @@ function getProjectMixClipFingerprintInput(
   };
 }
 
+function voiceDeliveryFingerprint(project: AsmrProject): ProjectMixFingerprintInput["voice_delivery"] {
+  const voices = getAudioPostProcessingClips(project).filter(clip => clip.kind !== "silent");
+  if (!voices.length) return undefined;
+  const current = getCurrentAudioPostProcessingReceipts(project);
+  const receipts = voices.map(clip => current.get(clip.id)).filter(receipt => receipt !== undefined);
+  // Match the mix loader: partial or stale processing always uses the whole raw set.
+  if (receipts.length !== voices.length) return { version: "explicit-voice-v1", mode: "original" };
+  return { version: "explicit-voice-v1", mode: "processed", processed: receipts.map(receipt => ({
+    clipId: receipt.clipId, asset: { uri: receipt.asset.uri, duration: receipt.asset.duration },
+    sourceSha256: receipt.sourceSha256, outputSha256: receipt.outputSha256,
+    settingsFingerprint: receipt.settingsFingerprint, rendererVersion: receipt.rendererVersion,
+  })) };
+}
+
 export function getProjectMixFingerprint(
   project: AsmrProject,
   exportType: ProjectMixExportType = "wav",
 ): string {
+  const voiceDelivery = voiceDeliveryFingerprint(project);
   const input: ProjectMixFingerprintInput = {
     ...(project.timeline.mixing.binaural ? { spatial_renderer: SPATIAL_RENDER_VERSION } : {}),
+    ...(voiceDelivery ? { voice_delivery: voiceDelivery } : {}),
     project_id: project.project_id,
     duration: project.duration,
     exportType,

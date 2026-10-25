@@ -8,6 +8,7 @@ import type { AsmrProject } from "@/lib/asmr/schema";
 import { getBatchStoryboardClips, getBatchStoryboardDownloadFilename, getBatchStoryboardDownloadFolderName } from "@/lib/asmr/storyboard-batch-download";
 import { getStudioStoryboardProgress } from "@/lib/asmr/studio-storyboard-overview";
 import { getVideoPackageFilename, getVideoPackageSummary } from "@/lib/asmr/video-package";
+import { getCurrentAudioPostProcessingReceipts } from "@/lib/asmr/audio-post-processing";
 
 type DownloadMode = "audio" | "storyboard" | "video";
 type DownloadState = { source: string; mode: DownloadMode; status: "idle" | "preparing" | "downloaded" | "error"; error?: string };
@@ -32,6 +33,9 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const storyboards = getBatchStoryboardClips(project);
   const progress = getStudioStoryboardProgress(project);
   const video = getVideoPackageSummary(project);
+  const speechClips = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []).filter(clip => clip.kind !== "silent");
+  const preparedReceipts = getCurrentAudioPostProcessingReceipts(project);
+  const videoUsesPrepared = speechClips.length > 0 && speechClips.every(clip => preparedReceipts.has(clip.id));
   const status = state?.source === source && state.mode === mode ? state.status : "idle";
   const error = status === "error" ? state?.error : undefined;
   const count = mode === "audio" ? clips.length : mode === "storyboard" ? storyboards.length : video.total;
@@ -192,7 +196,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
         <div className="flex min-w-0 items-center gap-2 text-xs font-medium"><Folder className="h-4 w-4 shrink-0 text-amber-200/80" aria-hidden="true" /><span className="truncate" title={getBatchDownloadFolderName(project)}>{getBatchDownloadFolderName(project)}</span></div>
         <div className="ml-2 mt-3 space-y-3 border-l border-white/10 pl-3">
           <div className="flex items-start gap-2"><Folder className="mt-0.5 h-3.5 w-3.5 shrink-0 text-studio-muted" aria-hidden="true" /><div><p className="text-xs font-medium">无后处理</p><p className="mt-0.5 text-[11px] leading-5 text-studio-muted">已采用原声，保留原始音频文件。</p></div></div>
-          <div className="flex items-start gap-2"><Headphones className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-200/80" aria-hidden="true" /><div><p className="text-xs font-medium">后处理</p><p className="mt-0.5 text-[11px] leading-5 text-studio-muted">{project.timeline.mixing.binaural ? "沿用当前空间、距离与移动设置，以及音量和淡入淡出。" : "沿用当前音量、声像和淡入淡出；双耳空间当前已关闭。"}</p></div></div>
+          <div className="flex items-start gap-2"><Headphones className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-200/80" aria-hidden="true" /><div><p className="text-xs font-medium">后处理</p><p className="mt-0.5 text-[11px] leading-5 text-studio-muted">附上已生成且当前有效的后处理成品；请先在分镜右侧点击「生成后处理」。下载直接读取文件。</p></div></div>
         </div>
       </div>
       <p className="mt-2.5 text-[11px] leading-5 text-studio-muted">两个版本使用相同编号，按时间线顺序排列。</p>
@@ -219,7 +223,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
         <p className="mt-1 text-[11px] leading-5 text-studio-muted">仅打包已保存、完整且未过期的提示词；待生成与需更新段落不包含在内。</p>
       </> : <>
         <p className="mt-3 text-xs leading-5 text-studio-muted">当前项目共 {video.total} 镜，打包音频、分镜和独立运行程序。</p>
-        <p className="mt-2 text-[11px] leading-5 text-studio-muted">每镜仅一份已采用音频。按镜头顺序生成；无对白镜头带环境底噪，最长 5 秒。</p>
+        <p className="mt-2 text-[11px] leading-5 text-studio-muted">每镜仅一份音频：{videoUsesPrepared ? "已生成的后处理成品" : "已采用原音（整批后处理尚未完成）"}。按镜头顺序生成；无对白镜头带环境底噪，最长 5 秒。</p>
         <label className="mt-3 block text-xs font-medium" htmlFor={`${panelId}-reference`}>角色参考图（可选）</label>
         <input id={`${panelId}-reference`} type="file" accept="image/jpeg,image/png,image/webp" disabled={busy}
           onChange={(event) => {

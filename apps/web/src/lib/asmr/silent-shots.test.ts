@@ -114,6 +114,21 @@ describe("silent editorial shots", () => {
     expect(voices(refreshed)[0].audio_stale).toBe(false);
     expect(getStudioAudioOverview(refreshed, [])).toEqual({ adopted: 3, pending: 0, unadopted: 0, total: 3 });
   });
+  it.each([undefined, "   "])("inserts a pending-context description without inventing story props (%s)", description => {
+    const project = fixture(), before = structuredClone(project), clips = voices(project);
+    clips[0].text = "寒潮就要来了，先进门躲躲风。";
+    clips[1].text = "把门关上，别让冷风灌进来。";
+    const input = structuredClone(project);
+    const result = addSilentClip(project, clips[0].id, { description });
+    const inserted = voices(result.project).find(clip => clip.id === result.selectedClipId)!;
+    expect(inserted).toMatchObject({ kind: "silent", text: "待设计：根据前后剧情安排自然衔接的无对白画面。", duration: 4,
+      asset: { asset_id: null, uri: null, duration: null } });
+    expect(inserted.text).not.toMatch(/水杯|桌边/);
+    expect(project).toEqual(input);
+    expect(voices(result.project).filter(clip => clip.kind !== "silent").map(clip => clip.asset)).toEqual(voices(before).map(clip => clip.asset));
+    expect(AsmrProjectSchema.safeParse(result.project).success).toBe(true);
+  });
+
   it("shares silent insertion, movement and duration edits without clearing or staling adopted speech in either bank", () => {
     let project = ensureSpeechWorkspaces(fixture());
     project = switchSpeechWorkspace(project, "paragraph");

@@ -7,14 +7,20 @@ import { ClipStoryboardRequestSchema, generateClipStoryboard, readClipStoryboard
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { demoProject } from "./mock-project";
 import { writePcm16Wav } from "./pcm-audio";
+import { addSilentClip } from "./voice-segments";
 import { createClipH3Prompt, createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "./video-plan";
 
-const base = path.resolve(process.platform === "win32" ? "I:/AI/asmr-director-storyboard-modes/2026-10-02/test-temp" : tmpdir());
+const base = path.resolve(process.env.ASMR_STORYBOARD_TEST_ROOT ?? tmpdir());
 let root: string, config: LocalRuntimeConfig;
 const generated = { title: "暖光迎接", visual: "S1 stands beside a warmly lit kitchen counter.", action: "S1 gently gestures toward the counter.", camera: "Static eye-level medium close-up." };
 function reply(value: unknown) { return Response.json({ message: { content: JSON.stringify(value) } }); }
+function materialFrom(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>) {
+  const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+  return JSON.parse(body.messages[1].content.split("\n")[0].slice("当前镜头素材：".length));
+}
 
 beforeEach(async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
   await mkdir(base, { recursive: true });
   root = await mkdtemp(path.join(base, "asmr-clip-video-test-"));
   config = { runtimeRoot: root, clipAssetRoot: path.join(root, "clips"), mixAssetRoot: path.join(root, "mix"), gptSovitsBaseUrl: "http://unused", voicePackPath: "unused" };
@@ -23,6 +29,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.useRealTimers();
   if (path.dirname(path.resolve(root)) === base && path.basename(root).startsWith("asmr-clip-video-test-")) await rm(root, { recursive: true, force: true });
+  vi.restoreAllMocks();
 });
 
 async function fixture() {
@@ -48,6 +55,21 @@ function attachPrevious(project: ClipStoryboardRequest["project"], clipId: strin
   const shot: ClipVideoStoryboard = { ...generated, version: 1, promptFormat: "minimax-h3", clipId, sourceFingerprint: createClipVideoSourceFingerprint(project, clipId), audio: { assetId: clip.asset.asset_id!, uri: clip.asset.uri!, duration: .3 } };
   project.videoPlan!.shots[clipId] = shot;
   return shot;
+}
+
+async function coldEntrySilentFixture(description?: string) {
+  const { project, voices } = await fixture();
+  project.title = "寒潮前的归家";
+  project.videoPlan!.sceneDescription = "寒潮将至，朋友刚到木屋门前，正准备进屋，还没有进入室内。";
+  const lines = ["外面风起来了，快到门边来。", "先站稳，我把门开大一点。", "把靴子上的雪抖掉，再进来。"];
+  voices.forEach((clip, index) => { clip.text = lines[index]; clip.asset.duration = .3; });
+  const following = { ...structuredClone(voices[2]), id: "cold_entry_following", start: 3, text: "进屋后再把外套挂起来。" };
+  project.timeline.tracks.find(track => track.track_type === "voice")!.clips.push(following);
+  const inserted = addSilentClip(project, voices[2].id, description === undefined ? {} : { description });
+  const clip = inserted.project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : [])
+    .find(item => item.id === inserted.selectedClipId)!;
+  const input: ClipStoryboardRequest = { provider: "api", project: inserted.project, clipId: clip.id, referenceMode: "new", includePrevious: false, instruction: "" };
+  return { project: inserted.project, input, clip, lines: [...lines, clip.text, following.text] };
 }
 
 describe("已采用音频的单片段分镜", () => {
@@ -76,6 +98,9 @@ describe("已采用音频的单片段分镜", () => {
     expect(body.messages[0].content).toContain("fully_copy");
     expect(body.messages[0].content).toContain("non_diegetic_music: N/A");
     expect(body.messages[0].content).toContain("每个字段只写一句");
+    expect(body.messages[0].content).toContain("建议 visual 尽量控制在 320 字符内");
+    expect(body.messages[0].content).toContain("action 尽量控制在 180 字符内");
+    expect(body.messages[0].content).toContain("camera 尽量控制在 120 字符内");
     expect(body.messages[0].content).toContain("visual、action、camera 不重复这些固定要求");
     expect(body.messages[0].content).toContain("说话期间脸和嘴部始终可见");
     expect(body.messages[1].content).toContain('"audioDurationSeconds":0.3');
@@ -85,9 +110,9 @@ describe("已采用音频的单片段分镜", () => {
     expect(body.format.properties).not.toHaveProperty("audio");
     expect(body.format.properties).not.toHaveProperty("sourceFingerprint");
     expect(body.format.properties).not.toHaveProperty("dialogue");
-    expect(body.format.properties.visual.maxLength).toBe(320);
-    expect(body.format.properties.action.maxLength).toBe(180);
-    expect(body.format.properties.camera.maxLength).toBe(120);
+    expect(body.format.properties.visual.maxLength).toBe(800);
+    expect(body.format.properties.action.maxLength).toBe(600);
+    expect(body.format.properties.camera.maxLength).toBe(400);
     project.videoPlan!.shots[voices[1].id] = result.storyboard;
     expect(isClipVideoStoryboardCurrent(project, voices[1].id)).toBe(true);
     const prompt = createClipH3Prompt(project, voices[1].id);
@@ -119,7 +144,128 @@ describe("已采用音频的单片段分镜", () => {
     expect(result.storyboard.sourceFingerprint).toBe(createClipVideoSourceFingerprint(project, voices[1].id));
   });
 
-  it("limits newly generated visual fields without discarding longer editable previous notes", async () => {
+  it("sends full script order, future speech and silent actions without timeline timing or unavailable audio dependencies", async () => {
+    const { input, project, voices } = await fixture();
+    voices[0].text = "我已经把热汤放在桌上了。";
+    voices[1].text = "你来火边坐吧。";
+    voices[2].text = "等你暖和了，我再去端汤。";
+    voices[0].asset.duration = 2.75;
+    const silent = { ...structuredClone(voices[0]), id: "silent_context", kind: "silent" as const, text: "镜头停留在桌上冒着热气的碗。", duration: 4.25 };
+    const track = project.timeline.tracks.find(track => track.track_type === "voice")!;
+    track.clips = [voices[0], silent, voices[1], voices[2]];
+    project.duration = 200_000;
+    for (const [index, clip] of track.clips.entries()) {
+      clip.start = (4 - index) * 1000;
+      clip.pause_after = 8888;
+      if (clip.kind !== "silent") clip.duration = 98765;
+    }
+    voices[2].generation.status = "asset_pending";
+    voices[2].asset = { asset_id: null, uri: null, duration: null };
+    // Neither an unavailable neighboring WAV nor missing neighboring storyboards blocks a new shot.
+    await rm(path.join(config.clipAssetRoot, "audio_0.wav"));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generated));
+    await generateClipStoryboard({ ...input, referenceMode: "new" }, { env: {}, config, fetchImpl });
+    const material = materialFrom(fetchImpl);
+    expect(material.currentIndex).toBe(2);
+    expect(material.scriptOrder).toEqual([
+      { index: 0, clipId: voices[0].id, kind: "speech", text: voices[0].text, durationSeconds: 2.75 },
+      { index: 1, clipId: silent.id, kind: "silent", text: silent.text, durationSeconds: 4.25 },
+      { index: 2, clipId: voices[1].id, kind: "speech", text: voices[1].text, durationSeconds: .3 },
+      { index: 3, clipId: voices[2].id, kind: "speech", text: voices[2].text },
+    ]);
+    const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    for (const excluded of ["98765", "8888", "audio_0", "audio_1", "asset://", "base64", "pause_after", '"start":', "volume_db", "fade_in"]) {
+      expect(body.messages[1].content).not.toContain(excluded);
+    }
+    const system = body.messages[0].content;
+    expect(system).toContain("已完成的事不重演");
+    expect(system).toContain("邀请不等于对方已经执行");
+    expect(system).toContain("计划或条件不当作当下已发生");
+    expect(system).toContain("不让 S1 代替听者完成其动作");
+    expect(system).toContain("只写一个主要事件");
+    expect(system).toContain("动作起始与可见结果");
+    expect(system).toContain("静止反应可以合理成立");
+    expect(system).toContain("不强迫每句改变机位");
+    expect(system).toContain("不把每镜强制为中近景");
+    expect(system).toContain("不延长时长来塞入复杂动作");
+    expect(system).toContain("不追加无对白段或镜头");
+    expect(system).toContain("不添加其对白或额外正脸");
+  });
+
+  it("uses the same complete script context for silent shots and never requires a current WAV", async () => {
+    const { input, project, voices } = await fixture();
+    const clip = voices[1];
+    clip.kind = "silent";
+    clip.text = "窗边的水汽缓慢消散。";
+    clip.duration = 4.5;
+    clip.generation.status = "asset_pending";
+    clip.asset = { asset_id: null, uri: null, duration: null };
+    const ambientSound = "Soft steady room tone beside the window.";
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify({ ...generated, ambientSound }) } }] }));
+    const result = await generateClipStoryboard({ ...input, referenceMode: "new" }, {
+      config: { ...config, clipAssetRoot: path.join(root, "nonexistent") }, fetchImpl,
+      env: { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "mock-only", ASMR_PLANNER_API_MODEL: "mock-model" },
+    });
+    const material = materialFrom(fetchImpl);
+    expect(material).toMatchObject({ currentIndex: 1, kind: "silent", description: clip.text, durationSeconds: 4.5 });
+    expect(material.scriptOrder.map((entry: { text: string }) => entry.text)).toEqual(voices.map(clip => clip.text));
+    expect(material).not.toHaveProperty("dialogue");
+    expect(material).not.toHaveProperty("audioDurationSeconds");
+    expect(result.storyboard).toMatchObject({ kind: "silent", duration: 4.5, ambientSound });
+    expect(result.storyboard).not.toHaveProperty("audio");
+    expect(result.provider).toBe("api");
+    expect(project.videoPlan!.shots).toEqual({});
+  });
+
+  it("passes a newly inserted fourth silent beat's neutral request and full cold-entry context without inventing source events", async () => {
+    const { project, input, clip, lines } = await coldEntrySilentFixture();
+    const before = JSON.stringify(project);
+    // This fixed response verifies request transport and preservation, not model comprehension.
+    const response = { title: "门前承接", visual: "S1 stands in the open doorway while snow rests along the threshold.",
+      action: "S1 steadies the open door and leaves space for the listener to enter.", camera: "Static medium shot framing the doorway.",
+      ambientSound: "Soft steady wind outside the sheltered doorway." };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(response) } }] }));
+    const result = await generateClipStoryboard(input, { config: { ...config, clipAssetRoot: path.join(root, "nonexistent") }, fetchImpl,
+      env: { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "mock-only", ASMR_PLANNER_API_MODEL: "mock-model" } });
+    const material = materialFrom(fetchImpl);
+    expect(clip.text).toBe("待设计：根据前后剧情安排自然衔接的无对白画面。");
+    expect(material).toMatchObject({ baseScene: project.videoPlan!.sceneDescription, currentIndex: 3, kind: "silent", description: clip.text, durationSeconds: 4 });
+    expect(material.scriptOrder.map((entry: { text: string }) => entry.text)).toEqual(lines);
+    expect(material.scriptOrder[2].text).toBe("把靴子上的雪抖掉，再进来。");
+    expect(material.scriptOrder[4].text).toBe("进屋后再把外套挂起来。");
+    expect(JSON.stringify(material)).not.toContain("轻轻放下水杯，镜头停留在桌边。");
+    const system = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages[0].content;
+    expect(system).toContain("不是已发生的剧情事件");
+    expect(system).toContain("从完整 scriptOrder、当前镜头位置及前后台词");
+    expect(system).toContain("不凭空预设道具、地点或人物行为");
+    expect(system).toContain("白噪声或底噪");
+    expect(system).toContain("不超过 5 秒");
+    expect(result.storyboard).toMatchObject({ ...response, kind: "silent", duration: 4 });
+    expect(result.storyboard).not.toHaveProperty("audio");
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.stringify(project)).toBe(before);
+  });
+
+  it("preserves a user's concrete silent-shot intent alongside the cold-entry context", async () => {
+    const description = "镜头对准门槛积雪，S1 的手扶住门扇。";
+    const { project, input, lines } = await coldEntrySilentFixture(`  ${description}  `);
+    const before = JSON.stringify(project);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify({
+      title: "门槛积雪", visual: "Snow rests along the threshold beside S1's hand.", action: "S1 holds the door steady.",
+      camera: "Static close view of the threshold and hand.", ambientSound: "Soft wind at the doorway.",
+    }) } }] }));
+    await generateClipStoryboard(input, { config, fetchImpl,
+      env: { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "mock-only", ASMR_PLANNER_API_MODEL: "mock-model" } });
+    const material = materialFrom(fetchImpl);
+    expect(material.description).toBe(description);
+    expect(material.scriptOrder[3].text).toBe(description);
+    expect(material.scriptOrder.map((entry: { text: string }) => entry.text)).toEqual(lines);
+    expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages[0].content).toContain("用户明确填写了具体画面或动作意图时优先遵循");
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.stringify(project)).toBe(before);
+  });
+
+  it("uses storage bounds for generated fields without discarding longer editable previous notes", async () => {
     const { input, project, voices } = await fixture();
     const previous = attachPrevious(project, voices[0].id);
     previous.visual = "A".repeat(500);
@@ -132,27 +278,56 @@ describe("已采用音频的单片段分镜", () => {
     const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
     expect(body.messages[1].content).toContain(previous.visual);
     expect(body.messages[0].content).toContain("不复述或复制上一镜提示词");
-    for (const [field, limit] of [["visual", 320], ["action", 180], ["camera", 120]] as const) {
+    for (const [field, limit] of [["visual", 800], ["action", 600], ["camera", 400]] as const) {
       const tooLong = vi.fn<typeof fetch>().mockResolvedValue(reply({ ...generated, [field]: "x".repeat(limit + 1) }));
       await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl: tooLong })).rejects.toMatchObject({ status: 502 });
       expect(tooLong).toHaveBeenCalledOnce();
     }
   });
 
-  it("never sends a previous prompt or previous dialogue when continuity is disabled", async () => {
+  it("accepts complete 337-character visual and 198-character action text without rewriting or retrying", async () => {
+    const { input, project, voices } = await fixture(), before = JSON.stringify(project);
+    const value = { ...generated, visual: "V".repeat(337), action: "A".repeat(198) };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(value));
+    const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
+    expect(result.storyboard).toMatchObject(value);
+    expect(result.storyboard.sourceFingerprint).toBe(createClipVideoSourceFingerprint(project, voices[1].id));
+    expect(fetchImpl).toHaveBeenCalledOnce(); expect(JSON.stringify(project)).toBe(before);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it.each([["visual", 800], ["action", 600], ["camera", 400]] as const)("accepts the %s storage boundary after trimming only surrounding whitespace", async (field, length) => {
+    const { input } = await fixture(), text = "x".repeat(length);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply({ ...generated, [field]: ` \n${text} \n` }));
+    const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
+    expect(result.storyboard[field]).toBe(text); expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it.each(["title", "visual", "action", "camera"] as const)("keeps the nonempty %s requirement after trimming", async field => {
+    const { input } = await fixture();
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply({ ...generated, [field]: " \n " }));
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({ status: 502 });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("provides the whole script without inheriting a previous camera or full prompt when continuity is disabled", async () => {
     const { input, project, voices } = await fixture();
-    attachPrevious(project, voices[0].id);
+    const previous = attachPrevious(project, voices[0].id);
+    previous.camera = "Unique previous camera that must not be inherited.";
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generated));
     const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
     const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
-    expect(JSON.stringify(body.messages)).not.toContain(voices[0].text);
+    expect(materialFrom(fetchImpl).scriptOrder.map((entry: { text: string }) => entry.text)).toEqual(voices.map(clip => clip.text));
+    expect(body.messages[1].content).not.toContain(previous.camera);
+    expect(body.messages[1].content).not.toContain(createClipH3Prompt(project, voices[0].id));
     expect(JSON.stringify(body.messages)).not.toContain("上一镜连续参考");
     expect(JSON.stringify(body.messages)).not.toContain("retention_analysis:");
     expect(result.storyboard).not.toHaveProperty("previousClipId");
     expect(result.storyboard).not.toHaveProperty("previousPromptFingerprint");
   });
 
-  it("uses exactly the adjacent current prompt as continuity and binds its hand-edit fingerprint", async () => {
+  it("uses the adjacent scene/action end state for legacy continuity and preserves its hand-edit binding", async () => {
     const { input, project, voices } = await fixture();
     const previous = attachPrevious(project, voices[0].id);
     previous.action = "S1 rests one hand lightly on the counter.";
@@ -163,7 +338,10 @@ describe("已采用音频的单片段分镜", () => {
     expect(result.storyboard.previousClipId).toBe(voices[0].id);
     expect(result.storyboard.previousPromptFingerprint).toBe(previousFingerprint);
     const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
-    expect(body.messages[1].content).toContain(previousPrompt);
+    expect(body.messages[1].content).not.toContain(previousPrompt);
+    expect(body.messages[1].content).toContain(previous.visual);
+    expect(body.messages[1].content).toContain(previous.action);
+    expect(body.messages[1].content).toContain(previous.camera);
     expect(body.messages[0].content).toContain("不能复制上一镜台词、音频");
     project.videoPlan!.shots[voices[1].id] = result.storyboard;
     expect(isClipVideoStoryboardCurrent(project, voices[1].id)).toBe(true);
@@ -244,6 +422,56 @@ describe("已采用音频的单片段分镜", () => {
     }
   });
 
+  it.each([
+    ["title", 121, 120, "标题"], ["visual", 801, 800, "画面"], ["action", 601, 600, "动作"],
+    ["camera", 401, 400, "镜头"], ["ambientSound", 601, 600, "环境声"],
+  ] as const)("reports the exact rejected %s length without retrying or changing the project", async (field, length, maximum, label) => {
+    const { input, project } = await fixture(), before = JSON.stringify(project);
+    const value = { ...generated, [field]: "x".repeat(length) };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(value));
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({
+      status: 502, message: expect.stringContaining(`${label}（${field}）过长（${length}/${maximum} 字符）`),
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce(); expect(JSON.stringify(project)).toBe(before);
+    const [tag, diagnostic] = vi.mocked(console.error).mock.calls[0];
+    expect(tag).toBe("[asmr:clip-storyboard:invalid-output]");
+    expect(JSON.parse(String(diagnostic))).toMatchObject({ projectId: project.project_id, clipId: input.clipId,
+      provider: "ollama", modelJsonTruncated: false, issues: [{ field, code: "too_big", actualLength: length, maximum }] });
+    expect(JSON.parse(JSON.parse(String(diagnostic)).modelJson)).toEqual(value);
+  });
+
+  it.each([
+    { value: { title: generated.title, visual: generated.visual, action: generated.action }, expected: "镜头（camera）缺失", code: "invalid_type" },
+    { value: { ...generated, action: "  " }, expected: "动作（action）不能为空", code: "too_small" },
+    { value: { ...generated, action: 123 }, expected: "动作（action）必须是文字，实际为number", code: "invalid_type" },
+    { value: { ...generated, duration: 999 }, expected: "包含不支持的字段：duration", code: "unrecognized_keys" },
+    { value: [generated], expected: "分镜回复必须是对象，实际为数组", code: "invalid_type" },
+  ])("explains malformed direction fields: $expected", async ({ value, expected, code }) => {
+    const { input } = await fixture(), fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(value));
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({ status: 502, message: expect.stringContaining(expected) });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const diagnostic = JSON.parse(String(vi.mocked(console.error).mock.calls[0][1]));
+    expect(diagnostic.issues[0]).toMatchObject({ code, detail: expected });
+  });
+
+  it("bounds failed model JSON diagnostics and redacts credentials, headers and audio payloads", async () => {
+    const { input } = await fixture();
+    const value = { api_key: "forbidden-key", headers: { Authorization: "forbidden-header" }, audio: { bytes: "forbidden-audio" }, ...generated, visual: "x".repeat(24_000) };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(value));
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({ status: 502 });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const logged = String(vi.mocked(console.error).mock.calls[0][1]), diagnostic = JSON.parse(logged);
+    expect(diagnostic.modelJsonTruncated).toBe(true); expect(diagnostic.modelJson.length).toBeLessThanOrEqual(16_000);
+    for (const field of ["api_key", "headers", "audio"]) expect(diagnostic.modelJson).toContain(`"${field}":"[redacted]"`);
+    for (const secret of ["forbidden-key", "forbidden-header", "forbidden-audio"]) expect(logged).not.toContain(secret);
+  });
+
+  it("does not retry or mislabel an upstream network failure as invalid storyboard fields", async () => {
+    const { input } = await fixture(), fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error("offline"));
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({ status: 503 });
+    expect(fetchImpl).toHaveBeenCalledOnce(); expect(console.error).not.toHaveBeenCalled();
+  });
+
   it("cancels before asset access or during upstream generation without keeping late output", async () => {
     const { input } = await fixture();
     const controller = new AbortController();
@@ -276,10 +504,11 @@ describe("explicit storyboard reference modes", () => {
     expect(ClipStoryboardRequestSchema.safeParse({ ...input, referenceMode: "independent" }).success).toBe(false);
   });
 
-  it.each(["continuous", "new"] as const)("uses adjacent visual context and current audio/dialogue only for %s, recording actual reference provenance", async (referenceMode) => {
+  it.each(["continuous", "new"] as const)("uses whole-script semantics with only current audio for %s, recording actual reference provenance", async (referenceMode) => {
     const { input, project, voices } = await fixture();
     const previous = attachPrevious(project, voices[0].id);
     previous.action = "S1 rests one hand lightly on the counter.";
+    previous.camera = "Unique previous camera for continuity only.";
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generated));
     const result = await generateClipStoryboard({ ...input, referenceMode }, { env: {}, config, fetchImpl });
     expect(result.storyboard.referenceMode).toBe(referenceMode);
@@ -292,19 +521,23 @@ describe("explicit storyboard reference modes", () => {
     expect(body.messages[1].content).toContain(previous.visual);
     expect(body.messages[1].content).toContain(previous.action);
     expect(body.messages[1].content).toContain(JSON.stringify(voices[1].text).slice(1, -1));
-    expect(messages).not.toContain(voices[0].text);
+    expect(materialFrom(fetchImpl).scriptOrder.map((entry: { text: string }) => entry.text)).toEqual(voices.map(clip => clip.text));
     expect(messages).not.toContain("audio_0");
     expect(messages).not.toContain(createClipH3Prompt(project, voices[0].id));
     expect(body.messages[0].content).toContain("不能复制上一镜台词、音频");
     expect(body.messages[0].content).toContain("仅作为语义上下文");
     if (referenceMode === "continuous") {
-      expect(body.messages[0].content).toContain("同一具体场景、光线、景别与机位");
+      expect(body.messages[0].content).toContain("同一具体场景、角色、道具与上一镜动作的结束状态");
       expect(body.messages[0].content).toContain("从上一镜动作自然接续");
+      expect(body.messages[0].content).toContain("自然走动、落座、递接道具以及跟随运镜");
+      expect(body.messages[0].content).toContain("连续不等于固定景别、机位、人物位置或姿势");
+      expect(body.messages[1].content).toContain(previous.camera);
       expect(body.messages[0].content).not.toContain("可以选择新的景别");
     } else {
       expect(body.messages[0].content).toContain("新分镜优先依据 baseScene、当前剧情和当前台词");
       expect(body.messages[0].content).toContain("可以选择新的景别、机位或相关位置");
-      expect(body.messages[0].content).toContain("次要参考");
+      expect(body.messages[0].content).toContain("不继承或复制上一镜机位、构图或完整 prompt");
+      expect(body.messages[1].content).not.toContain(previous.camera);
     }
     project.videoPlan!.shots[voices[1].id] = result.storyboard;
     expect(isClipVideoStoryboardCurrent(project, voices[1].id)).toBe(true);

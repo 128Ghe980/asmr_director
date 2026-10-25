@@ -6,6 +6,7 @@ import type { AsmrProject } from "@/lib/asmr/schema";
 import { flattenClips } from "@/lib/asmr/view-model";
 import { sanitizeDownloadName } from "@/lib/asmr/batch-download";
 import { getSpeechWorkspaceMode } from "@/lib/asmr/speech-workspace";
+import { createStoryboardGenerationContextFingerprint } from "@/lib/asmr/storyboard-context";
 import {
   ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint,
   getPreviousVoiceClip, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent,
@@ -33,6 +34,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
   const clip = flattenClips(project).find((item) => item.id === clipId && item.type === "voice");
   const silent = clip?.type === "voice" && clip.kind === "silent";
   const workspaceMode = getSpeechWorkspaceMode(project);
+  const narrativeFingerprint = createStoryboardGenerationContextFingerprint(project);
   const shot = project.videoPlan?.shots[clipId];
   const voices = flattenClips(project).filter((item) => item.type === "voice").sort((a, b) => a.start - b.start);
   const index = voices.findIndex((item) => item.id === clipId);
@@ -106,9 +108,9 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
     return () => controller.abort();
   }, [onProviderChange, silent]);
   useEffect(() => {
-    // A changed line, audio, scene or continuity source cancels the old request.
+    // The model also reads the whole narrative; changed neighboring context cancels old work.
     return () => { requestRef.current?.abort(); };
-  }, [sourceFingerprint, continuitySource, referenceMode, clipId, project.project_id, workspaceMode]);
+  }, [sourceFingerprint, continuitySource, narrativeFingerprint, referenceMode, clipId, project.project_id, workspaceMode]);
   useEffect(() => () => { requestRef.current?.abort(); requestRef.current = null; onBusyChange?.(false); }, [onBusyChange]);
 
   function cancel() {
@@ -119,6 +121,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
 
   async function generate() {
     if (batchBusy || waitingForPrevious || invalidSilentDuration || clip?.type !== "voice" || !sourceFingerprint || !sceneDescription.trim() || requestRef.current || !configured) return;
+    if (shot && !window.confirm("重新生成本段分镜？成功后将替换本段已有分镜及手动修改，失败或取消会保留原分镜。")) return;
     const snapshot = structuredClone(project);
     const controller = new AbortController();
     requestRef.current = controller; setBusy(true); setError(""); setNotice("");
@@ -139,6 +142,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
         || (silent ? result.kind !== "silent" || result.audio !== undefined || result.duration !== clip.duration || !result.ambientSound?.trim()
           : result.kind === "silent" || result.audio?.assetId !== clip.asset.asset_id || result.audio?.uri !== clip.asset.uri)
         || createClipVideoSourceFingerprint(latest, clipId) !== sourceFingerprint
+        || createStoryboardGenerationContextFingerprint(latest) !== narrativeFingerprint
         || getPreviousClipPromptFingerprint(latest, clipId) !== previousFingerprint
         || Boolean(result.previousClipId) !== usePrevious
         || (usePrevious && (result.previousClipId !== previous?.id || result.previousPromptFingerprint !== previousFingerprint))) {

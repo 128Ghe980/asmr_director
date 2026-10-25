@@ -62,6 +62,30 @@ describe("Planner provider", () => {
     expect(result.draft.sections.map((item) => item.text)).toEqual(units.map((unit) => unit.text));
     expect(result.draft.sections.every((item) => item.direction === direction && item.pauseAfterSeconds === 0.35)).toBe(true);
   });
+  it.each(["compact", "flat"] as const)("preserves valid %s API units with several sentence endings beyond brevity targets", async representation => {
+    const texts = ["你累了吧？先歇会儿，饭马上就好。", "先慢慢呼吸。我就在这里。".repeat(12)];
+    expect(texts[1].length).toBeGreaterThan(100);
+    expect(texts[1].length).toBeLessThanOrEqual(500);
+    const modelSections = texts.map((text, index) => ({ ...section, id: `source_${index + 1}`, text, pauseAfter: index ? "long" as const : "short" as const }));
+    const { id, title, emotion, style, pace, direction, soundSuggestions, position } = section;
+    const compact = { title: draft.title, scene: draft.scene, character: draft.character, groups: [{ id, title, emotion, style, pace, direction, soundSuggestions, position,
+      units: modelSections.map(({ text, pauseAfter }) => ({ text, pauseAfter })) }] };
+    const modelReply = representation === "compact" ? compact : { ...draft, sections: modelSections };
+    const before = structuredClone(modelReply);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(modelReply) }, finish_reason: "stop" }] }));
+    const result = await runPlanner({ action: "generate", provider: "api", brief }, { env: {
+      ASMR_PLANNER_API_URL: "https://provider.example/v1", ASMR_PLANNER_API_KEY: "fixture-key", ASMR_PLANNER_API_MODEL: "fixture-model",
+    }, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    if (!("draft" in result)) throw new Error("Expected draft");
+    expect(result.draft.sections.map(item => item.text)).toEqual(texts);
+    expect(result.draft.sections.map(item => item.id)).toEqual(representation === "compact" ? ["unit_001", "unit_002"] : ["source_1", "source_2"]);
+    expect(result.draft.sections.map(item => item.pauseAfterSeconds)).toEqual([.18, .6]);
+    expect(result.draft.sections.every(item => item.direction === section.direction)).toBe(true);
+    expect(modelReply).toEqual(before);
+    const request = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    expect(request.messages[1].content).toContain("一个单元可以包含多个句号，不按每个句号机械拆分");
+  });
   it("reserves the creative Planner's complete JSON budget by explicitly disabling official DeepSeek thinking", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(draft) }, finish_reason: "stop" }] }));
     const result = await runPlanner({ action: "generate", provider: "api", brief }, { env: {

@@ -1,4 +1,5 @@
 import { sanitizeDownloadName } from "./batch-download";
+import { getCurrentProcessedVoiceAsset } from "./audio-post-processing";
 import type { AsmrProject, VoiceClip } from "./schema";
 
 export type AcceptedVoicePreviewEntry = { clipId: string; gapAfterSeconds: number } & (
@@ -16,7 +17,23 @@ export type AcceptedVoicePreviewPlan = {
 };
 
 /** Only current adopted local voice assets; candidates and other tracks never enter. */
-export function getAcceptedVoicePreviewPlan(project: AsmrProject): AcceptedVoicePreviewPlan {
+export function getAcceptedVoicePreviewPlan(project: AsmrProject, audioVersion: "original" | "processed" = "original"): AcceptedVoicePreviewPlan {
+  if (audioVersion === "processed") {
+    const voices = project.timeline.tracks.flatMap<VoiceClip>(track => track.track_type === "voice" ? track.clips : []);
+    const spoken = voices.filter(clip => clip.kind !== "silent");
+    const prepared = new Map(spoken.flatMap(clip => {
+      const asset = getCurrentProcessedVoiceAsset(project, clip.id);
+      return asset ? [[clip.id, asset] as const] : [];
+    }));
+    const entries = voices.flatMap((clip): AcceptedVoicePreviewEntry[] => clip.kind === "silent"
+      ? [{ clipId: clip.id, gapAfterSeconds: 0, silenceDurationSeconds: clip.duration }]
+      : prepared.has(clip.id) ? [{ clipId: clip.id, gapAfterSeconds: 0, assetId: prepared.get(clip.id)!.assetId }] : []);
+    return { entries, clipCount: prepared.size, skippedCount: spoken.length - prepared.size, totalVoiceCount: spoken.length,
+      silentCount: voices.length - spoken.length,
+      filename: `${sanitizeDownloadName(project.title, "ASMR 工程")}_后处理试听.wav`,
+      fingerprint: JSON.stringify({ projectId: project.project_id, title: project.title, audioVersion, entries,
+        processing: project.audioPostProcessing, mixing: project.timeline.mixing }) };
+  }
   const voices = project.timeline.tracks.flatMap<VoiceClip>(track => track.track_type === "voice" ? track.clips : [])
     .map((clip, index) => ({ clip, index })).sort((a, b) => a.clip.start - b.clip.start || a.index - b.index)
     .map(({ clip }) => clip);

@@ -217,3 +217,22 @@ export function getUsableClipH3Prompts(project: AsmrProject): Map<string, string
   }
   return prompts;
 }
+
+/** Text-only batch changes may rebind existing valid links, never repair stale provenance. */
+export function rebindCurrentStoryboardReferences(before: AsmrProject, after: AsmrProject): AsmrProject {
+  if (!after.videoPlan) return after;
+  const original = storyboardStates(before), updated = structuredClone(after), clips = orderedVoiceClips(updated);
+  const counts = new Map<string, number>();
+  for (const clip of clips) counts.set(clip.id, (counts.get(clip.id) ?? 0) + 1);
+  const metadata = (shot: ClipVideoStoryboard) => JSON.stringify({ clipId: shot.clipId, kind: shot.kind, duration: shot.duration,
+    sourceFingerprint: shot.sourceFingerprint, audio: shot.audio, referenceMode: shot.referenceMode,
+    previousClipId: shot.previousClipId, previousPromptFingerprint: shot.previousPromptFingerprint });
+  for (const clip of clips) {
+    const prior = original.get(clip.id), shot = updated.videoPlan!.shots[clip.id];
+    if (!prior?.current || !shot?.previousClipId || counts.get(clip.id) !== 1 || metadata(prior.shot) !== metadata(shot)
+      || shot.sourceFingerprint !== sourceFingerprint(updated, clip)) continue;
+    const fingerprint = getPreviousClipPromptFingerprint(updated, clip.id);
+    if (fingerprint !== undefined) shot.previousPromptFingerprint = fingerprint;
+  }
+  return updated;
+}

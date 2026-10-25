@@ -316,7 +316,7 @@ export async function completePlannerJson(
   input: { provider: PlannerProviderId; messages: PlannerChatMessage[]; jsonSchema: unknown },
   options: {
     env?: PlannerEnvironment; fetchImpl?: typeof fetch; signal?: AbortSignal; timeoutMs?: number;
-    maxTokens?: number; temperature?: number; messageLimit?: number;
+    maxTokens?: number; tokenLimit?: number; temperature?: number; messageLimit?: number;
     localCpuOnly?: boolean; timeoutLimitMs?: number;
   } = {},
 ): Promise<{ value: unknown; provider: PlannerProviderId; model: string }> {
@@ -334,10 +334,12 @@ export async function completePlannerJson(
   const timeoutLimit = Number.isFinite(options.timeoutLimitMs) ? Math.max(1, Math.min(600_000, options.timeoutLimitMs!)) : 60_000;
   const timeout = Number.isFinite(options.timeoutMs) ? Math.max(1, Math.min(timeoutLimit, options.timeoutMs!)) : 60_000;
   const timer = setTimeout(() => controller.abort(new PlannerError(504, "文本分析超时。")), timeout);
+  // Only a server caller can opt into the larger bounded batch JSON allowance.
+  const tokenLimit = Number.isFinite(options.tokenLimit) ? Math.max(1, Math.min(16_384, Math.floor(options.tokenLimit!))) : 8192;
   try {
     const content = await completion(provider, input.messages, input.jsonSchema, options.fetchImpl ?? fetch, controller.signal,
       {
-        maxTokens: Number.isFinite(options.maxTokens) ? Math.max(1, Math.min(8192, Math.floor(options.maxTokens!))) : 2048,
+        maxTokens: Math.min(tokenLimit, Number.isFinite(options.maxTokens) ? Math.max(1, Math.floor(options.maxTokens!)) : 2048),
         temperature: Number.isFinite(options.temperature) ? Math.max(0, Math.min(1, options.temperature!)) : 0.2,
         localCpuOnly: options.localCpuOnly ?? true, disableDeepSeekThinking: true,
       });
@@ -400,7 +402,7 @@ export async function runPlanner(
         const output = parseOutput(content, schema);
         if (request.action === "generate") {
           let draft: PlannerDraft;
-          try { draft = "groups" in output ? expandPlannerGeneratedDraft(output) : normalizePlannerSemanticDraft(output as PlannerDraft); }
+          try { draft = "groups" in output ? expandPlannerGeneratedDraft(output) : normalizePlannerSemanticDraft(output as PlannerDraft, { preserveUnitBoundaries: true }); }
           catch (error) { throw new InvalidPlannerOutput(error instanceof Error ? error.message : "请按语义短单元完整分段。"); }
           return { draft, provider: provider.id, model: provider.model };
         }

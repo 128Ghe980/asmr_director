@@ -185,7 +185,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     expect(currentProject().timeline.tracks.find((track) => track.track_type === "voice")!.clips[1].text).toBe("后文已经更改。");
   });
 
-  it("switches spatial playback routes and edits orbit distance without replacing the dry asset", async () => {
+  it("keeps raw playback while saving binaural and orbit settings with the existing mix invalidation rules", async () => {
     const initial = seedLibrary();
     const entry = initial.projects[0];
     entry.mixFingerprint = getProjectMixFingerprint(entry.project);
@@ -197,7 +197,7 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     const toggle = screen.getByRole("checkbox", { name: "双耳空间与房间感" }) as HTMLInputElement;
     const preview = within(screen.getByRole("complementary", { name: "试听与导出" }));
     expect(toggle.checked).toBe(true);
-    expect(new URL(audioSource()!, "http://localhost").pathname).toBe("/api/assets/spatial/original_0");
+    expect(audioSource()).toBe("/api/assets/clip/original_0");
     expect(preview.queryAllByText("需重混")).toHaveLength(0);
 
     fireEvent.click(toggle);
@@ -208,15 +208,14 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
 
     fireEvent.click(toggle);
     await waitFor(() => expect(currentProject().timeline.mixing.binaural).toBe(true));
-    expect(new URL(audioSource()!, "http://localhost").pathname).toBe("/api/assets/spatial/original_0");
+    expect(audioSource()).toBe("/api/assets/clip/original_0");
     expect(preview.queryAllByText("需重混")).toHaveLength(0);
     expect(firstVoice().asset).toEqual(dryAsset);
 
     fireEvent.change(screen.getByRole("combobox", { name: /^距离/ }), { target: { value: "far" } });
     fireEvent.change(screen.getByRole("combobox", { name: /^移动/ }), { target: { value: "orbit" } });
     await waitFor(() => expect(firstVoice().position).toMatchObject({ distance: "far", movement: "orbit" }));
-    const spatialUrl = new URL(audioSource()!, "http://localhost");
-    expect(JSON.parse(spatialUrl.searchParams.get("position")!)).toMatchObject({ distance: "far", movement: "orbit" });
+    expect(audioSource()).toBe("/api/assets/clip/original_0");
     expect(audioAssetId()).toBe("original_0");
     expect(firstVoice().asset).toEqual(dryAsset);
     expect(firstVoice().generation.status).toBe("asset_generated");
@@ -224,6 +223,8 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     expect(isCurrentProjectMixFingerprint(currentProject(), entry.mixFingerprint)).toBe(false);
     expect(preview.getAllByText("需重混").length).toBeGreaterThan(0);
     expect(api.posts).toHaveLength(0);
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method?.toUpperCase() === "POST")).toEqual([]);
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).startsWith("/api/assets/spatial/") || String(input).startsWith("/api/audio-post-processing/"))).toBe(false);
   });
 
   it.each(["local", "api"] as const)("sends and restores the user's long-text %s analysis choice", async (analysisProvider) => {

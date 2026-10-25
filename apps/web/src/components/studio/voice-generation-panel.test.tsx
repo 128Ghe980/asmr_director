@@ -774,15 +774,15 @@ describe("voice generation panel", () => {
     expect(screen.getByLabelText("候选 1 第 1 组试听")).toBeTruthy();
   });
 
-  it("waits for user playback before announcing spatial preparation, then clears it when ready", () => {
+  it("plays the raw candidate even with binaural enabled and only reports normal media loading", () => {
     render(<VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()] })} />);
     const audio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
-    expect(audio.getAttribute("src")).toMatch(/^\/api\/assets\/spatial\//);
+    expect(audio.getAttribute("src")).toBe("/api/assets/clip/voice_fixture_1");
     expect(audio.preload).toBe("none");
     expect(audio.autoplay).toBe(false);
     expect(screen.queryByRole("status")).toBeNull();
     fireEvent.play(audio);
-    expect(screen.getByRole("status").textContent).toBe("正在准备空间试听…");
+    expect(screen.getByRole("status").textContent).toBe("正在准备试听…");
     fireEvent.canPlay(audio);
     expect(screen.queryByRole("status")).toBeNull();
     fireEvent.waiting(audio);
@@ -794,7 +794,7 @@ describe("voice generation panel", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("shows spatial retry errors and pauses the current preview only when the retry starts playing", async () => {
+  it("retries raw audio and pauses the current preview only when retry playback starts", async () => {
     render(<VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()],
       selectedClip: { ...selectedClip, asset: { asset_id: "original", uri: "asset://clip/original", duration: 5 } },
     })} />);
@@ -806,7 +806,7 @@ describe("voice generation panel", () => {
     const load = mockMediaCall(audio, "load");
     const play = vi.spyOn(audio, "play").mockRejectedValueOnce(new Error("network failure"));
     fireEvent.error(audio);
-    expect(screen.getByRole("alert").textContent).toContain("关闭双耳空间后试听原声");
+    expect(screen.getByRole("alert").textContent).toBe("试听暂不可用，请重试。");
     fireEvent.click(screen.getByRole("button", { name: "重试候选 1 试听" }));
     expect(load).toHaveBeenCalledOnce();
     expect(play).toHaveBeenCalledOnce();
@@ -820,14 +820,14 @@ describe("voice generation panel", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("resets state and ignores late errors from the previous spatial source", () => {
+  it("resets state and ignores late errors from the previous raw candidate source", () => {
     const input = props({ binaural: true, candidates: [candidate()] });
     const view = render(<VoiceGenerationPanel {...input} />);
     const oldAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
     fireEvent.error(oldAudio);
-    view.rerender(<VoiceGenerationPanel {...input} selectedClip={{ ...selectedClip,
-      position: { ...selectedClip.position, movement: "orbit" },
-    }} />);
+    view.rerender(<VoiceGenerationPanel {...input} candidates={[{ ...candidate(),
+      asset: { ...candidate().asset, assetId: "new_raw_take", uri: "asset://clip/new_raw_take" },
+    }]} />);
     const newAudio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
     expect(newAudio).not.toBe(oldAudio);
     expect(screen.queryByRole("alert")).toBeNull();
@@ -840,14 +840,15 @@ describe("voice generation panel", () => {
     expect(oldAudio.getAttribute("src")).toBeNull();
   });
 
-  it("clears spatial errors when disabling the effect and leaves group previews as original audio", () => {
+  it("keeps candidate and group original audio unchanged when binaural settings change", () => {
     const input = props({ binaural: true, candidates: [longTextCandidate()] });
     const view = render(<VoiceGenerationPanel {...input} />);
     expect(screen.getByLabelText("候选 1 第 2 组试听").getAttribute("src")).toBe("/api/assets/clip/group_1");
-    fireEvent.error(screen.getByLabelText("候选 1 试听"));
+    const before = screen.getByLabelText("候选 1 试听");
     view.rerender(<VoiceGenerationPanel {...input} binaural={false} />);
     const original = screen.getByLabelText("候选 1 试听");
     expect(original.getAttribute("src")).toBe("/api/assets/clip/voice_fixture_1");
+    expect(original).toBe(before);
     expect(screen.queryByRole("alert")).toBeNull();
     fireEvent.waiting(original);
     expect(screen.getByRole("status").textContent).toBe("正在准备试听…");
@@ -856,7 +857,7 @@ describe("voice generation panel", () => {
   it("keeps the source valid in StrictMode and releases media when unmounted", () => {
     const view = render(<StrictMode><VoiceGenerationPanel {...props({ binaural: true, candidates: [candidate()] })} /></StrictMode>);
     const audio = screen.getByLabelText("候选 1 试听") as HTMLAudioElement;
-    expect(audio.getAttribute("src")).toMatch(/^\/api\/assets\/spatial\//);
+    expect(audio.getAttribute("src")).toBe("/api/assets/clip/voice_fixture_1");
     const pause = mockMediaCall(audio, "pause");
     const load = mockMediaCall(audio, "load");
     view.unmount();

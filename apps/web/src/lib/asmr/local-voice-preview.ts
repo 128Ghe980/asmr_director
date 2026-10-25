@@ -5,6 +5,7 @@ import { resolveClipAssetPath } from "./local-asset-store";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { writePcm16Wav } from "./pcm-audio";
 import type { AsmrProject } from "./schema";
+import { readPreparedAudioSource } from "./prepared-audio-source";
 
 export class VoicePreviewError extends Error {
   constructor(message: string, public readonly statusCode = 500) { super(message); this.name = "VoicePreviewError"; }
@@ -51,13 +52,15 @@ function readSample(source: SourcePcm, frame: number, channel: number) {
 
 /** Stream PCM chunks, keeping memory bounded to one adopted source rather than the complete output. */
 export async function prepareVoicePreview(project: AsmrProject, config: LocalRuntimeConfig, signal?: AbortSignal,
-  dependencies: { tempRoot?: string; deadlineMs?: number; maxDurationSeconds?: number } = {}): Promise<PreparedVoicePreview> {
+  dependencies: { tempRoot?: string; deadlineMs?: number; maxDurationSeconds?: number; audioVersion?: "original" | "processed" } = {}): Promise<PreparedVoicePreview> {
   const workSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(dependencies.deadlineMs ?? DEADLINE_MS)]);
   const check = () => {
     if (workSignal.aborted) throw new VoicePreviewError(signal?.aborted ? "已取消整体预览。" : "整体预览整理超时，请减少片段后重试。", signal?.aborted ? 499 : 408);
   };
   check();
-  const plan = getAcceptedVoicePreviewPlan(project);
+  const processed = dependencies.audioVersion === "processed";
+  const plan = getAcceptedVoicePreviewPlan(project, dependencies.audioVersion);
+  if (processed && (plan.skippedCount > 0 || !plan.clipCount)) throw new VoicePreviewError("请先完成当前全部语音的后处理，再试听整批结果。", 422);
   if (!plan.entries.length) throw new VoicePreviewError("当前工程还没有已采用的语音。", 400);
   if (plan.entries.length > 2000) throw new VoicePreviewError("预览最多支持 2000 段。", 413);
   for (const track of project.timeline.tracks) if (track.track_type === "voice") for (const clip of track.clips) {
@@ -80,10 +83,20 @@ export async function prepareVoicePreview(project: AsmrProject, config: LocalRun
       check();
       let source: SourcePcm | undefined;
       if ("assetId" in entry) {
+      let bytes: Buffer;
+      if (processed) {
+        try {
+          const prepared = await readPreparedAudioSource(project, entry.clipId, config, workSignal);
+          if (!prepared || prepared.asset.assetId !== entry.assetId) throw new Error("后处理已更新，请重新整理试听。");
+          bytes = prepared.wav;
+        } catch (error) {
+          check();
+          throw new VoicePreviewError(error instanceof Error ? error.message : "后处理文件不可用，请重新生成后处理。", 422);
+        }
+      } else {
       let sourcePath: string;
       try { sourcePath = resolveClipAssetPath(entry.assetId, config); }
       catch { throw new VoicePreviewError("已采用语音的素材编号无效。", 400); }
-      let bytes: Buffer;
       try {
         const [root, source, info] = await Promise.all([realpath(config.clipAssetRoot), realpath(sourcePath), stat(sourcePath)]);
         if (!source.startsWith(root + path.sep)) throw new VoicePreviewError("已采用语音的素材路径无效。", 400);
@@ -96,9 +109,10 @@ export async function prepareVoicePreview(project: AsmrProject, config: LocalRun
         if (error instanceof VoicePreviewError) throw error;
         throw new VoicePreviewError("找不到已采用的语音文件，请检查本地素材。", 404);
       }
+      }
       try { source = inspectPcm(bytes); }
       catch { throw new VoicePreviewError("已采用的素材需要有效的 PCM WAV 语音。", 422); }
-      if (source.frames / source.sampleRate > MAX_CLIP_SECONDS) throw new VoicePreviewError("每段语音最长支持 10 分钟。", 413);
+      if (source.frames / source.sampleRate > MAX_CLIP_SECONDS + (processed ? .65 + 1 / 48000 : 0)) throw new VoicePreviewError("每段语音最长支持 10 分钟。", 413);
       } else if (entry.silenceDurationSeconds > MAX_CLIP_SECONDS) throw new VoicePreviewError("无对白镜头最长支持 10 分钟。", 413);
       const frames = Math.max(1, Math.round(source ? source.frames * SAMPLE_RATE / source.sampleRate
         : "silenceDurationSeconds" in entry ? entry.silenceDurationSeconds * SAMPLE_RATE : 0));

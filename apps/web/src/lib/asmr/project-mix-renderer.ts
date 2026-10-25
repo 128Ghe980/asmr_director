@@ -13,7 +13,7 @@ import {
 export { decodePcmWav, writePcm16StereoWav } from "./pcm-audio";
 export type { DecodedPcmAudio } from "./pcm-audio";
 
-export type LoadedMixClip = Uint8Array | Buffer | { wav: Uint8Array; spatialized: boolean };
+export type LoadedMixClip = Uint8Array | Buffer | { wav: Uint8Array; spatialized: boolean; prepared?: boolean; original?: boolean };
 
 export type RenderProjectMixWavInput = {
   project: AsmrProject;
@@ -136,21 +136,23 @@ async function mixClipIntoOutput(
   loadClipAsset: RenderProjectMixWavInput["loadClipAsset"],
 ) {
   const loaded = await loadClipAsset(clip);
+  const prepared = !(loaded instanceof Uint8Array) && Boolean(loaded.prepared);
+  const original = !(loaded instanceof Uint8Array) && Boolean(loaded.original);
   const spatialized = !(loaded instanceof Uint8Array) && loaded.spatialized;
   const bytes = loaded instanceof Uint8Array ? loaded : loaded.wav;
   const source = normalizePcmAudio(decodePcmWav(bytes), sampleRate);
-  if (spatialized && source.channels !== 2) throw new Error("Spatial output must be stereo");
+  if ((spatialized || prepared) && source.channels !== 2) throw new Error("Spatial output must be stereo");
 
   const sourceFrameCount = Math.floor(source.samples.length / source.channels);
   const startFrame = Math.max(0, Math.round(clip.start * sampleRate));
   const clipFrameCount = Math.max(0, Math.round(clip.duration * sampleRate));
-  if (spatialized && (startFrame + sourceFrameCount) * 2 > output.length) {
+  if ((spatialized || prepared || original) && (startFrame + sourceFrameCount) * 2 > output.length) {
     const extended = new Float32Array((startFrame + sourceFrameCount) * 2);
     extended.set(output);
     output = extended;
   }
   const outputFrameCount = output.length / 2;
-  const frameCount = Math.min(spatialized ? sourceFrameCount : clipFrameCount, outputFrameCount - startFrame);
+  const frameCount = Math.min(spatialized || prepared || original ? sourceFrameCount : clipFrameCount, outputFrameCount - startFrame);
   const shouldLoop =
     clip.type === "ambience" && clip.loop && sourceFrameCount > 0;
 
@@ -162,14 +164,17 @@ async function mixClipIntoOutput(
     const left = getDecodedFrameSample(source, sourceFrame, 0);
     const right = getDecodedFrameSample(source, sourceFrame, 1);
     const gain =
-      gainFromDb(clip.volume_db) *
-      (spatialized ? 1 : getFadeGain(frame, clipFrameCount, clip, sampleRate));
+      (prepared || original ? 1 : gainFromDb(clip.volume_db)) *
+      (spatialized || prepared || original ? 1 : getFadeGain(frame, clipFrameCount, clip, sampleRate));
 
     if (source.channels === 2) {
       // Stereo may already carry binaural cues: preserve both channels and
       // apply only the clip envelope, without repeating pan or distance.
       output[outputIndex] += left * gain;
       output[outputIndex + 1] += right * gain;
+    } else if (original) {
+      output[outputIndex] += left;
+      output[outputIndex + 1] += left;
     } else {
       const panGains = getPanGains(getMovementPan(clip, progress));
       const positionedGain = gain * getMovementDistanceGain(clip, progress);
@@ -177,7 +182,7 @@ async function mixClipIntoOutput(
       output[outputIndex + 1] += left * positionedGain * panGains.right;
     }
   }
-  return { output, spatialized };
+  return { output, spatialized: spatialized || prepared };
 }
 
 function getRms(samples: Float32Array): number {
