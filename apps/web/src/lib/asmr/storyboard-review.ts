@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AsmrProject, VoiceClip } from "./schema";
 import { captureSpeechWorkspace } from "./speech-workspace";
 import { ClipVideoStoryboardSchema, getUsableClipH3Prompts, rebindCurrentStoryboardReferences, type ClipVideoStoryboard } from "./video-plan";
+import { creativeTemplateContext, getMatchingTemplateDirections } from "./reference-template";
 
 /** Existing editable bounds also allow an inverse review to restore older long notes. */
 export const StoryboardReviewFieldsSchema = z.object({
@@ -35,9 +36,12 @@ export function getStoryboardReviewFingerprint(project: AsmrProject): string {
     title: project.title, scene: { id: project.scene.id, name: project.scene.name },
     character: { id: project.character.id, role: project.character.role, personality: project.character.personality, speech_style: project.character.speech_style },
     sceneDescription: project.videoPlan?.sceneDescription,
+    referenceTemplate: creativeTemplateContext(project.videoPlan?.referenceTemplate),
     clips: getStoryboardReviewClips(project).map(clip => {
       const shot = project.videoPlan?.shots[clip.id];
       return { clipId: clip.id, kind: clip.kind ?? "speech", text: clip.text, emotion: clip.emotion, style: clip.style, pace: clip.pace,
+        ...(clip.kind !== "silent" && getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text).length
+          ? { directorNotes: getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text) } : {}),
         ...(clip.kind === "silent" ? { duration: clip.duration } : { source: { assetId: clip.asset.asset_id, uri: clip.asset.uri, duration: clip.asset.duration }, stale: Boolean(clip.audio_stale), status: clip.generation.status }),
         selectedReferenceMode: project.videoPlan?.referenceModes?.[clip.id],
         shot: shot ? { ...pickStoryboardReviewFields(shot), version: shot.version, promptFormat: shot.promptFormat, clipId: shot.clipId,

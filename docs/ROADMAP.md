@@ -6,6 +6,12 @@ Last updated: 2026-10-26
 
 ## 当前优先级
 
+2026-10-26 参考模板版本发布交接：模板功能及同日 UI/开场修复统一发布至 `codex/voxcpm2-product-generation`。沿用已验 build `S5qsm3ifzUnsbyExv-lh_`，交接时恢复停止的 3001 服务并重核页面和静态资源；32 功能文件一致，28 范围外文件保留。本次没有新增模型调用或重跑整站，历史验证分组不相加。当前发布状态及下一会话入口见[交接记录](records/2026-10-26-reference-template-handoff.md)，下列同日早期 build/未推送描述保留为历史。Audio Quality V1 进行中、其他 SFX 暂停；目标机真实 H3 批跑与试听待办不变。
+
+2026-10-26 同日修正模板界面与重复开场：左侧模板选择器、右侧所有模板默认折叠，撤下分析依据/开发提醒；移除遮挡关闭入口的文案设置浮层，背景统一编辑保存。旧首句来自每次发送的分句示例，已删除；用户原设定真实 DeepSeek 一次请求首句变为「外面风声越来越大了。」。参考声音在实际 364px/566px 工具栏均一排、进度可见。相关回归、类型/lint/独立构建与浏览器通过，3001 build `S5qsm3ifzUnsbyExv-lh_`，28范围外文件保持。Audio Quality V1 路线不变。[修复记录](records/2026-10-26-template-ui-and-opening-fixes.md)。
+
+2026-10-26 按用户要求完成创作页「参考模板」，首个「禁令下的秘密交易」含视频拆解、可编辑 Prompt、8 个叙事节拍和14段中文示例；模板与逐段导演说明随采用/JSON/双工作区传到分镜生成与校对。新主题使用新场景，明确取放/左右手/开镜与终态。348相关测试、类型/scoped lint/独立构建及实际浏览器通过，3001更新为 `cAt7jG6FLdE1t-hB9jhGF`，28范围外工作文件保持。真实策划2请求、分镜8请求用于校验；TTS/H3为0，ASR内存不足未完成，未声称成片质量。该功能属于 Audio Quality V1；原远端H3实跑待办保留。[记录](records/2026-10-26-reference-creative-templates.md)。
+
 2026-10-26 发布交接：H3 原生 ASMR 12 类触发音、自定义时长和目录整理作为本次版本提交到 `codex/voxcpm2-product-generation`；具体 commit/远端状态查 Git 与 `I:/AI/asmr_director/qa/handoff/2026-10-26/publication.json`。下一步是目标 ComfyUI 机器实际批跑并试听，真实 H3 调用仍为 0。唯一外置根 `I:/AI/asmr_director`；当前包、服务入口、验证边界及 27 个有意保留的旧工作区路径见[本次交接](records/2026-10-26-h3-storage-handoff.md)。不要全量暂存遗留 spatial-studio/Qwen 工作，也不要从脏主工作区替换常驻服务。
 
 2026-10-26 按用户要求完成项目存储收敛：85 个 I:/AI 平级项目目录及本轮 I:/temp 的 6 项 H3 产物归入唯一数据根 `I:/AI/asmr_director`，旧散根为 0；清理 25 个纯 webpack 缓存和 1 个已验证重复展开包，释放约 3.30 GiB。模型、用户输入和音频保留。目录规则同步全局 AGENTS 与项目 STORAGE/AGENT/管理文档；测试输出默认值、运行配置、26 个 junction 和 H3 包路径同步。136 项 Python、19 项 Vitest 和 17 项服务 HTTP/内容哈希核验通过。当前 H3 包为 `I:/AI/asmr_director/artifacts/h3-asmr/H3-ASMR-12-custom-duration.zip`。这是 Audio Quality V1 内的工程维护，路线不变。[完整记录](records/2026-10-26-project-storage-cleanup.md)；[目录规则](STORAGE.md)。历史段落中的旧绝对路径通过数据根 `storage-map.json` 查新位置，不可再作为输出路径。

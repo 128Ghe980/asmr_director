@@ -9,6 +9,7 @@ import { demoProject } from "./mock-project";
 import { writePcm16Wav } from "./pcm-audio";
 import { addSilentClip } from "./voice-segments";
 import { createClipH3Prompt, createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "./video-plan";
+import { referenceTemplateFixture } from "./reference-template-test-fixture";
 
 const base = path.resolve(process.env.ASMR_STORYBOARD_TEST_ROOT ?? tmpdir());
 let root: string, config: LocalRuntimeConfig;
@@ -73,6 +74,21 @@ async function coldEntrySilentFixture(description?: string) {
 }
 
 describe("已采用音频的单片段分镜", () => {
+  it("provides template structure and only text-matched director notes while retaining full original audio rules", async () => {
+    const { input, project, voices } = await fixture();
+    project.videoPlan!.referenceTemplate = structuredClone(referenceTemplateFixture);
+    project.videoPlan!.templateDirections = [{ text: voices[1].text, direction: "先放下红色用品，再展示蓝瓶，结尾持瓶。", soundSuggestions: "轻轻敲瓶，仅建议" }];
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generated));
+    await generateClipStoryboard(input, { env: {}, config, fetchImpl });
+    const material = materialFrom(fetchImpl), body = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string);
+    expect(material.referenceTemplate.storyboardRules).toBe(referenceTemplateFixture.storyboardRules);
+    expect(material.scriptOrder[1].directorNotes[0].direction).toBe(project.videoPlan!.templateDirections[0].direction);
+    expect(material.scriptOrder[0]).not.toHaveProperty("directorNotes");
+    expect(body.messages[0].content).toContain("禁止按索引硬套旧说明");
+    expect(body.messages[0].content).toContain("fully_copy");
+    expect(body.messages[0].content).toContain("soundSuggestions 只是语义参考");
+    expect(material.audioDurationSeconds).toBe(.3);
+  });
   it("ignores a model-added ambient sound on speech shots while retaining the existing speech prompt", async () => {
     const { input, project, voices } = await fixture();
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply({ ...generated, ambientSound: "Rain outside." }));

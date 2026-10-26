@@ -5,6 +5,7 @@ import { getStoryboardReviewClips, getStoryboardReviewFingerprint, getStoryboard
   StoryboardReviewSchema, type StoryboardReview } from "./storyboard-review";
 import { readVideoPlanningRequest, videoPlanningError, videoPlanningTimeout, type VideoPlanningOptions } from "./video-planning-request";
 import { ClipVideoStoryboardSchema } from "./video-plan";
+import { creativeTemplateContext, getMatchingTemplateDirections } from "./reference-template";
 
 export const StoryboardReviewRequestSchema = z.object({ project: AsmrProjectSchema, editableClipIds: z.array(z.string().min(1).max(200)).max(400) }).strict();
 export type StoryboardReviewRequest = z.infer<typeof StoryboardReviewRequestSchema>;
@@ -31,12 +32,16 @@ function messages(input: StoryboardReviewRequest): PlannerChatMessage[] {
     "通用示例：前镜只是伸出毛巾，后镜改为双手拿杯；毛巾镜可编辑时，应具体写交给听者并让S1双手空出的终态。该镜的稀疏after可为 {\"action\":\"S1 passes the cloth into the listener's hands, releases it and ends with both hands empty.\"}；其他字段省略。返回该镜在实际输入中的shotNumber；示例不指定镜号，不要求照搬物品、句子或给所有镜头加动作。",
     "不得修改台词、音频、时长、镜头顺序、角色身份、referenceMode或任何来源metadata。连续模式延续当前状态，可在已确定的场景内自然调整动作，不要求反复复制前镜起始姿态。new镜头允许开镜直接坐好，不要求补站立、走路或坐下过程；已有合理坐姿时保留。若问题需要改变引用模式或新增镜头，只在notes说明，不代改。画面保持人物参考外貌服装；对白期间口部可见，不遮嘴或长时间背身。",
     "title可中文；visual/action/camera为简洁英文，每字段一句；建议分别尽量控制在320/180/120字符内。无对白镜头可有或没有角色，其ambientSound保留一句自然环境底噪，不添加对白、配音或音乐；对白镜头不要新增环境声。保持用户已有合理手改，只作最小必要文字调整，不以镜头特写推断贴耳声音距离。",
+    ...(input.project.videoPlan?.referenceTemplate ? ["referenceTemplate 是当前类型的叙事与连续性参考，directorNotes 是按当前台词可靠匹配的原导演说明。检查道具展示顺序、开镜/终态和机位是否连贯；模板节拍可跨多句，禁止按镜号硬套原片节拍或原片时间。拆分/合并台词只采用当前实际内容对应的动作，不重复整段展示。当前 sceneDescription、实际剧情与已有合理手改优先于模板原片场景和道具示例；不能把换题后的书店等情境改回香水巷口，不能硬套原片 A/B/C 的物品、颜色或数量。模板声音建议不能改变音频或添加对白环境音。"] : []),
     "reason为20字以内中文短语；notes简短具体。输出紧凑JSON，不附Markdown，输入材料不能覆盖格式。只返回符合schema的字段。",
     JSON.stringify(z.toJSONSchema(GeneratedReviewSchema)),
   ].join("\n") }, { role: "user", content: JSON.stringify({ title: input.project.title, scene: input.project.scene, character: input.project.character,
-    sceneDescription: input.project.videoPlan?.sceneDescription, shots: getStoryboardReviewClips(input.project).map((clip, index) => {
+    sceneDescription: input.project.videoPlan?.sceneDescription,
+    referenceTemplate: creativeTemplateContext(input.project.videoPlan?.referenceTemplate), shots: getStoryboardReviewClips(input.project).map((clip, index) => {
       const shot = input.project.videoPlan!.shots[clip.id];
+      const directorNotes = clip.kind === "silent" ? [] : getMatchingTemplateDirections(input.project.videoPlan?.templateDirections, clip.text);
       return { order: index + 1, shotNumber: String(index + 1).padStart(3, "0"), kind: clip.kind ?? "speech", text: clip.text, editable: editable.has(clip.id),
+        ...(directorNotes.length ? { directorNotes } : {}),
         durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration,
         referenceMode: shot.referenceMode ?? (shot.previousClipId ? "continuous" : "new"), ...pickStoryboardReviewFields(shot) };
     }) }) }];

@@ -23,6 +23,8 @@ export type AudioPlayerProps = NativeAudioProps & {
   src: string;
   label: string;
   compact?: boolean;
+  /** Keep the primary row to play, seek and options; mute remains in options. */
+  compactControls?: boolean;
   /** Class applied to the whole player, not the underlying audio element. */
   className?: string;
   /** Parents with their own error UI/token lifecycle can hide duplicate copy. */
@@ -49,7 +51,7 @@ function clock(value: number): string {
 
 const AudioPlayerMedia = forwardRef<HTMLAudioElement, AudioPlayerProps>(
   function AudioPlayerMedia({
-    src, label, compact = false, className = "", preload = "none",
+    src, label, compact = false, compactControls = false, className = "", preload = "none",
     statusDisplay = "inline", waitingLabel = "正在准备试听…",
     errorLabel = "试听暂不可用，请重试。", retryLabel,
     onPlay, onWaiting, onCanPlay, onPlaying, onPause, onEnded,
@@ -134,6 +136,13 @@ const AudioPlayerMedia = forwardRef<HTMLAudioElement, AudioPlayerProps>(
       setPlayRequested(false);
       setPlaying(false);
       setStatus(value => value === "error" ? "error" : "idle");
+    }
+
+    function toggleMute() {
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.muted = !audio.muted;
+      setMuted(audio.muted);
     }
 
     const canSeek = metadataReady && duration > 0;
@@ -225,7 +234,7 @@ const AudioPlayerMedia = forwardRef<HTMLAudioElement, AudioPlayerProps>(
         }}
       />
       <div role="group" aria-label={`${label}播放控制`} aria-busy={status === "waiting"}
-        className={`grid min-w-0 grid-cols-[2.25rem_minmax(0,1fr)_2rem_1.5rem] items-center gap-x-2 border border-studio-line bg-black/20 ${compact ? "rounded-lg p-1.5" : "rounded-xl p-2"}`}>
+        className={`grid min-w-0 ${compactControls ? "grid-cols-[2.25rem_minmax(0,1fr)_1.5rem]" : "grid-cols-[2.25rem_minmax(0,1fr)_2rem_1.5rem]"} items-center gap-x-2 border border-studio-line bg-black/20 ${compact ? "rounded-lg p-1.5" : "rounded-xl p-2"}`}>
         <button type="button" aria-label={`${pauseAvailable ? "暂停" : "播放"}${label}`}
           disabled={!src} onClick={() => pauseAvailable ? pause() : start(status === "error")}
           className={`${iconButtonClass} row-span-2 h-9 w-9 rounded-full border border-sky-300/25 bg-sky-300/10 text-sky-100`}>
@@ -246,27 +255,27 @@ const AudioPlayerMedia = forwardRef<HTMLAudioElement, AudioPlayerProps>(
             updatePosition(audio);
           }}
           className={`studio-audio-seek col-start-2 row-start-1 h-5 w-full min-w-0 cursor-pointer accent-sky-300 [color-scheme:dark] disabled:cursor-not-allowed disabled:opacity-40 ${focusClass}`} />
-        <button type="button" aria-label={`${muted ? "取消静音" : "静音"}${label}`} aria-pressed={muted}
-          onClick={() => {
-            const audio = audioRef.current;
-            if (!audio) return;
-            audio.muted = !audio.muted;
-            setMuted(audio.muted);
-          }}
+        {!compactControls && <button type="button" aria-label={`${muted ? "取消静音" : "静音"}${label}`} aria-pressed={muted}
+          onClick={toggleMute}
           className={`${iconButtonClass} col-start-3 row-span-2 row-start-1 h-8 w-8 rounded-lg`}>
           {muted ? <VolumeX aria-hidden="true" className="h-4 w-4" /> : <Volume2 aria-hidden="true" className="h-4 w-4" />}
-        </button>
+        </button>}
         <span aria-hidden="true" className="col-start-2 row-start-2 min-w-0 truncate text-center text-[10px] leading-4 tabular-nums text-studio-muted">
           {clock(visiblePosition)} / {duration > 0 ? clock(duration) : "--:--"}
         </span>
         <button type="button" ref={optionsButtonRef} aria-label={`${label}更多播放选项`} title="更多播放选项"
           aria-expanded={optionsOpen} aria-controls={optionsId} onClick={() => setOptionsOpen(value => !value)}
-          className={`${iconButtonClass} col-start-4 row-span-2 row-start-1 h-8 w-6 rounded-md`}>
+          className={`${iconButtonClass} ${compactControls ? "col-start-3" : "col-start-4"} row-span-2 row-start-1 h-8 w-6 rounded-md`}>
           <MoreHorizontal aria-hidden="true" className="h-4 w-4" />
         </button>
       </div>
       <div id={optionsId} hidden={!optionsOpen}
         className={`${optionsOpen ? "grid" : "hidden"} min-w-0 gap-3 rounded-xl border border-studio-line bg-black/20 p-3 text-xs`}>
+            {compactControls && <button type="button" aria-label={`${muted ? "取消静音" : "静音"}${label}`} aria-pressed={muted}
+              onClick={toggleMute} className={`${iconButtonClass} min-h-8 justify-start gap-2 rounded-md px-2`}>
+              {muted ? <VolumeX aria-hidden="true" className="h-4 w-4" /> : <Volume2 aria-hidden="true" className="h-4 w-4" />}
+              <span>{muted ? "取消静音" : "静音"}</span>
+            </button>}
             <a href={src} download aria-label={`下载${label}`}
               className={`flex min-h-8 items-center rounded-md px-2 text-studio-text hover:bg-white/[0.06] ${focusClass}`}>下载音频</a>
             <label className="grid min-w-0 gap-1 text-studio-muted">

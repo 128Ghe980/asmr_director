@@ -4,7 +4,29 @@ Last updated: 2026-10-26
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-10-26 / H3 与目录整理发布交接
+## Current update — 2026-10-26 / 参考模板版本发布交接
+
+本次将参考模板、逐段分镜信息传递、重复开场和界面修复作为一版发布到 `codex/voxcpm2-product-generation`。当前状态以本节和[发布交接记录](records/2026-10-26-reference-template-handoff.md)为准；下面各阶段的「未提交推送」、旧 build 和旧进程号均为历史快照。提交及远端回执：`I:/AI/asmr_director/qa/reference-templates/2026-10-26/publication/publication.json`。
+
+当前只有整理好的内置模板「禁令下的秘密交易」，尚未实现任意视频上传自动分析。原视频 `I:/temp/asmr参考样例/助眠禁止.mp4` 就地只读，抽帧等资料留在项目 QA。选择模板只改创作设定；「载入中文示例稿」载入本地预写十四段、不调用模型；「生成/重新生成策划稿」才调用选定模型。前端不恢复分析依据、防御性文案或开发提醒，模板内容全部默认折叠。
+
+运行版本仍为 `S5qsm3ifzUnsbyExv-lh_`，源码 `.local/releases/reference-templates-ui/apps/web`，canonical 启动入口 `I:/AI/asmr_director/service/2026-10-16/start-production.ps1`。交接时发现 3001 无监听，使用该脚本恢复同一已验构建，页面、配置接口和 8 个静态资源重新核对；没有重建或新增模型调用。32 个功能文件与已验源码一致，28 个范围外文件保持并排除提交。下一会话先读本记录、固定路线和 Git 状态，不从脏主树覆盖服务。Audio Quality V1 仍进行中，其他 SFX 工作暂停，目标 ComfyUI 机器实际 H3 批跑与试听仍待完成。
+
+## Previous update — 2026-10-26 / 模板界面与重复开场修复
+
+用户禁止前端分析依据、防御性说明及开发提醒，规则已写入 `AGENT.md`。创作设定使用模板选择器，右侧模板卡、Prompt、场景分镜、节拍默认全收起；旧已选快照的描述显示当前目录说明，编辑的Prompt仍保留。右上「文案设置」fixed浮层遮住自身summary，已移除，必要角色/背景编辑归场景页，文案操作内联开关。背景显示fallback draft.scene，手改和背景生成同步两字段，统一4000字符及本地暂时清空。
+
+重复首句「回来啦。我还没睡，就猜你快到了。」是 `PLANNER_SEMANTIC_GUIDANCE` 无条件注入的具体示例，不是用户没重新生成。删除它及模板固定台词示例，仅保留结构和动作状态指导。实际读取用户寒潮项目brief原样调用现配置DeepSeek一次，新首句「外面风声越来越大了。」；未自动替换保存稿件。声音工具栏可缩放单排，参考试听compactControls显示播放/进度/更多，静音收进更多，其他播放器不变。浏览器实测364px工具栏进度70px、566.33px工具栏进度123.64px，均无横溢出；模板11个details初始0open，分析依据无渲染、文案操作能开关。
+
+3001已更新 build `S5qsm3ifzUnsbyExv-lh_`，源码 `.local/releases/reference-templates-ui/apps/web`，`.next`→`I:/AI/asmr_director/cache/build-cache/reference-templates-ui`，canonical入口仍为 `I:/AI/asmr_director/service/2026-10-16/start-production.ps1`。32功能文件和28范围外SHA核对，8服务静态资产字节匹配；相关测试/lint/类型/build通过。证据 `I:/AI/asmr_director/qa/reference-templates/2026-10-26/ui-fixes`，[记录及测试分组](records/2026-10-26-template-ui-and-opening-fixes.md)。1真实策划、0TTS/H3，未提交推送。Audio Quality V1 与H3目标机实跑待办不变。
+
+## Previous update — 2026-10-26 / 参考视频创作模板
+
+创作页新增「参考模板」，首个「禁令下的秘密交易」从用户 `助眠禁止.mp4` 的抽帧和字幕整理，含可编辑 Prompt、场景、8节拍连续性说明与14段原创中文示例。原片是香水禁令秘密推销；ASR加载失败，无完整听辨结论。快照和逐段导演说明进入工程、JSON、双语音工作区、分镜及整批校对；当前主题和场景优先于模板中的旧道具与场景，导演说明按可靠台词匹配。逐unit起始/动作/结束与开镜状态修正经过真实模型核对。
+
+最终348相关测试、类型、23文件lint、独立build及实际浏览器通过；3001 build `cAt7jG6FLdE1t-hB9jhGF`，发布源码 `D:/CodexWorkplace/asmr_director/.local/releases/reference-templates/apps/web`，`.next` 指向 `I:/AI/asmr_director/cache/build-cache/reference-templates`。canonical仍为 `I:/AI/asmr_director/service/2026-10-16/start-production.ps1`。28范围外文件SHA保持，不从脏主树直接替换服务。证据在 `I:/AI/asmr_director/qa/reference-templates/2026-10-26`，[完整记录](records/2026-10-26-reference-creative-templates.md)。真实策划2业务请求/分镜8请求（分镜用合成时长夹具），0TTS/0H3；用户旧稿没有被模板覆盖。未提交推送、未跑整站或真实视频。Audio Quality V1继续，原H3目标机实跑待办仍在。
+
+## Previous update — 2026-10-26 / H3 与目录整理发布交接
 
 2026-10-26 发布交接：H3 原生 ASMR 12 类触发音、自定义时长和目录整理作为本次版本提交到 `codex/voxcpm2-product-generation`；具体 commit/远端状态查 Git 与 `I:/AI/asmr_director/qa/handoff/2026-10-26/publication.json`。下一步是目标 ComfyUI 机器实际批跑并试听，真实 H3 调用仍为 0。唯一外置根 `I:/AI/asmr_director`；当前包、服务入口、验证边界及 27 个有意保留的旧工作区路径见[本次交接](records/2026-10-26-h3-storage-handoff.md)。不要全量暂存遗留 spatial-studio/Qwen 工作，也不要从脏主工作区替换常驻服务。
 

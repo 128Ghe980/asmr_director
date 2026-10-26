@@ -6,6 +6,7 @@ import {
   runPlanner,
 } from "./planner-provider";
 import { normalizePlannerSemanticDraft } from "./planner-semantic";
+import { referenceTemplateFixture } from "./reference-template-test-fixture";
 
 const brief = {
   theme: "深夜书店",
@@ -49,6 +50,38 @@ afterEach(() => {
 });
 
 describe("Planner provider", () => {
+  it.each([false, true])("generates from the current robot-care brief without injecting a fixed domestic opening (template=%s)", async withTemplate => {
+    const currentBrief = { ...brief, theme: "漫长寒潮中的智能小屋，机器人管家守候归来的旅人。", role: "机器人管家",
+      notes: "机器人没有人类的睡眠需求；环境保持寒冷，室内有可靠供暖。", ...(withTemplate ? { referenceTemplate: referenceTemplateFixture } : {}) };
+    const freshDraft = { ...draft, title: "智能小屋的寒潮夜", scene: "漫长寒潮中的智能小屋。",
+      character: { ...draft.character, role: "机器人管家" },
+      sections: [{ ...section, text: "入口的暖风已调好了。你可以先在这里缓一缓。" }] };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(freshDraft));
+    const result = await runPlanner({ action: "generate", provider: "ollama", brief: currentBrief }, { env: {}, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const request = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string), prompt = request.messages.map((message: { content: string }) => message.content).join("\n");
+    expect(prompt).toContain(currentBrief.theme);
+    expect(prompt).toContain(currentBrief.role);
+    expect(prompt).toContain(currentBrief.notes);
+    for (const phrase of ["回来啦", "我还没睡", "就猜你快到了", "换鞋", "挂外套", "先看这一件", "这一款的颜色很柔和", "我先把它放回这里", "先把这本放回去"]) expect(prompt).not.toContain(phrase);
+    expect(prompt).not.toContain(section.text);
+    expect(prompt).toContain("开场与具体细节必须来自本次主题、角色和关系");
+    expect("draft" in result && result.draft.sections[0].text).toBe(freshDraft.sections[0].text);
+  });
+  it("makes each template unit own its complete prop transition rather than relying on overwritten group directions", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(draft));
+    await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, referenceTemplate: referenceTemplateFixture } }, { env: {}, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const messages = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages;
+    expect(messages[0].content).toContain("units.direction 会完整覆盖 group.direction，不会自动拼接");
+    expect(messages[0].content).toContain("本 unit 的起始必须承接上一 unit 的结束，包括跨 group");
+    expect(messages[0].content).toContain("取起A必须写在①的unit.direction，不能只写在group.direction");
+    expect(messages[0].content).toContain("结束：A留在左侧，双手空");
+    expect(messages[0].content).toContain("不要把食指竖在唇前");
+    expect(messages[0].content).toContain("持物期间不要用手指比价或比数字");
+    expect(messages[1].content).toContain("一次性动作全部写在各自的 unit.direction");
+    expect(messages[1].content).not.toContain("groups 只用来共享导演与声音属性");
+  });
   it("expands compact semantic generation in one call while inheriting shared direction", async () => {
     const { id, title, emotion, style, pace, direction, soundSuggestions, position } = section;
     const units = Array.from({ length: 70 }, (_, index) => ({ text: `第${index + 1}句，你可以慢慢看，我在这里陪着。`, pauseAfter: "medium" }));

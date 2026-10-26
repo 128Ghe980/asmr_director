@@ -30,14 +30,14 @@ describe("PlannerSceneEditor", () => {
     expect(field.maxLength).toBe(4000); expect(field.value).toBe("雪地木屋内，壁炉温暖，窗外飘雪。");
     expect(field.placeholder).toContain("雪地");
     expect(screen.queryByText(/英文/)).toBeNull();
-    expect(screen.getByText(/逐段分镜据此选取具体场景/)).toBeTruthy();
+    expect(screen.queryByText(/逐段分镜据此选取具体场景/)).toBeNull();
     fireEvent.change(field, { target: { value: "木屋中温暖安静，一扇窗朝向雪地。" } });
     expect(onEdit).toHaveBeenCalledExactlyOnceWith("木屋中温暖安静，一扇窗朝向雪地。");
     fireEvent.click(screen.getByText(/背景偏好/));
     fireEvent.change(screen.getByLabelText("背景生成要求"), { target: { value: "保留雪地木屋的温暖氛围。" } });
     fireEvent.click(screen.getByRole("button", { name: "重新生成背景" }));
     expect(onGenerate).toHaveBeenCalledExactlyOnceWith("保留雪地木屋的温暖氛围。");
-    expect(screen.getByText(/已采用音频逐段生成分镜/)).toBeTruthy();
+    expect(screen.queryByText(/已采用音频逐段生成分镜/)).toBeNull();
     expect(screen.queryByText("H3 提示词")).toBeNull();
   });
 

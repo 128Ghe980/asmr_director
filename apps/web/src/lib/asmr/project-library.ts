@@ -495,8 +495,10 @@ export function adoptPlannerDraft(
   // Compile and validate everything before creating the safety revision. Failures
   // leave the caller's project and planning workspace untouched.
   const compiled = compilePlannerDraft(source.brief, source.draft, projectId);
-  if (source.sceneDescription !== undefined) {
-    compiled.videoPlan = { version: 1, sceneDescription: source.sceneDescription, shots: {} };
+  if (source.sceneDescription !== undefined || source.brief.referenceTemplate) {
+    compiled.videoPlan = { version: 1, sceneDescription: source.sceneDescription ?? source.draft.scene, shots: {},
+      ...(source.brief.referenceTemplate ? { referenceTemplate: structuredClone(source.brief.referenceTemplate),
+        templateDirections: source.draft.sections.map(({ text, direction, soundSuggestions }) => ({ text, direction, soundSuggestions })) } : {}) };
   }
   const project = ensureSpeechWorkspaces(compiled);
   const protectedLibrary = createProjectRevision(

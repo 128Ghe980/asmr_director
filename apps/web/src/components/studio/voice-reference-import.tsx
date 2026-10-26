@@ -224,10 +224,10 @@ export function VoiceReferenceImport({ disabled, onImported, onCatalogRefresh, o
   }
 
   return <div className="min-w-0 space-y-2">
-    <div aria-label="参考声音工具栏" className="flex min-w-0 flex-wrap items-center gap-2">
+    <div aria-label="参考声音工具栏" className={`flex min-w-0 items-center gap-2 ${compactToolbar ? "flex-nowrap" : "flex-wrap"}`}>
       {toolbarContent}
-      <div className={`flex flex-none items-center gap-1.5 ${compactToolbar ? "order-2 ml-auto @[35rem]/reference:order-none" : ""}`}>
-        <button type="button" aria-label="添加参考音频" title="添加参考音频" className={`${compactToolbar ? compactButtonClass : buttonClass} text-sky-100`} aria-expanded={open} aria-controls="voice-reference-import-form" disabled={locked} onClick={() => { audioRef.current?.pause(); segmentPlaying.current = false; setOpen(!open); }}>{compactToolbar ? <><Plus aria-hidden="true" size={14} /><span>添加</span></> : "添加参考音频"}</button>
+      <div className={`flex flex-none items-center gap-1.5 ${compactToolbar ? "ml-auto" : ""}`}>
+        <button type="button" aria-label="添加参考音频" title="添加参考音频" className={`${compactToolbar ? compactButtonClass : buttonClass} text-sky-100`} aria-expanded={open} aria-controls="voice-reference-import-form" disabled={locked} onClick={() => { audioRef.current?.pause(); segmentPlaying.current = false; setOpen(!open); }}>{compactToolbar ? <><Plus aria-hidden="true" size={14} /><span className="hidden @[35rem]/reference:inline">添加</span></> : "添加参考音频"}</button>
         <button type="button" aria-label="刷新参考列表" title="刷新参考列表" className={`${compactToolbar ? compactButtonClass : buttonClass} text-studio-muted`} disabled={locked} onClick={() => void refreshCatalog()}>{compactToolbar ? <RefreshCw aria-hidden="true" size={14} /> : "刷新参考列表"}</button>
       </div>
     </div>

@@ -103,6 +103,32 @@ describe("shared audio player", () => {
     expect(screen.getByRole("link", { name: "下载候选 1 试听" }).getAttribute("href")).toBe("/new.mp3?asset=new");
     expect(media().play).not.toHaveBeenCalled();
   });
+  it("keeps compact controls playable and seekable while moving mute into the options menu", () => {
+    render(<AudioPlayer src="/reference.wav" label="参考声音试听" compact compactControls />);
+    const audio = media("参考声音试听");
+    metadata(audio, 18);
+    expect(screen.queryByRole("button", { name: "静音参考声音试听" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "播放参考声音试听" }));
+    expect(audio.play).toHaveBeenCalledOnce();
+    fireEvent.change(screen.getByRole("slider", { name: "参考声音试听播放进度" }), { target: { value: "5.5" } });
+    expect(audio.currentTime).toBe(5.5);
+    fireEvent.click(screen.getByRole("button", { name: "暂停参考声音试听" }));
+    expect(audio.pause).toHaveBeenCalledOnce();
+    const more = screen.getByRole("button", { name: "参考声音试听更多播放选项" });
+    fireEvent.click(more);
+    const mute = screen.getByRole("button", { name: "静音参考声音试听" });
+    expect(document.getElementById(more.getAttribute("aria-controls")!)!.contains(mute)).toBe(true);
+    fireEvent.click(mute);
+    expect(audio.muted).toBe(true);
+    const unmute = screen.getByRole("button", { name: "取消静音参考声音试听" });
+    expect(unmute.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(unmute);
+    expect(audio.muted).toBe(false);
+    fireEvent.keyDown(unmute, { key: "Escape" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(more);
+    expect(screen.queryByRole("button", { name: "静音参考声音试听" })).toBeNull();
+  });
   it("synchronizes menu volume and mute state with native volume events without starting audio", () => {
     const changed = vi.fn();
     render(<AudioPlayer src="/clip.wav" label="候选 1 试听" onVolumeChange={event => changed(event.currentTarget)} />);

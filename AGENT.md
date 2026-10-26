@@ -11,6 +11,8 @@ Also check current git status and recent project history before deciding what sh
 
 ## Rules
 
+- Frontend copy must describe useful product actions or results. Do not render analysis provenance, defensive caveats, implementation boundaries, or reminders addressed to developers. The user explicitly prohibited these on 2026-10-26. Keep reference-template content collapsible and collapsed by default; template selection belongs in the creation settings.
+
 - `docs/ROADMAP.md` is the only source of truth for the top-level product sequence.
 - `docs/PROJECT_MANAGEMENT.md` defines how agents should follow and update the project process.
 - Do not invent new top-level roadmap steps.

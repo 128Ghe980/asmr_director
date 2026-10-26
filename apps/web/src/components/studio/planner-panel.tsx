@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, Download, FileText, LoaderCircle, MapPin, Plus, Sparkles, Undo2 } from "lucide-react";
+import { ArrowRight, BookOpen, Check, Download, FileText, LoaderCircle, MapPin, Plus, Sparkles, Undo2 } from "lucide-react";
 
 import {
   PlannerBriefSchema,
@@ -26,6 +26,9 @@ import {
 import { normalizePlannerSemanticDraft } from "@/lib/asmr/planner-semantic";
 import { createStoryboardSourceFingerprint, type PlannerStoryboard } from "@/lib/asmr/storyboard";
 import { PlannerSceneEditor } from "./planner-scene";
+import { CreativeTemplatePanel } from "./creative-template-panel";
+import { CREATIVE_TEMPLATES, createTemplateDemo } from "@/lib/asmr/creative-templates";
+import { CreativeTemplateSchema, type CreativeTemplate } from "@/lib/asmr/reference-template";
 
 type Provider = { id: "ollama" | "api"; label: string; model: string; configured: boolean };
 type PlannerPanelProps = {
@@ -44,6 +47,7 @@ function validationMessage(issues: { path: PropertyKey[] }[]) {
     theme: "今日主题", durationSeconds: "目标时长", role: "角色", style: "说话风格",
     notes: "补充要求", title: "标题", scene: "场景", text: "台词", emotion: "情绪",
     pace: "语速", direction: "导演提示", soundSuggestions: "音效建议", character: "角色设定",
+    creativePrompt: "模板创作 Prompt", sceneDescription: "场景描述", storyboardRules: "模板分镜约束",
   };
   const sectionIndex = issue?.path.find((part) => typeof part === "number");
   const leaf = String(issue?.path.at(-1) ?? "草稿");
@@ -61,7 +65,8 @@ function downloadText(body: string, filename: string, type = "text/plain;charset
   URL.revokeObjectURL(url);
 }
 
-function downloadDraft(brief: PlannerBrief, draft: PlannerDraft) {
+function downloadDraft(brief: PlannerBrief, draft: PlannerDraft, sceneDescription?: string | null) {
+  const template = brief.referenceTemplate;
   const body = [
     draft.title, `主题：${brief.theme}`, `场景：${draft.scene}`, `角色：${draft.character.role}`,
     `目标时长：${brief.durationSeconds / 60} 分钟（规划参考）`, "",
@@ -72,6 +77,17 @@ function downloadDraft(brief: PlannerBrief, draft: PlannerDraft) {
       `情绪：${section.emotion}；风格：${section.style}；语速：${section.pace}`,
       `句后等待：${getPlannerPauseSeconds(section)} 秒`, "",
     ]),
+    ...(sceneDescription?.trim() ? ["剧情背景", sceneDescription, ""] : []),
+    ...(template ? [
+      `参考模板：${template.title}（v${template.version}）`, `参考文件：${template.source.filename}`,
+      "", "创作 Prompt", template.creativePrompt,
+      "", "模板场景描述", template.sceneDescription, "", "分镜与连续性约束", template.storyboardRules, "",
+      ...template.beats.flatMap((beat, index) => [
+        `${index + 1}. ${beat.title}（参考 ${beat.referenceRange}）`, `剧情：${beat.story}`,
+        `画面：${beat.visual}`, `动作：${beat.action}`, `镜头：${beat.camera}`,
+        `声音：${beat.sound}`, `连续性：${beat.continuity}`, "",
+      ]),
+    ] : []),
   ].join("\n");
   downloadText(body, `${draft.title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "ASMR策划稿"}.txt`);
 }
@@ -102,7 +118,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState<"generate" | "rewrite" | "scene" | null>(null);
-  const [activeTab, setActiveTab] = useState<"script" | "scene">("script");
+  const [activeTab, setActiveTab] = useState<"script" | "scene" | "templates">("script");
   const [rewriteId, setRewriteId] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
@@ -196,10 +212,10 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
   const { brief, draft } = working;
   const storyboard = working.storyboard ?? null;
   const sceneDescription = working.sceneDescription ?? null;
+  const downloadableScene = sceneDescription ?? draft?.scene ?? "";
   const draftBrief = working.draftBrief ?? brief;
   const provider = providers.find((item) => item.id === working.provider);
   const busy = pending !== null;
-  const changedBrief = !!draft && JSON.stringify(brief) !== JSON.stringify(draftBrief);
   const draftValidation = draft ? PlannerDraftSchema.safeParse(draft) : null;
   const readableCharacters = draft?.sections.reduce((sum, section) => sum + section.text.replace(/\s/g, "").length, 0) ?? 0;
 
@@ -214,7 +230,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
     setCanPersist(true);
     setSaving(true);
     setError("");
-    setNotice(interrupted ? "已停止 AI 生成，保留你的修改。" : "");
+    setNotice(interrupted ? "已停止 AI 生成。" : "");
   }
 
   function remember() {
@@ -223,6 +239,38 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
 
   function updateBrief(patch: Partial<PlannerBrief>) {
     changeWorking({ ...working, brief: { ...brief, ...patch } });
+  }
+
+  function applyTemplate(template: CreativeTemplate) {
+    const validation = CreativeTemplateSchema.safeParse(template);
+    if (!validation.success) { setError(validationMessage(validation.error.issues)); return; }
+    const defaults = createTemplateDemo(template).brief;
+    remember();
+    changeWorking({ ...working, brief: {
+      ...brief, referenceTemplate: structuredClone(template),
+      theme: brief.theme.trim() ? brief.theme : defaults.theme,
+      role: brief.role.trim() ? brief.role : defaults.role,
+      style: brief.style.trim() ? brief.style : defaults.style,
+    } });
+  }
+
+  function loadTemplateDemo(template: CreativeTemplate) {
+    const validation = CreativeTemplateSchema.safeParse(template);
+    if (!validation.success) { setError(validationMessage(validation.error.issues)); return; }
+    const demo = createTemplateDemo(template);
+    remember();
+    changeWorking({ ...working, brief: demo.brief, draftBrief: structuredClone(demo.brief), draft: demo.draft, sceneDescription: demo.sceneDescription, storyboard: null });
+    setActiveSectionId(null);
+    setRewriteId(null);
+    setActiveTab("script");
+    setNotice("已载入中文示例稿。");
+  }
+
+  function removeTemplate() {
+    const nextBrief = { ...brief };
+    delete nextBrief.referenceTemplate;
+    remember();
+    changeWorking({ ...working, brief: nextBrief });
   }
 
   function updateDraft(patch: Partial<PlannerDraft>) {
@@ -303,12 +351,15 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
         PlannerDraftSchema.parse(nextDraft);
       }
       setHistory((current) => [...current.slice(-29), snapshot]);
-      const nextWorking = { ...snapshot, draft: nextDraft, draftBrief: input.data };
+      const nextWorking = {
+        ...snapshot, draft: nextDraft, draftBrief: input.data,
+        ...(action === "generate" ? { sceneDescription: input.data.referenceTemplate ? nextDraft.scene : null, storyboard: null } : {}),
+      };
       persistable.current = { state: nextWorking, enabled: true };
       setWorking(nextWorking);
       setCanPersist(true);
       setSaving(true);
-      setNotice(action === "generate" ? "文案已生成。" : range ? "已改写选中文字，其他内容保持不变。" : "已改写所选段落。");
+      setNotice(action === "generate" ? "文案已生成。" : range ? "已改写选中文字。" : "已改写所选段落。");
       setActiveTab("script");
       setSelection(null);
       setInstruction("");
@@ -322,7 +373,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
 
   function editScene(value: string) {
     remember();
-    changeWorking({ ...working, sceneDescription: value });
+    changeWorking({ ...working, sceneDescription: value, ...(draft ? { draft: { ...draft, scene: value } } : {}) });
   }
 
   async function generateScene(instruction: string) {
@@ -337,7 +388,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
     try {
       const response = await fetch("/api/scene-description", {
         method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ provider: working.provider, draft: draftValidation.data, ...(instruction.trim() ? { instruction: instruction.trim() } : {}) }),
+        body: JSON.stringify({ provider: working.provider, draft: draftValidation.data, ...(draftBrief.referenceTemplate ? { referenceTemplate: draftBrief.referenceTemplate } : {}), ...(instruction.trim() ? { instruction: instruction.trim() } : {}) }),
       });
       const body = await response.json();
       if (requestRef.current !== controller || controller.signal.aborted) return;
@@ -345,7 +396,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
       if (typeof body.sceneDescription !== "string" || !body.sceneDescription.trim() || body.sceneDescription.length > 4000) throw new Error("模型返回的剧情背景不完整，请重试。");
       if (body.sourceFingerprint !== createStoryboardSourceFingerprint(draftValidation.data)) throw new Error("剧情背景与当前文案不一致，请重新生成。");
       setHistory((current) => [...current.slice(-29), snapshot]);
-      const nextWorking = { ...snapshot, sceneDescription: body.sceneDescription.trim() };
+      const nextWorking = { ...snapshot, sceneDescription: body.sceneDescription.trim(), draft: { ...draft, scene: body.sceneDescription.trim() } };
       persistable.current = { state: nextWorking, enabled: true };
       setWorking(nextWorking);
       setCanPersist(true);
@@ -359,7 +410,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
     }
   }
 
-  function switchTab(tab: "script" | "scene") {
+  function switchTab(tab: "script" | "scene" | "templates") {
     setActiveTab(tab);
     setRewriteId(null);
     setSelection(null);
@@ -373,7 +424,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
       else if (storyboard) onAdopt(PlannerBriefSchema.parse(draftBrief), draftValidation.data, structuredClone(storyboard));
       else onAdopt(PlannerBriefSchema.parse(draftBrief), draftValidation.data);
       setNotice("已创建工程。");
-    } catch { setError("暂时无法采用这份草稿，请检查内容后重试。原项目已保留。"); }
+    } catch { setError("暂时无法采用这份草稿，请检查内容后重试。"); }
   }
 
   return (
@@ -381,6 +432,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
       <aside className={`${briefExpanded ? "absolute inset-x-0 top-0 z-20 max-h-full shadow-2xl lg:static lg:shadow-none" : "max-h-[45%]"} min-h-0 shrink-0 overflow-y-auto rounded-xl border border-studio-line bg-studio-panel lg:max-h-none`}>
         <div className="flex items-center justify-between px-4 py-3"><h2 className="text-sm font-semibold">创作设定</h2><button type="button" className="text-xs text-studio-muted lg:hidden" aria-expanded={briefExpanded} onClick={() => setBriefExpanded((value) => !value)}>{briefExpanded ? "收起设定" : "展开设定"}</button></div>
         <div className={`${briefExpanded ? "block" : "hidden lg:block"} space-y-4 px-4 pb-4`}>
+          <label className="block space-y-2 text-xs text-studio-muted"><span>参考模板</span><select aria-label="参考模板" className={fieldClass} value={brief.referenceTemplate?.id ?? ""} disabled={!loaded} onChange={(event) => { const template = CREATIVE_TEMPLATES.find((item) => item.id === event.target.value); if (template) applyTemplate(template); else if (!event.target.value) removeTemplate(); }}><option value="">不使用模板</option>{CREATIVE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}{brief.referenceTemplate && !CREATIVE_TEMPLATES.some((template) => template.id === brief.referenceTemplate?.id) ? <option value={brief.referenceTemplate.id}>{brief.referenceTemplate.title}</option> : null}</select></label>
           <label className="block space-y-2 text-xs text-studio-muted"><span>今日主题</span><textarea aria-label="今日主题" value={brief.theme} onChange={(event) => updateBrief({ theme: event.target.value })} disabled={!loaded} maxLength={2000} rows={4} className={fieldClass} placeholder="今晚的故事发生在哪里？你想带来怎样的陪伴？" /></label>
           <div className="grid grid-cols-2 gap-2">
             <label className="space-y-1 text-xs text-studio-muted"><span>目标时长</span><select aria-label="目标时长" className={fieldClass} value={brief.durationSeconds} onChange={(event) => updateBrief({ durationSeconds: Number(event.target.value) })} disabled={!loaded}>{[60, 180, 300, 600].map((seconds) => <option key={seconds} value={seconds}>{seconds / 60} 分钟</option>)}</select></label>
@@ -394,9 +446,8 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
             <label className="block space-y-1 text-xs text-studio-muted"><span>补充要求</span><textarea aria-label="补充要求 / 避免的内容" className={fieldClass} value={brief.notes} rows={3} maxLength={2000} onChange={(event) => updateBrief({ notes: event.target.value })} /></label>
           </div></details>
           <button type="button" className={`${primaryClass} min-h-10 w-full`} disabled={busy || !loaded || !provider?.configured || !brief.theme.trim()} onClick={() => void runPlanner("generate")}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{draft ? "重新生成策划稿" : "生成策划稿"}</button>
-          <p className="text-[11px] leading-5 text-studio-muted">文案会按完整意思整理为短句，可随时改写、拆分或合并。</p>
           {source ? <details className="text-xs text-studio-muted"><summary className="cursor-pointer">项目原稿</summary><button className={`${buttonClass} mt-2 w-full`} disabled={!loaded} onClick={() => { remember(); changeWorking({ ...working, brief: source.brief, draftBrief: source.brief, draft: structuredClone(source.draft), storyboard: source.storyboard ? structuredClone(source.storyboard) : null, sceneDescription: source.sceneDescription ?? null }); setRewriteId(null); setActiveSectionId(null); setNotice("已载入项目原稿。"); }}>载入当前项目策划稿</button></details> : null}
-          {legacyAvailable ? <details className="text-xs text-studio-muted"><summary className="cursor-pointer">恢复旧版草稿</summary><p className="mt-2 leading-5">旧版草稿尚未归属项目，原保存内容仍保留。可将它恢复到当前策划区。</p><button className={`${buttonClass} mt-2 w-full`} disabled={!loaded} onClick={() => {
+          {legacyAvailable ? <details className="text-xs text-studio-muted"><summary className="cursor-pointer">恢复旧版草稿</summary><button className={`${buttonClass} mt-2 w-full`} disabled={!loaded} onClick={() => {
             const previous = loadPlannerDraft(window.localStorage);
             if (previous.error || !previous.restored) { setError(previous.error || "没有可恢复的旧版草稿。"); return; }
             remember(); changeWorking(previous.state); setRewriteId(null); setActiveSectionId(null); setNotice("已恢复旧版策划草稿，可撤回恢复。");
@@ -408,21 +459,27 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-3">
               <div role="tablist" aria-label="策划内容" className="flex items-center gap-1 rounded-lg border border-studio-line bg-black/20 p-1">
-                {([['script', '文案', FileText], ['scene', '场景', MapPin]] as const).map(([tab, label, Icon]) => <button key={tab} type="button" role="tab" id={`planner-tab-${tab}`} aria-selected={activeTab === tab} aria-controls={`planner-panel-${tab}`} tabIndex={activeTab === tab ? 0 : -1} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 ${activeTab === tab ? tab === "scene" ? "bg-violet-300/15 text-violet-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`} onClick={() => switchTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const next = event.key === "Home" ? "script" : event.key === "End" ? "scene" : tab === "script" ? "scene" : "script"; switchTab(next); document.getElementById(`planner-tab-${next}`)?.focus(); }}><Icon className="h-3.5 w-3.5" aria-hidden="true" />{label}</button>)}
+                {([['script', '文案', FileText], ['scene', '场景', MapPin], ['templates', '参考模板', BookOpen]] as const).map(([tab, label, Icon]) => <button key={tab} type="button" role="tab" id={`planner-tab-${tab}`} aria-selected={activeTab === tab} aria-controls={`planner-panel-${tab}`} tabIndex={activeTab === tab ? 0 : -1} className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 sm:px-3 ${activeTab === tab ? tab === "scene" ? "bg-violet-300/15 text-violet-100" : tab === "templates" ? "bg-amber-200/15 text-amber-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`} onClick={() => switchTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const tabs = ["script", "scene", "templates"] as const; const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[2] : tabs[(tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : 2)) % tabs.length]; switchTab(next); document.getElementById(`planner-tab-${next}`)?.focus(); }}><Icon className="h-3.5 w-3.5" aria-hidden="true" />{label}</button>)}
               </div>
               <span className="flex items-center gap-1 text-[11px] text-studio-muted" role="status">{!saveError && loaded && !saving ? <Check className="h-3 w-3 text-studio-green" aria-hidden="true" /> : null}{!loaded ? "正在载入" : saveError ? "未保存" : saving ? "保存中…" : "已保存"}</span>
             </div>
-            {draft ? <div className="flex flex-wrap gap-2"><button aria-label="撤回修改" className={buttonClass} disabled={!history.length} onClick={() => { const previous = history.at(-1); if (previous) { changeWorking(previous); setHistory((current) => current.slice(0, -1)); setRewriteId(null); setActiveSectionId(null); setNotice("已撤回。"); } }}><Undo2 className="h-3.5 w-3.5" aria-hidden="true" />撤回</button><button className={buttonClass} disabled={activeTab === "scene" && !sceneDescription?.trim()} onClick={() => { if (activeTab === "scene" && sceneDescription?.trim()) downloadText(sceneDescription, `${draft.title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "ASMR"}-剧情背景.txt`); else downloadDraft(draftBrief, draft); }}><Download className="h-3.5 w-3.5" aria-hidden="true" />{activeTab === "scene" ? "下载背景" : "下载"}</button></div> : null}
+            {draft || history.length ? <div className="flex flex-wrap gap-2"><button aria-label="撤回修改" className={buttonClass} disabled={!history.length} onClick={() => { const previous = history.at(-1); if (previous) { changeWorking(previous); setHistory((current) => current.slice(0, -1)); setRewriteId(null); setActiveSectionId(null); setNotice("已撤回。"); } }}><Undo2 className="h-3.5 w-3.5" aria-hidden="true" />撤回</button>{draft && activeTab !== "templates" ? <button className={buttonClass} disabled={activeTab === "scene" && !downloadableScene.trim()} onClick={() => { if (activeTab === "scene" && downloadableScene.trim()) downloadText(downloadableScene, `${draft.title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "ASMR"}-剧情背景.txt`); else downloadDraft(draftBrief, draft, sceneDescription); }}><Download className="h-3.5 w-3.5" aria-hidden="true" />{activeTab === "scene" ? "下载背景" : "下载"}</button> : null}</div> : null}
           </div>
-          {draft ? <div className="mt-2"><input aria-label="文案标题" className="w-full min-w-0 bg-transparent py-1 text-xl font-semibold leading-8 outline-none focus:ring-1 focus:ring-sky-300/25" value={draft.title} maxLength={120} onChange={(event) => updateDraft({ title: event.target.value })} /><div className="mt-1 flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] text-studio-muted">{activeTab === "script" ? `${draft.sections.length} 条台词 · ${readableCharacters} 字 · 点选台词编辑，选中文字可只改这一小段。` : "先查看剧情背景，再到工程中逐段生成画面。"}</p><details className="relative text-xs text-studio-muted"><summary className="cursor-pointer">文案设置</summary><div className="fixed right-4 top-24 z-30 max-h-[calc(100dvh-128px)] w-64 space-y-3 overflow-y-auto rounded-lg border border-studio-line bg-studio-panel p-3 shadow-xl"><label className="block space-y-1"><span>场景设定</span><textarea aria-label="场景设定" rows={2} className={fieldClass} value={draft.scene} maxLength={1000} onChange={(event) => updateDraft({ scene: event.target.value })} /></label><label className="block space-y-1"><span>角色设定</span><input aria-label="角色设定" className={fieldClass} value={draft.character.role} maxLength={200} onChange={(event) => updateDraft({ character: { ...draft.character, role: event.target.value } })} /></label><button className={buttonClass} onClick={() => editStructure((current) => normalizePlannerSemanticDraft(current, { preserveSectionPauses: true }))}>按语义整理短句</button></div></details></div></div> : null}
+          {draft && activeTab !== "templates" ? <div className="mt-2">
+            <input aria-label="文案标题" className="w-full min-w-0 bg-transparent py-1 text-xl font-semibold leading-8 outline-none focus:ring-1 focus:ring-sky-300/25" value={draft.title} maxLength={120} onChange={(event) => updateDraft({ title: event.target.value })} />
+            {activeTab === "script" ? <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
+              <p className="text-[11px] text-studio-muted">{draft.sections.length} 条台词 · {readableCharacters} 字</p>
+              <details className="text-xs text-studio-muted"><summary className="cursor-pointer">文案操作</summary><div className="pt-2"><button className={buttonClass} onClick={() => editStructure((current) => normalizePlannerSemanticDraft(current, { preserveSectionPauses: true }))}>按语义整理短句</button></div></details>
+            </div> : null}
+          </div> : null}
         </div>
         <div aria-live="polite" aria-atomic="true" className="max-h-[28%] shrink-0 overflow-y-auto px-4 sm:px-6">
           {busy ? <div className="flex items-center justify-between gap-2 py-2 text-xs text-sky-100"><span className="flex items-center gap-2"><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />{pending === "generate" ? "正在写文案…" : pending === "scene" ? "正在生成背景…" : "正在改写…"}</span><button className={buttonClass} onClick={cancelRequest}>取消</button></div> : null}
           {notice ? <p className="py-2 text-xs text-studio-muted">{notice}</p> : null}
-          {[saveError, error, changedBrief ? "创作要求已修改，重新生成后应用到文案。" : ""].filter(Boolean).map((message, index) => <p key={index} role={index < 2 ? "alert" : undefined} className="py-2 text-xs leading-5 text-amber-100">{message}</p>)}
+          {[saveError, error].filter(Boolean).map((message, index) => <p key={index} role="alert" className="py-2 text-xs leading-5 text-amber-100">{message}</p>)}
         </div>
         <div data-planner-scroll role="tabpanel" id={`planner-panel-${activeTab}`} aria-labelledby={`planner-tab-${activeTab}`} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 sm:px-5">
-          {activeTab === "scene" ? <PlannerSceneEditor draft={draft} sceneDescription={sceneDescription} busy={busy} canGenerate={loaded && !!provider?.configured && !!draftValidation?.success} onGenerate={(instruction) => void generateScene(instruction)} onEdit={editScene} onBack={() => switchTab("script")} /> : !draft ? <div className="flex h-full min-h-40 flex-col items-center justify-center px-6 text-center"><Sparkles className="mb-4 h-7 w-7 text-sky-200/60" aria-hidden="true" /><h3 className="text-lg font-semibold">从今晚的一个想法开始</h3><p className="mt-2 max-w-xs text-sm leading-7 text-studio-muted">写下主题，生成一份可以逐句雕琢的陪伴文案。</p><button className={`${buttonClass} mt-4 lg:hidden`} onClick={() => setBriefExpanded(true)}>填写创作设定</button></div> : <div className="mx-auto max-w-[860px] space-y-1">
+          {activeTab === "templates" ? <CreativeTemplatePanel templates={CREATIVE_TEMPLATES} selected={brief.referenceTemplate} disabled={!loaded} onApply={applyTemplate} onUpdate={(template) => updateBrief({ referenceTemplate: template })} onLoadDemo={loadTemplateDemo} onRemove={removeTemplate} /> : activeTab === "scene" ? <PlannerSceneEditor draft={draft} sceneDescription={sceneDescription} busy={busy} canGenerate={loaded && !!provider?.configured && !!draftValidation?.success} onGenerate={(instruction) => void generateScene(instruction)} onEdit={editScene} onEditCharacter={(role) => { if (draft) updateDraft({ character: { ...draft.character, role } }); }} onBack={() => switchTab("script")} /> : !draft ? <div className="flex h-full min-h-40 flex-col items-center justify-center px-6 text-center"><Sparkles className="mb-4 h-7 w-7 text-sky-200/60" aria-hidden="true" /><h3 className="text-lg font-semibold">从今晚的一个想法开始</h3><p className="mt-2 max-w-xs text-sm leading-7 text-studio-muted">写下主题，生成一份可以逐句雕琢的陪伴文案。</p><button className={`${buttonClass} mt-4 lg:hidden`} onClick={() => setBriefExpanded(true)}>填写创作设定</button></div> : <div className="mx-auto max-w-[860px] space-y-1">
             {draft.sections.map((section, index) => {
               const active = activeSectionId === section.id;
               const range = selection?.sectionId === section.id ? selection : null;
@@ -449,7 +506,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
             <button className="ml-4 mt-4 flex items-center gap-2 px-3 py-2 text-xs text-studio-muted hover:text-sky-100" onClick={() => editStructure((current) => insertPlannerSection(current))}><Plus className="h-3.5 w-3.5" aria-hidden="true" />新增一句</button>
           </div>}
         </div>
-        {draft ? <div className="flex shrink-0 items-center justify-between gap-3 border-t border-studio-line px-4 py-3 sm:px-6"><span className="text-[11px] text-studio-muted">每条台词可独立生成与安排等待</span><button aria-label="采用并创建工程" className={`${primaryClass} shrink-0`} disabled={busy || !loaded} onClick={adopt}>创建音频工程<ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button></div> : null}
+        {draft && activeTab !== "templates" ? <div className="flex shrink-0 items-center justify-end border-t border-studio-line px-4 py-3 sm:px-6"><button aria-label="采用并创建工程" className={`${primaryClass} shrink-0`} disabled={busy || !loaded} onClick={adopt}>创建音频工程<ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button></div> : null}
       </div>
     </section>
   );

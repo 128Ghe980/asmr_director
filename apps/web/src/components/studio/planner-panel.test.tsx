@@ -130,7 +130,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     const { onAdopt } = await mountPanel();
     expect(control("第 1 段台词").value).toBe(legacy.sections[0].text);
     expect(screen.queryByLabelText("第 4 段台词")).toBeNull();
-    fireEvent.click(screen.getByText("文案设置"));
+    fireEvent.click(screen.getByText("文案操作"));
     fireEvent.click(screen.getByRole("button", { name: "按语义整理短句" }));
     expect(screen.getByLabelText("第 4 段台词")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
@@ -178,7 +178,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     await screen.findByRole("button", { name: "取消" });
     fireEvent.change(control("第 2 段台词"), { target: { value: "我在生成中手动修改的句子。" } });
     expect(api.posts[0].signal?.aborted).toBe(true);
-    expect(screen.getByText("已停止 AI 生成，保留你的修改。")).toBeTruthy();
+    expect(screen.getByText("已停止 AI 生成。")).toBeTruthy();
     await act(async () => {
       late.resolve(Response.json(action === "generate" ? { draft: makeDraft("迟到稿") } : { section: { ...state.draft!.sections[1], text: "迟到改写" } }));
       await late.promise;

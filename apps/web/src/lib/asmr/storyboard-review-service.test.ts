@@ -3,6 +3,7 @@ import { postProcessingProject } from "../../components/studio/audio-post-proces
 import { generateStoryboardReview } from "./storyboard-review-service";
 import { createClipVideoSourceFingerprint } from "./video-plan";
 import type { StoryboardReviewFields } from "./storyboard-review";
+import { referenceTemplateFixture } from "./reference-template-test-fixture";
 
 const env = { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "test-only", ASMR_PLANNER_API_MODEL: "mock-reviewer" };
 function fixture() {
@@ -13,6 +14,23 @@ function fixture() {
   return { project, ids, output, fetchImpl };
 }
 describe("one-batch storyboard review service", () => {
+  it("reviews template continuity with matching per-line notes and rejects proposals after a template change", async () => {
+    const { project, ids, fetchImpl } = fixture(), clips = project.timeline.tracks.find(track => track.track_type === "voice")!.clips;
+    project.videoPlan!.referenceTemplate = structuredClone(referenceTemplateFixture);
+    project.videoPlan!.templateDirections = [{ text: clips[0].text, direction: "放下外套，双手空出。", soundSuggestions: "" }];
+    for (const id of ids) project.videoPlan!.shots[id].sourceFingerprint = createClipVideoSourceFingerprint(project, id);
+    await generateStoryboardReview({ project, editableClipIds: ids }, { env, fetchImpl });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string), context = JSON.parse(body.messages[1].content);
+    expect(context.referenceTemplate.storyboardRules).toBe(referenceTemplateFixture.storyboardRules);
+    expect(context.shots[0].directorNotes).toEqual(project.videoPlan!.templateDirections);
+    expect(context.shots[1]).not.toHaveProperty("directorNotes");
+    expect(body.messages[0].content).toContain("禁止按镜号硬套原片节拍");
+    fetchImpl.mockImplementation(async () => {
+      project.videoPlan!.referenceTemplate!.storyboardRules += "保持坐姿。";
+      return Response.json({ choices: [{ message: { content: JSON.stringify({ changes: [], notes: [] }) } }] });
+    });
+    await expect(generateStoryboardReview({ project, editableClipIds: ids }, { env, fetchImpl })).rejects.toMatchObject({ status: 409 });
+  });
   it("calls configured API once for all script context but only patches editable members", async () => {
     const { project, ids, fetchImpl } = fixture(), before = JSON.stringify(project);
     const result = await generateStoryboardReview({ project, editableClipIds: [ids[0]] }, { env, fetchImpl });

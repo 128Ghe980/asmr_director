@@ -73,10 +73,10 @@ describe("Planner scene workflow replacing first-step storyboard controls", () =
     fireEvent.click(screen.getByRole("button", { name: "生成背景" }));
     await waitFor(() => expect(control("剧情背景").value).toBe(originalScene));
     expect(api.posts[0].body).toEqual({ provider: "api", draft: edited, instruction: "暖灯与雨夜的固定环境" });
-    await waitFor(() => { const state = loadPlannerDraft(window.localStorage).state; expect(state.sceneDescription).toBe(originalScene); expect(state.storyboard).toEqual(storyboard); expect(state.draft).toEqual(edited); });
+    await waitFor(() => { const state = loadPlannerDraft(window.localStorage).state; expect(state.sceneDescription).toBe(originalScene); expect(state.storyboard).toEqual(storyboard); expect(state.draft).toEqual({ ...edited, scene: originalScene }); });
     first.unmount(); const second = await mountPanel(); showScene();
     expect(control("剧情背景").value).toBe(originalScene);
-    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" })); expect(second.onAdopt).toHaveBeenCalledExactlyOnceWith(brief, edited, storyboard, originalScene);
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" })); expect(second.onAdopt).toHaveBeenCalledExactlyOnceWith(brief, { ...edited, scene: originalScene }, storyboard, originalScene);
   });
   it("allows clearing a scene, undoing and saving temporary empty content through refresh", async () => {
     const { draft, storyboard } = seed(originalScene, true); mockSceneApi(); const first = await mountPanel(); showScene();
@@ -86,7 +86,11 @@ describe("Planner scene workflow replacing first-step storyboard controls", () =
     fireEvent.change(control("剧情背景"), { target: { value: "" } });
     await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.sceneDescription).toBe("")); first.unmount();
     const second = await mountPanel(); showScene(); expect(control("剧情背景").value).toBe(""); expect(screen.queryByRole("alert")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" })); expect(second.onAdopt).toHaveBeenCalledExactlyOnceWith(brief, draft, storyboard);
+    expect(loadPlannerDraft(window.localStorage).state.draft?.scene).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" })); expect(second.onAdopt).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain("场景");
+    fireEvent.change(control("剧情背景"), { target: { value: "重新填写的书店背景" } });
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" })); expect(second.onAdopt).toHaveBeenCalledExactlyOnceWith(brief, { ...draft, scene: "重新填写的书店背景" }, storyboard, "重新填写的书店背景");
   });
   it.each([false, true])("preserves old adoption argument counts without a scene (legacy=%s)", async (legacy) => {
     const { draft, storyboard } = seed(null, legacy); mockSceneApi(); const { onAdopt } = await mountPanel();
@@ -129,7 +133,7 @@ describe("Planner scene workflow replacing first-step storyboard controls", () =
     const nextSource = { brief: PlannerBriefSchema.parse({ theme: "另一个工程" }), draft: makeDraft("另一个工程的文案") }; rerender(<StrictMode><PlannerPanel source={nextSource} onAdopt={onAdopt} /></StrictMode>);
     expect(control("剧情背景").value).toBe(originalScene);
     fireEvent.click(screen.getByText("项目原稿")); fireEvent.click(screen.getByRole("button", { name: "载入当前项目策划稿" }));
-    expect(control("文案标题").value).toBe(nextSource.draft.title); expect(control("剧情背景").value).toBe("");
+    expect(control("文案标题").value).toBe(nextSource.draft.title); expect(control("剧情背景").value).toBe(nextSource.draft.scene);
     await waitFor(() => { const state = loadPlannerDraft(window.localStorage).state; expect(state.sceneDescription).toBeNull(); expect(state.storyboard).toBeNull(); });
     fireEvent.click(screen.getByRole("button", { name: "撤回修改" })); expect(control("剧情背景").value).toBe(originalScene); expect(control("文案标题").value).toBe(draft.title);
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" })); expect(onAdopt).toHaveBeenCalledExactlyOnceWith(brief, draft, storyboard, originalScene);
@@ -153,7 +157,7 @@ describe("Planner scene workflow replacing first-step storyboard controls", () =
   });
   it("navigates the scene tab with keyboard focus and aborts on unmount", async () => {
     seed(); const api = mockSceneApi(); const late = deferred<Response>(); api.respond(late.promise); const view = await mountPanel();
-    fireEvent.keyDown(screen.getByRole("tab", { name: "文案" }), { key: "End" }); expect(document.activeElement?.id).toBe("planner-tab-scene"); expect(screen.getByRole("tabpanel").id).toBe("planner-panel-scene");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "文案" }), { key: "ArrowRight" }); expect(document.activeElement?.id).toBe("planner-tab-scene"); expect(screen.getByRole("tabpanel").id).toBe("planner-panel-scene");
     fireEvent.keyDown(screen.getByRole("tab", { name: "场景" }), { key: "ArrowLeft" }); expect(document.activeElement?.id).toBe("planner-tab-script");
     showScene(); fireEvent.click(screen.getByRole("button", { name: "生成背景" })); await screen.findByRole("button", { name: "取消" }); view.unmount(); expect(api.posts[0].signal?.aborted).toBe(true);
     await act(async () => { late.resolve(sceneResponse(makeDraft())); await late.promise; }); expect(loadPlannerDraft(window.localStorage).state.sceneDescription).toBeNull();

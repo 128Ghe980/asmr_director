@@ -84,7 +84,7 @@ function VoicePreview({ src, label, compact = false }: {
   label: string;
   compact?: boolean;
 }) {
-  return <AudioPlayer src={src} label={label} compact={compact}
+  return <AudioPlayer src={src} label={label} compact={compact} compactControls={compact}
     waitingLabel="正在准备试听…"
     errorLabel="试听暂不可用，请重试。" />;
 }
@@ -358,14 +358,14 @@ export function VoiceGenerationPanel({
   }
 
   const referenceControls = <>
-    <label className="flex min-w-0 items-center gap-2 text-xs text-studio-muted">
-      <span className="flex-none">参考声音</span>
-      <select aria-label="参考声音" className="h-8 w-36 min-w-0 max-w-full rounded-lg border border-studio-line bg-black/20 px-2 py-1 text-xs text-studio-text outline-none focus:border-sky-300/50 disabled:opacity-50" value={options.voicePackId} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeReference(event.target.value)}>
+    <label className="flex min-w-0 flex-[1_1_12rem] items-center gap-2 text-xs text-studio-muted">
+      <span className="hidden flex-none @[28rem]/reference:inline">参考声音</span>
+      <select aria-label="参考声音" className="h-8 w-full min-w-0 flex-1 rounded-lg border border-studio-line bg-black/20 px-2 py-1 text-xs text-studio-text outline-none focus:border-sky-300/50 disabled:opacity-50" value={options.voicePackId} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeReference(event.target.value)}>
         {!reference ? <option value={options.voicePackId} disabled>参考不可用</option> : null}
         {provider?.references.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
     </label>
-    {reference?.audioUrl ? <div className="order-3 min-w-0 max-w-full @[35rem]/reference:order-none" title={`参考片段${reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}`}>
+    {reference?.audioUrl ? <div className="min-w-40 flex-[1.2_1_10rem]" title={`参考片段${reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}`}>
       <p className="sr-only">参考片段{reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}</p>
       <VoicePreview key={reference.audioUrl} src={reference.audioUrl} label="参考声音试听" compact />
     </div> : null}
@@ -378,7 +378,7 @@ export function VoiceGenerationPanel({
       onImported={onReferenceImported} onCatalogRefresh={onReferenceCatalogRefresh}
       onBusyChange={onReferenceImportBusyChange}
     /> : <div className="min-w-0 space-y-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">{referenceControls}</div>
+      <div className="flex min-w-0 items-center gap-2">{referenceControls}</div>
       {!isVox ? <p className="break-words text-xs leading-5 text-studio-muted">添加参考音频请在“更多生成设置”中选择 VoxCPM2。</p> : null}
     </div>}
 

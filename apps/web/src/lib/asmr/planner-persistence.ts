@@ -11,6 +11,7 @@ import {
 } from "./planner";
 import type { StorageLike } from "./project-persistence";
 import { EditableStoryboardSchema, type PlannerStoryboard } from "./storyboard";
+import { CreativeTemplateSchema } from "./reference-template";
 
 export const PLANNER_DRAFT_STORAGE_KEY = "ai-asmr-studio:v1:planner-draft";
 export const PLANNER_DRAFT_LEGACY_OWNER_STORAGE_KEY = `${PLANNER_DRAFT_STORAGE_KEY}:legacy-project`;
@@ -22,6 +23,7 @@ const MAX_STORED_DRAFT_CHARACTERS = 200000;
 // Local work can contain a new/temporarily cleared paragraph. Adoption and model
 // calls still validate against the complete PlannerDraftSchema.
 const EditableDraftSchema = PlannerDraftSchema.safeExtend({
+  scene: z.string().max(4000),
   sections: z.array(PlannerSectionSchema.extend({
     title: z.string().max(200),
     text: z.string().max(3000),
@@ -41,7 +43,9 @@ export type PlannerWorkingState = {
 const WorkingStateSchema = z.object({
   version: z.literal(1),
   // A theme is required for generation, but the local editor starts empty.
-  brief: PlannerBriefSchema.extend({ theme: z.string().trim().max(2000) }),
+  brief: PlannerBriefSchema.extend({ theme: z.string().trim().max(2000), referenceTemplate: CreativeTemplateSchema.safeExtend({
+    creativePrompt: z.string().max(6000), sceneDescription: z.string().max(4000), storyboardRules: z.string().max(6000),
+  }).optional() }),
   draftBrief: PlannerBriefSchema.nullable(),
   draft: EditableDraftSchema.nullable(),
   provider: z.enum(["ollama", "api"]),

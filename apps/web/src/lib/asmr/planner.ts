@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { AsmrProjectSchema, PositionSchema, type AsmrProject } from "./schema";
 import { EditableStoryboardSchema } from "./storyboard";
+import { CreativeTemplateSchema } from "./reference-template";
 
 export const PlannerBriefSchema = z.object({
   theme: z.string().trim().min(1).max(2000),
@@ -10,6 +11,7 @@ export const PlannerBriefSchema = z.object({
   role: z.string().trim().max(200).default(""),
   style: z.string().trim().min(1).max(200).default("温柔自然"),
   notes: z.string().trim().max(4000).default(""),
+  referenceTemplate: CreativeTemplateSchema.optional(),
 }).strict();
 
 export const PlannerSectionSchema = z.object({
@@ -30,7 +32,7 @@ export const PlannerSectionSchema = z.object({
 export const PlannerDraftSchema = z.object({
   segmentation: z.literal("semantic").optional(),
   title: z.string().trim().min(1).max(200),
-  scene: z.string().trim().min(1).max(2000),
+  scene: z.string().trim().min(1).max(4000),
   character: z.object({
     role: z.string().trim().min(1).max(200),
     personality: z.array(z.string().trim().min(1).max(120)).min(1).max(12),

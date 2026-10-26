@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { AsmrProject, TimelineClip } from "./schema";
 import { renderConciseH3Prompt } from "./h3-prompt";
+import { CreativeTemplateSchema, TemplateDirectionsSchema, getMatchingTemplateDirections } from "./reference-template";
 
 type VoiceClip = Extract<TimelineClip, { type: "voice" }>;
 const assetIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
@@ -49,6 +50,8 @@ export const ProjectVideoPlanSchema = z.object({
   sceneDescription: z.string().max(4000),
   shots: z.record(z.string().min(1).max(200), ClipVideoStoryboardSchema),
   referenceModes: z.record(z.string().min(1).max(200), StoryboardReferenceModeSchema).optional(),
+  referenceTemplate: CreativeTemplateSchema.optional(),
+  templateDirections: TemplateDirectionsSchema.optional(),
 }).strict().superRefine((plan, context) => {
   for (const [clipId, shot] of Object.entries(plan.shots)) {
     if (clipId !== shot.clipId) {
@@ -117,6 +120,9 @@ function sourceFingerprint(project: AsmrProject, clip: VoiceClip): string {
       : { asset: { assetId: clip.asset.asset_id, uri: clip.asset.uri, declaredDuration: clip.asset.duration } }),
     scene: project.scene, character: project.character,
     sceneDescription: effectiveSceneDescription(project),
+    ...(project.videoPlan?.referenceTemplate ? { referenceTemplate: project.videoPlan.referenceTemplate } : {}),
+    ...(getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text).length
+      ? { templateDirections: getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text) } : {}),
   });
 }
 

@@ -12,9 +12,20 @@ export const PlannerGeneratedDraftSchema = z.object({
     units: z.array(z.object({
       text: PlannerSectionSchema.shape.text,
       pauseAfter: PlannerSectionSchema.shape.pauseAfter,
+      direction: PlannerSectionSchema.shape.direction.optional(),
+      soundSuggestions: PlannerSectionSchema.shape.soundSuggestions.optional(),
     }).strict()).min(1).max(200),
   }).strict()).min(1).max(24),
 }).strict();
+
+/** Template writing promises a usable shot intention for every actual speech unit. */
+export const PlannerTemplateGeneratedDraftSchema = PlannerGeneratedDraftSchema.extend({
+  groups: z.array(PlannerGeneratedDraftSchema.shape.groups.element.extend({
+    units: z.array(PlannerGeneratedDraftSchema.shape.groups.element.shape.units.element.extend({
+      direction: PlannerSectionSchema.shape.direction.min(1),
+    })).min(1).max(200),
+  })).min(1).max(24),
+});
 
 export function expandPlannerGeneratedDraft(value: z.infer<typeof PlannerGeneratedDraftSchema>): PlannerDraft {
   let count = 0;
@@ -29,7 +40,7 @@ export function expandPlannerGeneratedDraft(value: z.infer<typeof PlannerGenerat
 // The same semantic and pause vocabulary used by the long-text voice planner.
 export const PLANNER_SEMANTIC_GUIDANCE = [
   "groups[].units 必须是按朗读顺序连续排列的语义短单元，不是章节或几大段。通常每个单元 2 至 3 个子句、约 10 至 50 字；一个完整动作确实不能分开时最多 4 个子句。",
-  "子句按逗号、句末标点等自然停顿划分，不是 2 至 3 个完整复句。比如‘回来啦。我还没睡，就猜你快到了。’是 3 个子句；后面的换鞋、挂外套、坐下应另起一个单元。",
+  "子句按逗号、句末标点等自然停顿划分，不是 2 至 3 个完整复句。统计当前原创台词的自然语义停顿；同一意思的短回应与接续说明可以保留在同一单元，转入下一个独立动作或话题时再分开。分段规则只指导结构，不提供任何固定开场、台词或剧情。",
   "同一动作或未完成的意思放在同一单元，完整意思结束或动作、场景、情绪自然转换时再分开；不要在每个逗号处机械拆分，也不要重复前后文。",
   "短句是较短的语义或语气台词单元，不限定为一个完整句子；一个单元可以包含多个句号，不按每个句号机械拆分。",
   "每个单元都将直接显示为一条可编辑台词并成为一个音频片段。全文串联必须自然完整，没有重复、缺句或大纲。",
