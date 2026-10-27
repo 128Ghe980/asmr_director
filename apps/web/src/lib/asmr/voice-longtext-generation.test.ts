@@ -874,6 +874,7 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(generate).toHaveBeenCalledOnce();
     expect(analyze).toHaveBeenCalledOnce();
     expect(generate.mock.calls[0][0].text).toBe(targets[retryGroupIndex].text);
+    expect(generate.mock.calls[0][1]?.rerollFromSeed).toBe(priorMetadata.groups[retryGroupIndex].seed);
     expect(analyze.mock.calls[0][0].expectedText).toBe(targets[retryGroupIndex].expectedText);
     expect(updated).toMatchObject({ baseCandidateId: original.candidateId, rerolledGroup: retryGroupIndex, analysisProvider: "rules" });
     for (const index of [0, 1, 2].filter((index) => index !== retryGroupIndex)) expect(updated.groups[index]).toEqual(priorMetadata.groups[index]);

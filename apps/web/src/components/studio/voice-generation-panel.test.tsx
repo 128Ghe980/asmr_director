@@ -888,6 +888,56 @@ describe("voice generation panel", () => {
     expect(within(control("参考模式")).queryByRole("option", { name: "参考音频＋文本" })).toBeNull();
   });
 
+  it("selects Japanese reference defaults from saved audio-only settings and shows each voice's parameters", () => {
+    const japaneseCatalog: VoiceProviderCatalog = { providers: [catalog.providers[0], {
+      ...catalog.providers[1], references: [...catalog.providers[1].references,
+        { id: "yukino_ja", label: "雪之下", language: "ja", referenceModes: ["reference_only", "with_reference_text"],
+          generationDefaults: { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed: 43 } },
+        { id: "yui_ja", label: "由比滨", language: "ja", referenceModes: ["reference_only", "with_reference_text"],
+          generationDefaults: { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed: 42 } },
+      ],
+    }] };
+    const saved: VoiceGenerationOptions = { provider: "voxcpm2", voicePackId: "normal_zh", referenceMode: "reference_only", generationMode: "clip" };
+    const input = props({ options: saved, catalog: japaneseCatalog });
+    const view = render(<VoiceGenerationPanel {...input} />);
+    expect(screen.getByRole("option", { name: "雪之下 · 日语" })).not.toBeNull();
+    expect(screen.getByRole("option", { name: "由比滨 · 日语" })).not.toBeNull();
+    expect(screen.queryByLabelText("当前参考参数")).toBeNull();
+
+    fireEvent.change(control("参考声音"), { target: { value: "yukino_ja" } });
+    const snow = { ...saved, voicePackId: "yukino_ja", referenceMode: "with_reference_text" as const };
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith(snow);
+    view.rerender(<VoiceGenerationPanel {...input} options={snow} />);
+    expect(control("参考模式").value).toBe("with_reference_text");
+    expect(screen.getByLabelText("当前参考参数").textContent).toBe("CFG 2.5 · 10 步 · 固定 Seed 43");
+
+    fireEvent.change(control("参考声音"), { target: { value: "yui_ja" } });
+    const yui = { ...snow, voicePackId: "yui_ja" };
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith(yui);
+    view.rerender(<VoiceGenerationPanel {...input} options={yui} />);
+    expect(screen.getByLabelText("当前参考参数").textContent).toBe("CFG 2.5 · 10 步 · 固定 Seed 42");
+
+    fireEvent.change(control("参考声音"), { target: { value: "normal_zh" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith(saved);
+    view.rerender(<VoiceGenerationPanel {...input} options={saved} />);
+    expect(screen.queryByLabelText("当前参考参数")).toBeNull();
+  });
+
+  it("honors a supported reference default mode without changing ordinary reference choices", () => {
+    const audioDefaultCatalog: VoiceProviderCatalog = { providers: [catalog.providers[0], {
+      ...catalog.providers[1], references: [...catalog.providers[1].references,
+        { id: "audio_default", label: "音频参考", referenceModes: ["reference_only", "with_reference_text"],
+          generationDefaults: { referenceMode: "reference_only", cfg: 2, timesteps: 10, seed: 42 } },
+      ],
+    }] };
+    const input = props({ options: { ...options, provider: "voxcpm2", voicePackId: "soft_zh" }, catalog: audioDefaultCatalog });
+    render(<VoiceGenerationPanel {...input} />);
+    fireEvent.change(control("参考声音"), { target: { value: "audio_default" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith({ ...input.options, voicePackId: "audio_default", referenceMode: "reference_only" });
+    fireEvent.change(control("参考声音"), { target: { value: "soft_zh" } });
+    expect(input.onOptionsChange).toHaveBeenLastCalledWith({ ...input.options, voicePackId: "soft_zh", referenceMode: "with_reference_text" });
+  });
+
   it("shows unavailable engines without letting the user select them", () => {
     const unavailable = { ...catalog.providers[1], available: false, references: [], defaultReferenceId: null, unavailableReason: "请检查 VoxCPM2 配置。" };
     render(<VoiceGenerationPanel {...props({ catalog: { providers: [catalog.providers[0], unavailable] } })} />);

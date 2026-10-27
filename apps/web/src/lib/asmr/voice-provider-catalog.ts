@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { loadVoicePack } from "./voice-pack";
-import { loadVoxCpm2Profile } from "./voxcpm2-profile";
+import { loadVoxCpm2Profile, type VoxCpm2ReferenceLanguage, type VoxCpm2ReferenceGenerationDefaults } from "./voxcpm2-profile";
 import { getVoiceAnalysisReadiness } from "./voice-group-analysis";
 import { getPlannerProviderCatalog } from "./planner-provider";
 
@@ -12,7 +12,8 @@ export type VoiceProviderCatalog = {
     label: string;
     available: boolean;
     defaultReferenceId: string | null;
-    references: { id: string; label: string; referenceModes: VoiceReferenceMode[]; audioUrl?: string; durationSeconds?: number }[];
+    references: { id: string; label: string; referenceModes: VoiceReferenceMode[]; audioUrl?: string; durationSeconds?: number;
+      language?: VoxCpm2ReferenceLanguage; generationDefaults?: VoxCpm2ReferenceGenerationDefaults }[];
     unavailableReason?: string;
     longText?: { available: boolean; reason?: string; apiConfigured: boolean };
   }[];
@@ -41,7 +42,8 @@ export async function getVoiceProviderCatalog(config: LocalRuntimeConfig): Promi
         longText: { available: true, apiConfigured,
           ...(!analysis.available ? { reason: "录音检查暂不可用，仍可生成并试听完整原音。" } : {}) },
         defaultReferenceId: vox.value.defaultReferenceId,
-        references: vox.value.references.map((ref) => ({ id: ref.id, label: ref.displayName, referenceModes: ref.promptText ? ["reference_only", "with_reference_text"] : ["reference_only"], audioUrl: `/api/voice-references/${encodeURIComponent(ref.id)}/audio`, ...(ref.durationSeconds ? { durationSeconds: ref.durationSeconds } : {}) })),
+        references: vox.value.references.map((ref) => ({ id: ref.id, label: ref.displayName, referenceModes: ref.promptText ? ["reference_only", "with_reference_text"] : ["reference_only"], audioUrl: `/api/voice-references/${encodeURIComponent(ref.id)}/audio`, ...(ref.durationSeconds ? { durationSeconds: ref.durationSeconds } : {}),
+          ...(ref.language ? { language: ref.language } : {}), ...(ref.generationDefaults ? { generationDefaults: ref.generationDefaults } : {}) })),
       } : {
         id: "voxcpm2", label: "VoxCPM2", available: false, defaultReferenceId: null,
         references: [], unavailableReason: "请检查本机 VoxCPM2 模型与参考声音配置。",

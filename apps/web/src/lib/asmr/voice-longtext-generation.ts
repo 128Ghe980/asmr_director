@@ -251,7 +251,8 @@ export async function generateVoiceLongText(input: LongTextInput, deps: Dependen
           let take: Awaited<ReturnType<typeof generateVoxCpm2>>;
           try {
             take = await (deps.generate ?? generateVoxCpm2)({ text: target.text, voicePackId: input.voicePackId,
-              referenceMode: input.referenceMode, config: input.config, signal, onRawOutput: publishRaw }, { runtimeSession });
+              referenceMode: input.referenceMode, config: input.config, signal, onRawOutput: publishRaw }, { runtimeSession,
+              ...(input.retryCandidate ? { rerollFromSeed: prior!.groups[index].seed } : {}) });
             // Publish before any recognition or content decision, including on cancellation.
             if (!rawSaved) await publishRaw(take.wav);
             await bestEffortRecord(`${prefix}-source.json`, { ...take.provenance, generationDurationMs: Date.now() - generationStarted });

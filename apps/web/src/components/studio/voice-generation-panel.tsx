@@ -67,8 +67,11 @@ const generationModeLabels = {
   long_text: "长文连续生成",
   paragraph: "整段生成后切分",
 } as const;
+const referenceLanguageLabels = { zh: "中文", en: "英语", ja: "日语", ko: "韩语" } as const;
 
 function preferredMode(reference: Reference): VoiceGenerationOptions["referenceMode"] {
+  const recommended = reference.generationDefaults?.referenceMode;
+  if (recommended && reference.referenceModes.includes(recommended)) return recommended;
   return reference.referenceModes.includes("with_reference_text")
     ? "with_reference_text"
     : "reference_only";
@@ -362,7 +365,7 @@ export function VoiceGenerationPanel({
       <span className="hidden flex-none @[28rem]/reference:inline">参考声音</span>
       <select aria-label="参考声音" className="h-8 w-full min-w-0 flex-1 rounded-lg border border-studio-line bg-black/20 px-2 py-1 text-xs text-studio-text outline-none focus:border-sky-300/50 disabled:opacity-50" value={options.voicePackId} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeReference(event.target.value)}>
         {!reference ? <option value={options.voicePackId} disabled>参考不可用</option> : null}
-        {provider?.references.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        {provider?.references.map((item) => <option key={item.id} value={item.id}>{item.label}{item.language ? ` · ${referenceLanguageLabels[item.language]}` : ""}</option>)}
       </select>
     </label>
     {reference?.audioUrl ? <div className="min-w-40 flex-[1.2_1_10rem]" title={`参考片段${reference.durationSeconds !== undefined ? ` · ${reference.durationSeconds.toFixed(1)} 秒` : ""}`}>
@@ -481,6 +484,9 @@ export function VoiceGenerationPanel({
               {reference ? reference.referenceModes.map((mode) => <option key={mode} value={mode}>{referenceModeLabels[mode]}</option>) : <option value={options.referenceMode}>参考不可用</option>}
             </select>
           </label>
+          {isVox && reference?.generationDefaults ? <p aria-label="当前参考参数" className="break-words text-xs leading-5 text-studio-muted sm:col-span-2">
+            CFG {reference.generationDefaults.cfg} · {reference.generationDefaults.timesteps} 步 · 固定 Seed {reference.generationDefaults.seed}
+          </p> : null}
           {isVox && !isParagraph ? <label className="block min-w-0 space-y-1.5 text-xs text-studio-muted">
             <span>生成方式</span>
             <select aria-label="生成方式" className={fieldClass} value={options.generationMode} disabled={settingsDisabled || !provider?.available} onChange={(event) => changeGenerationMode(event.target.value)}>

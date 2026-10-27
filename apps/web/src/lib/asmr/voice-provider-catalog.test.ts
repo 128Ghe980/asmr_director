@@ -18,9 +18,11 @@ describe("voice provider catalog", () => {
     await writeFile(path.join(root, "transcript.txt"), "你好。\n");
     const profilePath = path.join(root, "profile.json");
     const ref = { id: "soft", displayName: "温柔", audioPath: "reference.wav", promptTextPath: "transcript.txt", licenseStatus: "user_confirmed", consentConfirmedAt: "2026-07-01T00:00:00Z" };
-    await writeFile(profilePath, JSON.stringify({ version: 1, provider: "voxcpm2", cliPath: "private-cli.exe", baseModelPath: "base.gguf", acousticModelPath: "acoustic.gguf", defaultReferenceId: "soft", references: [ref, { ...ref, id: "normal", displayName: "普通", promptTextPath: null }] }));
+    const generationDefaults = { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed: 43 };
+    await writeFile(profilePath, JSON.stringify({ version: 1, provider: "voxcpm2", cliPath: "private-cli.exe", baseModelPath: "base.gguf", acousticModelPath: "acoustic.gguf", defaultReferenceId: "soft", references: [ref, { ...ref, id: "normal", displayName: "普通", promptTextPath: null }, { ...ref, id: "japanese", displayName: "日语参考", language: "ja", generationDefaults }] }));
     const catalog = await getVoiceProviderCatalog(getLocalRuntimeConfig({ ASMR_DIRECTOR_RUNTIME_ROOT: root, ASMR_VOXCPM2_PROFILE_PATH: profilePath }));
-    expect(catalog.providers[1]).toMatchObject({ id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft", longText: { available: true, reason: expect.stringContaining("仍可生成") }, references: [{ id: "soft", label: "温柔", referenceModes: ["reference_only", "with_reference_text"] }, { id: "normal", label: "普通", referenceModes: ["reference_only"] }] });
+    expect(catalog.providers[1]).toMatchObject({ id: "voxcpm2", label: "VoxCPM2", available: true, defaultReferenceId: "soft", longText: { available: true, reason: expect.stringContaining("仍可生成") }, references: [{ id: "soft", label: "温柔", referenceModes: ["reference_only", "with_reference_text"] }, { id: "normal", label: "普通", referenceModes: ["reference_only"] }, { id: "japanese", language: "ja", generationDefaults }] });
+    expect(catalog.providers[1].references[0]).not.toHaveProperty("generationDefaults");
     expect(JSON.stringify(catalog)).not.toContain(root);
     expect(JSON.stringify(catalog)).not.toContain("private-cli");
     expect(JSON.stringify(catalog)).not.toContain("你好");

@@ -31,6 +31,30 @@ describe("VoxCPM2 profile", () => {
     await writeFile(manifestPath, JSON.stringify({ ...manifest, references: [{ ...manifest.references[0], promptTextPath: null }] }));
     expect((await loadVoxCpm2Profile(manifestPath)).references[0].promptText).toBeNull();
   });
+  it("loads per-reference Japanese presets and preserves their exact natural transcript", async () => {
+    const { root, manifest, manifestPath } = await fixture();
+    const text = "はい。温かいお茶、どうぞ！";
+    const generationDefaults = { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed: 43 };
+    await writeFile(path.join(root, "soft.txt"), `${text}\n`);
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, references: [{ ...manifest.references[0], language: "ja", generationDefaults }] }));
+    expect((await loadVoxCpm2Profile(manifestPath)).references[0]).toMatchObject({ language: "ja", generationDefaults, promptText: text });
+  });
+  it("rejects unsafe presets and transcript-dependent defaults without a usable transcript", async () => {
+    const { root, manifest, manifestPath } = await fixture();
+    const defaults = { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed: 43 };
+    for (const change of [
+      { language: "jp" }, { generationDefaults: { ...defaults, cfg: 3.1 } },
+      { generationDefaults: { ...defaults, timesteps: 3 } }, { generationDefaults: { ...defaults, timesteps: 10.5 } },
+      { generationDefaults: { ...defaults, seed: 0 } }, { generationDefaults: { ...defaults, extra: true } },
+      { generationDefaults: defaults, promptTextPath: null },
+    ]) {
+      await writeFile(manifestPath, JSON.stringify({ ...manifest, references: [{ ...manifest.references[0], ...change }] }));
+      await expect(loadVoxCpm2Profile(manifestPath)).rejects.toThrow("VoxCPM2 配置不可用");
+    }
+    await writeFile(path.join(root, "soft.txt"), " \n");
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, references: [{ ...manifest.references[0], language: "ja", generationDefaults: defaults }] }));
+    await expect(loadVoxCpm2Profile(manifestPath)).rejects.toThrow("VoxCPM2 配置不可用");
+  });
   it("rejects duplicate, unauthorized, missing runtime and malformed profiles with safe errors", async () => {
     const { manifest, manifestPath } = await fixture();
     for (const invalid of [

@@ -1,10 +1,132 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-10-26
+Last updated: 2026-10-28
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-10-26 / 参考模板版本发布交接
+## Current update — 2026-10-28 / 日语参考正式入库与发布交接
+
+用户最终认为中文CFG2／20仍不像，暂停本轮相似度实验；明确要求两参考加入系统、标日语、加日语原文并保存较优参数，再记录推送交接。两条已入库并上线：雪之下`user-fe1e360f-9ef2-4451-9272-d666c31f4936`，完整25.10秒已测减6dB参考、seed43；由比滨`user-fdd0148d-b85c-432c-b36e-fd926ffe3cae`，02完整20.2188秒gain1、seed42。均language ja／with_reference_text／CFG2.5／10；正式音频与日语原文在`I:/AI/asmr_director/runtime/voice-references/<id>/`，字节／标点保持。旧5参考和default soft_zh不变。活动profile沿用既有D盘runtime配置路径，本次不迁移；新音频均在I盘项目根。
+
+产品新增可选参考语言／参数预设，选中默认combined、更多设置显示固定Seed；日语原文保留标点。实际native双音频＋原文参数与CFG／步数／seed应用正确，其他参考保持原CFG2／10随机行为；明确long_text分组重抽换Seed，普通预设调用固定可复现。121后端＋69组件测试、10文件lint、13实验工具测试、隔离构建含TypeScript及实际服务HTTP核验通过。未新增TTS／ASR／浏览器工程操作。日语长文自动识别切分仍未扩展／实测，不能当完整多语言分析支持；中文仅音频虽发音正常但相似度未通过，带日文原文中文会跑偏，今后按用户目标语言区分使用。
+
+服务3001 build `2p3tAp4OKdM1Lj_p3Z7_A`，隔离源码`.local/releases/japanese-reference-presets/apps/web`，canonical start脚本已指向它；启动时旧服务本就未运行。7参考目录／两新WAV／首页＋7JS1CSS实际核对通过。QA `I:/AI/asmr_director/qa/handoff/2026-10-28/japanese-references/`，看registration、backend/UI验证、build、activation、service-verification及最终publication.json。分支`codex/voxcpm2-product-generation`，实际commit／push状态以Git和publication回执为准。28范围外spatial等修改保留不混入；backend-test-temp清理被自动审批拒绝仅返回blocked by policy，保留不绕过。AudioQualityV1继续／SFX暂停／H3待办保持。[完整发布交接](records/2026-10-28-japanese-reference-presets-handoff.md)。
+
+## Earlier update — 2026-10-28 / 仅参考音频中文CFG2／20对照
+
+用户已听CFG2.5／10仅音频版，反馈中文正常、两角色音色仍不太像，要求参考音量／seed／同两句不变、仍不加原文，改CFG2／20。已完成4新GPU，严格只改cfg和timesteps；完整16k参考保持，雪25.10秒减6dB分支seed43、由比滨02完整20.22秒gain1 seed42。新时长雪rest3.52／Yui rest3.36／雪comfort5.76／Yui comfort4.80秒；4条zh ASR去标点均对应，音色改善待听。实际reference_only无prompt、20步8962图及源／模型身份独立验证通过；reference ID保留旧字样不代表真实CFG。
+
+雪rest首次低于1.5GiB实时保护中止无WAV，按本会话既有授权只临时退出5个精确NVIDIA Overlay进程后，同配置take002成功；其余take001，无质量重抽，失败和resource-recovery证据保留。成功GPU最低提交余量1.709～2.127GiB，ASR2.204GiB；保护保持50ms／1.5GiB，模型退出、锁释放。初审仅历史graph对象／数组读取差异，核定旧20步同为8962后修正审计，初报告保留，不是运行参数错误。
+
+新8卡对照页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/chinese-reference-only-cfg2-step20/index.html`，4组按角色／句子并排旧2.5／10和新2／20；旧4条raw／listen精确直接引用，新4约−23LUFS静态增益，原生保留，完整参考折叠。22链接／137旧资产／独立交付通过。QA followup-2026-10-27/chinese-reference-only-cfg2-step20，selection指定雪rest take002，读execution-summary／resource-recovery／generation-verification／generated-asr／package及两delivery验证。未改系统永久设置／生产profile、未开浏览器／部署提交。AudioQualityV1继续／SFX暂停／H3待办保持。[CFG2／20记录](records/2026-10-28-chinese-reference-only-cfg2-step20.md)。
+
+## Earlier update — 2026-10-28 / 中文纠正为仅参考音频
+
+**用户明确中文生成不加原文；上一批combined是agent误解，不是用户选择。后续中文默认reference_only，不能把日语实验的combined设置继续带入。** 已按同两句／完整16k参考／gain／seed／CFG2.5和10步重做4条，实际删除promptText且argv无prompt-wav／prompt-text、日志无prompt分支。雪25.10秒减6dB分支seed43，由比滨02完整20.22秒gain1 seed42保持。
+
+4条均take001成功：雪rest3.68秒、Yui rest3.36秒、雪comfort5.76秒、Yui comfort5.28秒；全部zh ASR去标点后精确匹配目标，content_review_needed=false，不等于音色通过。GPU最低提交余量2.218～2.474GiB、ASR2.275GiB，无保护中止／重试／CPU TTS，锁已释放。真实no-prompt命令、参数、输入及模型身份独立审核通过；仅音频日志的参考patch157／127来自PCM及native公式核定，不是combined分支打印值。
+
+新页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/chinese-reference-only-cfg2p5-step10/index.html`，4卡按句对比、参考折叠、约−23LUFS静态试听／raw；14链接、128旧资产、固定增益及独立交付校验通过。QA followup-2026-10-27/chinese-reference-only-cfg2p5-step10，入口selection／execution-summary／generation-verification／generated-asr／package及两delivery验证；旧combined页保留错误方法历史。未退出应用／Overlay、打开浏览器、修改系统生产／部署提交。AudioQualityV1继续／SFX暂停／H3待办保持。[仅参考音频记录](records/2026-10-28-chinese-reference-only-cfg2p5-step10.md)。
+
+## Earlier update — 2026-10-28 / 误用combined的中文批
+
+下面combined批是agent误解；已按上方仅参考音频批纠正，不能作为用户认可中文方式。
+
+用户暂不继续低声区诊断，要求雪之下和由比滨用新参数生成两句中文；已完成每角色同2句，共4条。沿用combined／日语原文／完整预转16k参考；雪25.10秒减6dB分支seed43，由比滨02完整20.22秒gain1 seed42，CFG2.5／10，其余保持。雪rest4.32秒、Yui rest3.68秒、雪comfort6.08秒、Yui comfort4.96秒；雪comfort take001低于1.5GiB实时保护被终止无WAV，同配置take002成功，初次失败证据保留，无质量重抽。其余take001；成功最低提交余量1.900～2.452GiB，zh ASR2.241GiB，锁释放，无残留Vox。
+
+中文ASR仅雪rest与目标一致，其余3条明显偏离，content_review_needed=true；强制zh不能判定具体混语或音色，不记为跨语言问题已解决。真实参数／10步／雪157和Yui127双路patch／源及模型身份独立技术核验通过。交付 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/chinese-cfg2p5-step10/index.html`：4卡按句对比，完整参考折叠，约−23LUFS静态试听及raw下载；14链接／119旧资产及独立固定增益校验通过。QA followup-2026-10-27/chinese-cfg2p5-step10，恢复看selection.json（雪第二句take002）、execution-summary、generation-verification、generated-asr、package／delivery／independent-delivery-verification。未关应用／开浏览器、未改系统生产／部署提交。AudioQualityV1继续／SFX暂停／H3待办保持。[中文试听记录](records/2026-10-28-chinese-cfg2p5-step10.md)。
+
+## Earlier update — 2026-10-28 / 由比滨低声区反馈
+
+用户听完五句认为“还行吧，算是像了”，明确剩余问题是“声音往下落、低声说话时不够像”。基本声线认可，低声区还原未通过。只读频段／F0分析完成：44.1k→16k参考80–1000Hz功率差约0.00003dB；试听仅静态增益，无低切。生成无统一低频或低F0缺失，关心／安慰可靠帧音高中位数360／342Hz，参考417Hz；不同文案、可靠覆盖25–47%及气声弃权限制，不能否定低声区音色问题或定位根因。建议下一步同一句原对白对照，仍保持完整02参考／预转16k／gain1／seed42／CFG2.5／10；尚未生成该对照，未做EQ或整体降调。本轮无模型调用、音频修改／浏览器／系统／部署／提交变化。QA followup-2026-10-27/yui-low-register含low-band-analysis、low-band-source-transfer、pitch-analysis及7帧CSV，源哈希保持。[诊断记录](records/2026-10-28-yui-low-register.md)。AudioQualityV1继续／SFX暂停／H3待办保持。
+
+## Earlier update — 2026-10-28 / 由比滨02参考五组新句
+
+用户认为02“稍微更像了一点”，要求再生成几个句子；不记为相似度全面通过。已用同一完整02参考（20.22秒、预转16k、增益0dB）及原文，固定seed42／CFG2.5／10／combined，只换5个日文目标：打招呼／邀约／关心／害羞回应／安慰，未加情绪标签。5新GPU均成功、无削波，时长5.12／6.72／8.00／6.24／8.16秒，实际参数／两路127patch／动态texttokens／模型身份与全部资产核验通过。
+
+初轮ASR中greeting漏识别「あ」「待ってたよ」；对同WAV仅关闭VAD复核后全文恢复，除标点与target完全同，独立补充核验通过，原音频／初轮ASR及初审content_review_needed标记都保留。其他4条仅标点或よければ／良ければ、ふう／風正字差异。恢复时须同时看greeting-content-check/verification.json，不能仅凭旧初审标记重新生成。
+
+新页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/yui-reference-02-sentences/index.html`：5条附日文／中文含义，旧8.64秒段落与参考折叠，约−23LUFS静态试听和原生下载；16链接／108旧资产保持。QA复用followup-2026-10-27/yui-reference-02-sentences，入口design／5guarded／preparation-verification／generation-verification／generated-asr／greeting-content-check复核／package及delivery验证；master只任务索引不可执行。5TTS最低提交余量2.191～2.448GiB，批ASR2.150、复核2.146，无保护中止，锁释放。未改生产或系统、未重开浏览器、无CPU TTS回退／重抽／提交推送。AudioQualityV1继续／SFX暂停／H3待办保持。[记录](records/2026-10-28-yui-reference-02-sentences.md)。
+
+## Earlier update — 2026-10-28 / 由比滨新参考02，恢复提前16kHz
+
+用户确认Yui直接44.1kHz也更差，两角色后续都恢复提前16kHz转换。新输入 `H:/comfyui/output/sd2素材/干音/由比滨25s-02.MP3` 实际完整20.2187755秒／891648帧44100stereo，模型输入完整323501帧16kmonoPCM16；未按25s裁补、两分支gain1.0，不叠旧+3／+6。新后半对白与旧版不同，已做fresh source ASR并仅加标点构建prompt（保留かもしんない），词句比对和独立prepare核验通过。
+
+固定seed42／CFG2.5／10／combined／同一日文目标，1新GPU输出8.64秒／exit0／零削波，真实两路127patch及参数／CLI模型profile身份核对通过；generated ASR仅标点缺省与温かい／暖かい写法差异。新页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/yui-reference-02/index.html` 与旧原参考9.28秒精确复用对照，约−23LUFS试听，保留新原品质预听／实际输入／新原文，另链接旧增益页；10链接、103旧资产保持。新旧参考内容、时长及本身电平有变化，不能称单音量变量实验；听感待用户。
+
+QA复用followup-2026-10-27/yui-reference-02，入口preparation、source-asr、design、guarded清单、preparation-verification、prompt-verification、generation-verification及package／delivery验证。sourceASR／TTS／generatedASR最低提交余量2.128／2.357／2.116GiB，无保护中止，锁释放；无CPU TTS回退、系统生产设置／浏览器变化或提交推送。AudioQualityV1继续／SFX暂停／H3待办保持。[记录](records/2026-10-28-yui-reference-02.md)。
+
+## Earlier update — 2026-10-28 / 由比滨三档44.1kHz直接输入对照
+
+雪之下直接44.1kHz输入已收到用户“明显更差”反馈，不再记为未听／改善。用户要求由比滨做同样对照，并明确回复原音量／+3／+6三档都比较。已完成3新GPU，固定seed42／CFG2.5／10／combined／完整23.823673秒，参考各档增益与对应旧版一致；真实44.1k mono PCM16输入、内部16k编码。新原／+3／+6为8.64／9.44／9.44秒，复用旧9.28／9.44／9.44秒。原源与旧16k三档逐字节复现、固定参数和模型身份、两路149patch及实际10步均独立核验通过。3新ASR仅标点与温かい／暖かい同音字差异；零削波，主观听感待用户。
+
+新页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/yui-direct-44100/index.html`，三组6卡等响约−23LUFS，原生与实际参考保留；20链接／93旧资产SHA保持。QA复用followup-2026-10-27下yui-direct-44100（实际日期2026-10-28），入口preparation／design／preparation-verification／generation-verification／generated-asr／package与delivery验证。3TTS最低提交余量2.228／2.205／2.205GiB，ASR2.134GiB，无保护中止、锁释放。没有CPU TTS回退、系统／生产／浏览器变化或提交推送。AudioQualityV1继续／SFX暂停／H3待办保持。[记录](records/2026-10-28-yui-direct-44100.md)。
+
+## Earlier update — 2026-10-28 / 雪之下44.1kHz直接输入对照
+
+用户明确要求直接44.1kHz参考生成，与提前16kHz版对照，CFG2.5／10、参考增益、seed和其他参数不变。已完成1新GPU：同源完整25.10秒mono PCM16、seed43／combined，保留模型分支初始−1.070002dB再−6dB（未误用预听−1.6063dB分支）。新10.24秒／exit0／零削波，复用参数轮yukino-cfg2p5-step10旧10.56秒。真实日志验证两路44.1k输入、内部16k编码、157／157patch与10步4462节点；ASR仅温かい／暖かい同音写法差异。准备逐样本重建与生成独立核验均通过；这是内外重采样方法及量化顺序对照，不声称模型接受44.1k全带宽编码。
+
+新页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/yukino-direct-44100/index.html`，两条约−23LUFS静态增益试听，原生／实际输入保留，8链接、89旧资产SHA保持；听感待用户。QA复用followup-2026-10-27下yukino-direct-44100，实际执行日期2026-10-28；入口preparation／design／preparation-verification／generation-verification／generated-asr／package及delivery验证。生成／ASR最低提交余量2.573／2.135GiB，无保护中止，锁释放。未改生产或系统、未重开浏览器、无CPU TTS回退或提交推送。AudioQualityV1继续／SFX暂停／H3待办保持。[记录](records/2026-10-28-yukino-direct-44100.md)。
+
+## Earlier update — 2026-10-27 / 由比滨参考增益与输入清晰度
+
+2026-10-28反馈：由比滨提高参考音量仅小幅改善、语调更自然，仍不像；用户可能重做参考，未指定+3或+6获选。保留两档，不自动设最终增益或继续生成。16k澄清：官方加载时会自动转编码采样率和mono，当前native也有内部重采样；我们提前用FFmpeg转换后，native同采样率直通，并非官方只推荐16k而本可全带宽编码。本次仅核对代码与更新反馈，详见本轮记录追加。
+
+用户已选反馈：雪CFG2.5／10及2／20明显更好，Yui2.5／10稍好仍不像；不要再把参数轮记为未听。按要求固定Yui完整23.82367秒、combined／seed42／CFG2.5／10，加3／6dB各新生成9.44秒，复用原电平9.28秒基准。两新GPU成功、ASR只温かい／暖かい同音差异；参考和结果零削波，原MP3与旧资产保持。+6dB参考RMS−19.451dBFS，接近雪减6参考−19.74；相似度仍待本轮听感，未改产品默认。
+
+新页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/input-clarity/index.html`：三档生成等响，折叠雪44.1 stereo／44.1 mono／16k mono全长等响诊断。15链接、77旧资产SHA与静态增益核验通过。诊断可逐样本复现实际输入，无重复衰减／多余EQ降噪／错误引用；mono损失仅0.009dB，0–7kHz基本不变，原参考活跃帧8k以上能量约4.90%被16k转换舍弃，7.5–8k为抗混叠过渡带。官方与native编码固定16k、输出48k：不能通过改文件采样率恢复高频，当前未解决这部分糊感，也未证明它是相似度不足全部原因。用户允许不能解决则说明，由用户手动处理后再试；没有伪称修复并新跑雪。
+
+QA仍followup-2026-10-27下input-clarity，入口yui-gain-preparation／design、diagnosis、generation-verification、generated-asr、package／delivery-verification。两生成最低提交余量2.256／2.431GiB、ASR2.209GiB，沿用已授权低启动线与50ms／1.5GiB运行保护，无中止；共享锁释放。没有CPU TTS回退、系统改动、浏览器重开、应用部署或提交推送。AudioQualityV1继续／SFX暂停／H3待办保持。[本轮记录](records/2026-10-27-reference-gain-input-clarity.md)。
+
+## Earlier update — 2026-10-27 / CFG 与10／20步对照
+
+用户反馈：由比滨23秒质量上升但不像，雪重抽重音较好，参考减6dB噪感明显改善。按要求完成每人物CFG2／10基准、1.5／10、2.5／10、2／20四档：雪固定减6dB完整25.10秒参考+seed43（组合基准全新），Yui固定完整23.82367秒+seed42（9.60秒旧基准直接复用）。7新GPU全成功、无削波／保护中止；7新ASR内容对应，仅同音字和标点差异，重音／音质／相似度待用户选。雪低CFG输出12.96秒，其他大多9–11秒，ASR未见漏字重复。
+
+新页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/parameter-sweep/index.html`，8档均约−23LUFS且保留原生；23链接、62旧资产SHA保持。QA仍followup-2026-10-27下parameter-sweep，入口design／manifest／generation-verification／ASR／package和delivery验证。运行器已接可选timesteps整数4–30默认10，并进入请求hash和真实CLI，--steps600保持；10runner+3guard测试、只读审阅通过。实际20步图已核实，无产品参数默认值变更、系统改动、部署或提交推送。[本轮记录](records/2026-10-27-cfg-timesteps-listening.md)。AudioQualityV1继续／SFX暂停／H3待办保持。
+
+## Earlier update — 2026-10-27 / 新由比滨与雪之下参考调整
+
+用户确认雪之下25秒更像，但重音异常，三档讲话尤其si/tsh有噪声感。按要求完整使用新 `H:/comfyui/output/sd2素材/干音/由比滨25s.MP3`（实际23.82367秒，未裁切），并做雪之下25.10秒只换seed43、参考−6dB、参考4kHz高架−3dB三版，后两seed42；均combined／同日文／CFG2／10步。4新GPU均成功，输出9.60／9.92／10.72／10.08秒，ASR内容对应，零削波／无保护中止。参考处理独立、不补偿／不叠加，生成试听只固定增益匹配，不能把ASR通过说成重音／音质改善。
+
+新六条对照页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/reference-refinement/index.html`，保留旧雪25.1seed42与旧Yui12.64combined。QA在followup-2026-10-27/reference-refinement：preparation、variants、manifest、generation-verification、ASR、package/delivery验证。雪参考比旧Yui响约11dB且讲话高频占比更高，但等响后静段高频残余几乎相同，不能判定为持续底噪；具体根因未定位，听感待用户。seed43对照不能单独证明重音来源。新Yui与原输入保持、无CPU／系统设置／应用部署／提交推送。[本轮记录](records/2026-10-27-reference-refinement-listening.md)。AudioQualityV1继续／SFX暂停／H3待办保持。
+
+## Earlier update — 2026-10-27 / 雪之下17.30／25.10秒长参考
+
+用户已听日语四条：仅音频不像，加原文稍好但仍不算像；不要继续记为待初次反馈或验收通过。按要求把雪之下原开头6.85秒连续扩至17.30／25.10秒，原浮点前缀一致／静音结束、无拼接降噪，由比滨不动。源ASR恢复标点并统一共同前缀，保留ASR未人工核准边界。固定combined／seed42／CFG2／10步／同日文，新增两次GPU均成功，输出均10.08秒零削波；生成ASR对应内容、仅同音字和标点差异，相似度待用户听。
+
+新对照页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/yukino-length/index.html`，旧6.85combined直接复用；QA在followup-2026-10-27/yukino-length。官方推荐5–30秒，产品导入上限30秒；native无30秒截断，但prefill≤1024、low-vram总序列4096且内存有约束，不能声称模型任意长。本机当前实测25.10秒可跑，极限未知。后续可选更代表声线的干净片段／准原文、固定参考后小参数对照、官方实现基线，再考虑LoRA或GPT-SoVITS对照，均未擅自启动。[最新记录与来源](records/2026-10-27-japanese-output-control.md)。沿用已授权低启动线及1.5GiB运行保护；无系统改动、应用部署或提交推送，AudioQualityV1／SFX／H3状态不变。
+
+## Earlier update — 2026-10-27 / 日语四条对照与官方跨语言说明
+
+用户否定第二轮中文：combined 发音不像中文也不像日语，reference-only 音色仍不像。按要求改生成同一段日文，两角色各两模式，共 4 条 GPU 成功，均 take001／seed42／CFG2、零削波；由比滨仍是完整 12.64325 秒干音。日语 ASR 四条均对应文案，仅标点和同音「温かい／暖かい」差异，相似度待用户听。新独立页 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/japanese/index.html`，原中文页与27项资产保持；静态增益试听约−23LUFS，原生 WAV 保留，未重开浏览器。
+
+官方模型卡支持日语／中文、无语言标签；官方仓库 issue321 贡献者解释 Ultimate 会迁移原口音，跨语言若重视目标语言发音建议普通克隆。这不是本地严重乱码的完整根因结论；native 日志文本无乱码，tokenizer 与官方有实现差异，尚无逐token／官方PyTorch基线。用户授权临时退出 NVIDIA Overlay（随后已自动重启）及不等启动线：新增 `--allow-low-start` 仅本次启动检查改1.5GiB，默认5.75GiB及50ms／1.5GiB运行保护保持；四生成和ASR未触发保护，无CPU／系统设置修改。QA仍在 followup-2026-10-27，入口 `japanese-generation-verification.json`、`japanese-generated-asr.json`、`japanese-delivery-verification.json`。[完整结果与官方来源](records/2026-10-27-japanese-output-control.md)。AudioQualityV1继续、SFX暂停，H3待办保持，无提交推送。
+
+## Earlier update — 2026-10-27 / 完整 MP3 的 GPU 对照已交付
+
+系统恢复后已成功完成 4 条新中文：雪之下／由比滨各 reference-only 与真正 combined，同短句、seed42、CFG2。由比滨全部使用用户处理好的完整 12.64325 秒 MP3，绝不再裁短；雪之下仍用原 6.85 秒内容，修正满幅安全和原品质预览。4 条全部 48 kHz mono PCM16、零削波，无步数封顶；两条仅音频 ASR 逐字匹配，两条 combined 识别偏差较大，页面提示重点听中文发音，不能据此宣称相似度更好。原试听页已更新四条中文和 44.1 kHz stereo 参考，旧轮折叠保留「都不像」反馈。
+
+先前无保护运行最低提交余量 5 MiB，用户报告卡死；恢复后必须用 `tools/voxcpm2-runtime/guard_reference_listening.py`，单条串行、50 ms 观测、低于 1.5 GiB 通过持有 handle 停本次进程。启动门槛按首次成功数据由 6 校准至 5.75 GiB，运行阈值不变；四成功最低余量约 2.22–2.28 GiB，guard 均未触发。ASR 同样保护，无 CPU TTS、系统分页设置修改或服务重启。7 运行器／3 保护测试通过；native 锁已释放，不保证所有瞬时资源突增都可拦住。
+
+QA：`I:/AI/asmr_director/qa/reference-tests/japanese-crosslingual-2026-10-26/followup-2026-10-27/`；恢复入口 `round2-generation-verification.json`、`round2-package-receipt.json`、`round2-delivery-verification.json` 与 `generated-asr.json`。交付仍 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/index.html`，未重开用户浏览器；尚待用户主观试听。CLI/模型/profile、用户源、12旧音频资产保持。旧模式结论已纠正：7月混语 B 是 continuation-only，不是真正 combined。详细失败与成功过程见[本轮记录](records/2026-10-26-japanese-reference-chinese-listening.md)。Audio Quality V1继续、SFX暂停，H3待办保持；未提交推送。
+
+## Earlier update — 2026-10-27 / 日语参考反馈与完整 MP3
+
+用户已听首轮，明确雪之下与由比滨「都不像」；不再记为待初次反馈。旧雪之下参考播放器用 16 kHz mono 模型输入并减 11.88 dB，已准备原采样率 44.1 kHz stereo 预览与等响度对照；旧 PCM 与对应解码逐采样相同，无错位或相位抵消证据，不能把音色不似全部归因预览。由比滨替换为用户已处理的完整 `H:/comfyui/output/sd2素材/干音/由比滨.MP3`（12.64325 秒）；用户明确禁止再裁短，3.2–9.4 秒方案撤回，当前 comparison-manifest 使用完整参考和对应全段日语原文。
+
+用户已保存关闭剪映、之后关闭浏览器，要求继续 GPU；CPU 实验取消，实际 CPU 调用 0。当前新增中文仍无成功，完整 MP3 与旧长度雪之下均在原生 cuBLAS 初始化失败，需看 `followup-2026-10-27/comparison-generation/` 的不可变 take/receipt，不能把准备好的参考当作生成成功。无模型独立 CUDA11.6 cuBLAS probe 成功；加载后压力仍待具体观测，C 盘约 1.1 GiB 空闲是线索。生产 profile/CLI/权重保持，不改系统分页文件、不关闭其他应用、不重启服务。
+
+后续 take-002 已取得 112 个 50 ms 样本：全局提交余量最低 **5 MiB**、同点物理可用约 3.6 GiB、native private 峰值 5.715 GiB，7.042 秒 cuBLAS 失败且无 WAV；这是系统提交压力的强证据，未测 GPU 瞬时峰值。用户报告系统卡死，恢复后要求继续；恢复观测为 C 盘 8.6 GiB、可新增提交约 6.6 GiB。后续 GPU 必须使用主动内存保护，不得再次无保护重试。证据 `full-yui-gpu-take002-resources/summary.json` 与 `guarded-retry-after-freeze.json`；原生和两种锁已释放。
+
+本轮模式证据纠正：7 月 27 日混语 B 实为 continuation-only（reference_path 为空），不是同时传 `-r` 与 prompt 的 combined。拟做 reference-only/真正 combined 对照；运行器已支持并正确停止 fatal CUDA，7 测试通过。QA 根仍首轮路径，下设 `followup-2026-10-27/`；完整状态见[记录追加](records/2026-10-26-japanese-reference-chinese-listening.md)。试听包 `round2/` 已准备高品质参考，首页发布与生成结果要查最新打包回执，禁止臆称新音频通过。Audio Quality V1 继续、SFX 暂停，原 H3 待办保留。
+
+## Previous update — 2026-10-26 / 日语干音生成中文试听
+
+按用户指定「160 雪之下、192 由比滨」完成首轮跨语言试听生成：原 MP4 就地只读，各取开头 6.85 秒／6.5 秒日语片段，以 reference-only、同一 seed 42 各生成一条短句和一条长段。4 次真实 VoxCPM2 全部 exit0，输出 48 kHz 单声道 PCM16，无削波或步数封顶；另做两段源音频开头 60 秒日语 ASR 和四条生成结果中文 ASR，日语文本没有传给 TTS。3 条去标点逐字匹配，由比滨长段的「调暗」识别为同音「条按」（字符相似度 97.65%），不据此认定实际误读。音色相似度、自然度及口音仍待用户试听。
+
+参考永久保留于 `I:/AI/asmr_director/runtime/voice-references/japanese-characters/`；QA 根 `I:/AI/asmr_director/qa/reference-tests/japanese-crosslingual-2026-10-26/`，从 `verification.json` 和四份 `receipt.json` 恢复。两角色原音量约差 17 dB，试听包已保留 raw 并提供约 -23 LUFS 的静态增益 listen 版，交付目录 `I:/AI/asmr_director/artifacts/voice-listening/japanese-160-192/`；打包状态与具体验证见[本轮记录](records/2026-10-26-japanese-reference-chinese-listening.md)。可复用运行器 `tools/voxcpm2-runtime/run_reference_listening.py`，占用生产共享锁、串行执行、保留每条参数与 SHA 收据，锁已释放。原 MP4 与生产 profile 哈希保持，未注册新参考到 profile，未改应用／服务、未部署或提交推送。Audio Quality V1 进行中、其他 SFX 暂停，原目标机 H3 实跑待办保留。
+
+## Previous update — 2026-10-26 / 参考模板版本发布交接
 
 本次将参考模板、逐段分镜信息传递、重复开场和界面修复作为一版发布到 `codex/voxcpm2-product-generation`。当前状态以本节和[发布交接记录](records/2026-10-26-reference-template-handoff.md)为准；下面各阶段的「未提交推送」、旧 build 和旧进程号均为历史快照。提交及远端回执：`I:/AI/asmr_director/qa/reference-templates/2026-10-26/publication/publication.json`。
 

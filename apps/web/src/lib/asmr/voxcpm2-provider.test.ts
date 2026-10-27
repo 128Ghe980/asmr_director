@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { createHash } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 import { mkdtemp, mkdir, open, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,11 @@ import { generateVoxCpm2, type VoxCpm2Spawn } from "./voxcpm2-provider";
 import { withVoxCpm2RuntimeSession } from "./voxcpm2-runtime-session";
 import { getVoiceGenerationRoot } from "./voice-generation-recordings";
 import type { NativeResourceObserver, NativeResourceSummary } from "./native-resource-observer";
+
+vi.mock("node:crypto", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:crypto")>();
+  return { ...original, randomInt: vi.fn(original.randomInt) };
+});
 
 async function failureDiagnostics(input: Awaited<ReturnType<typeof fixture>>["input"]) {
   const directory = path.join(getVoiceGenerationRoot(input.config), "diagnostics");
@@ -133,6 +138,66 @@ describe("VoxCPM2 native provider", () => {
       expect(args[args.indexOf("-r") + 1]).toBe(args[args.indexOf("--prompt-wav") + 1]);
       expect(args[args.indexOf("--prompt-text") + 1]).toBe("欢迎光临 请慢慢放松 ");
     }) });
+  });
+  it.each([43, 42])("uses a Japanese reference's exact prompt, CFG and fixed seed %i without changing legacy voices", async (seed) => {
+    const { input, output, root } = await fixture();
+    const profilePath = path.join(root, "profile.json");
+    const profile = JSON.parse(await readFile(profilePath, "utf8"));
+    profile.references[0].language = "ja";
+    profile.references[0].generationDefaults = { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed };
+    const transcript = "はい。温かいお茶を用意したよ。";
+    await writeFile(path.join(root, "transcript.txt"), `${transcript}\n`);
+    await writeFile(profilePath, JSON.stringify(profile));
+    const spawnImpl = successfulSpawn(output, (args) => {
+      expect(args[args.indexOf("-r") + 1]).toBe(args[args.indexOf("--prompt-wav") + 1]);
+      expect(args[args.indexOf("--prompt-text") + 1]).toBe(transcript);
+      expect(args[args.indexOf("--seed") + 1]).toBe(String(seed));
+      expect(args[args.indexOf("--cfg") + 1]).toBe("2.5");
+      expect(args[args.indexOf("--timesteps") + 1]).toBe("10");
+      expect(args[args.indexOf("-t") + 1]).toBe("今日はゆっくり休んでね。");
+    });
+    const request = { ...input, text: "今日はゆっくり休んでね。", referenceMode: "with_reference_text" as const };
+    const first = await generateVoxCpm2(request, { spawnImpl });
+    const repeated = await generateVoxCpm2(request, { spawnImpl });
+    expect(spawnImpl).toHaveBeenCalledTimes(2);
+    expect(first.provenance).toMatchObject({ seed, parameters: { cfg: 2.5, timesteps: 10, referenceLanguage: "ja", referencePresetSeed: seed, seedSource: "reference_preset" } });
+    expect(repeated.provenance.seed).toBe(seed);
+    expect(repeated.provenance.referenceIdentity).toBe(first.provenance.referenceIdentity);
+    const legacy = await generateVoxCpm2({ ...input, voicePackId: "normal" }, { spawnImpl: successfulSpawn(output) });
+    expect(legacy.provenance.parameters).toMatchObject({ cfg: 2, timesteps: 10 });
+    expect(legacy.provenance.parameters).not.toHaveProperty("referencePresetSeed");
+    expect(legacy.provenance.referenceIdentity).toBe(`sha256:${createHash("sha256").update(await readFile(path.join(root, "reference.wav"))).digest("hex")}`);
+  });
+  it("keeps legacy random generation and uses a new random seed for an explicit preset reroll", async () => {
+    const { input, output, root } = await fixture();
+    vi.mocked(randomInt).mockImplementationOnce(() => 1001).mockImplementationOnce(() => 1002);
+    const first = await generateVoxCpm2(input, { spawnImpl: successfulSpawn(output) });
+    const next = await generateVoxCpm2(input, { spawnImpl: successfulSpawn(output) });
+    expect([first.provenance.seed, next.provenance.seed]).toEqual([1001, 1002]);
+    const profilePath = path.join(root, "profile.json");
+    const profile = JSON.parse(await readFile(profilePath, "utf8"));
+    profile.references[0].generationDefaults = { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed: 43 };
+    await writeFile(profilePath, JSON.stringify(profile));
+    vi.mocked(randomInt).mockImplementationOnce(() => 43);
+    const reroll = await generateVoxCpm2(input, { rerollFromSeed: 43, spawnImpl: successfulSpawn(output) });
+    expect(reroll.provenance.seed).toBe(44);
+    expect(reroll.provenance.parameters).toMatchObject({ cfg: 2.5, timesteps: 10, seedSource: "explicit_reroll" });
+  });
+  it("binds language and each reference preset setting into stable reference provenance", async () => {
+    const { input, output, root } = await fixture();
+    const profilePath = path.join(root, "profile.json");
+    const profile = JSON.parse(await readFile(profilePath, "utf8"));
+    const defaults = { referenceMode: "with_reference_text", cfg: 2.5, timesteps: 10, seed: 43 };
+    const identities = [];
+    for (const variation of [{ language: "ja", generationDefaults: defaults },
+      { language: "zh", generationDefaults: defaults },
+      ...[{ cfg: 2 }, { timesteps: 20 }, { seed: 42 }, { referenceMode: "reference_only" }].map(change => ({ language: "ja", generationDefaults: { ...defaults, ...change } }))]) {
+      Object.assign(profile.references[0], variation);
+      await writeFile(profilePath, JSON.stringify(profile));
+      const result = await generateVoxCpm2(input, { spawnImpl: successfulSpawn(output, args => expect(args).not.toContain("--prompt-wav")) });
+      identities.push(result.provenance.referenceIdentity);
+    }
+    expect(new Set(identities).size).toBe(identities.length);
   });
   it("uses the paragraph-only corrected decoder, 800-step recipe and original natural reference punctuation", async () => {
     const { input, output, root } = await fixture();

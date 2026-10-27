@@ -1,0 +1,223 @@
+"""Independent CFG2/20 adapter; reuses the established evidence-only audits."""
+import argparse
+from copy import deepcopy
+from html.parser import HTMLParser
+import importlib.util
+import json
+from pathlib import Path
+import re
+import sys
+from datetime import datetime, timezone
+from urllib.parse import unquote, urlparse
+
+sys.dont_write_bytecode = True
+COMMON = Path(__file__).with_name("verify_chinese_reference_only_cfg2p5_step10.py")
+spec = importlib.util.spec_from_file_location("reference_only_evidence_common", COMMON)
+p = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(p)
+v, h = p.v, p.h
+PREVIOUS_QA = p.QA
+QA = v.FOLLOWUP / "chinese-reference-only-cfg2-step20"
+p.QA = v.QA = QA
+p.EXPECTED_CFG, p.EXPECTED_TIMESTEPS, p.EXPECTED_GRAPH_NODES = 2, 20, 8962
+DELIVERY_EXTRA = {}
+
+
+def baselines():
+    bases = p.baselines()
+    for base in bases.values():
+        base["template"]["cfg"] = 2
+        base["template"]["timesteps"] = 20
+        base["request"]["parameters"]["cfg"] = 2
+        base["request"]["parameters"]["timesteps"] = 20
+    return bases
+
+
+def jobs(bases):
+    found = p.original_jobs(bases)
+    for job in found:
+        old_path = PREVIOUS_QA / ("guarded-" + job["id"] + ".json")
+        expected = deepcopy(h.read(old_path))
+        expected["cfg"], expected["timesteps"] = 2, 20
+        current = h.read(job["manifest"]["path"])
+        h.check(current == expected, job["id"] + " only CFG/timesteps changed from previous reference-only case")
+        h.check(current["references"][0]["mode"] == "reference_only" and not any(k.lower().startswith("prompt") for k in current["references"][0]), job["id"] + " still no prompt")
+        job["previous_cfg2p5_step10_manifest"] = h.identity(old_path)
+    return found
+
+
+def save(name, report):
+    report["audit_adapter"] = h.identity(Path(__file__))
+    report["reference_only_audit_helper"] = h.identity(COMMON)
+    report["reference_mode"] = "reference_only"
+    report["expected_cfg_timesteps_graph_nodes"] = {"cfg": 2, "timesteps": 20, "nodes": 8962}
+    if name == "preparation-verification.json":
+        report["checks"]["cfg_and_timesteps_only_changed_from_previous_reference_only"] = not h.ERRORS
+        report["notes"] = ["Only CFG2.5->2 and timesteps10->20 change from the four previous reference-only Chinese manifests.",
+                           "Exact reference identity/name/audio/gain, seeds, two Chinese target texts and no-prompt semantics are preserved."]
+    if name == "generation-verification.json":
+        by_pair = {(r["voice"], r["target"]["id"]): r for r in report["results"]}
+        checks = {}
+        for target_id in v.TARGETS:
+            counts = [by_pair[(voice, target_id)]["inferred_target_token_count"] for voice in v.BASES]
+            h.check(counts[0] == counts[1], target_id + " reference-only target token counts agree")
+            checks[target_id] = {"yukino": counts[0], "yui": counts[1], "equal": counts[0] == counts[1]}
+        report["cross_voice_target_token_checks"] = checks
+        known_path = v.FOLLOWUP / "parameter-sweep/generation-verification.json"
+        known = h.read(known_path)
+        h.check(known["status"] == "passed", "previous20step graph evidence passed")
+        confirmed_graphs = []
+        def find_graphs(value):
+            if isinstance(value, dict):
+                if (value.get("timesteps"), value.get("cfg"), value.get("nodes")) == (20, 2, 8962):
+                    confirmed_graphs.append(value)
+                for child in value.values():
+                    find_graphs(child)
+            elif isinstance(value, list):
+                if len(value) == 4 and all(isinstance(x, (int, float, str)) for x in value):
+                    try:
+                        if (int(value[0]), float(value[1]), int(value[2])) == (20, 2.0, 8962):
+                            confirmed_graphs.append(value)
+                    except (ValueError, TypeError):
+                        pass
+                for child in value:
+                    find_graphs(child)
+        find_graphs(known)
+        h.check(bool(confirmed_graphs), "previous evidence explicitly records CFG2/20 graph8962nodes")
+        report["previous_twenty_step_evidence"] = h.identity(known_path)
+        report["previous_twenty_step_graphs"] = confirmed_graphs
+        recovery_path = QA / "resource-recovery.json"
+        if recovery_path.exists():
+            report["retained_resource_recovery_evidence"] = h.identity(recovery_path)
+        report["notes"] = ["All new results remain reference-only with no prompt audio/text argv or native prompt branch.",
+                           "Actual20step graphs are checked for8962nodes, distinct from the4462-node10step graph.",
+                           "ASR content agreement is not proof of intelligibility, accent, naturalness or speaker similarity.",
+                           "Old CFG2.5/10 results are preserved; no old audio is regenerated by this audit."]
+    if name == "independent-delivery-verification.json":
+        report.update(DELIVERY_EXTRA)
+        report["notes"] += ["Four previousCFG2.5/10 raw/listen pairs are exact external references to the existing files; no regenerated baseline audio.",
+                            "Eight main generated players and four collapsed reference players were checked from the HTML structure."]
+    return p.original_save(name, report)
+
+
+def repair_prior_graph_schema():
+    """Repair only the historical graph-shape check; retain all prior evidence."""
+    current_path = QA / "generation-verification.json"
+    backup_path = QA / "generation-verification-initial.json"
+    report = h.read(current_path)
+    expected_error = "previous evidence explicitly records CFG2/20 graph8962nodes"
+    if report["errors"] != [expected_error] or report["status"] != "failed":
+        raise ValueError("Targeted schema repair only applies to its single identified audit error")
+    if backup_path.exists():
+        raise FileExistsError("Initial audit backup already exists")
+    previous_evidence = h.verify_file(report["previous_twenty_step_evidence"], "unchanged historical20step audit")
+    known = h.read(previous_evidence["path"])
+    if known["status"] != "passed":
+        raise ValueError("Historical audit did not pass")
+    proof = []
+    for row in known["results"]:
+        if row["parameters"]["timesteps"] == 20 and row["parameters"]["cfg"] == 2:
+            graphs = row["decode_front_half_graphs"]
+            if not graphs or not all((g["timesteps"], g["cfg"], g["nodes"]) == (20, 2, 8962) for g in graphs):
+                raise ValueError("Historical20step graph differs from8962nodes")
+            proof.append({"case_id": row["id"], "field": "results[].decode_front_half_graphs", "graphs": graphs})
+    if {r["case_id"] for r in proof} != {"yukino-cfg2-step20", "yui-cfg2-step20"}:
+        raise ValueError("Both previously verified20step cases must be present")
+    if len(report["results"]) != 4 or not all(r["actual_graphs"] and all((int(g[0]), float(g[1]), int(g[2])) == (20, 2, 8962) for g in r["actual_graphs"]) for r in report["results"]):
+        raise ValueError("The four current actual graphs did not pass20step verification")
+    if current_path.resolve().parent != QA.resolve() or backup_path.resolve().parent != QA.resolve():
+        raise ValueError("Audit paths escaped the scoped QA directory")
+    original_identity = h.identity(current_path)
+    current_path.rename(backup_path)
+    report["status"], report["errors"] = "passed", []
+    report["previous_twenty_step_graphs"] = proof
+    report["verified_at"] = datetime.now(timezone.utc).isoformat()
+    report["audit_adapter"] = h.identity(Path(__file__))
+    report["historical_graph_schema_recheck"] = {"initial_report": h.identity(backup_path),
+        "initial_report_sha256": original_identity["sha256"], "reason": "Historical report stores graph metadata as dictionaries, while the initial reader recognized only tuple/list form.",
+        "historical_report": previous_evidence, "validated_graphs": proof,
+        "current_generation_controls_hashes_and_audio_checks_reused": True,
+        "model_rehashes_in_recheck": 0, "model_calls": 0, "asr_calls": 0}
+    with current_path.open("x", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2, allow_nan=False)
+    print(json.dumps({"status": "passed", "report": str(current_path), "initial_report": str(backup_path), "historical_graphs": proof,
+                      "current_four_actual_graphs_verified": True, "model_calls": 0}, ensure_ascii=False))
+
+
+def delivery():
+    package = h.read(QA / "package-receipt.json")
+    previous_package_path = PREVIOUS_QA / "package-receipt.json"
+    previous_audit_path = PREVIOUS_QA / "independent-delivery-verification.json"
+    old_package = h.read(previous_package_path)
+    old_audit = h.read(previous_audit_path)
+    h.check(old_audit["status"] == "passed", "reused baseline previous independent delivery audit passed")
+    old_rows = {r["id"]: r for r in old_package["generated"]}
+    candidates = package["baseline_generated"]
+    h.check(len(candidates) == 4 and {r["id"] for r in candidates} == set(old_rows), "all four previous baseline cases reused")
+    checked = []
+    for candidate in candidates:
+        original = old_rows[candidate["id"]]
+        h.check(candidate["existing"] is True and candidate["reused"] is True, candidate["id"] + " explicit baseline reuse")
+        h.check(candidate["cfg"] == 2.5 and candidate["timesteps"] == 10 and candidate["mode"] == "reference_only", candidate["id"] + " baseline parameter labels")
+        files = {}
+        for role in ("source", "raw", "listen", "generation_receipt"):
+            h.check(candidate[role] == original[role], candidate["id"] + " identical old " + role + " path/hash, not a copy")
+            files[role] = h.verify_file(candidate[role], candidate["id"] + " unchanged old " + role)
+        h.check(candidate["gain_db"] == original["gain_db"], candidate["id"] + " unchanged old listening gain")
+        receipt = h.read(files["generation_receipt"]["path"])
+        h.check(receipt["request"]["parameters"]["cfg"] == 2.5 and receipt["request"]["parameters"]["timesteps"] == 10, candidate["id"] + " actual old controls")
+        checked.append({"id": candidate["id"], "existing": True, "reused": True, "exact_original_paths_and_hashes": True, **files})
+    h.check(package["playable_generated_count"] == 8 and package["new_generated_count"] == 4 and package["reused_generated_count"] == 4, "eight generated comparisons: four new plus four reused")
+    class Players(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.details = self.main = self.folded = 0
+            self.audio_sources = []
+        def handle_starttag(self, tag, attrs):
+            if tag == "details":
+                self.details += 1
+            if tag == "audio":
+                if self.details:
+                    self.folded += 1
+                else:
+                    self.main += 1
+            if tag in ("audio", "source"):
+                value = dict(attrs).get("src")
+                if value:
+                    self.audio_sources.append(value)
+        def handle_endtag(self, tag):
+            if tag == "details":
+                self.details -= 1
+    index_path = Path(package["index"]["path"])
+    parser = Players()
+    parser.feed(index_path.read_text(encoding="utf-8"))
+    h.check((parser.main, parser.folded, parser.details) == (8, 4, 0), "eight main generated players and four collapsed reference players")
+    resolved_sources = set()
+    for src in parser.audio_sources:
+        u = urlparse(src)
+        value = unquote(u.path)
+        if u.scheme == "file":
+            value = value[1:] if re.match(r"^/[A-Za-z]:/", value) else value
+            resolved_sources.add(Path(value).resolve())
+        elif not u.scheme:
+            resolved_sources.add((index_path.parent / value).resolve())
+    expected_listens = {Path(r["listen"]["path"]).resolve() for r in package["generated"] + candidates}
+    h.check(len(expected_listens) == 8 and expected_listens.issubset(resolved_sources), "HTML actually points to all eight intended listening files")
+    DELIVERY_EXTRA.update(baseline_generated=checked, baseline_previous_package=h.identity(previous_package_path),
+                          baseline_previous_independent_audit=h.identity(previous_audit_path), playable_generated_count=8,
+                          html_main_audio_players=parser.main, html_collapsed_reference_players=parser.folded,
+                          old_raw_and_listen_exactly_reused=True)
+    v.delivery()
+
+
+v.baselines, v.jobs, v.save = baselines, jobs, save
+v.generation_case = p.generation_case
+
+
+if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=("preparation", "generation", "delivery", "repair-prior-graph-schema"))
+    args = parser.parse_args()
+    {"preparation": v.preparation, "generation": v.generation, "delivery": delivery, "repair-prior-graph-schema": repair_prior_graph_schema}[args.mode]()
+    raise SystemExit(bool(h.ERRORS))

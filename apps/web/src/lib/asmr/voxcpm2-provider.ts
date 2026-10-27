@@ -49,6 +49,8 @@ type ProviderDependencies = {
   observeResources?: typeof startNativeResourceObserver;
   resourceObservationWaitMs?: number;
   seed?: number;
+  // Explicit group rerolls must not reuse a reference's repeatable preset seed.
+  rerollFromSeed?: number;
   maxSteps?: number;
   timeoutMs?: number;
   exitWaitMs?: number;
@@ -228,10 +230,6 @@ export async function generateVoxCpm2(
   const maxSteps = dependencies.maxSteps ?? (dependencies.paragraphMode ? 800 : Math.min(600, Math.max(120, Array.from(normalizedText).length * 5 + 60)));
   const timeoutMs = dependencies.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const exitWaitMs = dependencies.exitWaitMs ?? 5_000;
-  const seed = dependencies.seed ?? randomInt(1, 2_147_483_647);
-  if (!Number.isInteger(maxSteps) || maxSteps < 120 || maxSteps > (dependencies.paragraphMode ? 800 : 600) || !Number.isInteger(seed) || seed < 1 || seed > 2_147_483_646 || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000 || !Number.isInteger(exitWaitMs) || exitWaitMs < 1 || exitWaitMs > 30_000) {
-    throw new VoxCpm2Error("VoxCPM2 运行参数无效。", 503);
-  }
   const profile = await loadVoxCpm2Profile(resolveVoxCpm2ProfilePath(config), { naturalReferenceText: dependencies.paragraphMode }).catch(() => {
     throw new VoxCpm2Error("VoxCPM2 配置不可用，请检查本机模型与参考声音配置。", 503);
   });
@@ -240,6 +238,19 @@ export async function generateVoxCpm2(
     try { return selectVoxCpm2Reference(profile, voicePackId); }
     catch { throw new VoxCpm2Error("参考声音不可用，请重新选择。", 400); }
   })();
+  const rerollFromSeed = dependencies.rerollFromSeed;
+  if (rerollFromSeed !== undefined && (!Number.isInteger(rerollFromSeed) || rerollFromSeed < 0 || rerollFromSeed > 2_147_483_646)) {
+    throw new VoxCpm2Error("VoxCPM2 运行参数无效。", 503);
+  }
+  const seed = dependencies.seed ?? (rerollFromSeed !== undefined ? (() => {
+    const next = randomInt(1, 2_147_483_646);
+    return next >= rerollFromSeed ? next + 1 : next;
+  })() : reference.generationDefaults?.seed ?? randomInt(1, 2_147_483_647));
+  const cfg = reference.generationDefaults?.cfg ?? 2;
+  const timesteps = reference.generationDefaults?.timesteps ?? 10;
+  if (!Number.isInteger(maxSteps) || maxSteps < 120 || maxSteps > (dependencies.paragraphMode ? 800 : 600) || !Number.isInteger(seed) || seed < 1 || seed > 2_147_483_646 || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000 || !Number.isInteger(exitWaitMs) || exitWaitMs < 1 || exitWaitMs > 30_000) {
+    throw new VoxCpm2Error("VoxCPM2 运行参数无效。", 503);
+  }
   if (referenceMode === "with_reference_text" && !reference.promptText) {
     throw new VoxCpm2Error("这个声音尚未配置参考文本，请选择仅参考音频。", 400);
   }
@@ -296,7 +307,7 @@ export async function generateVoxCpm2(
     await mkdir(temporaryBase, { recursive: true });
     temporaryRoot = await mkdtemp(path.join(temporaryBase, "candidate-"));
     const outputPath = path.join(temporaryRoot, "output.wav");
-    const args = ["-t", normalizedText, "-o", outputPath, "--steps", String(maxSteps), "--timesteps", "10", "--cfg", "2", "--temperature", "1", "--seed", String(seed), "--n-gpu-layers", "0", "--low-vram", "-r", reference.audioPath];
+    const args = ["-t", normalizedText, "-o", outputPath, "--steps", String(maxSteps), "--timesteps", String(timesteps), "--cfg", String(cfg), "--temperature", "1", "--seed", String(seed), "--n-gpu-layers", "0", "--low-vram", "-r", reference.audioPath];
     if (referenceMode === "with_reference_text") args.push("--prompt-wav", reference.audioPath, "--prompt-text", reference.promptText!);
     args.push(profile.baseModelPath, profile.acousticModelPath);
     checkCancelled(signal);
@@ -351,15 +362,28 @@ export async function generateVoxCpm2(
     if (generatedSteps >= maxSteps - 0.001) qualityWarnings.push("录音达到模型长度上限，可能没有读完。完整原音已保留，请试听后决定是否重新生成。");
     if (!decoded.samples.some((sample) => Math.abs(sample) > .0001)) qualityWarnings.push("这条录音接近静音，完整原音已保留，可以试听或下载检查。");
     const clipping = decoded.samples.reduce((count, sample) => count + Number(Math.abs(sample) >= .999), 0);
+    const referenceHash = createHash("sha256").update(referenceBytes)
+      .update(referenceMode === "with_reference_text" ? reference.promptText! : "");
+    // Existing references keep their historical identity. Presets bind their
+    // language and validated settings in a stable field order as well as audio.
+    if (reference.language || reference.generationDefaults) {
+      const preset = reference.generationDefaults;
+      referenceHash.update("\0reference-settings-v1\0").update(JSON.stringify({ language: reference.language ?? null,
+        generationDefaults: preset ? { referenceMode: preset.referenceMode, cfg: preset.cfg, timesteps: preset.timesteps, seed: preset.seed } : null }));
+    }
     return {
       wav: new Uint8Array(output),
       provenance: {
         provider: "voxcpm2", model: "VoxCPM2", seed, temperature: 1,
         voicePackId: reference.id, referenceMode, generationMode: "clip",
-        parameters: { cfg: 2, timesteps: 10, gpuLayers: 0, lowVram: true, maxSteps, generatedSteps, timeoutMs },
+        parameters: { cfg, timesteps, gpuLayers: 0, lowVram: true, maxSteps, generatedSteps, timeoutMs,
+          ...(reference.language ? { referenceLanguage: reference.language } : {}),
+          ...(reference.generationDefaults ? { referencePresetSeed: reference.generationDefaults.seed,
+            referencePresetMode: reference.generationDefaults.referenceMode,
+            seedSource: dependencies.seed !== undefined ? "internal_override" : rerollFromSeed !== undefined ? "explicit_reroll" : "reference_preset" } : {}) },
         runtimeVersion: `sha256:${runtimeHash}`,
         modelIdentity: `${baseIdentity}|${acousticIdentity}`,
-        referenceIdentity: `sha256:${createHash("sha256").update(referenceBytes).update(referenceMode === "with_reference_text" ? reference.promptText! : "").digest("hex")}`,
+        referenceIdentity: `sha256:${referenceHash.digest("hex")}`,
       },
       qualityWarnings: [...qualityWarnings, ...(clipping > decoded.samples.length * .001 ? ["这条候选可能有削波失真，请试听后决定是否采用。"] : [])],
     };
