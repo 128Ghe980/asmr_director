@@ -62,6 +62,52 @@ function entries(bytes: Buffer) {
 }
 
 describe("portable video packages", () => {
+  it("exports both kinds of ASMR prompt at measured shot lengths and bundles the existing D processor", async () => {
+    const { project, clips, wav } = await fixture();
+    const sound = { prompt: "A cotton cloth gently glides over a wooden surface, then settles.", postProcessing: {
+      start: { pan: -.5, distance: "near" as const }, end: { pan: .5, distance: "near" as const }, movement: "left_to_right" as const, gainDb: -12,
+    } };
+    project.videoPlan!.storyboardStyle = "listener_pov";
+    for (const clip of clips) project.videoPlan!.shots[clip.id].asmrSound = structuredClone(sound);
+    clips[1].kind = "silent"; clips[1].duration = 3;
+    clips[1].asset = { asset_id: null, uri: null, duration: null }; clips[1].generation.status = "asset_pending";
+    delete project.videoPlan!.shots[clips[1].id].audio;
+    Object.assign(project.videoPlan!.shots[clips[1].id], { kind: "silent", duration: 3, ambientSound: "Quiet room tone." });
+    for (const clip of clips) project.videoPlan!.shots[clip.id].sourceFingerprint = createClipVideoSourceFingerprint(project, clip.id);
+    config.spatialHrtfPath = path.join(root, "test.sofa");
+    const sofa = Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]);
+    await writeFile(config.spatialHrtfPath, sofa);
+    const archive = await prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch") });
+    const files = entries(await readFile(archive.filePath));
+    const manifest = JSON.parse(files.get("project.json")!.toString()) as VideoPackageManifest;
+    expect(manifest.shots.map(shot => shot.asmrSound?.durationSeconds)).toEqual([.1, 3]);
+    for (const shot of manifest.shots) {
+      expect(shot.asmrSound?.postProcessing).toEqual(sound.postProcessing);
+      expect(shot.asmrSound?.prompt).toContain(sound.prompt);
+      expect(shot.asmrSound?.prompt).toContain("No speech, whispering, vocal sounds");
+      expect(shot.asmrSound?.prompt).not.toMatch(/fully_copy|Picture 1|Audio 1/);
+      expect(files.get(`shots/${String(shot.order).padStart(3, "0")}/asmr-prompt.txt`)?.toString()).toBe(shot.asmrSound?.prompt);
+    }
+    expect(manifest.shots[0].prompt).toContain("listener");
+    expect(files.get("shots/001/audio.wav")).toEqual(Buffer.from(wav));
+    expect(files.get("custom_nodes/asmr_director_audio/engine/processed_voice.py")).toEqual(await readFile(path.resolve("scripts/render-processed-voice.py")));
+    expect(files.get("custom_nodes/asmr_director_audio/data/subj_A.sofa")).toEqual(sofa);
+    expect(files.has("custom_nodes/asmr_director_audio/engine/spatial_d/render.py")).toBe(false);
+    expect(JSON.stringify(manifest)).not.toContain(root);
+    await archive.cleanup();
+  });
+
+  it("fails before writing a new ASMR package if its spatial runtime cannot be bundled", async () => {
+    const { project, clips } = await fixture();
+    project.videoPlan!.shots[clips[0].id].asmrSound = { prompt: "Gentle cotton movement.", postProcessing: {
+      start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -12,
+    } };
+    config.spatialHrtfPath = path.join(root, "missing.sofa");
+    await expect(prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch") }))
+      .rejects.toMatchObject({ statusCode: 503, message: expect.stringContaining("HRTF") });
+    expect(await readdir(root)).not.toContain("exports");
+  });
+
   it("packs a complete runnable snapshot, exact adopted WAV bytes and actual PCM durations without timeline timing", async () => {
     const { project, clips, wav } = await fixture();
     const second = project.videoPlan!.shots[clips[1].id];

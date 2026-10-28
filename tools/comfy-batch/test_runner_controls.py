@@ -35,7 +35,8 @@ class RunnerControlTests(unittest.TestCase):
 
     def test_gui_options_validate_before_starting_a_worker_and_convert_minutes(self):
         result = runner.gui_options({"package": "  project  ", "character_image": "", "comfy_url": "http://localhost:8188",
-                                     "candidates": "3", "job_minutes": "2.5", "only": " 2,3 ", "rerun": "", "rerun_candidates": "scene:two:2"}, dry_run=True, concat=True)
+                                     "candidates": "3", "job_minutes": "2.5", "only": " 2,3 ", "rerun": "", "rerun_candidates": "scene:two:2",
+                                     "rerun_asmr": " 2 ", "rerun_asmr_candidates": " scene:two:3 "}, dry_run=True, concat=True)
         self.assertEqual(result["package"], "project")
         self.assertEqual(result["candidates"], 3)
         self.assertEqual(result["job_timeout"], 150)
@@ -44,11 +45,15 @@ class RunnerControlTests(unittest.TestCase):
         self.assertEqual(result["only"], "2,3")
         self.assertIsNone(result["rerun"])
         self.assertEqual(result["rerun_candidates"], "scene:two:2")
+        self.assertEqual(result["rerun_asmr"], "2")
+        self.assertEqual(result["rerun_asmr_candidates"], "scene:two:3")
         self.assertTrue(result["dry_run"])
         self.assertTrue(result["concat"])
         self.assertNotIn("job_minutes", result)
         self.assertEqual(runner.gui_options({"package": "project"})["job_timeout"], 0)
         self.assertFalse(runner.gui_options({"package": "project"})["concat"])
+        self.assertIsNone(runner.gui_options({"package": "project", "rerun_asmr": " "})["rerun_asmr"])
+        self.assertIsNone(runner.gui_options({"package": "project"})["rerun_asmr_candidates"])
 
     def test_gui_rejects_blank_project_or_bad_numbers(self):
         for raw in [{"package": " "}, {"package": "project", "candidates": "0"},
@@ -66,6 +71,28 @@ class RunnerControlTests(unittest.TestCase):
         self.assertIn("01:05", first)
         self.assertIn("01:10", later)
         self.assertNotEqual(first, later)
+
+    def test_progress_prefers_asmr_task_label_without_duplicate_shot_or_candidate(self):
+        text = runner.gui_progress_text({"phase": "running", "task_kind": "asmr",
+                                         "task_label": "ASMR 触发音 · 镜头 2 / 候选 1/3",
+                                         "shot_id": "shot_2", "candidate_index": 1,
+                                         "completed": 0, "total": 6})
+        self.assertIn("远端生成 · ASMR 触发音 · 镜头 2 / 候选 1/3", text)
+        self.assertIn("已完成 0/6", text)
+        self.assertEqual(text.count("候选"), 1)
+        self.assertNotIn("shot_2", text)
+
+    def test_progress_keeps_preview_variant_label(self):
+        text = runner.gui_progress_text({"phase": "downloading", "task_kind": "preview",
+                                         "task_label": "候选 2 ASMR 叠加版顺序预览"})
+        self.assertIn("下载成品 · 候选 2 ASMR 叠加版顺序预览", text)
+
+    def test_progress_falls_back_to_task_kind_when_label_is_missing(self):
+        for kind, label in [("asmr", "ASMR 触发音"), ("preview", "顺序预览")]:
+            with self.subTest(kind=kind):
+                text = runner.gui_progress_text({"phase": "checking", "task_kind": kind,
+                                                 "shot_id": "shot_2", "candidate_index": 1})
+                self.assertIn(f"检查与对账 · {label} · 镜头 shot_2 · 候选 1", text)
 
     def test_gui_event_queue_is_bounded_and_keeps_completion_event(self):
         events = queue.Queue(maxsize=3)

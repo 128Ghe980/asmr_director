@@ -11,6 +11,7 @@ import { renderProjectMixWav } from "./project-mix-renderer";
 import { decodePcmWav } from "./pcm-audio";
 import { generateLocalClip } from "./local-clip-generation";
 import { generateClipStoryboard } from "./clip-storyboard-service";
+import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint,
   getPreviousClipPromptFingerprint, getPreviousVoiceClip, getUsableClipH3Prompts, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "./video-plan";
 import { captureSpeechWorkspace, ensureSpeechWorkspaces, getSpeechWorkspaceProject, mergeSpeechWorkspaceProject, switchSpeechWorkspace, syncSharedSpeechScript } from "./speech-workspace";
@@ -196,7 +197,7 @@ describe("silent editorial shots", () => {
   it("generates a silent storyboard using description and declared duration without reading speech assets", async () => {
     const project = fixture(), clip = voices(project)[1]; silent(clip); clip.duration = 4;
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify({
-      title: "茶杯落桌", visual: "Warm light falls on the table.", action: "S1 sets down a cup.", camera: "Static close-up.", ambientSound: "Faint steady room tone."
+      title: "茶杯落桌", visual: "Warm light falls on the table.", action: "S1 sets down a cup.", camera: "Static close-up.", ambientSound: "Faint steady room tone.", asmrSound: asmrSoundFixture,
     }) } }] }));
     const result = await generateClipStoryboard({ provider: "ollama", project, clipId: clip.id, referenceMode: "new", includePrevious: false, instruction: "" }, {
       env: { ASMR_PLANNER_API_URL: "https://api.example.test/v1", ASMR_PLANNER_API_KEY: "test-only", ASMR_PLANNER_API_MODEL: "test-model" }, fetchImpl,

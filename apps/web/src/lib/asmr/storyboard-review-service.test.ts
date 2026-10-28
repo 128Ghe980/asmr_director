@@ -4,6 +4,7 @@ import { generateStoryboardReview } from "./storyboard-review-service";
 import { createClipVideoSourceFingerprint } from "./video-plan";
 import type { StoryboardReviewFields } from "./storyboard-review";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
+import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 
 const env = { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "test-only", ASMR_PLANNER_API_MODEL: "mock-reviewer" };
 function fixture() {
@@ -14,6 +15,22 @@ function fixture() {
   return { project, ids, output, fetchImpl };
 }
 describe("one-batch storyboard review service", () => {
+  it("reviews first-person continuity and patches sound plans separately from the preserved speech track", async () => {
+    const { project, ids, output, fetchImpl } = fixture();
+    project.videoPlan!.storyboardStyle = "listener_pov";
+    for (const id of ids) {
+      project.videoPlan!.shots[id].storyboardStyle = "listener_pov";
+      project.videoPlan!.shots[id].sourceFingerprint = createClipVideoSourceFingerprint(project, id);
+    }
+    output.changes[0].after = { asmrSound: asmrSoundFixture };
+    const { review } = await generateStoryboardReview({ project, editableClipIds: [ids[0]] }, { env, fetchImpl });
+    expect(review.changes[0].after.asmrSound).toEqual(asmrSoundFixture);
+    expect(review.changes[0].after.action).toBe(review.changes[0].before.action);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    expect(body.messages[0].content).toContain("镜头就是听者眼睛");
+    expect(body.messages[0].content).toContain("允许S1画外说话");
+    expect(JSON.parse(body.messages[1].content).storyboardStyle).toBe("listener_pov");
+  });
   it("reviews template continuity with matching per-line notes and rejects proposals after a template change", async () => {
     const { project, ids, fetchImpl } = fixture(), clips = project.timeline.tracks.find(track => track.track_type === "voice")!.clips;
     project.videoPlan!.referenceTemplate = structuredClone(referenceTemplateFixture);

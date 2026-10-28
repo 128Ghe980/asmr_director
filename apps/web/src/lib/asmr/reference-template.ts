@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { StoryboardStyleSchema } from "./storyboard-style";
 
 const text = (maximum: number) => z.string().trim().min(1).max(maximum);
 export const CreativeTemplateSchema = z.object({
   id: text(100), version: z.number().int().positive(), title: text(120), summary: text(1200),
   source: z.object({ filename: text(200), durationSeconds: z.number().finite().positive(), analysisBasis: text(1200) }).strict(),
   creativePrompt: text(6000), sceneDescription: text(4000), storyboardRules: text(6000),
+  storyboardStyle: StoryboardStyleSchema.optional(),
   beats: z.array(z.object({ id: text(80), title: text(120), referenceRange: text(80), story: text(1000),
     visual: text(1000), action: text(1000), camera: text(600), sound: text(600), continuity: text(1000) }).strict()).min(1).max(20),
 }).strict().superRefine((template, context) => {
@@ -49,5 +51,6 @@ export function getMatchingTemplateDirections(notes: TemplateDirection[] | undef
 /** Only creative instructions are model context; filenames are provenance, never file paths to load. */
 export function creativeTemplateContext(template: CreativeTemplate | undefined) {
   return template ? { title: template.title, summary: template.summary, creativePrompt: template.creativePrompt,
-    sceneDescription: template.sceneDescription, storyboardRules: template.storyboardRules, beats: template.beats } : undefined;
+    sceneDescription: template.sceneDescription, storyboardRules: template.storyboardRules,
+    ...(template.storyboardStyle ? { storyboardStyle: template.storyboardStyle } : {}), beats: template.beats } : undefined;
 }

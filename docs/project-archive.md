@@ -4,6 +4,8 @@
 
 最后更新：2026-10-28
 
+2026-10-28 第一人称分镜与剧情 ASMR：新增听者视点随真实剧情移动，允许看路/道具时 S1 画外讲话；原角色风格/prompt 保留，模板固定风格，工程双工作区和采用链持久保存。每个新有声/空镜分镜同时规划纯触发音与声位/移动/增益，按实际导出音频时长生成独立 H3 候选，最终逐段 D 处理后分别合原版和叠加版。随包 ComfyUI 节点复用已发布 D 核心/配置 SOFA，本机不新增 FFmpeg；旧结果独立恢复，参数变化仅重叠加。隔离全量2220通过/1旧mock缺字段失败/4跳过，补fixture后定向16通过；运行器155项OK/1跳过，40文件lint及build `uzuId3uS9hiHNo1x0nteD` 通过，真实CPU/ZIP干跑证据齐备。真实API2次验证门口前移至桌边及俯视书页；无H3/TTS/ASR或用户工程改写，真实视听待验。更新ZIP在 `I:/AI/asmr_director/artifacts/h3-asmr/ASMR-video-runner-storyboard-sound-update-2026-10-28.zip`；05:43HKT已切换本地3001上述build，启动PID25364，8静态资源/7参考目录/两日语WAV及编译HTTP导出通过，49功能文件与发布副本一致、28范围外工作保持，回执为主QA `service-verification.json`。用户已要求将本轮单独发布，commit/推送/远端校验回执为主QA `publication.json`；AudioQualityV1继续/其他SFX暂停。[记录及最终状态](records/2026-10-28-pov-asmr-overlay.md)；[中文规格](specs/2026-10-28-pov-asmr-overlay.zh.md) / [English](specs/2026-10-28-pov-asmr-overlay.en.md)。
+
 2026-10-28 日语参考入库发布：用户认为最后中文2／20仍不像，暂停实验并要求收录两参考。正式注册雪之下25.10秒seed43、由比滨02完整20.22秒seed42，原样16k输入／完整日文，ja＋音频文本模式＋CFG2.5／10，旧5参考与默认soft_zh保持。10应用文件支持可选预设／语言标记／日文标点与明确分组重抽换seed；121后端／69UI／13工具测试、lint、隔离构建和3001实际目录／WAV／静态资产核验通过。Build2p3tAp4OKdM1Lj_p3Z7_A，未新增模型调用；中文相似度及日语长文自动分析未验收。28范围外工作保留；临时测试目录清理被自动审批拒绝后保留。发布commit／push事实查Git及QA publication.json。[本次交接](records/2026-10-28-japanese-reference-presets-handoff.md)。
 
 2026-10-28 仅音频中文CFG2／20：用户确认2.5／10中文正常但音色不像，保持参考音量／seed／两句、不加原文，只改cfg和扩散步数。4新输出3.52／3.36／5.76／4.80秒，ASR全文对应；真实20步8962图、no-prompt及身份核验通过。雪rest首轮内存保护中止，沿用用户授权临退5个确切Overlay进程后同参数take002成功，失败证据保留。8卡按同角色同句对比，旧4raw／listen直接引用，新4静态等响，22链接／137旧资产／独立交付通过。音色提升未验收；无产品默认、系统永久设置、浏览器或部署提交变化。[记录](records/2026-10-28-chinese-reference-only-cfg2-step20.md)。

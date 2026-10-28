@@ -7,6 +7,7 @@ import { flattenClips } from "@/lib/asmr/view-model";
 import { sanitizeDownloadName } from "@/lib/asmr/batch-download";
 import { getSpeechWorkspaceMode } from "@/lib/asmr/speech-workspace";
 import { createStoryboardGenerationContextFingerprint } from "@/lib/asmr/storyboard-context";
+import { AsmrSoundEditor } from "./asmr-sound-editor";
 import {
   ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint,
   getPreviousVoiceClip, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent,
@@ -24,7 +25,7 @@ type Props = {
   onProviderChange?: (provider: "api" | "ollama") => void;
   onSceneChange: (description: string) => void;
   onSave: (projectId: string, shot: ClipVideoStoryboard) => boolean;
-  onEdit: (clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera" | "ambientSound">>) => void;
+  onEdit: (clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera" | "ambientSound" | "asmrSound">>) => void;
 };
 
 const buttonClass = "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-300/20 px-2.5 py-1.5 text-xs text-violet-100 transition-colors hover:bg-violet-300/10 focus-visible:outline-2 focus-visible:outline-violet-300 disabled:cursor-not-allowed disabled:opacity-40";
@@ -240,6 +241,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
       <input aria-label="本段分镜标题" disabled={batchBusy} value={shot.title} maxLength={120} className="w-full min-w-0 rounded bg-transparent py-1 text-sm font-semibold outline-none focus:ring-1 focus:ring-violet-300/25" onChange={(event) => edit({ title: event.target.value })} />
       {([['visual', '画面', 800], ['action', '动作', 600], ['camera', '镜头', 400]] as const).map(([field, label, maxLength]) => <label key={field} className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">{label}</span><textarea aria-label={`本段分镜${label}`} disabled={batchBusy} className={fieldClass} value={shot[field]} rows={field === "visual" ? 3 : 2} maxLength={maxLength} onChange={(event) => edit({ [field]: event.target.value })} /></label>)}
       {silent ? <label className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">环境声</span><textarea aria-label="本段分镜环境声" disabled={batchBusy} className={fieldClass} value={shot.ambientSound ?? ""} rows={2} maxLength={600} placeholder="Soft rain outside the window with a faint room tone." onChange={(event) => edit({ ambientSound: event.target.value })} /></label> : null}
+      {shot.asmrSound ? <AsmrSoundEditor key={shot.clipId} sound={shot.asmrSound} duration={silent ? clip.duration : shot.audio?.duration ?? clip.asset.duration ?? 0} silent={silent} disabled={batchBusy} onChange={asmrSound => edit({ asmrSound })} /> : <p className="text-[11px] text-studio-muted">重做分镜可生成本段 ASMR 触发音。</p>}
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!prompt} onClick={() => void copy()}>{copiedPrompt === prompt && prompt ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}{copiedPrompt === prompt && prompt ? "已复制 H3 提示词" : "复制 H3 提示词"}</button><button type="button" className={buttonClass} disabled={!prompt} onClick={download}><Download className="h-3.5 w-3.5" aria-hidden="true" />下载提示词</button></div>
       <details ref={disclosure} onToggle={fitPromptPreview} className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted"><summary className="cursor-pointer">H3 提示词预览</summary>{prompt ? <textarea ref={preview} aria-label="本段 H3 提示词" readOnly value={prompt} rows={8} spellCheck={false} className="mt-3 w-full min-w-0 resize-none overflow-hidden rounded-lg bg-black/20 px-2 py-2 font-mono text-xs leading-6 outline-none focus:ring-1 focus:ring-violet-300/30" /> : <p className="mt-2 leading-5">补全画面、动作与镜头，并确保分镜对应当前音频。</p>}</details>
     </div> : null}

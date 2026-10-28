@@ -5,6 +5,7 @@ import { CreativeTemplateSchema, type CreativeTemplate } from "./reference-templ
 export const CREATIVE_TEMPLATES: CreativeTemplate[] = [CreativeTemplateSchema.parse({
   id: "forbidden-counter-trade",
   version: 1,
+  storyboardStyle: "character_framing",
   title: "禁令下的秘密交易",
   summary: "把普通日用品当成稀缺的秘密商品：低声接头、逐件展示、价格递进，最后让听者选择。以单人近景和道具展示，营造神秘、亲近又带一点幽默的陪伴氛围。",
   source: {

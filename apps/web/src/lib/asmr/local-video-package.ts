@@ -10,6 +10,8 @@ import { StoredZipWriter, ZipLimitError } from "./stored-zip";
 import { getVideoPackageFilename, getVideoPackageShots, VideoPackageValidationError, type VideoPackageSourceShot } from "./video-package";
 import { getCurrentAudioPostProcessingReceipts } from "./audio-post-processing";
 import { readPreparedAudioSource } from "./prepared-audio-source";
+import { renderAsmrSoundH3Prompt, type AsmrSound } from "./asmr-sound";
+import { resolveStoryboardStyle } from "./storyboard-style";
 
 export const MAX_VIDEO_REFERENCE_BYTES = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 128 * 1024 * 1024;
@@ -27,9 +29,10 @@ export type VideoPackageManifest = {
   shots: {
     id: string; order: number; kind: "speech" | "ambient"; referenceMode: "new" | "continuous";
     prompt: string; durationSeconds: number; audio?: string;
+    asmrSound?: { prompt: string; durationSeconds: number; postProcessing: AsmrSound["postProcessing"] };
   }[];
 };
-type Dependencies = { reference?: Uint8Array; tempRoot?: string; runnerRoot?: string; maxArchiveBytes?: number };
+type Dependencies = { reference?: Uint8Array; tempRoot?: string; runnerRoot?: string; processorRoot?: string; maxArchiveBytes?: number };
 type AudioSource = { filePath: string; size: number; mtimeMs: number; duration: number; outputSha256?: string };
 
 function checkCancelled(signal?: AbortSignal) {
@@ -126,6 +129,20 @@ async function inspectAudio(entry: VideoPackageSourceShot, config: LocalRuntimeC
   } finally { await file?.close().catch(() => {}); }
 }
 
+async function readBundleFile(root: string, name: string, signal?: AbortSignal) {
+  const file = await realpath(path.join(root, name));
+  if (!isWithin(root, file)) throw new Error("Invalid bundle path");
+  const handle = await open(file, "r");
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size > 16 * 1024 * 1024) throw new Error("Invalid bundle file");
+    const bytes = await readBytes(handle, 0, before.size, signal);
+    const after = await handle.stat();
+    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("Bundle changed during export");
+    return bytes;
+  } finally { await handle.close(); }
+}
+
 async function loadRunnerFiles(explicitRoot: string | undefined, signal?: AbortSignal) {
   const configured = explicitRoot ?? process.env.ASMR_VIDEO_RUNNER_ROOT;
   const candidates = configured ? [path.resolve(configured)]
@@ -148,10 +165,35 @@ async function loadRunnerFiles(explicitRoot: string | undefined, signal?: AbortS
           files.push({ name, bytes });
         } finally { await handle.close().catch(() => {}); }
       }
-      return files;
+      return { root, files };
     } catch { checkCancelled(signal); }
   }
   throw new BatchDownloadError("视频批跑器文件不完整，请配置 ASMR_VIDEO_RUNNER_ROOT 后重试。", 503);
+}
+
+/** Package the same published processor, not the unrelated experimental renderer. */
+async function loadSoundNodeFiles(runnerRoot: string, config: LocalRuntimeConfig, explicitProcessorRoot?: string, signal?: AbortSignal) {
+  const prefix = "custom_nodes/asmr_director_audio";
+  try {
+    const files: { name: string; bytes: Buffer }[] = [];
+    for (const name of ["__init__.py", "requirements.txt", "README.zh.md"]) {
+      files.push({ name: `${prefix}/${name}`, bytes: await readBundleFile(runnerRoot, `${prefix}/${name}`, signal) });
+    }
+    const processorRoot = await realpath(explicitProcessorRoot ?? path.join(process.cwd(), "scripts"));
+    files.push({ name: `${prefix}/engine/__init__.py`, bytes: Buffer.from("") });
+    files.push({ name: `${prefix}/engine/processed_voice.py`, bytes: await readBundleFile(processorRoot, "render-processed-voice.py", signal) });
+    for (const name of ["__init__.py", "core.py", "near_field.py", "motion_convolution.py"]) {
+      files.push({ name: `${prefix}/engine/spatial_d/${name}`, bytes: await readBundleFile(processorRoot, `spatial_d/${name}`, signal) });
+    }
+    const hrtf = await realpath(config.spatialHrtfPath ?? path.join(config.runtimeRoot, "audio-quality-v1", "hrtf", "viking", "subj_A.sofa"));
+    const bytes = await readBundleFile(path.dirname(hrtf), path.basename(hrtf), signal);
+    if (!bytes.subarray(0, 8).equals(Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]))) throw new Error("Invalid SOFA file");
+    files.push({ name: `${prefix}/data/subj_A.sofa`, bytes });
+    return files;
+  } catch {
+    checkCancelled(signal);
+    throw new BatchDownloadError("ASMR 后处理节点或 HRTF 文件不完整，请检查音频后处理配置后重试。", 503);
+  }
 }
 
 async function addAudio(writer: StoredZipWriter, name: string, source: AudioSource, index: number, signal?: AbortSignal) {
@@ -187,7 +229,11 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
   if (shots.length > 2000) throw new BatchDownloadError("视频镜头过多，请分工程导出（每包最多 2000 镜）。", 413);
   const extension = dependencies.reference === undefined ? undefined : getVideoPackageReferenceExtension(dependencies.reference);
   const reference = dependencies.reference === undefined ? undefined : Buffer.from(dependencies.reference);
-  const runner = await loadRunnerFiles(dependencies.runnerRoot, signal);
+  const runnerBundle = await loadRunnerFiles(dependencies.runnerRoot, signal);
+  const runner = runnerBundle.files;
+  if (shots.some(entry => entry.storyboard.asmrSound)) {
+    runner.push(...await loadSoundNodeFiles(runnerBundle.root, config, dependencies.processorRoot, signal));
+  }
   const sources = new Map<number, AudioSource>();
   let inputBytes = (reference?.length ?? 0) + runner.reduce((sum, file) => sum + file.bytes.length, 0);
   const maxArchiveBytes = dependencies.maxArchiveBytes ?? MAX_ARCHIVE_BYTES;
@@ -222,8 +268,13 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
         id: entry.clip.id, order: entry.index, kind: silent ? "ambient" : "speech", referenceMode: entry.referenceMode, durationSeconds,
         prompt: renderConciseH3Prompt({ visual: entry.storyboard.visual, action: entry.storyboard.action, camera: entry.storyboard.camera,
           dialogue: silent ? "" : entry.clip.text, silent, durationSeconds,
+          storyboardStyle: resolveStoryboardStyle(project.videoPlan),
           ...(silent ? { ambientSound: entry.storyboard.ambientSound } : {}) }),
         ...(silent ? {} : { audio }),
+        ...(entry.storyboard.asmrSound ? { asmrSound: {
+          prompt: renderAsmrSoundH3Prompt(entry.storyboard.asmrSound), durationSeconds,
+          postProcessing: entry.storyboard.asmrSound.postProcessing,
+        } } : {}),
       };
     }),
   };
@@ -245,6 +296,7 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
       checkCancelled(signal);
       const folder = `shots/${String(shot.order).padStart(3, "0")}`;
       await writer.add(`${folder}/prompt.txt`, new TextEncoder().encode(shot.prompt));
+      if (shot.asmrSound) await writer.add(`${folder}/asmr-prompt.txt`, new TextEncoder().encode(shot.asmrSound.prompt));
       if (shot.audio) await addAudio(writer, shot.audio, sources.get(shots[position].index)!, shot.order, signal);
     }
     checkCancelled(signal);

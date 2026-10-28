@@ -10,10 +10,11 @@ import { writePcm16Wav } from "./pcm-audio";
 import { addSilentClip } from "./voice-segments";
 import { createClipH3Prompt, createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "./video-plan";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
+import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 
 const base = path.resolve(process.env.ASMR_STORYBOARD_TEST_ROOT ?? tmpdir());
 let root: string, config: LocalRuntimeConfig;
-const generated = { title: "暖光迎接", visual: "S1 stands beside a warmly lit kitchen counter.", action: "S1 gently gestures toward the counter.", camera: "Static eye-level medium close-up." };
+const generated = { title: "暖光迎接", visual: "S1 stands beside a warmly lit kitchen counter.", action: "S1 gently gestures toward the counter.", camera: "Static eye-level medium close-up.", asmrSound: asmrSoundFixture };
 function reply(value: unknown) { return Response.json({ message: { content: JSON.stringify(value) } }); }
 function materialFrom(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>) {
   const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
@@ -74,6 +75,37 @@ async function coldEntrySilentFixture(description?: string) {
 }
 
 describe("已采用音频的单片段分镜", () => {
+  it("plans a moving listener viewpoint and an independent ASMR track while keeping the measured source duration", async () => {
+    const { input, project, voices } = await fixture();
+    project.videoPlan!.storyboardStyle = "listener_pov";
+    voices[1].text = "你已经走到桌边，低头看看这本书。";
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generated));
+    const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
+    const system = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages[0].content;
+    expect(system).toContain("摄影机就是剧情中听者的眼睛");
+    expect(system).toContain("不为了拍到");
+    expect(system).not.toContain("说话期间脸和嘴部始终可见");
+    expect(system).toContain("对白镜头与无对白镜头都必须有");
+    expect(result.storyboard).toMatchObject({ storyboardStyle: "listener_pov", asmrSound: asmrSoundFixture, audio: { duration: .3 } });
+    expect(result.storyboard.asmrSound).not.toHaveProperty("durationSeconds");
+    project.videoPlan!.shots[voices[1].id] = result.storyboard;
+    const prompt = createClipH3Prompt(project, voices[1].id);
+    expect(prompt).toContain("camera is the listener's own eyes");
+    expect(prompt).toContain("may speak from outside");
+    expect(prompt).toContain("<Audio 1>: fully_copy");
+    expect(prompt).not.toContain(asmrSoundFixture.prompt);
+  });
+  it("rejects a newly generated shot missing its ASMR plan without retrying or overwriting a saved shot", async () => {
+    const { input, project, voices } = await fixture();
+    attachPrevious(project, voices[1].id);
+    const before = JSON.stringify(project);
+    const { asmrSound: _omitted, ...legacyReply } = generated;
+    void _omitted;
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(legacyReply));
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({ status: 502, message: expect.stringContaining("ASMR 触发音") });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.stringify(project)).toBe(before);
+  });
   it("provides template structure and only text-matched director notes while retaining full original audio rules", async () => {
     const { input, project, voices } = await fixture();
     project.videoPlan!.referenceTemplate = structuredClone(referenceTemplateFixture);
@@ -143,7 +175,7 @@ describe("已采用音频的单片段分镜", () => {
     const background = "雪地木屋内，刚回来的客人歇息取暖。";
     project.videoPlan!.sceneDescription = background;
     voices[1].text = "来火边坐一会儿吧。";
-    const fireplace = { title: "火边歇息", visual: "S1 sits beside a softly glowing fireplace.", action: "S1 offers a gentle open-hand gesture.", camera: "Static frontal medium close-up." };
+    const fireplace = { title: "火边歇息", visual: "S1 sits beside a softly glowing fireplace.", action: "S1 offers a gentle open-hand gesture.", camera: "Static frontal medium close-up.", asmrSound: asmrSoundFixture };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(fireplace));
     const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
     const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
@@ -239,7 +271,7 @@ describe("已采用音频的单片段分镜", () => {
     // This fixed response verifies request transport and preservation, not model comprehension.
     const response = { title: "门前承接", visual: "S1 stands in the open doorway while snow rests along the threshold.",
       action: "S1 steadies the open door and leaves space for the listener to enter.", camera: "Static medium shot framing the doorway.",
-      ambientSound: "Soft steady wind outside the sheltered doorway." };
+      ambientSound: "Soft steady wind outside the sheltered doorway.", asmrSound: asmrSoundFixture };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify(response) } }] }));
     const result = await generateClipStoryboard(input, { config: { ...config, clipAssetRoot: path.join(root, "nonexistent") }, fetchImpl,
       env: { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "mock-only", ASMR_PLANNER_API_MODEL: "mock-model" } });
@@ -268,7 +300,7 @@ describe("已采用音频的单片段分镜", () => {
     const before = JSON.stringify(project);
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: { content: JSON.stringify({
       title: "门槛积雪", visual: "Snow rests along the threshold beside S1's hand.", action: "S1 holds the door steady.",
-      camera: "Static close view of the threshold and hand.", ambientSound: "Soft wind at the doorway.",
+      camera: "Static close view of the threshold and hand.", ambientSound: "Soft wind at the doorway.", asmrSound: asmrSoundFixture,
     }) } }] }));
     await generateClipStoryboard(input, { config, fetchImpl,
       env: { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "mock-only", ASMR_PLANNER_API_MODEL: "mock-model" } });

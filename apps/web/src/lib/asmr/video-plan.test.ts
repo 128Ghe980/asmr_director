@@ -5,6 +5,7 @@ import { getClipGenerationFingerprint, getProjectMixFingerprint } from "./genera
 import { demoProject } from "./mock-project";
 import { parseImportedProject, serializeProject } from "./project-persistence";
 import { AsmrProjectSchema, type AsmrProject, type VoiceClip } from "./schema";
+import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 import {
   ClipVideoStoryboardSchema, ProjectVideoPlanSchema, createClipH3Prompt,
   StoryboardReferenceModeSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext,
@@ -54,6 +55,23 @@ function putLinkedShot(project: AsmrProject, clipId: string): ClipVideoStoryboar
 }
 
 describe("clip video plan metadata", () => {
+  it("preserves the original prompt for missing or explicit character style and expires only video when POV changes", () => {
+    const project = makeProject();
+    putShot(project);
+    const prompt = createClipH3Prompt(project, firstId);
+    const source = createClipVideoSourceFingerprint(project, firstId);
+    const voiceFingerprint = getClipGenerationFingerprint(voice(project, firstId));
+    project.videoPlan!.storyboardStyle = "character_framing";
+    expect(createClipVideoSourceFingerprint(project, firstId)).toBe(source);
+    expect(createClipH3Prompt(project, firstId)).toBe(prompt);
+    project.videoPlan!.storyboardStyle = "listener_pov";
+    expect(isClipVideoStoryboardCurrent(project, firstId)).toBe(false);
+    expect(getClipGenerationFingerprint(voice(project, firstId))).toBe(voiceFingerprint);
+    putShot(project, firstId, { storyboardStyle: "listener_pov", asmrSound: asmrSoundFixture });
+    expect(createClipH3Prompt(project, firstId)).toContain("listener's own eyes");
+    const restored = parseImportedProject(serializeProject(project));
+    expect(restored).toEqual({ success: true, project });
+  });
   it("retains valid optional metadata in Project JSON and restores old V1 audio without adding a video plan", () => {
     const project = makeProject();
     putShot(project);

@@ -91,6 +91,8 @@ import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getClipStoryboardReferenceMode, getPreviousVoiceClip, getUsableClipH3Prompts, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
 import { applyStoryboardReview, getStoryboardReviewFingerprint, getStoryboardReviewSummary, StoryboardReviewSchema, type StoryboardReview } from "@/lib/asmr/storyboard-review";
 import { createStoryboardGenerationContextFingerprint } from "@/lib/asmr/storyboard-context";
+import { setProjectStoryboardStyle } from "@/lib/asmr/storyboard-style-project";
+import type { StoryboardStyle } from "@/lib/asmr/storyboard-style";
 import { getStudioBatchTargets, runStudioBatchQueue, waitForStudioVoiceGeneration, type StudioBatchAction } from "@/lib/asmr/studio-batch-generation";
 import { getStudioAudioProgress } from "@/lib/asmr/studio-audio-overview";
 import { applyAudioPostProcessingPlan, applyAudioPostProcessingResult, createAudioPostProcessingInputFingerprint,
@@ -99,6 +101,7 @@ import { AudioPostProcessingReceiptSchema, AudioPostProcessingSchema } from "@/l
 
 import { ClipInspector } from "./clip-inspector";
 import { ClipStoryboardEditor } from "./clip-storyboard-editor";
+import { StoryboardStyleSelector } from "./storyboard-style-selector";
 import { EditorPanels } from "./editor-panels";
 import { VoiceGenerationPanel } from "./voice-generation-panel";
 import { PlannerPanel } from "./planner-panel";
@@ -1778,6 +1781,14 @@ export function StudioApp({ project }: StudioAppProps) {
     setEditableProject(next);
   }
 
+  function handleStoryboardStyleChange(style: StoryboardStyle) {
+    if (storyboardReviewRunRef.current || postProcessingRunRef.current || batchRunRef.current || candidateRecheckRunRef.current || singleStoryboardBusyRef.current || candidateActionBusy
+      || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
+    const next = setProjectStoryboardStyle(editableProjectRef.current, style);
+    editableProjectRef.current = next;
+    setEditableProject(next);
+  }
+
   function handleMoveVoice(clipId: string, direction: VoiceClipMoveDirection) {
     if (voiceBusy || referenceImportBusyRef.current || singleStoryboardBusyRef.current || batchRunRef.current) return;
     const result = moveVoiceClip(editableProjectRef.current, clipId, direction);
@@ -2172,7 +2183,7 @@ export function StudioApp({ project }: StudioAppProps) {
     return true;
   }
 
-  function handleEditClipStoryboard(clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera" | "ambientSound">>) {
+  function handleEditClipStoryboard(clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera" | "ambientSound" | "asmrSound">>) {
     const current = editableProjectRef.current;
     const plan = current.videoPlan;
     const shot = plan?.shots[clipId];
@@ -2412,6 +2423,7 @@ export function StudioApp({ project }: StudioAppProps) {
           />
           </div>
           <div id="clip-inspector-storyboard" role="tabpanel" aria-labelledby="clip-inspector-tab-storyboard" hidden={inspectorView !== "storyboard"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+            {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <StoryboardStyleSelector plan={editableProject.videoPlan} disabled={voiceBusy || singleStoryboardBusy || storyboardReviewBusy || Boolean(postProcessingProgress) || Boolean(batchProgress) || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId)} onChange={handleStoryboardStyleChange} /> : null}
             {inspectorView === "storyboard" && selectedClip?.type === "voice" ? <ClipStoryboardEditor key={`${editableProject.project_id}:${speechMode}:${selectedClip.id}`} project={editableProject} clipId={selectedClip.id} batchBusy={storyboardReviewBusy || Boolean(postProcessingProgress) || Boolean(batchProgress) || Boolean(forceSplittingCandidateId) || Boolean(confirmingCandidateId)} referenceModeBusy={voiceBusy || singleStoryboardBusy || Boolean(batchProgress)} onReferenceModeChange={handleStoryboardReferenceModeChange} onBusyChange={handleStoryboardBusyChange} onProviderChange={handleStoryboardProviderChange} onSceneChange={handleVideoSceneChange} onSave={(id, shot) => handleSaveClipStoryboard(id, shot, speechMode)} onEdit={handleEditClipStoryboard} /> : null}
           </div>
         </div>

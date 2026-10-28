@@ -4,6 +4,7 @@ import { demoProject } from "./mock-project";
 import type { AsmrProject } from "./schema";
 import { createStoryboardGenerationContextFingerprint, createStoryboardScriptContext } from "./storyboard-context";
 import { createClipVideoSourceFingerprint } from "./video-plan";
+import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 
 function fixture() {
   const project = structuredClone(demoProject);
@@ -24,11 +25,29 @@ function fixture() {
 }
 
 describe("storyboard semantic context and in-flight identity", () => {
+  it("carries a prior POV's physical viewpoint and sound endpoints without sending assets", () => {
+    const { project, clips } = fixture();
+    project.videoPlan!.storyboardStyle = "listener_pov";
+    project.videoPlan!.shots[clips[0].id] = {
+      version: 1, promptFormat: "minimax-h3", clipId: clips[0].id, storyboardStyle: "listener_pov",
+      sourceFingerprint: createClipVideoSourceFingerprint(project, clips[0].id),
+      title: "走到桌边", visual: "The table is ahead at the listener's waist.", action: "The listener comes to a stop beside the table.",
+      camera: "The listener's eye-level view settles facing the window.", asmrSound: asmrSoundFixture,
+      audio: { assetId: "context_0", uri: "asset://clip/context_0", duration: 2 },
+    };
+    const context = createStoryboardScriptContext(project, clips[2].id);
+    expect(context.storyboardStyle).toBe("listener_pov");
+    expect(context.scriptOrder[0].storyboardContext).toMatchObject({ camera: project.videoPlan!.shots[clips[0].id].camera, asmrSound: asmrSoundFixture });
+    expect(JSON.stringify(context)).not.toContain("asset://");
+    const fingerprint = createStoryboardGenerationContextFingerprint(project);
+    project.videoPlan!.shots[clips[0].id].camera = "The listener is now seated facing the door.";
+    expect(createStoryboardGenerationContextFingerprint(project)).not.toBe(fingerprint);
+  });
   it("follows voice array order including silent actions, with only usable adopted speech duration metadata", () => {
     const { project, clips } = fixture();
     clips[2].generation.status = "asset_pending";
     const context = createStoryboardScriptContext(project, clips[1].id);
-    expect(context).toEqual({ currentIndex: 1, scriptOrder: [
+    expect(context).toEqual({ currentIndex: 1, storyboardStyle: "character_framing", scriptOrder: [
       { index: 0, clipId: clips[0].id, kind: "speech", text: clips[0].text, durationSeconds: 2 },
       { index: 1, clipId: clips[1].id, kind: "silent", text: clips[1].text, durationSeconds: 4.5 },
       { index: 2, clipId: clips[2].id, kind: "speech", text: clips[2].text },

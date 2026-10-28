@@ -3,12 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { generateClipStoryboard } from "./clip-storyboard-service";
 import { renderConciseH3Prompt } from "./h3-prompt";
 import { demoProject } from "./mock-project";
+import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 import { AsmrProjectSchema, type VoiceClip } from "./schema";
 import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint,
   getPreviousClipPromptFingerprint, getUsableClipH3Prompts, type ClipVideoStoryboard } from "./video-plan";
 
 const ambientSound = "Soft steady rain outside the window with a faint room tone.";
-const generated = { title: "窗边雨声", visual: "Rain trails down the cabin window.", action: "A curtain moves gently beside the window.", camera: "Static close-up.", ambientSound };
+const generated = { title: "窗边雨声", visual: "Rain trails down the cabin window.", action: "A curtain moves gently beside the window.", camera: "Static close-up.", ambientSound, asmrSound: asmrSoundFixture };
 const env = { ASMR_PLANNER_API_URL: "https://api.deepseek.example/v1", ASMR_PLANNER_API_KEY: "test-only-key", ASMR_PLANNER_API_MODEL: "test-model" };
 function reply(value: unknown) { return Response.json({ choices: [{ message: { content: JSON.stringify(value) } }] }); }
 

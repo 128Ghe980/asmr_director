@@ -4,7 +4,15 @@ Last updated: 2026-10-28
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-10-28 / 日语参考正式入库与发布交接
+## Current update — 2026-10-28 / 第一人称分镜与逐镜 ASMR 叠加
+
+按用户新要求完成创意/工程「角色展示（原风格）」与「第一人称 · 跟随剧情」，模板固定风格；缺省旧数据和原 prompt 保持。第一人称相机属于听者，承接实际位置、眼高和朝向，随剧情走动/转头/落座；S1 可按剧情画外说话，不再因始终可见嘴部而锁回人像。每个新有声/无对白分镜同次 API 给独立 ASMR 触发音及起止声位/移动/增益，时长取实际导出 WAV 或空镜自身时长。编辑、保存、校对和撤回已贯通，旧工程未自动改写。
+
+批跑器保留原视频，独立生成每镜同号 ASMR 候选，最终输出原版和 `preview-asmr` 叠加版；音效改动不重跑原视频，空间/增益改动只重合片。目标 ComfyUI 使用随包 `custom_nodes/asmr_director_audio`，复用已发布 D 引擎和 Viking SOFA；需按包内说明安装节点/缺失依赖，运行器本机无 FFmpeg/新服务。更新包 `I:/AI/asmr_director/artifacts/h3-asmr/ASMR-video-runner-storyboard-sound-update-2026-10-28.zip`，不是旧三文件更新方式，保留项目/工作流/素材/outputs。
+
+主 QA `I:/AI/asmr_director/qa/storyboard/2026-10-28-pov-asmr/`：隔离全量 Vitest 2220 通过、1 旧 route fixture 缺新字段失败、4 条件跳过；仅补 fixture 后最终定向 16 通过，不称最终整站重跑。运行器最终 155 项 OK/1 跳过，40 文件 lint 与隔离完整构建通过，build `uzuId3uS9hiHNo1x0nteD`；另有真实 CPU D/解压 ZIP/干跑证据。真实 API 2业务/2上游验证门口→桌边→俯视书页及两镜 ASMR，未跑 H3/TTS/ASR，不能称最终视听或物理声位通过。已于 05:43 HKT 切换本地 3001，活动源码 `.local/releases/pov-asmr-overlay/apps/web`，上述 build，启动 PID25364；首页/8个JS/CSS、7参考目录及两条日语WAV通过，编译HTTP导出ZIP通过，49功能文件与发布副本一致、28范围外路径未变。恢复看[本轮记录](records/2026-10-28-pov-asmr-overlay.md)及主QA `activation.json`/`service-verification.json`。用户已要求单独记录并推送本轮；Git commit、推送及远端校验以主 QA `publication.json` 为准。Audio Quality V1 继续，其他 SFX 模型实验仍暂停，不新增路线。[中文合同](specs/2026-10-28-pov-asmr-overlay.zh.md) / [English](specs/2026-10-28-pov-asmr-overlay.en.md)。
+
+## Earlier update — 2026-10-28 / 日语参考正式入库与发布交接
 
 用户最终认为中文CFG2／20仍不像，暂停本轮相似度实验；明确要求两参考加入系统、标日语、加日语原文并保存较优参数，再记录推送交接。两条已入库并上线：雪之下`user-fe1e360f-9ef2-4451-9272-d666c31f4936`，完整25.10秒已测减6dB参考、seed43；由比滨`user-fdd0148d-b85c-432c-b36e-fd926ffe3cae`，02完整20.2188秒gain1、seed42。均language ja／with_reference_text／CFG2.5／10；正式音频与日语原文在`I:/AI/asmr_director/runtime/voice-references/<id>/`，字节／标点保持。旧5参考和default soft_zh不变。活动profile沿用既有D盘runtime配置路径，本次不迁移；新音频均在I盘项目根。
 

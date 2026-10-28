@@ -18,8 +18,12 @@ import pyloudnorm as pyln
 import soundfile as sf
 from scipy.signal import resample_poly
 
-from spatial_d.core import FS, Profile, room_ir
-from spatial_d.motion_convolution import render_moving
+if __package__:
+    from .spatial_d.core import FS, Profile, room_ir
+    from .spatial_d.motion_convolution import render_moving
+else:
+    from spatial_d.core import FS, Profile, room_ir
+    from spatial_d.motion_convolution import render_moving
 
 RENDERER_VERSION = "processed-voice-v1"
 DISTANCES = {"very_close": .18, "close": .35, "near": .5, "mid": .8, "far": 1.75}

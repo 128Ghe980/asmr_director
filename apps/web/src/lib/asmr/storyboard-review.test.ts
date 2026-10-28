@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { postProcessingProject } from "../../components/studio/audio-post-processing-test-fixture";
 import { createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent } from "./video-plan";
 import { applyStoryboardReview, getStoryboardReviewFingerprint, getStoryboardReviewSummary, pickStoryboardReviewFields, StoryboardReviewSchema } from "./storyboard-review";
+import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 
 function fixture() {
   const project = postProcessingProject(), clips = project.timeline.tracks.find(track => track.track_type === "voice")!.clips;
@@ -13,6 +14,19 @@ function fixture() {
 }
 
 describe("storyboard review domain", () => {
+  it("adds an independent sound plan to a legacy shot and can undo it without touching its main prompt or audio", () => {
+    const { project, clips } = fixture(), shot = project.videoPlan!.shots[clips[0].id];
+    const before = pickStoryboardReviewFields(shot);
+    const after = { ...before, asmrSound: structuredClone(asmrSoundFixture) };
+    const change = { clipId: clips[0].id, reason: "增加本镜触发音", before, after };
+    const updated = applyStoryboardReview(project, { inputFingerprint: getStoryboardReviewFingerprint(project), notes: [], changes: [change] });
+    expect(updated.videoPlan!.shots[clips[0].id].asmrSound).toEqual(asmrSoundFixture);
+    expect(updated.videoPlan!.shots[clips[0].id].audio).toEqual(shot.audio);
+    expect(updated.videoPlan!.shots[clips[1].id].previousPromptFingerprint).toBe(project.videoPlan!.shots[clips[1].id].previousPromptFingerprint);
+    expect(updated.timeline).toEqual(project.timeline);
+    const undone = applyStoryboardReview(updated, { inputFingerprint: getStoryboardReviewFingerprint(updated), notes: [], changes: [{ ...change, before: after, after: before }] });
+    expect(undone.videoPlan).toEqual(project.videoPlan);
+  });
   it("requires all adopted sources and complete current shots", () => {
     const { project, clips } = fixture(); expect(getStoryboardReviewSummary(project)).toMatchObject({ ready: true, total: 2 });
     project.videoPlan!.shots[clips[0].id].action = "";

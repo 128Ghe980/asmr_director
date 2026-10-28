@@ -14,6 +14,7 @@ import {
   serializeProject,
 } from "./project-persistence";
 import { safeParseAsmrProject } from "./validate";
+import { effectiveStoryboardStyle } from "./storyboard-style";
 
 export const PROJECT_LIBRARY_STORAGE_KEY =
   "ai-asmr-studio:v1:project-library";
@@ -495,10 +496,12 @@ export function adoptPlannerDraft(
   // Compile and validate everything before creating the safety revision. Failures
   // leave the caller's project and planning workspace untouched.
   const compiled = compilePlannerDraft(source.brief, source.draft, projectId);
-  if (source.sceneDescription !== undefined || source.brief.referenceTemplate) {
+  if (source.sceneDescription !== undefined || source.brief.referenceTemplate || source.brief.storyboardStyle) {
     compiled.videoPlan = { version: 1, sceneDescription: source.sceneDescription ?? source.draft.scene, shots: {},
-      ...(source.brief.referenceTemplate ? { referenceTemplate: structuredClone(source.brief.referenceTemplate),
-        templateDirections: source.draft.sections.map(({ text, direction, soundSuggestions }) => ({ text, direction, soundSuggestions })) } : {}) };
+      ...(source.brief.storyboardStyle || source.brief.referenceTemplate ? { storyboardStyle: effectiveStoryboardStyle(source.brief) } : {}),
+      ...(source.brief.referenceTemplate ? { referenceTemplate: structuredClone(source.brief.referenceTemplate) } : {}),
+      ...(source.brief.referenceTemplate || effectiveStoryboardStyle(source.brief) === "listener_pov"
+        ? { templateDirections: source.draft.sections.map(({ text, direction, soundSuggestions }) => ({ text, direction, soundSuggestions })) } : {}) };
   }
   const project = ensureSpeechWorkspaces(compiled);
   const protectedLibrary = createProjectRevision(

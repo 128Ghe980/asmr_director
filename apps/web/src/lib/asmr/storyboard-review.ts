@@ -3,11 +3,14 @@ import type { AsmrProject, VoiceClip } from "./schema";
 import { captureSpeechWorkspace } from "./speech-workspace";
 import { ClipVideoStoryboardSchema, getUsableClipH3Prompts, rebindCurrentStoryboardReferences, type ClipVideoStoryboard } from "./video-plan";
 import { creativeTemplateContext, getMatchingTemplateDirections } from "./reference-template";
+import { AsmrSoundSchema } from "./asmr-sound";
+import { resolveStoryboardStyle } from "./storyboard-style";
 
 /** Existing editable bounds also allow an inverse review to restore older long notes. */
 export const StoryboardReviewFieldsSchema = z.object({
   title: z.string().min(1).max(120), visual: z.string().min(1).max(800), action: z.string().min(1).max(600), camera: z.string().min(1).max(400),
   ambientSound: z.string().max(600).optional(),
+  asmrSound: AsmrSoundSchema.optional(),
 }).strict();
 export const StoryboardReviewSchema = z.object({
   inputFingerprint: z.string().regex(/^storyboard-review-v1:[a-f0-9]{32}$/),
@@ -24,7 +27,8 @@ export function getStoryboardReviewClips(project: AsmrProject): VoiceClip[] {
 }
 export function pickStoryboardReviewFields(shot: ClipVideoStoryboard): StoryboardReviewFields {
   return { title: shot.title, visual: shot.visual, action: shot.action, camera: shot.camera,
-    ...(shot.ambientSound === undefined ? {} : { ambientSound: shot.ambientSound }) };
+    ...(shot.ambientSound === undefined ? {} : { ambientSound: shot.ambientSound }),
+    ...(shot.asmrSound === undefined ? {} : { asmrSound: shot.asmrSound }) };
 }
 function compactFingerprint(value: string) {
   const lanes = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35], primes = [0x01000193, 0x27d4eb2d, 0x165667b1, 0x85ebca77];
@@ -36,6 +40,7 @@ export function getStoryboardReviewFingerprint(project: AsmrProject): string {
     title: project.title, scene: { id: project.scene.id, name: project.scene.name },
     character: { id: project.character.id, role: project.character.role, personality: project.character.personality, speech_style: project.character.speech_style },
     sceneDescription: project.videoPlan?.sceneDescription,
+    storyboardStyle: resolveStoryboardStyle(project.videoPlan),
     referenceTemplate: creativeTemplateContext(project.videoPlan?.referenceTemplate),
     clips: getStoryboardReviewClips(project).map(clip => {
       const shot = project.videoPlan?.shots[clip.id];
@@ -73,6 +78,7 @@ export function applyStoryboardReview(project: AsmrProject, input: StoryboardRev
     if (!ids.has(change.clipId) || !current || JSON.stringify(pickStoryboardReviewFields(current)) !== JSON.stringify(change.before)) throw new Error("校对前的分镜已变化，未应用任何修改。");
     const replacement = { ...current, ...change.after };
     if (change.after.ambientSound === undefined) delete replacement.ambientSound;
+    if (change.after.asmrSound === undefined) delete replacement.asmrSound;
     if (![replacement.title, replacement.visual, replacement.action, replacement.camera].every(value => value.trim())
       || replacement.kind === "silent" && !replacement.ambientSound?.trim()) throw new Error("校对后的分镜文字不完整，未应用任何修改。");
     return [change.clipId, ClipVideoStoryboardSchema.parse(replacement)] as const;

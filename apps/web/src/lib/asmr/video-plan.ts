@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { AsmrProject, TimelineClip } from "./schema";
 import { renderConciseH3Prompt } from "./h3-prompt";
 import { CreativeTemplateSchema, TemplateDirectionsSchema, getMatchingTemplateDirections } from "./reference-template";
+import { AsmrSoundSchema } from "./asmr-sound";
+import { StoryboardStyleSchema, resolveStoryboardStyle } from "./storyboard-style";
 
 type VoiceClip = Extract<TimelineClip, { type: "voice" }>;
 const assetIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
@@ -29,6 +31,8 @@ export const ClipVideoStoryboardSchema = z.object({
   action: z.string().max(600),
   camera: z.string().max(400),
   ambientSound: z.string().max(600).optional(),
+  asmrSound: AsmrSoundSchema.optional(),
+  storyboardStyle: StoryboardStyleSchema.optional(),
   previousClipId: z.string().min(1).max(200).optional(),
   previousPromptFingerprint: fingerprintSchema.optional(),
   referenceMode: StoryboardReferenceModeSchema.optional(),
@@ -52,6 +56,7 @@ export const ProjectVideoPlanSchema = z.object({
   referenceModes: z.record(z.string().min(1).max(200), StoryboardReferenceModeSchema).optional(),
   referenceTemplate: CreativeTemplateSchema.optional(),
   templateDirections: TemplateDirectionsSchema.optional(),
+  storyboardStyle: StoryboardStyleSchema.optional(),
 }).strict().superRefine((plan, context) => {
   for (const [clipId, shot] of Object.entries(plan.shots)) {
     if (clipId !== shot.clipId) {
@@ -120,6 +125,7 @@ function sourceFingerprint(project: AsmrProject, clip: VoiceClip): string {
       : { asset: { assetId: clip.asset.asset_id, uri: clip.asset.uri, declaredDuration: clip.asset.duration } }),
     scene: project.scene, character: project.character,
     sceneDescription: effectiveSceneDescription(project),
+    ...(resolveStoryboardStyle(project.videoPlan) === "listener_pov" ? { storyboardStyle: "listener_pov" } : {}),
     ...(project.videoPlan?.referenceTemplate ? { referenceTemplate: project.videoPlan.referenceTemplate } : {}),
     ...(getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text).length
       ? { templateDirections: getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text) } : {}),
@@ -139,6 +145,7 @@ function previousContentFingerprint(shot: ClipVideoStoryboard): string {
     title: shot.title, visual: shot.visual, action: shot.action, camera: shot.camera,
     ...(shot.ambientSound === undefined ? {} : { ambientSound: shot.ambientSound }),
     ...(shot.referenceMode === undefined ? {} : { referenceMode: shot.referenceMode }),
+    ...(shot.storyboardStyle === undefined ? {} : { storyboardStyle: shot.storyboardStyle }),
   });
 }
 
@@ -208,7 +215,8 @@ export function createClipH3Prompt(project: AsmrProject, clipId: string): string
 function renderClipH3Prompt(clip: VoiceClip, shot: ClipVideoStoryboard): string {
   return renderConciseH3Prompt({ visual: shot.visual, action: shot.action, camera: shot.camera,
     dialogue: clip.kind === "silent" ? "" : clip.text, silent: clip.kind === "silent",
-    durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration, ambientSound: shot.ambientSound });
+    durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration, ambientSound: shot.ambientSound,
+    storyboardStyle: shot.storyboardStyle });
 }
 
 /** Evaluate every saved shot once; values are identical to usable single-clip prompts. */

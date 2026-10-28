@@ -6,6 +6,8 @@ Last updated: 2026-10-28
 
 ## 当前优先级
 
+2026-10-28 按新要求完成第一人称分镜/逐镜 ASMR 产品链路：保留旧角色风格，模板固定风格；新视点随听者实际剧情移动并允许 S1 画外讲话。有声及空镜同次 API 规划独立触发音和 D 后处理，按实测音频时长生成，批跑保留原版并增加逐段叠加版。Audio Quality V1 继续，其他 SFX 模型选型/质量实验仍暂停，不新增顶层阶段。隔离全量 2220通过/1旧fixture失败/4跳过，补fixture后定向16通过；运行器155项OK/1跳过、40文件lint、隔离构建通过。真实API仅2次，H3成片/音效试听及目标机节点兼容性待验；已切换本地3001 build `uzuId3uS9hiHNo1x0nteD`，8静态资源/7参考/两日语WAV及编译HTTP导出核验通过，49功能文件一致/28范围外未变；详见[记录](records/2026-10-28-pov-asmr-overlay.md)及主QA `service-verification.json`。更新包已生成至项目 artifacts/h3-asmr；用户已要求单独记录推送，实际 Git/远端回执见同一 QA `publication.json`。合同：[中文](specs/2026-10-28-pov-asmr-overlay.zh.md) / [English](specs/2026-10-28-pov-asmr-overlay.en.md)。
+
 2026-10-28 中文CFG2／20用户仍认为不像，暂停相似度试参，要求两最终参考日语入库／原文生成／较优参数并推送交接。已入库雪25.10秒seed43、由比滨02完整20.22秒seed42，均ja／combined／CFG2.5／10，原有5条与默认保持。每参考预设及界面语言标签已上线3001 build2p3tAp4OKdM1Lj_p3Z7_A；121后端／69UI／13工具测试、lint、隔离构建和实际HTTP验证通过。中文音色未通过，日语长文识别切分未扩展；当前注册子项完成，AudioQualityV1继续／SFX暂停／H3待办保持。Git发布以当前HEAD／远端和QA publication回执为准。[日语入库发布交接](records/2026-10-28-japanese-reference-presets-handoff.md)。
 
 2026-10-28 用户认可仅音频CFG2.5／10中文正常，音色仍不像，要求保持参考音量／seed／两句、不加原文试CFG2／20。4新结果及8卡旧新对照已交付；实际仅变cfg／timesteps，20步8962图及no-prompt核实，4条zh ASR对应。雪rest资源保护中止后，按已有授权临退Overlay，同配置take002成功；其他首次，失败保留。旧4原生／试听直接复用，22链接／137旧资产及独立交付通过；相似度待听，不自动改产品默认。AudioQualityV1继续／SFX暂停／H3待办保持。[CFG2／20对照记录](records/2026-10-28-chinese-reference-only-cfg2-step20.md)。

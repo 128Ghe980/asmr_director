@@ -9,6 +9,7 @@ import { getStoryboardReviewFingerprint, type StoryboardReview } from "@/lib/asm
 import { createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, type ClipVideoStoryboard } from "@/lib/asmr/video-plan";
 import { postProcessingProject } from "./audio-post-processing-test-fixture";
 import { StudioApp } from "./studio-app";
+import { CREATIVE_TEMPLATES } from "@/lib/asmr/creative-templates";
 
 const bridge = vi.hoisted(() => ({ generateClip: vi.fn(), generateProjectMix: vi.fn(), cancelGeneration: vi.fn(async () => {}) }));
 const dialogMethods = ["showModal", "close"] as const;
@@ -80,6 +81,34 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window
 });
 
 describe("whole-batch storyboard review UI", () => {
+  it("changes the current project's camera style without rewriting audio or shots and saves it across workspaces", async () => {
+    const api = mockApi(); const { project } = await mount();
+    const original = structuredClone(current());
+    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    const selector = screen.getByRole("combobox", { name: "当前工程分镜风格" }) as HTMLSelectElement;
+    expect(selector.value).toBe("character_framing");
+    fireEvent.change(selector, { target: { value: "listener_pov" } });
+    await waitFor(() => expect(stored(project).videoPlan?.storyboardStyle).toBe("listener_pov"));
+    expect(current().videoPlan!.shots).toEqual(original.videoPlan!.shots);
+    expect(current().timeline).toEqual(original.timeline);
+    fireEvent.click(screen.getByRole("tab", { name: "整段" }));
+    expect(current().videoPlan!.storyboardStyle).toBe("listener_pov");
+    expect(api.posts).toHaveLength(0);
+    expect(bridge.generateClip).not.toHaveBeenCalled();
+  });
+
+  it("locks the current project's camera style when a reference template is selected", async () => {
+    mockApi(); const project = postProcessingProject();
+    project.videoPlan!.referenceTemplate = CREATIVE_TEMPLATES[0];
+    const view = render(<StudioApp project={project} />);
+    await screen.findByRole("tab", { name: "分镜" });
+    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    const selector = screen.getByRole("combobox", { name: "当前工程分镜风格" }) as HTMLSelectElement;
+    expect(selector.disabled).toBe(true);
+    expect(selector.value).toBe("character_framing");
+    view.unmount();
+  });
+
   it("previews legacy/manual shots before explicit apply and can undo without losing later DSP edits", async () => {
     const api = mockApi(), { project } = await mount(); const before = structuredClone(current().videoPlan);
     manual(); expect(api.posts).toHaveLength(1); expect(api.posts[0].body.editableClipIds).toHaveLength(2);

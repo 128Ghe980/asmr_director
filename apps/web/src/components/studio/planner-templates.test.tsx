@@ -51,6 +51,35 @@ beforeEach(() => window.localStorage.clear());
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("reference templates in the creation workspace", () => {
+  it("persists POV selection, locks a template's own style and restores the independent choice when removed", async () => {
+    seed(); mockApi(); const view = await mountPanel();
+    const style = screen.getByRole("combobox", { name: "分镜风格" }) as HTMLSelectElement;
+    expect(style.value).toBe("character_framing");
+    fireEvent.change(style, { target: { value: "listener_pov" } });
+    await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.brief.storyboardStyle).toBe("listener_pov"));
+    expect(loadPlannerDraft(window.localStorage).state.draftBrief).toEqual(brief);
+    fireEvent.change(screen.getByRole("combobox", { name: "参考模板" }), { target: { value: template.id } });
+    expect(style.disabled).toBe(true);
+    expect(style.value).toBe("character_framing");
+    fireEvent.change(screen.getByRole("combobox", { name: "参考模板" }), { target: { value: "" } });
+    expect(style.disabled).toBe(false);
+    expect(style.value).toBe("listener_pov");
+    view.unmount(); await mountPanel();
+    expect((screen.getByRole("combobox", { name: "分镜风格" }) as HTMLSelectElement).value).toBe("listener_pov");
+    expect(control("第 1 段台词").value).toBe(draft.sections[0].text);
+  });
+
+  it("sends selected POV style to generation and retains it in the adopted draft snapshot", async () => {
+    seed(); const api = mockApi(); const { onAdopt } = await mountPanel();
+    fireEvent.change(screen.getByRole("combobox", { name: "分镜风格" }), { target: { value: "listener_pov" } });
+    api.respond(Response.json({ draft }));
+    fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.draftBrief?.storyboardStyle).toBe("listener_pov"));
+    expect((api.posts[0].body.brief as { storyboardStyle: string }).storyboardStyle).toBe("listener_pov");
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
+    expect(onAdopt.mock.calls[0][0].storyboardStyle).toBe("listener_pov");
+  });
+
   it("applies a template to future creation while preserving the old draft, scene and adoption source", async () => {
     const old = seed(); mockApi(); const { onAdopt } = await mountPanel();
     tab("参考模板");

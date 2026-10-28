@@ -78,6 +78,30 @@ def slug(value):
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_")[:64] or "project"
 
 
+def validate_asmr_sound(value):
+    if not isinstance(value, dict) or not isinstance(value.get("prompt"), str) or not value["prompt"].strip():
+        raise BatchError("ASMR 触发音需要完整提示词。")
+    if len(value["prompt"]) > 12000:
+        raise BatchError("ASMR 触发音提示词过长。")
+    settings = value.get("postProcessing")
+    if not isinstance(settings, dict):
+        raise BatchError("ASMR 触发音缺少后处理设置。")
+    for key in ("start", "end"):
+        anchor = settings.get(key)
+        if (not isinstance(anchor, dict) or anchor.get("distance") not in ("far", "mid", "near", "close", "very_close")
+                or type(anchor.get("pan")) not in (int, float) or not math.isfinite(anchor["pan"])
+                or not -1 <= anchor["pan"] <= 1):
+            raise BatchError("ASMR 触发音的起止声位无效。")
+    if settings.get("movement") not in ("static", "approach", "recede", "left_to_right", "right_to_left", "orbit", "orbit_approach"):
+        raise BatchError("ASMR 触发音的移动方式无效。")
+    gain = settings.get("gainDb")
+    if type(gain) not in (int, float) or not math.isfinite(gain) or not -36 <= gain <= 6:
+        raise BatchError("ASMR 触发音增益必须在 -36 到 6 dB 之间。")
+    if "durationSeconds" in value:
+        native_duration_frames(value["durationSeconds"])
+    return value
+
+
 def package_path(root, relative):
     if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
         raise BatchError("项目素材路径必须是项目内的相对路径。")
@@ -131,6 +155,12 @@ def load_package(folder):
             raise BatchError(f"镜头 {shot['id']} 的时长无效。")
         if shot["kind"] == "speech" and not isinstance(shot.get("audio"), str):
             raise BatchError(f"对白镜头 {shot['id']} 缺少音频。")
+        if shot.get("asmrSound") is not None:
+            if generation_mode == TEXT_TO_VIDEO:
+                raise BatchError("文生视频项目不能嵌套 ASMR 触发音任务。")
+            validate_asmr_sound(shot["asmrSound"])
+        if "trimToDuration" in shot and (generation_mode != TEXT_TO_VIDEO or type(shot["trimToDuration"]) is not bool):
+            raise BatchError("trimToDuration 只支持文生视频的布尔设置。")
         ids.add(shot["id"])
         orders.add(order)
     manifest["shots"] = sorted(shots, key=lambda shot: shot["order"])
@@ -202,6 +232,8 @@ def shot_facts(root, shot, generation_mode=REFERENCE_TO_VIDEO):
     else:
         if generation_mode == TEXT_TO_VIDEO:
             duration, target_frames = native_duration_frames(shot["durationSeconds"])
+            if shot.get("trimToDuration"):
+                target_frames = max(1, math.ceil(duration * FPS - 1e-9))
         else:
             duration = min(float(shot["durationSeconds"]), 5.0)
             target_frames = max(1, math.floor(duration * FPS + 1e-9))
@@ -211,9 +243,15 @@ def shot_facts(root, shot, generation_mode=REFERENCE_TO_VIDEO):
         raise BatchError("本镜超过 H3 单次 3600 帧输入上限，请先在项目中拆成较短镜头。")
     if generation_mode == TEXT_TO_VIDEO:
         target_frames = generation_frames
+        if shot.get("trimToDuration"):
+            target_frames = max(1, math.ceil(duration * FPS - 1e-9))
     return {"kind": shot["kind"], "audio_path": audio_path, "audio_sha256": audio_sha,
             "source_duration": duration, "target_frames": target_frames,
             "target_duration": target_frames / FPS, "generation_frames": generation_frames}
+
+
+def sound_duration(facts):
+    return facts["source_duration"] if facts["kind"] == "speech" else facts["target_duration"]
 
 
 def prune_graph(graph, include_tail=True):
@@ -245,6 +283,14 @@ def build_graph(template, shot, facts, character=None, audio=None, tail=None, wi
                 reference[dimension] = value
         graph["10"]["inputs"]["noise_seed"] = (seed + shot["order"]) % (2 ** 64)
         graph["26"]["inputs"]["filename_prefix"] = output_prefix or f"asmr-batch/{slug(shot['id'])}"
+        if shot.get("trimToDuration"):
+            duration = facts.get("source_duration", shot["durationSeconds"])
+            graph[FRAME_LIMIT_NODE] = {"class_type": "ImageFromBatch", "inputs": {
+                "image": graph["11"]["inputs"]["images"], "batch_index": 0,
+                "length": facts.get("target_frames", max(1, math.ceil(duration * FPS - 1e-9)))}}
+            graph[AMBIENT_AUDIO_LIMIT_NODE] = {"class_type": "TrimAudioDuration", "inputs": {
+                "audio": ["4", 0], "start_index": 0.0, "duration": duration}}
+            graph["11"]["inputs"].update({"images": [FRAME_LIMIT_NODE, 0], "audio": [AMBIENT_AUDIO_LIMIT_NODE, 0]})
         return prune_graph(graph, include_tail=False)
     width, height = 1216 if width is None else width, 672 if height is None else height
     for key in list(reference):
@@ -480,7 +526,7 @@ class BatchRunner:
                  candidates=1, rerun_candidates=None, request_timeout=30,
                  disconnect_timeout=300, heartbeat_interval=15, status_callback=None, stop_event=None,
                  only=None, rerun=None, dry_run=False, concat=False, log=print, client=None,
-                 publisher=copy_saved_video):
+                 publisher=copy_saved_video, rerun_asmr=None, rerun_asmr_candidates=None):
         self.root, self.manifest, self.template, self.template_sha = load_package(package)
         self.generation_mode = self.manifest.get("generationMode", REFERENCE_TO_VIDEO)
         self.text_to_video = self.generation_mode == TEXT_TO_VIDEO
@@ -535,6 +581,11 @@ class BatchRunner:
         self.uploads = {}
         self.only, self.rerun = self.resolve_selection(only), self.resolve_selection(rerun)
         self.rerun_candidates = self.resolve_candidates(rerun_candidates)
+        self.rerun_asmr = self.resolve_selection(rerun_asmr)
+        self.rerun_asmr_candidates = rerun_asmr_candidates
+        self.sound_runner = None
+        self.sound_prepared = False
+        self.sound_input_errors = {}
 
     def resolve_candidates(self, selection):
         result = set()
@@ -662,6 +713,8 @@ class BatchRunner:
                              "generationFrames": facts["generation_frames"], "fps": FPS,
                              "width": self.width if self.width is not None else self.template["22"]["inputs"]["width"],
                              "height": self.height if self.height is not None else self.template["22"]["inputs"]["height"]})
+            if shot.get("trimToDuration"):
+                identity["trimToDuration"] = True
         # Preserve the exact v1 identity for candidate 1, generation 0.
         # Candidate count is deliberately absent: increasing N only adds slots.
         if candidate != 1 or generation != 0:
@@ -1247,7 +1300,8 @@ class BatchRunner:
                     "fingerprint": self.fingerprint(shot, facts, candidate),
                     **({"requestedDurationSeconds": facts["source_duration"]} if self.text_to_video else {}),
                     "targetDurationSeconds": facts["target_duration"], "generationFrames": facts["generation_frames"],
-                    "note": ("文生视频：无需上传素材；保留 H3 原生画面和音轨，按对齐帧数完整保存。" if self.text_to_video
+                    "note": ("剧情 ASMR：原生音轨裁至本镜时长，画面按 24 fps 向上取整。" if shot.get("trimToDuration") else
+                             "文生视频：无需上传素材；保留 H3 原生画面和音轨，按对齐帧数完整保存。" if self.text_to_video
                              else "占位上传名称；连续参考取相邻上一镜同编号候选的实际成功输出。")}})
                 prepared.append(str(target))
                 duration_note = (f"请求 {facts['source_duration']:g} 秒，对齐后 {facts['target_duration']:.3f} 秒；"
@@ -1255,24 +1309,75 @@ class BatchRunner:
                 self.log(f"{shot['id']} / 候选 {candidate}：{duration_note}dry-run payload → {target}")
         return {"dry_run": prepared}
 
-    def set_preview(self, candidate, receipt):
-        self.state.setdefault("previews", {})[str(candidate)] = receipt
-        if candidate == 1:
+    def prepare_sound_runner(self):
+        """Reuse the proven task journal in a self-contained, relocatable sidecar package."""
+        if self.sound_prepared:
+            return self.sound_runner
+        self.sound_prepared = True
+        sound_shots = []
+        for shot in self.shots:
+            sound = shot.get("asmrSound")
+            if sound is None or self.only is not None and shot["id"] not in self.only:
+                continue
+            try:
+                facts = shot_facts(self.root, shot, self.generation_mode)
+            except (BatchError, OSError, ValueError) as error:
+                # Never invent a source duration or erase an accepted sidecar job.
+                # Its existing journal remains available once this source returns.
+                self.sound_input_errors[shot["id"]] = str(error)
+                self.log(f"{shot['id']}：ASMR 原音输入不可用，保留任务并继续其他镜头：{error}")
+                continue
+            sound_shots.append({"id": shot["id"], "order": shot["order"], "kind": "ambient", "referenceMode": "new",
+                                "prompt": sound["prompt"], "durationSeconds": sound_duration(facts), "trimToDuration": True})
+        if not sound_shots:
+            return None
+        graph = copy.deepcopy(self.template)
+        for key in list(graph["22"]["inputs"]):
+            if key.startswith(("ref_images", "ref_audios", "ref_videos", "ref_video_audios")):
+                del graph["22"]["inputs"][key]
+        graph["11"]["inputs"].update({"audio": ["4", 0], "fps": FPS})
+        graph = prune_graph(graph, include_tail=False)
+        package = self.output / "asmr"
+        atomic_json(package / "workflow_api.json", graph)
+        atomic_json(package / "project.json", {"format": "asmr-video-package", "version": 1,
+                    "projectId": self.manifest["projectId"] + "-asmr", "title": self.manifest.get("title", "") + " ASMR",
+                    "generationMode": TEXT_TO_VIDEO, "workflow": "workflow_api.json", "shots": sound_shots})
+        sound_ids = {shot["id"] for shot in sound_shots}
+        only = None if self.only is None else self.only & sound_ids
+        rerun = None if self.rerun_asmr is None else self.rerun_asmr & sound_ids
+        rerun_candidates = [f"{shot_id}:{candidate}" for shot_id, candidate in self.resolve_candidates(self.rerun_asmr_candidates)
+                            if shot_id in sound_ids]
+        def report(event):
+            if self.status_callback:
+                self.status_callback({**event, "task_label": "ASMR 触发音 · " + event.get("task_label", ""), "task_kind": "asmr"})
+        self.sound_runner = BatchRunner(package, comfy_url=self.client.base_url if hasattr(self.client, "base_url") else "http://127.0.0.1:8188",
+            client=self.client, width=self.width, height=self.height, seed=(self.seed + 104729) % (2 ** 64),
+            retries=self.retries, job_timeout=self.job_timeout, poll_interval=self.poll_interval,
+            missing_grace=self.missing_grace, candidates=self.candidates, disconnect_timeout=self.disconnect_timeout,
+            heartbeat_interval=self.heartbeat_interval, status_callback=report, stop_event=self.stop_event,
+            only=only, rerun=rerun, rerun_candidates=rerun_candidates, dry_run=self.dry_run,
+            log=lambda value: self.log("ASMR · " + str(value)))
+        return self.sound_runner
+
+    def set_preview(self, candidate, receipt, with_asmr=False):
+        self.state.setdefault("asmrPreviews" if with_asmr else "previews", {})[str(candidate)] = receipt
+        if candidate == 1 and not with_asmr:
             self.state["preview"] = receipt
         self.save()
 
-    def concat_preview(self, candidate=1):
+    def concat_preview(self, candidate=1, with_asmr=False):
         if self.text_to_video:
             reason = "文生视频触发音以独立片段保存；本模式不生成顺序合片。"
             self.set_preview(candidate, {"status": "unavailable", "last_error": reason})
             self.log(reason)
             return "unavailable"
-        clips, identities = [], []
-        name = "preview.mp4" if self.candidates == 1 else f"preview-c{candidate:03d}.mp4"
-        previous = self.state.get("previews", {}).get(str(candidate), {})
-        if candidate == 1 and previous:
+        clips, identities, sounds = [], [], []
+        prefix = "preview-asmr" if with_asmr else "preview"
+        name = prefix + (".mp4" if self.candidates == 1 else f"-c{candidate:03d}.mp4")
+        previous = self.state.get("asmrPreviews" if with_asmr else "previews", {}).get(str(candidate), {})
+        if candidate == 1 and previous and not with_asmr:
             self.state["preview"] = previous
-        self.current_task_label = f"候选 {candidate} 顺序预览"
+        self.current_task_label = f"候选 {candidate} " + ("ASMR 叠加版" if with_asmr else "原版") + "顺序预览"
 
         def collect(receipt, record=None):
             locator = saved_video(record) if record is not None else receipt.get("remote_output")
@@ -1334,7 +1439,7 @@ class BatchRunner:
                 history.append({key: copy.deepcopy(value) for key, value in previous.items() if key != "history"})
             if history:
                 receipt["history"] = history
-            self.set_preview(candidate, receipt)
+            self.set_preview(candidate, receipt, with_asmr)
             return receipt
 
         # Reconcile the accepted task before inspecting changed inputs. Missing history
@@ -1344,6 +1449,9 @@ class BatchRunner:
             if result in ("unknown", "downloading", "paused"):
                 return result
         try:
+            sound_runner = self.prepare_sound_runner() if with_asmr else None
+            if sound_runner:
+                sound_runner.load_state()
             for shot in self.shots:
                 entry = self.candidate_entry(shot["id"], candidate) or {}
                 if (entry.get("status") != "succeeded" or entry.get("input_error")
@@ -1359,6 +1467,24 @@ class BatchRunner:
                     raise BatchError(f"镜头 {shot['id']} 的输出时长记录无效。")
                 clips.append(path)
                 identities.append([shot["id"], entry["fingerprint"], entry["output_sha256"]])
+                if with_asmr:
+                    if shot.get("asmrSound") is None or sound_runner is None:
+                        raise BatchError(f"镜头 {shot['id']} 缺少 ASMR 触发音规划，不生成不完整的叠加版。")
+                    # An explicit --only run builds only those sidecar inputs. A
+                    # requested full preview may still reuse other completed sounds,
+                    # but verifies them against each freshly measured main source.
+                    sound_shot = {"id": shot["id"], "order": shot["order"], "kind": "ambient", "referenceMode": "new",
+                                  "prompt": shot["asmrSound"]["prompt"], "durationSeconds": sound_duration(facts), "trimToDuration": True}
+                    sound_entry = sound_runner.candidate_entry(shot["id"], candidate) or {}
+                    sound_facts = shot_facts(sound_runner.root, sound_shot, TEXT_TO_VIDEO)
+                    sound_path = sound_runner.state_file(sound_entry["output"]) if sound_entry.get("output") else None
+                    if (sound_entry.get("status") != "succeeded" or sound_entry.get("input_error") or sound_path is None
+                            or not sound_path.is_file() or file_hash(sound_path) != sound_entry.get("output_sha256")
+                            or sound_entry.get("fingerprint") != sound_runner.fingerprint(sound_shot, sound_facts, candidate, sound_entry.get("generation", 0))):
+                        raise BatchError(f"镜头 {shot['id']} 候选 {candidate} 的 ASMR 触发音未完成或已过期。")
+                    settings = shot["asmrSound"]["postProcessing"]
+                    sounds.append((sound_path, settings, sound_duration(facts)))
+                    identities.append(["asmr-spatial-d-v1", sound_entry["fingerprint"], sound_entry["output_sha256"], settings, sound_duration(facts)])
         except (BatchError, OSError, ValueError) as error:
             replace_receipt({"status": "unavailable", "last_error": str(error)})
             self.log(f"未生成候选 {candidate} 的顺序预览：{error} 已有 {name} 保留。")
@@ -1394,6 +1520,8 @@ class BatchRunner:
                         "ComfyMathExpression", "EmptyAudio", "LoadAudio", "AudioMerge"]
             if len(clips) > 1:
                 required.append("AudioConcat")
+            if with_asmr:
+                required.extend(["AsmrDirectorSpatialAudio", "AsmrDirectorMixAudio"])
             missing = [node for node in required if node not in info]
             if missing:
                 raise BatchError("远端缺少原生预览节点：" + ", ".join(missing) + "；各镜视频已保留。")
@@ -1418,6 +1546,16 @@ class BatchRunner:
                 graph[audio] = {"class_type": "LoadAudio", "inputs": {"audio": uploaded}}
                 graph[padded] = {"class_type": "AudioMerge", "inputs": {
                     "audio1": [empty, 0], "audio2": [audio, 0], "merge_method": "add"}}
+                if with_asmr:
+                    sound_path, settings, source_duration = sounds[index]
+                    sound_audio, spatial, mixed = [f"preview_asmr_{kind}_{index}" for kind in ("audio", "spatial", "mixed")]
+                    graph[sound_audio] = {"class_type": "LoadAudio", "inputs": {"audio": self.upload(sound_path)}}
+                    graph[spatial] = {"class_type": "AsmrDirectorSpatialAudio", "inputs": {
+                        "audio": [sound_audio, 0], "start_pan": settings["start"]["pan"], "start_distance": settings["start"]["distance"],
+                        "end_pan": settings["end"]["pan"], "end_distance": settings["end"]["distance"], "movement": settings["movement"],
+                        "gain_db": settings["gainDb"], "duration_seconds": source_duration}}
+                    graph[mixed] = {"class_type": "AsmrDirectorMixAudio", "inputs": {"audio1": [padded, 0], "audio2": [spatial, 0]}}
+                    padded = mixed
                 if audio_link is None:
                     audio_link = [padded, 0]
                 else:
@@ -1452,7 +1590,7 @@ class BatchRunner:
             graph[links[0][0]]["inputs"]["complete_audio"] = audio_link
             submission_id = uuid.uuid4().hex
             graph["26"] = {"class_type": "SaveVideo", "inputs": {
-                "video": links[0], "filename_prefix": f"asmr-batch/{slug(self.manifest['projectId'])}/preview_{candidate:03d}_{submission_id}",
+                "video": links[0], "filename_prefix": f"asmr-batch/{slug(self.manifest['projectId'])}/{prefix}_{candidate:03d}_{submission_id}",
                 "format": "mp4", "format.codec": "auto"}}
             payload_file = self.work_root / "previews" / submission_id / "payload.json"
             atomic_json(payload_file, {"prompt": graph, "client_id": submission_id,
@@ -1462,7 +1600,7 @@ class BatchRunner:
             receipt = replace_receipt({"status": "submitting", "fingerprint": identity, "submission_id": submission_id,
                 "candidate_index": candidate, "shot_count": len(clips), "output": name,
                 "payload": payload_file.relative_to(self.output).as_posix(), "method": "comfy_native",
-                "audio_alignment": "per_clip_frames_24fps"})
+                "audio_alignment": "per_clip_frames_24fps", **({"asmr": "spatial-d-v1"} if with_asmr else {})})
             self.progress(receipt, phase="preview", task_kind="preview")
             if self.stop_event.is_set():
                 # No POST has happened; this receipt is safe to prepare again.
@@ -1495,7 +1633,13 @@ class BatchRunner:
 
     def run(self):
         if self.dry_run:
-            return self.dry_payloads()
+            result = self.dry_payloads()
+            sound_runner = self.prepare_sound_runner()
+            if sound_runner:
+                result["asmr_dry_run"] = sound_runner.dry_payloads()["dry_run"]
+            if self.sound_input_errors:
+                result["asmr_input_errors"] = dict(self.sound_input_errors)
+            return result
         with RunLock(self.output / ".runner.lock"):
             self.load_state()
             selected = [(index, shot) for index, shot in enumerate(self.shots)
@@ -1535,12 +1679,32 @@ class BatchRunner:
             summary["input_error"] = sum(bool(entry.get("input_error")) for entry in receipts)
             summary["total"] = self.total_tasks
             summary["stopped"] = self.stop_event.is_set()
+            has_asmr = any(shot.get("asmrSound") is not None for shot in self.shots)
+            if has_asmr and not self.stop_event.is_set():
+                try:
+                    sound_runner = self.prepare_sound_runner()
+                    sound_summary = sound_runner.run() if sound_runner else {"total": 0}
+                    summary["asmr_succeeded"] = sound_summary.get("succeeded", 0)
+                    summary["asmr_failed"] = (len(self.sound_input_errors) * self.candidates
+                        + sum(sound_summary.get(key, 0) for key in ("failed", "unknown", "downloading", "input_error", "running", "queued", "preparing")))
+                    self.state["asmrRun"] = {"package": "asmr/project.json", "state": "asmr/outputs/run-state.json", "summary": sound_summary,
+                                             "inputErrors": dict(self.sound_input_errors)}
+                    self.save()
+                except (BatchError, OSError, ValueError) as error:
+                    summary["asmr_failed"] = 1
+                    self.state["asmrRun"] = {"status": "unavailable", "last_error": str(error)}
+                    self.save()
+                    self.log(f"ASMR 触发音待恢复，原镜头保留：{error}")
             if self.concat_requested and not self.stop_event.is_set():
                 summary["preview_failed"] = 0
+                if has_asmr:
+                    summary["asmr_preview_failed"] = 0
                 for candidate in range(1, self.candidates + 1):
                     if self.stop_event.is_set():
                         break
                     summary["preview_failed"] += int(self.concat_preview(candidate) != "succeeded")
+                    if has_asmr and not self.stop_event.is_set():
+                        summary["asmr_preview_failed"] += int(self.concat_preview(candidate, with_asmr=True) != "succeeded")
             summary["stopped"] = self.stop_event.is_set()
             self.progress(phase="stopped" if summary["stopped"] else "finished")
             self.log(("批次已停止：" if summary["stopped"] else "批次结束：") + ", ".join(f"{name}={count}" for name, count in summary.items()))
@@ -1568,8 +1732,10 @@ def parser():
     result.add_argument("--only", help="只处理这些镜头，逗号分隔 ID/order")
     result.add_argument("--rerun", help="重做指定镜头；仍先核对未确认的远端任务")
     result.add_argument("--rerun-candidates", help="重做指定候选：镜头ID或编号:候选号，逗号分隔；按最后一个冒号分隔")
+    result.add_argument("--rerun-asmr", help="只重做这些镜头的 ASMR 触发音，逗号分隔 ID/order；原视频保持")
+    result.add_argument("--rerun-asmr-candidates", help="只重做 ASMR 触发音候选，格式同 --rerun-candidates")
     result.add_argument("--dry-run", action="store_true", help="只准备本地 payload，不联网或运行模型")
-    result.add_argument("--concat", action="store_true", help="由 ComfyUI 按候选号生成完整顺序预览（需要原生 ConcatenateVideo）")
+    result.add_argument("--concat", action="store_true", help="按候选号合片；有 ASMR 规划时分别输出原版和 ASMR 叠加版")
     return result
 
 
@@ -1625,7 +1791,10 @@ def gui_options(raw, *, dry_run=False, concat=False):
             "comfy_url": values.get("comfy_url") or "http://127.0.0.1:8188",
             "candidates": candidates, "job_timeout": seconds, "duration_seconds": duration_seconds,
             "only": values.get("only") or None, "rerun": values.get("rerun") or None,
-            "rerun_candidates": values.get("rerun_candidates") or None, "dry_run": dry_run, "concat": concat}
+            "rerun_candidates": values.get("rerun_candidates") or None,
+            "rerun_asmr": values.get("rerun_asmr") or None,
+            "rerun_asmr_candidates": values.get("rerun_asmr_candidates") or None,
+            "dry_run": dry_run, "concat": concat}
 
 
 def duration_text(seconds):
@@ -1647,11 +1816,18 @@ def gui_progress_text(progress, elapsed_seconds=0, run_seconds=0):
               "concat": "生成顺序预览", "preview": "生成顺序预览"}
     phase = str(progress.get("phase", "idle"))
     parts = [labels.get(phase, phase)]
-    shot = progress.get("shot_id")
-    if shot is not None:
-        parts.append(f"镜头 {shot}")
-    if progress.get("candidate_index") is not None:
-        parts.append(f"候选 {progress['candidate_index']}" + (f"/{progress['candidate_total']}" if progress.get("candidate_total") is not None else ""))
+    task_label = str(progress.get("task_label") or "").strip()
+    if task_label:
+        parts.append(task_label)
+    else:
+        task_kind = {"asmr": "ASMR 触发音", "preview": "顺序预览"}.get(progress.get("task_kind"))
+        if task_kind:
+            parts.append(task_kind)
+        shot = progress.get("shot_id")
+        if shot is not None:
+            parts.append(f"镜头 {shot}")
+        if progress.get("candidate_index") is not None:
+            parts.append(f"候选 {progress['candidate_index']}" + (f"/{progress['candidate_total']}" if progress.get("candidate_total") is not None else ""))
     if progress.get("total") is not None:
         parts.append(f"已完成 {progress.get('completed', 0)}/{progress['total']}")
     parts.append(f"当前任务 {duration_text(elapsed_seconds)}")
@@ -1766,7 +1942,8 @@ def launch_gui():
     frame.columnconfigure(1, weight=1)
     fields = {"package": tk.StringVar(value=gui_default_package()), "character_image": tk.StringVar(), "comfy_url": tk.StringVar(value="http://127.0.0.1:8188"),
               "candidates": tk.StringVar(value="1"), "job_minutes": tk.StringVar(value="0"), "duration_seconds": tk.StringVar(),
-              "only": tk.StringVar(), "rerun": tk.StringVar(), "rerun_candidates": tk.StringVar()}
+              "only": tk.StringVar(), "rerun": tk.StringVar(), "rerun_candidates": tk.StringVar(),
+              "rerun_asmr": tk.StringVar(), "rerun_asmr_candidates": tk.StringVar()}
     dry = tk.BooleanVar(value=False)
     concat_flag = tk.BooleanVar(value=False)
     for row, (key, label) in enumerate((("package", "项目文件夹"), ("character_image", "角色图（文生视频无需）"), ("comfy_url", "ComfyUI 地址"))):
@@ -1789,11 +1966,12 @@ def launch_gui():
     ttk.Label(duration_controls, text="每条时长（秒，留空用项目；文生视频）").grid(row=0, column=0, sticky="w")
     ttk.Entry(duration_controls, textvariable=fields["duration_seconds"], width=12).grid(row=0, column=1, padx=8)
     ttk.Checkbutton(frame, text="只检查项目并准备 payload（不连接 ComfyUI）", variable=dry).grid(row=5, column=0, columnspan=3, sticky="w", pady=4)
-    ttk.Checkbutton(frame, text="由 ComfyUI 合并顺序预览", variable=concat_flag).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
+    ttk.Checkbutton(frame, text="合并顺序预览（含 ASMR 时同时输出原版与叠加版）", variable=concat_flag).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
     advanced = ttk.LabelFrame(frame, text="选填；镜头可用 ID 或序号，候选用 镜头:候选号", padding=8)
     advanced.grid(row=8, column=0, columnspan=3, sticky="ew", pady=5)
     advanced.columnconfigure(1, weight=1)
-    for row, (key, label) in enumerate((("only", "只做镜头"), ("rerun", "重做镜头"), ("rerun_candidates", "重做某候选"))):
+    for row, (key, label) in enumerate((("only", "只做镜头"), ("rerun", "重做画面镜头"), ("rerun_candidates", "重做画面候选"),
+                                       ("rerun_asmr", "只重做 ASMR 镜头"), ("rerun_asmr_candidates", "只重做 ASMR 候选"))):
         ttk.Label(advanced, text=label).grid(row=row, column=0, sticky="w", pady=3)
         ttk.Entry(advanced, textvariable=fields[key]).grid(row=row, column=1, sticky="ew", padx=8)
     advanced.grid_remove()
@@ -1940,7 +2118,7 @@ def main(argv=None):
         result = BatchRunner(**args).run()
         if result.get("stopped") or result.get("cancelled"):
             return 130
-        return 0 if "dry_run" in result or not any(result.get(key) for key in ("failed", "unknown", "downloading", "input_error", "preview_failed")) else 2
+        return 0 if "dry_run" in result or not any(result.get(key) for key in ("failed", "unknown", "downloading", "input_error", "preview_failed", "asmr_failed", "asmr_preview_failed")) else 2
     except KeyboardInterrupt:
         print("已停止本地等待与后续提交。ComfyUI 已提交任务继续运行；重新运行同一项目会先对账恢复。", file=sys.stderr)
         return 130

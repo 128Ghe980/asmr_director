@@ -2,6 +2,7 @@
 
 import type { StoryboardReview } from "@/lib/asmr/storyboard-review";
 import { useState } from "react";
+import { formatAsmrSound } from "./asmr-sound-editor";
 
 const fields = [{ key: "title", label: "标题" }, { key: "visual", label: "画面" }, { key: "action", label: "动作" }, { key: "camera", label: "镜头" }, { key: "ambientSound", label: "环境声" }] as const;
 const button = "min-h-7 rounded-md border border-violet-300/20 px-2 text-[11px] text-violet-100 hover:bg-violet-300/10 disabled:opacity-35";
@@ -26,6 +27,7 @@ export function StoryboardReviewPanel({ result, notice, disabled = false, curren
         {expanded && <div className="space-y-2 text-[11px] leading-5">{result.review.changes.map(change => <article key={change.clipId} className="min-w-0 rounded border border-studio-line p-2">
           <p className="break-words text-violet-100">{change.before.title || change.clipId} · {change.reason}</p>
           {fields.filter(field => change.before[field.key] !== change.after[field.key]).map(field => <div key={field.key} className="mt-1 break-words"><p className="text-studio-muted">{field.label}原文：{change.before[field.key] || "（无）"}</p><p className="text-studio-text">修订：{change.after[field.key] || "（无）"}</p></div>)}
+          {JSON.stringify(change.before.asmrSound) !== JSON.stringify(change.after.asmrSound) && <div className="mt-1 whitespace-pre-line break-words"><p className="text-studio-muted">ASMR 触发音原文：{formatAsmrSound(change.before.asmrSound)}</p><p className="text-studio-text">修订：{formatAsmrSound(change.after.asmrSound)}</p></div>}
         </article>)}{result.review.notes.map((note, index) => <p key={index} className="break-words text-studio-muted">{note}</p>)}</div>}
       </details>
     </>}

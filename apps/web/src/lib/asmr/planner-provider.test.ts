@@ -50,6 +50,23 @@ afterEach(() => {
 });
 
 describe("Planner provider", () => {
+  it.each([false, true])("follows listener POV only when not locked by a character-framing template (template=%s)", async withTemplate => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(draft));
+    await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, storyboardStyle: "listener_pov", ...(withTemplate ? { referenceTemplate: referenceTemplateFixture } : {}) } }, { env: {}, fetchImpl });
+    const messages = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages;
+    if (withTemplate) {
+      expect(messages[0].content).not.toContain("镜头就是听者的眼睛");
+      expect(messages[1].content).toContain('"storyboardStyle":"character_framing"');
+      expect(messages[1].content).not.toContain('"storyboardStyle":"listener_pov"');
+    }
+    else {
+      expect(messages[0].content).toContain("镜头就是听者的眼睛");
+      expect(messages[0].content).toContain("听者的站位、朝向、视线目标和移动后的落点");
+      expect(messages[0].content).toContain("无对白 ASMR 触发音意图");
+      expect(messages[1].content).toContain("每个 unit 必须单独填写 direction");
+    }
+  });
+
   it.each([false, true])("generates from the current robot-care brief without injecting a fixed domestic opening (template=%s)", async withTemplate => {
     const currentBrief = { ...brief, theme: "漫长寒潮中的智能小屋，机器人管家守候归来的旅人。", role: "机器人管家",
       notes: "机器人没有人类的睡眠需求；环境保持寒冷，室内有可靠供暖。", ...(withTemplate ? { referenceTemplate: referenceTemplateFixture } : {}) };

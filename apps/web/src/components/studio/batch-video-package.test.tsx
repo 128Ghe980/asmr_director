@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { demoProject } from "@/lib/asmr/mock-project";
 import { getVideoPackageFilename } from "@/lib/asmr/video-package";
 import { createClipVideoSourceFingerprint } from "@/lib/asmr/video-plan";
+import type { AsmrSound } from "@/lib/asmr/asmr-sound";
 import { BatchAudioDownload } from "./batch-audio-download";
 
 function fixture() {
@@ -37,6 +38,40 @@ beforeEach(() => { vi.stubGlobal("fetch", vi.fn()); vi.spyOn(HTMLAnchorElement.p
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("portable video package export", () => {
+  it("shows missing ASMR planning without blocking a legacy video package", async () => {
+    const project = fixture(); vi.mocked(fetch).mockResolvedValue(ready(project));
+    render(<BatchAudioDownload project={project} />); openVideo();
+    expect(screen.getByText("ASMR 触发音：0 / 1 镜已规划")).toBeTruthy();
+    expect(screen.getByText(/补齐剩余 1 镜的 ASMR 规划/)).toBeTruthy();
+    const download = screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement;
+    expect(download.disabled).toBe(false);
+    fireEvent.click(download);
+    await screen.findByText("下载已发起，解压后在生成主机打开 run.bat。");
+    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1]!.body as FormData).get("project") as string)).toEqual(project);
+  });
+
+  it("counts current ASMR plans for dialogue and silent shots and distinguishes a complete overlay package", () => {
+    const project = fixture(), track = project.timeline.tracks.find(track => track.track_type === "voice")!, first = track.clips[0];
+    const sound: AsmrSound = { prompt: "Soft fabric sliding.", postProcessing: { start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -12 } };
+    const silent = { ...first, id: "silent_asmr", kind: "silent" as const, text: "衣料滑过桌面。", start: first.start + first.duration, duration: 3,
+      asset: { asset_id: null, uri: null, duration: null }, generation: { ...first.generation, status: "asset_pending" as const } };
+    track.clips.push(silent);
+    project.videoPlan!.shots[first.id].asmrSound = sound;
+    project.videoPlan!.shots[silent.id] = { version: 1, promptFormat: "minimax-h3", clipId: silent.id, kind: "silent", duration: 3,
+      sourceFingerprint: createClipVideoSourceFingerprint(project, silent.id), title: "衣料", visual: "Cloth on a table.", action: "Cloth slides.", camera: "Fixed view.", ambientSound: "Quiet room." };
+    const view = render(<BatchAudioDownload project={project} />); openVideo();
+    expect(screen.getByText("ASMR 触发音：1 / 2 镜已规划")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement).disabled).toBe(false);
+    const complete = structuredClone(project); complete.videoPlan!.shots[silent.id].asmrSound = sound;
+    view.rerender(<BatchAudioDownload project={complete} />);
+    expect(screen.getByText("ASMR 触发音：2 / 2 镜已规划")).toBeTruthy();
+    expect(screen.getByText("勾选合并顺序预览后，输出原版与 ASMR 叠加版。")).toBeTruthy();
+    const stale = structuredClone(complete); stale.timeline.tracks.find(track => track.track_type === "voice")!.clips[1].text = "新的空镜动作。";
+    view.rerender(<BatchAudioDownload project={stale} />);
+    expect(screen.getByText("ASMR 触发音：1 / 2 镜已规划")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("posts one current project snapshot and an optional replaceable reference without audio-version controls", async () => {
     const project = fixture();
     vi.mocked(fetch).mockResolvedValue(ready(project));

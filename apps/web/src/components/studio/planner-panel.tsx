@@ -29,6 +29,7 @@ import { PlannerSceneEditor } from "./planner-scene";
 import { CreativeTemplatePanel } from "./creative-template-panel";
 import { CREATIVE_TEMPLATES, createTemplateDemo } from "@/lib/asmr/creative-templates";
 import { CreativeTemplateSchema, type CreativeTemplate } from "@/lib/asmr/reference-template";
+import { effectiveStoryboardStyle, STORYBOARD_STYLE_LABELS, type StoryboardStyle } from "@/lib/asmr/storyboard-style";
 
 type Provider = { id: "ollama" | "api"; label: string; model: string; configured: boolean };
 type PlannerPanelProps = {
@@ -69,7 +70,8 @@ function downloadDraft(brief: PlannerBrief, draft: PlannerDraft, sceneDescriptio
   const template = brief.referenceTemplate;
   const body = [
     draft.title, `主题：${brief.theme}`, `场景：${draft.scene}`, `角色：${draft.character.role}`,
-    `目标时长：${brief.durationSeconds / 60} 分钟（规划参考）`, "",
+    `目标时长：${brief.durationSeconds / 60} 分钟（规划参考）`,
+    `分镜风格：${STORYBOARD_STYLE_LABELS[effectiveStoryboardStyle(brief)]}`, "",
     ...draft.sections.flatMap((section, index) => [
       `${index + 1}. ${section.title}`, section.text, "",
       `导演提示：${section.direction || "无"}`,
@@ -433,6 +435,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
         <div className="flex items-center justify-between px-4 py-3"><h2 className="text-sm font-semibold">创作设定</h2><button type="button" className="text-xs text-studio-muted lg:hidden" aria-expanded={briefExpanded} onClick={() => setBriefExpanded((value) => !value)}>{briefExpanded ? "收起设定" : "展开设定"}</button></div>
         <div className={`${briefExpanded ? "block" : "hidden lg:block"} space-y-4 px-4 pb-4`}>
           <label className="block space-y-2 text-xs text-studio-muted"><span>参考模板</span><select aria-label="参考模板" className={fieldClass} value={brief.referenceTemplate?.id ?? ""} disabled={!loaded} onChange={(event) => { const template = CREATIVE_TEMPLATES.find((item) => item.id === event.target.value); if (template) applyTemplate(template); else if (!event.target.value) removeTemplate(); }}><option value="">不使用模板</option>{CREATIVE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}{brief.referenceTemplate && !CREATIVE_TEMPLATES.some((template) => template.id === brief.referenceTemplate?.id) ? <option value={brief.referenceTemplate.id}>{brief.referenceTemplate.title}</option> : null}</select></label>
+          <label className="block space-y-2 text-xs text-studio-muted"><span>分镜风格{brief.referenceTemplate ? " · 随模板" : ""}</span><select aria-label="分镜风格" className={fieldClass} value={effectiveStoryboardStyle(brief)} disabled={!loaded || Boolean(brief.referenceTemplate)} onChange={(event) => updateBrief({ storyboardStyle: event.target.value as StoryboardStyle })}>{Object.entries(STORYBOARD_STYLE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label className="block space-y-2 text-xs text-studio-muted"><span>今日主题</span><textarea aria-label="今日主题" value={brief.theme} onChange={(event) => updateBrief({ theme: event.target.value })} disabled={!loaded} maxLength={2000} rows={4} className={fieldClass} placeholder="今晚的故事发生在哪里？你想带来怎样的陪伴？" /></label>
           <div className="grid grid-cols-2 gap-2">
             <label className="space-y-1 text-xs text-studio-muted"><span>目标时长</span><select aria-label="目标时长" className={fieldClass} value={brief.durationSeconds} onChange={(event) => updateBrief({ durationSeconds: Number(event.target.value) })} disabled={!loaded}>{[60, 180, 300, 600].map((seconds) => <option key={seconds} value={seconds}>{seconds / 60} 分钟</option>)}</select></label>

@@ -33,7 +33,10 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const storyboards = getBatchStoryboardClips(project);
   const progress = getStudioStoryboardProgress(project);
   const video = getVideoPackageSummary(project);
-  const speechClips = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []).filter(clip => clip.kind !== "silent");
+  const voiceClips = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []);
+  const speechClips = voiceClips.filter(clip => clip.kind !== "silent");
+  const videoIssueIds = new Set(video.issues.map(issue => issue.clipId));
+  const videoAsmrReady = voiceClips.filter(clip => !videoIssueIds.has(clip.id) && project.videoPlan?.shots[clip.id]?.asmrSound).length;
   const preparedReceipts = getCurrentAudioPostProcessingReceipts(project);
   const videoUsesPrepared = speechClips.length > 0 && speechClips.every(clip => preparedReceipts.has(clip.id));
   const status = state?.source === source && state.mode === mode ? state.status : "idle";
@@ -223,7 +226,11 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
         <p className="mt-1 text-[11px] leading-5 text-studio-muted">仅打包已保存、完整且未过期的提示词；待生成与需更新段落不包含在内。</p>
       </> : <>
         <p className="mt-3 text-xs leading-5 text-studio-muted">当前项目共 {video.total} 镜，打包音频、分镜和独立运行程序。</p>
-        <p className="mt-2 text-[11px] leading-5 text-studio-muted">每镜仅一份音频：{videoUsesPrepared ? "已生成的后处理成品" : "已采用原音（整批后处理尚未完成）"}。按镜头顺序生成；无对白镜头带环境底噪，最长 5 秒。</p>
+        <p className="mt-2 text-[11px] leading-5 text-studio-muted">对白音频使用{videoUsesPrepared ? "已生成的后处理成品" : "已采用原音（整批后处理尚未完成）"}。按镜头顺序生成；无对白镜头带环境底噪，最长 5 秒。</p>
+        {video.total > 0 && <div className="mt-2 rounded-lg border border-violet-300/15 bg-violet-300/[0.035] px-3 py-2 text-[11px] leading-5 text-studio-muted">
+          <p>ASMR 触发音：{videoAsmrReady} / {video.total} 镜已规划</p>
+          <p>{videoAsmrReady === video.total ? "勾选合并顺序预览后，输出原版与 ASMR 叠加版。" : `补齐剩余 ${video.total - videoAsmrReady} 镜的 ASMR 规划后，可合并叠加版。${video.issues.length ? "" : "当前可导出原版视频包。"}`}</p>
+        </div>}
         <label className="mt-3 block text-xs font-medium" htmlFor={`${panelId}-reference`}>角色参考图（可选）</label>
         <input id={`${panelId}-reference`} type="file" accept="image/jpeg,image/png,image/webp" disabled={busy}
           onChange={(event) => {
