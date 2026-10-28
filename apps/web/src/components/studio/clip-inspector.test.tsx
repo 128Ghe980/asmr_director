@@ -71,9 +71,9 @@ describe("ClipInspector spatial controls", () => {
       selectedClipGeneration={{ action: "generate", label: "生成", disabled: false, statusLabel: "待生成", tone: "neutral" }}
       onUpdateClip={onUpdateClip} onGenerateSelectedClip={onGenerateSelectedClip} onCancelSelectedGeneration={() => {}}
       onApplyDirectorPreset={() => {}} onNudgeClipTiming={() => {}} />);
-    fireEvent.change(screen.getByLabelText("无对白镜头时长"), { target: { value: "6" } });
+    fireEvent.change(screen.getByLabelText("无台词段时长"), { target: { value: "6" } });
     expect(onUpdateClip).toHaveBeenLastCalledWith(selectedClip.id, { duration: 6 });
-    expect(screen.getByLabelText("无对白镜头画面描述")).toBeTruthy();
+    expect(screen.getByLabelText("无台词段画面描述")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "生成" })).toBeNull();
     expect(screen.queryByRole("spinbutton", { name: /^声像/ })).toBeNull();
     expect(screen.queryByText("表演与导演快捷")).toBeNull();

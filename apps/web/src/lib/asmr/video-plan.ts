@@ -13,6 +13,13 @@ const fingerprintSchema = z.string().min(1).max(64_000);
 export const StoryboardReferenceModeSchema = z.enum(["continuous", "new"]);
 export type StoryboardReferenceMode = z.infer<typeof StoryboardReferenceModeSchema>;
 
+export const PerformanceStoryboardPartSchema = z.object({
+  durationSeconds: z.number().finite().positive().max(5),
+  visual: z.string().max(800), action: z.string().max(600), camera: z.string().max(400),
+  ambientSound: z.string().max(600), asmrSound: AsmrSoundSchema,
+}).strict();
+export type PerformanceStoryboardPart = z.infer<typeof PerformanceStoryboardPartSchema>;
+
 export const ClipVideoStoryboardSchema = z.object({
   version: z.literal(1),
   promptFormat: z.literal("minimax-h3"),
@@ -32,6 +39,7 @@ export const ClipVideoStoryboardSchema = z.object({
   camera: z.string().max(400),
   ambientSound: z.string().max(600).optional(),
   asmrSound: AsmrSoundSchema.optional(),
+  parts: z.array(PerformanceStoryboardPartSchema).min(1).max(120).optional(),
   storyboardStyle: StoryboardStyleSchema.optional(),
   previousClipId: z.string().min(1).max(200).optional(),
   previousPromptFingerprint: fingerprintSchema.optional(),
@@ -46,6 +54,13 @@ export const ClipVideoStoryboardSchema = z.object({
   }
   if ((shot.previousClipId === undefined) !== (shot.previousPromptFingerprint === undefined)) {
     context.addIssue({ code: "custom", message: "前一镜关联必须同时保存片段与提示词来源。", path: ["previousClipId"] });
+  }
+  if (shot.parts && (shot.kind !== "silent" || shot.duration === undefined
+    || Math.abs(shot.parts.reduce((sum, part) => sum + part.durationSeconds, 0) - shot.duration) > .00001)) {
+    context.addIssue({ code: "custom", message: "连续生成段必须完整覆盖无台词段时长。", path: ["parts"] });
+  }
+  if (shot.kind !== "silent" && shot.asmrSound?.mixMode === "replace") {
+    context.addIssue({ code: "custom", message: "有台词段必须保留已采用人声。", path: ["asmrSound", "mixMode"] });
   }
 });
 
@@ -67,6 +82,16 @@ export const ProjectVideoPlanSchema = z.object({
 
 export type ClipVideoStoryboard = z.infer<typeof ClipVideoStoryboardSchema>;
 export type ProjectVideoPlan = z.infer<typeof ProjectVideoPlanSchema>;
+
+export type ClipStoryboardEdits = Partial<Pick<ClipVideoStoryboard,
+  "title" | "visual" | "action" | "camera" | "ambientSound" | "asmrSound" | "parts">>;
+/** Editing an overview cannot silently leave old detailed instructions executable. */
+export function applyClipStoryboardEdits(shot: ClipVideoStoryboard, patch: ClipStoryboardEdits): ClipVideoStoryboard {
+  const updated = { ...shot, ...patch };
+  if (shot.parts && patch.parts === undefined
+    && ["visual", "action", "camera", "ambientSound", "asmrSound"].some(key => key in patch)) delete updated.parts;
+  return ClipVideoStoryboardSchema.parse(updated);
+}
 
 function orderedVoiceClips(project: AsmrProject): VoiceClip[] {
   return project.timeline.tracks.flatMap<VoiceClip>((track) => track.track_type === "voice" ? track.clips : [])
@@ -123,6 +148,7 @@ function sourceFingerprint(project: AsmrProject, clip: VoiceClip): string {
     clipId: clip.id, text: clip.text,
     ...(clip.kind === "silent" ? { kind: "silent", duration: clip.duration }
       : { asset: { assetId: clip.asset.asset_id, uri: clip.asset.uri, declaredDuration: clip.asset.duration } }),
+    ...(clip.performance ? { performance: clip.performance } : {}),
     scene: project.scene, character: project.character,
     sceneDescription: effectiveSceneDescription(project),
     ...(resolveStoryboardStyle(project.videoPlan) === "listener_pov" ? { storyboardStyle: "listener_pov" } : {}),
@@ -134,19 +160,30 @@ function sourceFingerprint(project: AsmrProject, clip: VoiceClip): string {
 
 function completeShot(shot: ClipVideoStoryboard): boolean {
   return [shot.title, shot.visual, shot.action, shot.camera].every((value) => Boolean(value.trim()))
-    && (shot.kind !== "silent" || Boolean(shot.ambientSound?.trim()) && (shot.duration ?? 0) <= 5);
+    && (shot.kind !== "silent" || Boolean(shot.ambientSound?.trim()) && ((shot.duration ?? 0) <= 5 || Boolean(shot.parts?.length)))
+    && (!shot.parts || shot.parts.every(part => [part.visual, part.action, part.camera, part.ambientSound].every(value => value.trim())));
 }
 
 function previousContentFingerprint(shot: ClipVideoStoryboard): string {
   // No nested previous fingerprints: an iterative validity pass checks the chain.
-  return JSON.stringify({
+  const content = JSON.stringify({
     clipId: shot.clipId, sourceFingerprint: shot.sourceFingerprint, audio: shot.audio,
     ...(shot.kind === "silent" ? { kind: shot.kind, duration: shot.duration } : {}),
     title: shot.title, visual: shot.visual, action: shot.action, camera: shot.camera,
     ...(shot.ambientSound === undefined ? {} : { ambientSound: shot.ambientSound }),
     ...(shot.referenceMode === undefined ? {} : { referenceMode: shot.referenceMode }),
     ...(shot.storyboardStyle === undefined ? {} : { storyboardStyle: shot.storyboardStyle }),
+    ...(shot.parts ? { parts: shot.parts.map(({ durationSeconds, visual, action, camera, ambientSound }) => ({ durationSeconds, visual, action, camera, ambientSound })) } : {}),
   });
+  if (!shot.parts) return content;
+  // A valid ten-minute performance can contain 120 detailed blocks. Keep its
+  // successor's provenance bounded while hashing every visible continuity edit.
+  const lanes = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35];
+  const primes = [0x01000193, 0x27d4eb2d, 0x165667b1, 0x85ebca77];
+  for (let index = 0; index < content.length; index++) for (let lane = 0; lane < lanes.length; lane++) {
+    lanes[lane] = Math.imul(lanes[lane] ^ content.charCodeAt(index), primes[lane]) >>> 0;
+  }
+  return `performance-continuity-v1:${lanes.map(lane => lane.toString(16).padStart(8, "0")).join("")}`;
 }
 
 function storyboardStates(project: AsmrProject, clips = orderedVoiceClips(project)) {
@@ -204,7 +241,7 @@ export function createClipH3Prompt(project: AsmrProject, clipId: string): string
   const state = storyboardStates(project).get(clipId);
   if (!state) throw new Error("当前片段还没有视频分镜。");
   if (!state.current) throw new Error("文案、音频、场景或前一镜已更新，请重新生成当前视频分镜。");
-  if (clip.kind === "silent" && clip.duration > 5) throw new Error("请将无对白镜头时长调整为不超过 5 秒，再重新生成分镜。");
+  if (clip.kind === "silent" && clip.duration > 5 && !state.shot.parts?.length) throw new Error("长无台词段需要连续生成方案，请重新设计画面与声音。");
   if (clip.kind === "silent" && !state.shot.ambientSound?.trim()) throw new Error("旧无对白分镜缺少环境底噪描述，请重新生成分镜。");
   if (!completeShot(state.shot) || !effectiveSceneDescription(project).trim()) {
     throw new Error("请补全全局场景及当前镜头的标题、画面、动作和镜头说明。");
@@ -213,10 +250,13 @@ export function createClipH3Prompt(project: AsmrProject, clipId: string): string
 }
 
 function renderClipH3Prompt(clip: VoiceClip, shot: ClipVideoStoryboard): string {
+  if (shot.parts) return shot.parts.map((part, index) => `Part ${index + 1}/${shot.parts!.length}\n${renderConciseH3Prompt({
+    ...part, dialogue: "", silent: true, performance: true, storyboardStyle: shot.storyboardStyle,
+  })}`).join("\n\n");
   return renderConciseH3Prompt({ visual: shot.visual, action: shot.action, camera: shot.camera,
     dialogue: clip.kind === "silent" ? "" : clip.text, silent: clip.kind === "silent",
     durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration, ambientSound: shot.ambientSound,
-    storyboardStyle: shot.storyboardStyle });
+    storyboardStyle: shot.storyboardStyle, performance: Boolean(clip.performance) });
 }
 
 /** Evaluate every saved shot once; values are identical to usable single-clip prompts. */

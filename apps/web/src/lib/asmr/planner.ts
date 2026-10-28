@@ -4,6 +4,7 @@ import { AsmrProjectSchema, PositionSchema, type AsmrProject } from "./schema";
 import { EditableStoryboardSchema } from "./storyboard";
 import { CreativeTemplateSchema } from "./reference-template";
 import { StoryboardStyleSchema } from "./storyboard-style";
+import { PerformancePurposeSchema } from "./performance-segment";
 
 export const PlannerBriefSchema = z.object({
   theme: z.string().trim().min(1).max(2000),
@@ -19,6 +20,11 @@ export const PlannerBriefSchema = z.object({
 export const PlannerSectionSchema = z.object({
   id: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(200),
+  // Missing kind is legacy speech. A silent section stores an action description
+  // in text; it is never submitted to the voice engine.
+  kind: z.enum(["speech", "silent"]).optional(),
+  purpose: PerformancePurposeSchema.optional(),
+  durationSeconds: z.number().finite().positive().max(600).optional(),
   // Offsets in the editor use the original UTF-16 string; never trim it.
   text: z.string().min(1).max(3000).regex(/\S/u),
   emotion: z.string().trim().min(1).max(120),
@@ -32,6 +38,7 @@ export const PlannerSectionSchema = z.object({
 }).strict();
 
 export const PlannerDraftSchema = z.object({
+  performanceVersion: z.literal(1).optional(),
   segmentation: z.literal("semantic").optional(),
   title: z.string().trim().min(1).max(200),
   scene: z.string().trim().min(1).max(4000),
@@ -50,8 +57,14 @@ export const PlannerDraftSchema = z.object({
       });
     }
     ids.add(section.id);
+    if (section.kind === "silent" && (section.durationSeconds === undefined || section.purpose === "dialogue")) {
+      context.addIssue({ code: "custom", path: ["sections", index, "durationSeconds"], message: "无台词段需要有效时长及操作、过渡或互动用途。" });
+    }
+    if (section.kind !== "silent" && section.durationSeconds !== undefined) {
+      context.addIssue({ code: "custom", path: ["sections", index, "durationSeconds"], message: "台词时长由实际采用的人声音频决定。" });
+    }
   }
-  if (draft.sections.reduce((total, section) => total + section.text.length, 0) > 12000) {
+  if (draft.sections.reduce((total, section) => total + (section.kind === "silent" ? 0 : section.text.length), 0) > 12000) {
     context.addIssue({
       code: "custom", message: "台词总长度不能超过 12000 字符。", path: ["sections"],
     });
@@ -81,13 +94,37 @@ export function createEmptyPlannerBrief(): PlannerBrief {
 const PLANNED_PAUSE_SECONDS = { short: 1.5, medium: 3, long: 6 } as const;
 
 export function getPlannerPauseSeconds(section: PlannerSection): number {
+  if (section.kind === "silent") return 0;
   return section.pauseAfterSeconds ?? PLANNED_PAUSE_SECONDS[section.pauseAfter];
 }
 
-function estimateSpeechDuration(text: string): number {
+export function estimatePlannerSpeechDuration(text: string): number {
   const spokenCharacters = Array.from(text.replace(/\s/gu, "")).length;
   const punctuationCount = (text.match(/[，。！？；：、,.!?;:…]/gu) ?? []).length;
   return Math.max(2, Math.ceil(spokenCharacters / 2.8 + punctuationCount * 0.35));
+}
+
+/** Approximate speech plus explicit performance time; adopted WAVs replace estimates. */
+export function getPlannerDurationSummary(draft: PlannerDraft) {
+  let speechSeconds = 0, nonSpeechSeconds = 0, pauses = 0;
+  for (const section of draft.sections) {
+    if (section.kind === "silent") nonSpeechSeconds += section.durationSeconds ?? 0;
+    else speechSeconds += section.text.trim() ? estimatePlannerSpeechDuration(section.text) : 0;
+    if (draft.performanceVersion !== 1) pauses += getPlannerPauseSeconds(section);
+  }
+  return { speechSeconds, nonSpeechSeconds, totalSeconds: speechSeconds + nonSpeechSeconds + pauses };
+}
+
+/** Automatic creative budget. Ratios guide writing, never trim speech or fill output. */
+export function getPlannerPerformanceBudget(brief: PlannerBrief) {
+  const intent = `${brief.theme}\n${brief.notes}`;
+  const noSpeech = /(?:全程|完全)(?:无|不含|没有)(?:对白|台词|人声)|(?:不要|无需)(?:任何)?(?:对白|台词|人声)(?=$|[\s，。；、!！?？])|(?:^|[，。；\n])(?:无|没有|不含)(?:对白|台词|人声)(?=$|[\s，。；、!！?？])|纯(?:音效|触发音)|(?:全程)?不说话|no\s+(?:talking|speech|dialogue)/iu.test(intent);
+  const speechOnly = /纯(?:对白|台词|人声)|只(?:要|保留)(?:台词|对白)|不要无台词段/iu.test(intent);
+  const soundLed = /传统\s*ASMR|麦(?:克风)?前|声音为主|少(?:量)?说话|少(?:量)?台词|触发音为主|mostly\s+(?:sound|asmr)/iu.test(intent);
+  const speechRatio = noSpeech ? 0 : speechOnly ? 1 : soundLed ? 0.15 : brief.referenceTemplate?.performancePacing?.speechRatio ?? 0.45;
+  const speechSeconds = Math.round(brief.durationSeconds * speechRatio);
+  return { speechSeconds, nonSpeechSeconds: brief.durationSeconds - speechSeconds,
+    spokenCharacters: Math.round(speechSeconds * 2.2), noSpeech };
 }
 
 export function compilePlannerDraft(
@@ -101,14 +138,21 @@ export function compilePlannerDraft(
 
   let cursor = 0;
   const clips = draft.sections.map((section, index) => {
-    const duration = estimateSpeechDuration(section.text);
+    const silent = section.kind === "silent";
+    const duration = silent ? section.durationSeconds! : estimatePlannerSpeechDuration(section.text);
+    const pause = draft.performanceVersion === 1 ? 0 : getPlannerPauseSeconds(section);
     const clip = {
       id: `${projectId}_voice_${String(index + 1).padStart(3, "0")}`,
       track: "voice" as const,
       type: "voice" as const,
       start: cursor,
       duration,
-      pause_after: getPlannerPauseSeconds(section),
+      pause_after: pause,
+      ...(silent ? { kind: "silent" as const } : {}),
+      ...(draft.performanceVersion === 1 || silent ? { performance: { version: 1 as const,
+        segmentId: section.id, purpose: section.purpose ?? (silent ? "asmr" as const : "dialogue" as const),
+        direction: section.direction, soundIntent: section.soundSuggestions,
+      } } : {}),
       ...(draft.segmentation === "semantic" ? { semantic_unit: true } : {}),
       text: section.text,
       emotion: section.emotion,
@@ -120,14 +164,14 @@ export function compilePlannerDraft(
       position: section.position,
       generation: {
         status: "asset_pending" as const,
-        model: "gpt-sovits",
+        model: silent ? "silent" : "gpt-sovits",
         seed: index + 1,
         retry_count: 0,
         error: null,
       },
       asset: { asset_id: null, uri: null, duration: null },
     };
-    cursor += duration + getPlannerPauseSeconds(section);
+    cursor += duration + pause;
     return clip;
   });
 

@@ -83,6 +83,8 @@ def validate_asmr_sound(value):
         raise BatchError("ASMR 触发音需要完整提示词。")
     if len(value["prompt"]) > 12000:
         raise BatchError("ASMR 触发音提示词过长。")
+    if value.get("mixMode", "overlay") not in ("overlay", "replace"):
+        raise BatchError("ASMR 声音合成方式必须为 overlay 或 replace。")
     settings = value.get("postProcessing")
     if not isinstance(settings, dict):
         raise BatchError("ASMR 触发音缺少后处理设置。")
@@ -134,6 +136,8 @@ def load_package(folder):
     shots = manifest.get("shots")
     if not isinstance(shots, list) or not shots:
         raise BatchError("项目包没有镜头。")
+    if len(shots) > 2000:
+        raise BatchError("项目包最多支持 2000 个生成任务。")
     ids, orders = set(), set()
     for shot in shots:
         if not isinstance(shot, dict) or not isinstance(shot.get("id"), str) or not shot["id"]:
@@ -159,11 +163,33 @@ def load_package(folder):
             if generation_mode == TEXT_TO_VIDEO:
                 raise BatchError("文生视频项目不能嵌套 ASMR 触发音任务。")
             validate_asmr_sound(shot["asmrSound"])
+            if shot["kind"] == "speech" and shot["asmrSound"].get("mixMode") == "replace":
+                raise BatchError("对白段的 ASMR 声音只能叠加，不能替换已采用人声。")
+        if any(key in shot for key in ("segmentId", "partIndex", "partCount")):
+            if (generation_mode != REFERENCE_TO_VIDEO or shot["kind"] != "ambient"
+                    or not isinstance(shot.get("segmentId"), str) or not shot["segmentId"]
+                    or type(shot.get("partIndex")) is not int or type(shot.get("partCount")) is not int
+                    or not 1 <= shot["partIndex"] <= shot["partCount"] <= 120 or duration > 5
+                    or shot.get("audio") is not None):
+                raise BatchError("连续表演任务需要完整的段落编号、序号及不超过 5 秒的时长。")
+            if shot["partIndex"] > 1 and shot["referenceMode"] != "continuous":
+                raise BatchError("同一表演段的后续任务必须连续承接上一段。")
         if "trimToDuration" in shot and (generation_mode != TEXT_TO_VIDEO or type(shot["trimToDuration"]) is not bool):
             raise BatchError("trimToDuration 只支持文生视频的布尔设置。")
         ids.add(shot["id"])
         orders.add(order)
     manifest["shots"] = sorted(shots, key=lambda shot: shot["order"])
+    parts = {}
+    for position, shot in enumerate(manifest["shots"]):
+        if "segmentId" in shot:
+            parts.setdefault(shot["segmentId"], []).append((position, shot))
+    for segment in parts.values():
+        expected = segment[0][1]["partCount"]
+        if (len(segment) != expected
+                or [position for position, _ in segment] != list(range(segment[0][0], segment[0][0] + expected))
+                or any(shot["partCount"] != expected or shot["partIndex"] != index + 1
+                       for index, (_, shot) in enumerate(segment))):
+            raise BatchError("同一表演段的连续任务必须完整、相邻且按顺序排列。")
     template_path = package_path(root, manifest.get("workflow", "workflow_api.json"))
     try:
         template = json.loads(template_path.read_text(encoding="utf-8-sig"))
@@ -236,7 +262,7 @@ def shot_facts(root, shot, generation_mode=REFERENCE_TO_VIDEO):
                 target_frames = max(1, math.ceil(duration * FPS - 1e-9))
         else:
             duration = min(float(shot["durationSeconds"]), 5.0)
-            target_frames = max(1, math.floor(duration * FPS + 1e-9))
+            target_frames = max(1, math.ceil(duration * FPS - 1e-9) if "segmentId" in shot else math.floor(duration * FPS + 1e-9))
     generation_frames = max(5, target_frames)
     generation_frames += (5 - generation_frames) % 17
     if generation_frames > 3600:
@@ -245,12 +271,17 @@ def shot_facts(root, shot, generation_mode=REFERENCE_TO_VIDEO):
         target_frames = generation_frames
         if shot.get("trimToDuration"):
             target_frames = max(1, math.ceil(duration * FPS - 1e-9))
-    return {"kind": shot["kind"], "audio_path": audio_path, "audio_sha256": audio_sha,
-            "source_duration": duration, "target_frames": target_frames,
-            "target_duration": target_frames / FPS, "generation_frames": generation_frames}
+    facts = {"kind": shot["kind"], "audio_path": audio_path, "audio_sha256": audio_sha,
+             "source_duration": duration, "target_frames": target_frames,
+             "target_duration": target_frames / FPS, "generation_frames": generation_frames}
+    if "segmentId" in shot:
+        facts["performance_sound_duration"] = duration
+    return facts
 
 
 def sound_duration(facts):
+    if "performance_sound_duration" in facts:
+        return facts["performance_sound_duration"]
     return facts["source_duration"] if facts["kind"] == "speech" else facts["target_duration"]
 
 
@@ -317,7 +348,7 @@ def build_graph(template, shot, facts, character=None, audio=None, tail=None, wi
             raise BatchError("工作流占用了批跑器环境音节点 904，请更换该自定义节点编号。")
         graph[AMBIENT_AUDIO_LIMIT_NODE] = {"class_type": "TrimAudioDuration", "inputs": {
             "audio": ["4", 0], "start_index": 0.0,
-            "duration": facts.get("target_frames", min(facts["generation_frames"], 5 * FPS)) / FPS}}
+            "duration": facts.get("performance_sound_duration", facts.get("target_frames", min(facts["generation_frames"], 5 * FPS)) / FPS)}}
         graph["11"]["inputs"]["audio"] = [AMBIENT_AUDIO_LIMIT_NODE, 0]
     if tail:
         graph["900"] = {"class_type": "LoadImage", "inputs": {"image": tail}}
@@ -715,6 +746,8 @@ class BatchRunner:
                              "height": self.height if self.height is not None else self.template["22"]["inputs"]["height"]})
             if shot.get("trimToDuration"):
                 identity["trimToDuration"] = True
+        elif "segmentId" in shot:
+            identity["performanceTiming"] = "exact-sound-ceil-frames-v1"
         # Preserve the exact v1 identity for candidate 1, generation 0.
         # Candidate count is deliberately absent: increasing N only adds slots.
         if candidate != 1 or generation != 0:
@@ -1483,8 +1516,14 @@ class BatchRunner:
                             or sound_entry.get("fingerprint") != sound_runner.fingerprint(sound_shot, sound_facts, candidate, sound_entry.get("generation", 0))):
                         raise BatchError(f"镜头 {shot['id']} 候选 {candidate} 的 ASMR 触发音未完成或已过期。")
                     settings = shot["asmrSound"]["postProcessing"]
-                    sounds.append((sound_path, settings, sound_duration(facts)))
-                    identities.append(["asmr-spatial-d-v1", sound_entry["fingerprint"], sound_entry["output_sha256"], settings, sound_duration(facts)])
+                    mix_mode = shot["asmrSound"].get("mixMode", "overlay")
+                    sounds.append((sound_path, settings, sound_duration(facts), mix_mode))
+                    sound_identity = ["asmr-spatial-d-v1", sound_entry["fingerprint"], sound_entry["output_sha256"], settings, sound_duration(facts)]
+                    # Preserve existing overlay receipts. Replacing a nonspeech
+                    # track affects only the enhanced preview, never model jobs.
+                    if mix_mode == "replace":
+                        sound_identity.append("replace")
+                    identities.append(sound_identity)
         except (BatchError, OSError, ValueError) as error:
             replace_receipt({"status": "unavailable", "last_error": str(error)})
             self.log(f"未生成候选 {candidate} 的顺序预览：{error} 已有 {name} 保留。")
@@ -1547,14 +1586,15 @@ class BatchRunner:
                 graph[padded] = {"class_type": "AudioMerge", "inputs": {
                     "audio1": [empty, 0], "audio2": [audio, 0], "merge_method": "add"}}
                 if with_asmr:
-                    sound_path, settings, source_duration = sounds[index]
+                    sound_path, settings, source_duration, mix_mode = sounds[index]
                     sound_audio, spatial, mixed = [f"preview_asmr_{kind}_{index}" for kind in ("audio", "spatial", "mixed")]
                     graph[sound_audio] = {"class_type": "LoadAudio", "inputs": {"audio": self.upload(sound_path)}}
                     graph[spatial] = {"class_type": "AsmrDirectorSpatialAudio", "inputs": {
                         "audio": [sound_audio, 0], "start_pan": settings["start"]["pan"], "start_distance": settings["start"]["distance"],
                         "end_pan": settings["end"]["pan"], "end_distance": settings["end"]["distance"], "movement": settings["movement"],
                         "gain_db": settings["gainDb"], "duration_seconds": source_duration}}
-                    graph[mixed] = {"class_type": "AsmrDirectorMixAudio", "inputs": {"audio1": [padded, 0], "audio2": [spatial, 0]}}
+                    graph[mixed] = {"class_type": "AsmrDirectorMixAudio", "inputs": {
+                        "audio1": [empty if mix_mode == "replace" else padded, 0], "audio2": [spatial, 0]}}
                     padded = mixed
                 if audio_link is None:
                     audio_link = [padded, 0]

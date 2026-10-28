@@ -12,6 +12,7 @@ import { getCurrentAudioPostProcessingReceipts } from "./audio-post-processing";
 import { readPreparedAudioSource } from "./prepared-audio-source";
 import { renderAsmrSoundH3Prompt, type AsmrSound } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
+import type { ClipVideoStoryboard, PerformanceStoryboardPart } from "./video-plan";
 
 export const MAX_VIDEO_REFERENCE_BYTES = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 128 * 1024 * 1024;
@@ -29,11 +30,16 @@ export type VideoPackageManifest = {
   shots: {
     id: string; order: number; kind: "speech" | "ambient"; referenceMode: "new" | "continuous";
     prompt: string; durationSeconds: number; audio?: string;
-    asmrSound?: { prompt: string; durationSeconds: number; postProcessing: AsmrSound["postProcessing"] };
+    segmentId?: string; partIndex?: number; partCount?: number;
+    asmrSound?: { prompt: string; durationSeconds: number; postProcessing: AsmrSound["postProcessing"]; mixMode?: "overlay" | "replace" };
   }[];
 };
 type Dependencies = { reference?: Uint8Array; tempRoot?: string; runnerRoot?: string; processorRoot?: string; maxArchiveBytes?: number };
 type AudioSource = { filePath: string; size: number; mtimeMs: number; duration: number; outputSha256?: string };
+type ExportedEntry = {
+  entry: VideoPackageSourceShot; directions: ClipVideoStoryboard | PerformanceStoryboardPart;
+  partIndex: number; partCount: number;
+};
 
 function checkCancelled(signal?: AbortSignal) {
   if (signal?.aborted) throw new BatchDownloadError("已取消视频项目包导出。", 499);
@@ -227,11 +233,17 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
   }
   if (!shots.length) throw new BatchDownloadError("当前工程还没有可导出的视频镜头。", 400);
   if (shots.length > 2000) throw new BatchDownloadError("视频镜头过多，请分工程导出（每包最多 2000 镜）。", 413);
+  // The editor keeps one logical performance segment. Only the runnable
+  // snapshot expands its authored continuous parts into bounded H3 jobs.
+  const exportedEntries = shots.flatMap<ExportedEntry>(entry => entry.storyboard.parts?.length
+    ? entry.storyboard.parts.map((directions, partIndex) => ({ entry, directions, partIndex, partCount: entry.storyboard.parts!.length }))
+    : [{ entry, directions: entry.storyboard, partIndex: 0, partCount: 0 }]);
+  if (exportedEntries.length > 2000) throw new BatchDownloadError("连续生成任务过多，请分工程导出（每包最多 2000 段）。", 413);
   const extension = dependencies.reference === undefined ? undefined : getVideoPackageReferenceExtension(dependencies.reference);
   const reference = dependencies.reference === undefined ? undefined : Buffer.from(dependencies.reference);
   const runnerBundle = await loadRunnerFiles(dependencies.runnerRoot, signal);
   const runner = runnerBundle.files;
-  if (shots.some(entry => entry.storyboard.asmrSound)) {
+  if (exportedEntries.some(entry => entry.directions.asmrSound)) {
     runner.push(...await loadSoundNodeFiles(runnerBundle.root, config, dependencies.processorRoot, signal));
   }
   const sources = new Map<number, AudioSource>();
@@ -260,24 +272,32 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
     format: "asmr-video-package", version: 1, projectId: project.project_id, title: project.title,
     workspaceMode: project.speechWorkspace?.activeMode ?? "short", workflow: "workflow_api.json",
     ...(extension ? { characterReference: `references/character.${extension}` } : {}),
-    shots: shots.map(entry => {
+    shots: exportedEntries.map(({ entry, directions, partIndex, partCount }, position) => {
       const silent = entry.clip.kind === "silent";
-      const durationSeconds = silent ? entry.clip.duration : sources.get(entry.index)!.duration;
-      const audio = `shots/${String(entry.index).padStart(3, "0")}/audio.wav`;
+      const durationSeconds = silent ? "durationSeconds" in directions ? directions.durationSeconds : entry.clip.duration : sources.get(entry.index)!.duration;
+      const order = position + 1;
+      const audio = `shots/${String(order).padStart(3, "0")}/audio.wav`;
       return {
-        id: entry.clip.id, order: entry.index, kind: silent ? "ambient" : "speech", referenceMode: entry.referenceMode, durationSeconds,
-        prompt: renderConciseH3Prompt({ visual: entry.storyboard.visual, action: entry.storyboard.action, camera: entry.storyboard.camera,
+        id: partCount ? `${entry.clip.id}--part-${String(partIndex + 1).padStart(3, "0")}` : entry.clip.id,
+        order, kind: silent ? "ambient" : "speech", referenceMode: partIndex ? "continuous" : entry.referenceMode, durationSeconds,
+        ...(silent && (partCount || entry.clip.performance) ? { segmentId: entry.clip.id, partIndex: partIndex + 1, partCount: partCount || 1 } : {}),
+        prompt: renderConciseH3Prompt({ visual: directions.visual, action: directions.action, camera: directions.camera,
           dialogue: silent ? "" : entry.clip.text, silent, durationSeconds,
           storyboardStyle: resolveStoryboardStyle(project.videoPlan),
-          ...(silent ? { ambientSound: entry.storyboard.ambientSound } : {}) }),
+          performance: Boolean(entry.clip.performance || partCount),
+          ...(silent ? { ambientSound: directions.ambientSound } : {}) }),
         ...(silent ? {} : { audio }),
-        ...(entry.storyboard.asmrSound ? { asmrSound: {
-          prompt: renderAsmrSoundH3Prompt(entry.storyboard.asmrSound), durationSeconds,
-          postProcessing: entry.storyboard.asmrSound.postProcessing,
+        ...(directions.asmrSound ? { asmrSound: {
+          prompt: renderAsmrSoundH3Prompt(directions.asmrSound), durationSeconds,
+          postProcessing: directions.asmrSound.postProcessing,
+          ...(directions.asmrSound.mixMode ? { mixMode: directions.asmrSound.mixMode } : {}),
         } } : {}),
       };
     }),
   };
+  if (new Set(manifest.shots.map(shot => shot.id)).size !== manifest.shots.length) {
+    throw new BatchDownloadError("展开后的片段编号重复，请调整片段编号后导出。", 400);
+  }
   const tempRoot = path.resolve(dependencies.tempRoot ?? process.env.ASMR_BATCH_DOWNLOAD_TEMP_ROOT
     ?? path.join(config.spatialCacheRoot ?? path.join(config.runtimeRoot, "assets", "spatial"), "batch-downloads"));
   await mkdir(tempRoot, { recursive: true });
@@ -297,12 +317,12 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
       const folder = `shots/${String(shot.order).padStart(3, "0")}`;
       await writer.add(`${folder}/prompt.txt`, new TextEncoder().encode(shot.prompt));
       if (shot.asmrSound) await writer.add(`${folder}/asmr-prompt.txt`, new TextEncoder().encode(shot.asmrSound.prompt));
-      if (shot.audio) await addAudio(writer, shot.audio, sources.get(shots[position].index)!, shot.order, signal);
+      if (shot.audio) await addAudio(writer, shot.audio, sources.get(exportedEntries[position].entry.index)!, shot.order, signal);
     }
     checkCancelled(signal);
     const size = await writer.finish(); writer = undefined;
     checkCancelled(signal); prepared = true;
-    return { filePath, filename: getVideoPackageFilename(project), clipCount: shots.length, size, cleanup };
+    return { filePath, filename: getVideoPackageFilename(project), clipCount: manifest.shots.length, size, cleanup };
   } catch (error) {
     checkCancelled(signal);
     if (error instanceof BatchDownloadError) throw error;

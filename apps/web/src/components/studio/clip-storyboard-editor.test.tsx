@@ -88,7 +88,7 @@ async function mountEditor(project: AsmrProject, clipId = voices(project)[1].id,
 }
 
 function control(label: string) { return screen.getByLabelText(label) as HTMLInputElement | HTMLTextAreaElement; }
-function generationButton() { return screen.getByRole("button", { name: /^(?:生成|重做)分镜$/ }) as HTMLButtonElement; }
+function generationButton() { return screen.getByRole("button", { name: /^(?:设计画面与声音|重新设计)$/ }) as HTMLButtonElement; }
 function copyButton() { return screen.getByRole("button", { name: /^(?:复制|已复制) H3 提示词$/ }) as HTMLButtonElement; }
 function setClipboard(writeText?: (text: string) => Promise<void>) { Object.defineProperty(navigator, "clipboard", { configurable: true, value: writeText ? { writeText } : undefined }); }
 function readBlob(blob: Blob): Promise<string> {
@@ -160,7 +160,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const { onSave, onEdit, update } = await mountEditor(project);
     fireEvent.click(control("新镜头"));
     expect(generationButton().disabled).toBe(false);
-    expect(screen.getByText("无对白 · 5.0 秒")).toBeTruthy();
+    expect(screen.getByText("无台词 · 5.0 秒")).toBeTruthy();
     expect(screen.queryByText(/先生成并采用本段音频/)).toBeNull();
     fireEvent.click(generationButton());
     await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, result));
@@ -168,18 +168,36 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const saved = structuredClone(project); saved.videoPlan!.shots[clip.id] = result; update(saved);
     expect(control("本段 H3 提示词").value).toContain(result.ambientSound);
     expect(control("本段 H3 提示词").value).not.toContain("<Audio 1>");
-    expect(control("本段分镜环境声").value).toBe(result.ambientSound);
-    fireEvent.change(control("本段分镜环境声"), { target: { value: "Faint room tone." } });
+    expect(control("本段环境与触发音").value).toBe(result.ambientSound);
+    fireEvent.change(control("本段环境与触发音"), { target: { value: "Faint room tone." } });
     expect(onEdit).toHaveBeenCalledExactlyOnceWith(clip.id, { ambientSound: "Faint room tone." });
     expect(screen.queryByRole("link", { name: "下载本段音频" })).toBeNull();
   });
-  it("keeps an old long silent shot intact while asking for a duration adjustment before generation", async () => {
-    const project = fixture(), clip = voices(project)[1]; clip.kind = "silent"; clip.duration = 7;
+  it("accepts a long nonspoken performance without asking the user to shorten it", async () => {
+    const project = fixture(), clip = voices(project)[1]; clip.kind = "silent"; clip.duration = 20;
     clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
-    const api = mockApi(); await mountEditor(project);
-    expect(generationButton().disabled).toBe(true);
-    expect(screen.getByText(/请将无对白镜头时长调整为不超过 5 秒/)).toBeTruthy();
-    fireEvent.click(generationButton()); expect(api.posts).toHaveLength(0); expect(clip.duration).toBe(7);
+    const sound: NonNullable<ClipVideoStoryboard["asmrSound"]> = { prompt: "Soft dry fingertip taps on the same wooden box.", mixMode: "replace",
+      postProcessing: { start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -6 } };
+    const result: ClipVideoStoryboard = { ...shotFixture(project), kind: "silent", duration: 20, audio: undefined,
+      ambientSound: "Soft wooden taps.", asmrSound: sound, parts: Array.from({ length: 4 }, (_, index) => ({
+        durationSeconds: 5, visual: "The same box remains on the table.", action: `Continue gently tapping side ${index + 1}.`,
+        camera: "The listener stays seated at the same eye height.", ambientSound: "Quiet wooden taps.", asmrSound: sound,
+      })) };
+    const api = mockApi(); api.respond(Response.json({ storyboard: result }));
+    const { onSave, onEdit, update } = await mountEditor(project);
+    fireEvent.click(control("新镜头"));
+    expect(generationButton().disabled).toBe(false);
+    expect(screen.queryByText(/不超过 5 秒/)).toBeNull();
+    fireEvent.click(generationButton());
+    await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, result));
+    expect(api.posts).toHaveLength(1); expect(clip.duration).toBe(20);
+    const saved = structuredClone(project); saved.videoPlan!.shots[clip.id] = result; update(saved);
+    expect(screen.getByText("连续表演安排 · 4 段 · 20 秒")).toBeTruthy();
+    expect((control("本段动作") as HTMLTextAreaElement).readOnly).toBe(true);
+    fireEvent.change(control("连续表演 2 动作"), { target: { value: "Slow the taps without changing the box position." } });
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(clip.id, { parts: result.parts!.map((part, index) => index === 1
+      ? { ...part, action: "Slow the taps without changing the box position." } : part) });
+    expect(control("本段 H3 提示词").value).toContain("Part 4/4");
   });
   it("retains an old silent storyboard and explicitly requests regeneration for its missing ambient sound", async () => {
     const project = fixture(), clip = voices(project)[1]; clip.kind = "silent"; clip.duration = 5;
@@ -187,8 +205,8 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const old = { ...shotFixture(project), kind: "silent" as const, duration: 5, audio: undefined };
     project.videoPlan!.shots[clip.id] = old;
     mockApi(); await mountEditor(project);
-    expect(screen.getByText(/旧无对白分镜缺少环境底噪描述，请重新生成分镜/)).toBeTruthy();
-    expect(copyButton().disabled).toBe(true); expect(control("本段分镜环境声").value).toBe("");
+    expect(screen.getByText(/旧无台词分镜缺少环境底噪描述，请重新设计画面与声音/)).toBeTruthy();
+    expect(copyButton().disabled).toBe(true); expect(control("本段环境与触发音").value).toBe("");
     expect(project.videoPlan!.shots[clip.id]).toEqual(old);
   });
   it.each(["pending", "wrong URI"])("disables generation until the current clip has adopted audio (%s)", async (kind) => {
@@ -261,7 +279,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     expect((control("新镜头") as HTMLInputElement).checked).toBe(true);
     const changed = structuredClone(project); changed.videoPlan!.referenceModes = { [clip.id]: "continuous" }; view.rerender(component(changed));
     expect((control("连续镜头") as HTMLInputElement).checked).toBe(true); expect((control("新镜头") as HTMLInputElement).checked).toBe(false);
-    expect(control("本段分镜画面").value).toBe(original.visual); expect(control("本段分镜画面").disabled).toBe(false);
+    expect(control("本段画面").value).toBe(original.visual); expect(control("本段画面").disabled).toBe(false);
     expect(copyButton().disabled).toBe(false); expect(createClipH3Prompt(changed, clip.id)).toBe(originalPrompt); expect(changed.videoPlan!.shots[clip.id]).toEqual(original);
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined); setClipboard(writeText);
     fireEvent.click(copyButton()); await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(originalPrompt));
@@ -290,7 +308,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const fresh = { ...shotFixture(project), visual: "A newly generated current visual." }; api.respond(Response.json({ storyboard: fresh })); fireEvent.click(generationButton());
     await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(project.project_id, fresh));
     await act(async () => { late.resolve(Response.json({ storyboard: { ...original, visual: "A late canceled visual." } })); await late.promise; });
-    expect(onSave).toHaveBeenCalledTimes(1); expect(control("本段分镜画面").value).toBe(original.visual);
+    expect(onSave).toHaveBeenCalledTimes(1); expect(control("本段画面").value).toBe(original.visual);
   });
 
   it.each(["text", "audio", "scene", "mode", "project identity", "selected clip", "following dialogue", "other storyboard"])("cancels pending generation after the %s changes and rejects late output", async (kind) => {
@@ -308,7 +326,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     expect(api.posts[0].signal?.aborted).toBe(true);
     await act(async () => { late.resolve(Response.json({ storyboard: shotFixture(project) })); await late.promise; });
     expect(view.onSave).not.toHaveBeenCalled();
-    if (kind !== "selected clip") expect(control("本段分镜画面").value).toBe(original.visual);
+    if (kind !== "selected clip") expect(control("本段画面").value).toBe(original.visual);
   });
 
   it("keeps a narrative request valid through unrelated engineering waits and sound settings", async () => {
@@ -342,7 +360,7 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const api = mockApi(); api.respond(kind === "server failure" ? Response.json({ error: "分镜模型暂时无法连接。" }, { status: 502 }) : Response.json({ storyboard: shotFixture(project) }));
     const view = await mountEditor(project, voices(project)[1].id, kind !== "save rejection"); fireEvent.click(generationButton()); await screen.findByRole("alert");
     expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/(?=.*重新生成)(?=.*本段)/));
-    expect(control("本段分镜画面").value).toBe(shot.visual);
+    expect(control("本段画面").value).toBe(shot.visual);
     if (kind === "save rejection") expect(view.onSave).toHaveBeenCalledOnce(); else expect(view.onSave).not.toHaveBeenCalled();
     expect(generationButton().disabled).toBe(false);
   });
@@ -386,15 +404,15 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const project = fixture(); const shot = withShot(project); if (kind === "incomplete") shot.action = ""; else voices(project)[1].text += "来源已经变了。";
     const api = mockApi(); const view = await mountEditor(project);
     expect(copyButton().disabled).toBe(true); expect((screen.getByRole("button", { name: "下载提示词" }) as HTMLButtonElement).disabled).toBe(true); expect(screen.queryByLabelText("本段 H3 提示词")).toBeNull();
-    expect(control("本段分镜画面").value).toBe(shot.visual); expect(control("本段分镜画面").disabled).toBe(false);
-    fireEvent.change(control("本段分镜画面"), { target: { value: "My saved hand-edited setting." } }); expect(view.onEdit).toHaveBeenCalledExactlyOnceWith(shot.clipId, { visual: "My saved hand-edited setting." });
+    expect(control("本段画面").value).toBe(shot.visual); expect(control("本段画面").disabled).toBe(false);
+    fireEvent.change(control("本段画面"), { target: { value: "My saved hand-edited setting." } }); expect(view.onEdit).toHaveBeenCalledExactlyOnceWith(shot.clipId, { visual: "My saved hand-edited setting." });
     expect(api.posts).toHaveLength(0);
   });
 
   it("cancels pending generation when visual notes or the shared scene are edited", async () => {
     const project = fixture(); const shot = withShot(project); const api = mockApi(); const late = deferred<Response>(); api.respond(late.promise); const view = await mountEditor(project);
     fireEvent.click(generationButton()); await screen.findByRole("button", { name: "取消生成" });
-    fireEvent.change(control("本段分镜动作"), { target: { value: "S1 gently touches the cup without hiding the mouth." } });
+    fireEvent.change(control("本段动作"), { target: { value: "S1 gently touches the cup without hiding the mouth." } });
     expect(api.posts[0].signal?.aborted).toBe(true); expect(view.onEdit).toHaveBeenCalledExactlyOnceWith(shot.clipId, { action: "S1 gently touches the cup without hiding the mouth." });
     await act(async () => { late.resolve(Response.json({ storyboard: shotFixture(project) })); await late.promise; }); expect(view.onSave).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText(/剧情背景/u, { selector: "summary" }));
@@ -415,20 +433,20 @@ describe("ClipStoryboardEditor current-audio workflow", () => {
     const component = (batchBusy: boolean) => <StrictMode><ClipStoryboardEditor project={project} clipId={clip.id} batchBusy={batchBusy} onSave={onSave} onEdit={onEdit} onSceneChange={onSceneChange} /></StrictMode>;
     const view = render(component(true));
     await screen.findByRole("option", { name: "测试外部模型" });
-    const fields = ["工程剧情背景", "连续镜头", "新镜头", "本段分镜要求", "本段分镜标题", "本段分镜画面", "本段分镜动作", "本段分镜镜头"];
+    const fields = ["工程剧情背景", "连续镜头", "新镜头", "本段分镜要求", "本段分镜标题", "本段画面", "本段动作", "本段视点"];
     for (const name of fields) expect(control(name).disabled).toBe(true);
     expect((screen.getByRole("combobox", { name: "分镜模型" }) as HTMLSelectElement).disabled).toBe(true);
     expect(generationButton().disabled).toBe(true);
     fireEvent.click(generationButton());
     expect(api.posts).toHaveLength(0); expect(onSave).not.toHaveBeenCalled(); expect(onEdit).not.toHaveBeenCalled(); expect(onSceneChange).not.toHaveBeenCalled();
-    expect(control("本段分镜画面").value).toBe(shot.visual);
+    expect(control("本段画面").value).toBe(shot.visual);
     expect(copyButton().disabled).toBe(false);
     expect((screen.getByRole("button", { name: "下载提示词" }) as HTMLButtonElement).disabled).toBe(false);
     view.rerender(component(false));
     for (const name of fields) expect(control(name).disabled).toBe(false);
     expect((screen.getByRole("combobox", { name: "分镜模型" }) as HTMLSelectElement).disabled).toBe(false);
     expect(generationButton().disabled).toBe(false);
-    fireEvent.change(control("本段分镜画面"), { target: { value: "S1 keeps the cup beside the book." } });
+    fireEvent.change(control("本段画面"), { target: { value: "S1 keeps the cup beside the book." } });
     expect(onEdit).toHaveBeenCalledExactlyOnceWith(clip.id, { visual: "S1 keeps the cup beside the book." });
   });
 

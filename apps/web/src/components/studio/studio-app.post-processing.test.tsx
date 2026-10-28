@@ -86,7 +86,7 @@ describe("explicit audio post-processing flow", () => {
     expect(api.posts[0].body.provider).toBe("api");
     expect(screen.getByText("正在设计后处理…")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull(); expect(HTMLDialogElement.prototype.showModal).not.toHaveBeenCalled();
-    expect((screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "批量设计画面与声音" }) as HTMLButtonElement).disabled).toBe(true);
     await api.finishPlan();
     await waitFor(() => expect(api.posts).toHaveLength(2));
     expect(stored(project).audioPostProcessing?.shots).toHaveLength(2);

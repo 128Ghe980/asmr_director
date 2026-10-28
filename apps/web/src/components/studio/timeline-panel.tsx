@@ -139,7 +139,7 @@ export function TimelinePanel({
                     const silent = clip.type === "voice" && clip.kind === "silent";
 
                     const timeRange = formatTimeRange(clip.start, clip.duration);
-                    const generationStatus = silent ? { statusLabel: "无对白", tone: "neutral" as const }
+                    const generationStatus = silent ? { statusLabel: "无台词", tone: "neutral" as const }
                       : clip.type === "voice" && clip.audio_stale ? { statusLabel: "音频待更新", tone: "warn" as const } : getAssetStatusDisplay(
                       clip.generation.status,
                     );

@@ -81,6 +81,35 @@ describe("video package input snapshot", () => {
     expect(getVideoPackageSummary(project).issues[0].message).toContain("5 秒");
   });
 
+  it("accepts a long logical segment only with complete continuous parts", () => {
+    const { project, clips } = fixture();
+    const clip = clips[1];
+    clip.kind = "silent"; clip.duration = 12;
+    clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+    const shot = project.videoPlan!.shots[clip.id]; delete shot.audio;
+    const sound = { prompt: "Soft taps on the same wooden box.", mixMode: "replace" as const,
+      postProcessing: { start: { pan: 0, distance: "near" as const }, end: { pan: 0, distance: "near" as const }, movement: "static" as const, gainDb: -6 } };
+    Object.assign(shot, { kind: "silent", duration: 12, ambientSound: "Soft wooden taps.", asmrSound: sound,
+      parts: [5, 5, 2].map((durationSeconds, index) => ({ durationSeconds,
+        visual: "S1 holds the same wooden box.", action: `Continue gentle tapping, stage ${index + 1}.`,
+        camera: "Fixed listener viewpoint.", ambientSound: "Soft wooden taps.", asmrSound: sound })),
+      sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id) });
+    expect(getVideoPackageSummary(project)).toEqual({ total: 3, ready: 3, issues: [] });
+    expect(getVideoPackageShots(project)).toHaveLength(3);
+    shot.parts![2].durationSeconds = 1;
+    expect(getVideoPackageSummary(project).issues[0].index).toBe(2);
+    shot.parts![2].durationSeconds = 2;
+    shot.parts![1].ambientSound = " ";
+    expect(getVideoPackageSummary(project).issues[0].index).toBe(2);
+  });
+
+  it("does not allow a sound plan to replace adopted speech", () => {
+    const { project, clips } = fixture();
+    project.videoPlan!.shots[clips[0].id].asmrSound = { prompt: "Soft room tone.", mixMode: "replace",
+      postProcessing: { start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -6 } };
+    expect(getVideoPackageSummary(project).issues[0].message).toMatch(/人声|资料/);
+  });
+
   it("exports only the active speech bank", () => {
     const { project } = fixture();
     const initialized = ensureSpeechWorkspaces(project);

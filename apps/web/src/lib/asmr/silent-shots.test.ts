@@ -122,7 +122,7 @@ describe("silent editorial shots", () => {
     const input = structuredClone(project);
     const result = addSilentClip(project, clips[0].id, { description });
     const inserted = voices(result.project).find(clip => clip.id === result.selectedClipId)!;
-    expect(inserted).toMatchObject({ kind: "silent", text: "待设计：根据前后剧情安排自然衔接的无对白画面。", duration: 4,
+    expect(inserted).toMatchObject({ kind: "silent", text: "待设计：根据前后剧情安排自然衔接的无台词画面。", duration: 4,
       asset: { asset_id: null, uri: null, duration: null } });
     expect(inserted.text).not.toMatch(/水杯|桌边/);
     expect(project).toEqual(input);

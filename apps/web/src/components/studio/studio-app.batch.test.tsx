@@ -183,16 +183,16 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     let view = await mount(project);
-    expect(screen.getByRole("img", { name: "第 1 段分镜状态：分镜已生成" })).toBeTruthy();
-    expect(screen.getByRole("img", { name: "第 2 段分镜状态：分镜已生成" })).toBeTruthy();
-    expect(screen.getByRole("img", { name: "第 3 段分镜状态：分镜待生成" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "第 1 段分镜状态：设计已完成" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "第 2 段分镜状态：设计已完成" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "第 3 段分镜状态：设计待生成" })).toBeTruthy();
     fireEvent.change(screen.getByRole("textbox", { name: "台词" }), { target: { value: "修改第一段的当前台词。" } });
-    await waitFor(() => expect(screen.getByRole("img", { name: "第 1 段分镜状态：分镜待更新" })).toBeTruthy());
-    expect(screen.getByRole("img", { name: "第 2 段分镜状态：分镜待更新" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("img", { name: "第 1 段分镜状态：设计待更新" })).toBeTruthy());
+    expect(screen.getByRole("img", { name: "第 2 段分镜状态：设计待更新" })).toBeTruthy();
     expect(storedProject(project).videoPlan?.shots).toEqual(project.videoPlan!.shots);
     view.unmount(); view = await mount(project);
-    expect(screen.getByRole("img", { name: "第 1 段分镜状态：分镜待更新" })).toBeTruthy();
-    expect(screen.getByRole("img", { name: "第 2 段分镜状态：分镜待更新" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "第 1 段分镜状态：设计待更新" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "第 2 段分镜状态：设计待更新" })).toBeTruthy();
     expect(api.posts).toHaveLength(0);
     expect(generation.calls).toHaveLength(0);
     view.unmount();
@@ -341,7 +341,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     expect(generation.bridge.cancelGeneration).toHaveBeenCalledWith(generation.calls[0].job.jobId);
     await act(async () => { generation.finishCandidate(1); });
     expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
-    for (const name of ["音频全部生成", "音频全部重新生成", "分镜全部生成", "分镜全部重新生成"]) {
+    for (const name of ["音频全部生成", "音频全部重新生成", "批量设计画面与声音", "批量重新设计画面与声音"]) {
       expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(false);
     }
     expect(screen.getByRole("status", { name: "操作结果摘要" }).textContent).toContain("成功 1 · 失败 1");
@@ -358,7 +358,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     project.videoPlan!.shots[manual.clipId] = manual; seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     let view = await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量设计画面与声音" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
     expect(window.confirm).not.toHaveBeenCalled();
     expect(api.posts[0].body).toMatchObject({ project, clipId: voices(project)[1].id, provider: "api", includePrevious: true, referenceMode: "continuous" });
@@ -371,8 +371,8 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     view.unmount(); view = await mount(project);
     expect(currentProject().videoPlan?.shots[manual.clipId]).toEqual(manual);
     expect(currentProject().videoPlan?.shots[voices(project)[1].id]?.title).toBe("A newly generated moment");
-    expect((screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByRole("button", { name: "分镜全部生成" }).textContent).toContain("重新生成分镜");
+    expect((screen.getByRole("button", { name: "批量设计画面与声音" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("button", { name: "批量设计画面与声音" }).textContent).toContain("重新设计画面与声音");
     expect(api.posts).toHaveLength(1);
     view.unmount();
   });
@@ -382,7 +382,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     for (const clip of voices(project).slice(0, 2)) project.videoPlan!.shots[clip.id] = shotFor(project, clip.id, "Keep existing " + clip.id);
     seed(project); const api = mockApi(); const generation = mockBridge(api.candidates); await mount(project);
     vi.mocked(window.confirm).mockReturnValueOnce(false);
-    const button = screen.getByRole("button", { name: entry === "primary" ? "分镜全部生成" : "分镜全部重新生成" }) as HTMLButtonElement;
+    const button = screen.getByRole("button", { name: entry === "primary" ? "批量设计画面与声音" : "批量重新设计画面与声音" }) as HTMLButtonElement;
     expect(button.disabled).toBe(false); fireEvent.click(button); await act(async () => {});
     expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/(?=.*重新生成)(?=.*已有分镜)/));
     expect(api.posts).toHaveLength(0); expect(generation.calls).toHaveLength(0);
@@ -395,7 +395,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     for (const clip of [first, second]) project.videoPlan!.shots[clip.id] = shotFor(project, clip.id, "Old manual " + clip.id);
     const keptSecond = structuredClone(project.videoPlan!.shots[second.id]);
     seed(project); const api = mockApi(); const generation = mockBridge(api.candidates); await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量设计画面与声音" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
     expect(window.confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/(?=.*重新生成)(?=.*已有分镜)/));
     expect(api.posts[0].body.clipId).toBe(first.id); expect(storedProject(project)).toEqual(project);
@@ -422,7 +422,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     const originalSecond = structuredClone(project.videoPlan!.shots[second.id]);
     const originalThird = structuredClone(project.videoPlan!.shots[third.id]);
     seed(project); const api = mockApi(); const generation = mockBridge(api.candidates); await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量设计画面与声音" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
     await act(async () => { api.finishShot(0, "New first shot retained"); });
     await waitFor(() => expect(api.posts).toHaveLength(2));
@@ -452,7 +452,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     project.videoPlan!.shots[voices(project)[0].id] = shotFor(project, voices(project)[0].id, "Old manual shot"); seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部重新生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量重新设计画面与声音" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
     await act(async () => {});
     expect(api.posts).toHaveLength(1);
@@ -476,7 +476,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     project.videoPlan!.shots[original.clipId] = original; seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部重新生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量重新设计画面与声音" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "取消批量生成" }));
     expect(api.posts[0].signal?.aborted).toBe(true);
@@ -501,7 +501,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     expect(screen.getByRole("button", { name: "选择第 1 段" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("tab", { name: "声音" }).getAttribute("aria-selected")).toBe("true");
     expect(storedProject(project).videoPlan?.shots[secondId]).toEqual(saved);
-    fireEvent.click(screen.getByRole("button", { name: "第 2 段视频分镜" }));
+    fireEvent.click(screen.getByRole("button", { name: "第 2 段画面与声音" }));
     expect((screen.getByRole("radio", { name: "连续镜头" }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole("radio", { name: "新镜头" }));
     await waitFor(() => expect(storedProject(project).videoPlan?.referenceModes?.[secondId]).toBe("new"));
@@ -521,7 +521,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     seed(project);
     const api = mockApi(); const generation = mockBridge(api.candidates);
     await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量设计画面与声音" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
     expect(window.confirm).not.toHaveBeenCalled();
     expect(api.posts[0].body).toMatchObject({ clipId: first.id, referenceMode: "new", includePrevious: false });
@@ -551,7 +551,7 @@ describe("StudioApp batch generation with simulated bridge and HTTP", () => {
     project.videoPlan!.shots[firstId] = saved; seed(project);
     const api = mockApi(); mockBridge(api.candidates);
     await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部重新生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量重新设计画面与声音" }));
     await waitFor(() => expect(api.posts).toHaveLength(1));
     await act(async () => { api.posts[0].resolve(Response.json({ storyboard: { ...shotFor(project, firstId), referenceMode: "continuous" } })); });
     await waitFor(() => expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull());

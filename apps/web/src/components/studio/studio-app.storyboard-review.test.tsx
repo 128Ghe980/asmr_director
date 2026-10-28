@@ -22,7 +22,7 @@ vi.mock("./clip-inspector", () => ({ ClipInspector: ({ selectedClip, onUpdateCli
   <button onClick={() => onUpdateClip("voice_002", { text: "修改后文台词。" })}>修改后文台词</button></div> }));
 vi.mock("./clip-storyboard-editor", () => ({ ClipStoryboardEditor: ({ project, onEdit }: { project: AsmrProject; onEdit: (id: string, patch: Partial<ClipVideoStoryboard>) => void }) => {
   const id = Object.keys(project.videoPlan?.shots ?? {})[0];
-  return <button onClick={() => onEdit(id, { action: "User edited action" })}>手改已生成分镜</button>;
+  return <button onClick={() => onEdit(id, { action: "User edited action" })}>手改已设计画面与声音</button>;
 } }));
 vi.mock("./planner-panel", () => ({ PlannerPanel: () => null }));
 vi.mock("./timeline-panel", () => ({ TimelinePanel: () => null }));
@@ -60,12 +60,12 @@ function stored(fallback: AsmrProject) { return getCurrentLibraryEntry(loadProje
 async function mount(project = postProcessingProject()) {
   saveProjectLibrary(window.localStorage, createInitialProjectLibrary(project));
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
-  await waitFor(() => expect((screen.getByRole("button", { name: "分镜全部重新生成" }) as HTMLButtonElement).disabled).toBe(false));
+  await waitFor(() => expect((screen.getByRole("button", { name: "批量重新设计画面与声音" }) as HTMLButtonElement).disabled).toBe(false));
   return { project, view };
 }
 function openMore() { const summary = screen.getByLabelText("批量更多操作"); if (!summary.closest("details")!.open) fireEvent.click(summary); }
 function manual() { openMore(); fireEvent.click(screen.getByRole("button", { name: "整批校对" })); }
-function regenerate() { openMore(); fireEvent.click(screen.getByRole("button", { name: "分镜全部重新生成" })); }
+function regenerate() { openMore(); fireEvent.click(screen.getByRole("button", { name: "批量重新设计画面与声音" })); }
 function openResults() {
   fireEvent.click(screen.getByRole("button", { name: "查看结果" }));
   return screen.getByRole("dialog", { name: "操作结果" });
@@ -84,7 +84,7 @@ describe("whole-batch storyboard review UI", () => {
   it("changes the current project's camera style without rewriting audio or shots and saves it across workspaces", async () => {
     const api = mockApi(); const { project } = await mount();
     const original = structuredClone(current());
-    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
     const selector = screen.getByRole("combobox", { name: "当前工程分镜风格" }) as HTMLSelectElement;
     expect(selector.value).toBe("character_framing");
     fireEvent.change(selector, { target: { value: "listener_pov" } });
@@ -101,8 +101,8 @@ describe("whole-batch storyboard review UI", () => {
     mockApi(); const project = postProcessingProject();
     project.videoPlan!.referenceTemplate = CREATIVE_TEMPLATES[0];
     const view = render(<StudioApp project={project} />);
-    await screen.findByRole("tab", { name: "分镜" });
-    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    await screen.findByRole("tab", { name: "画面与声音" });
+    fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
     const selector = screen.getByRole("combobox", { name: "当前工程分镜风格" }) as HTMLSelectElement;
     expect(selector.disabled).toBe(true);
     expect(selector.value).toBe("character_framing");
@@ -175,9 +175,9 @@ describe("whole-batch storyboard review UI", () => {
     expect(Object.values(current().videoPlan!.shots).every(shot => shot.action === "Offers the coat")).toBe(true);
   });
   it("does not make an automatic edit to a newly generated shot that was hand-edited during the batch", async () => {
-    const api = mockApi(); await mount(); fireEvent.click(screen.getByRole("tab", { name: "分镜" })); regenerate();
+    const api = mockApi(); await mount(); fireEvent.click(screen.getByRole("tab", { name: "画面与声音" })); regenerate();
     await waitFor(() => expect(api.posts).toHaveLength(1)); await api.finishShot(0); await waitFor(() => expect(api.posts).toHaveLength(2));
-    fireEvent.click(screen.getByRole("button", { name: "手改已生成分镜" })); await api.finishShot(1);
+    fireEvent.click(screen.getByRole("button", { name: "手改已设计画面与声音" })); await api.finishShot(1);
     expect(within(openResults()).getByText(/本轮没有未修改的新分镜/)).toBeTruthy();
     expect(current().videoPlan!.shots.voice_001.action).toBe("User edited action");
     expect(api.posts.some(post => post.url === "/api/storyboard-review")).toBe(false);
@@ -201,13 +201,13 @@ describe("whole-batch storyboard review UI", () => {
   it("cannot undo over a later storyboard edit", async () => {
     const api = mockApi(); await mount(); manual(); await api.finishReview(0); fireEvent.click(within(openResults()).getByRole("button", { name: "应用修订" }));
     closeResults();
-    fireEvent.click(screen.getByRole("tab", { name: "分镜" })); fireEvent.click(screen.getByRole("button", { name: "手改已生成分镜" }));
+    fireEvent.click(screen.getByRole("tab", { name: "画面与声音" })); fireEvent.click(screen.getByRole("button", { name: "手改已设计画面与声音" }));
     const dialog = openResults();
     expect((within(dialog).getByRole("button", { name: "撤回校对" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(within(dialog).getByRole("button", { name: "撤回校对" })); expect(current().videoPlan!.shots.voice_001.action).toBe("User edited action");
   });
   it("does not apply a late review after a storyboard edit and refuses a pending proposal after later edits", async () => {
-    const api = mockApi(); await mount(); fireEvent.click(screen.getByRole("tab", { name: "分镜" })); manual(); fireEvent.click(screen.getByRole("button", { name: "手改已生成分镜" }));
+    const api = mockApi(); await mount(); fireEvent.click(screen.getByRole("tab", { name: "画面与声音" })); manual(); fireEvent.click(screen.getByRole("button", { name: "手改已设计画面与声音" }));
     expect(api.posts[0].signal?.aborted).toBe(true); await api.finishReview(0); expect(screen.queryByRole("button", { name: "应用修订" })).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "声音" })); manual(); await api.finishReview(1); fireEvent.click(screen.getByRole("button", { name: "修改后文台词" }));
     expect((within(openResults()).getByRole("button", { name: "应用修订" }) as HTMLButtonElement).disabled).toBe(true);

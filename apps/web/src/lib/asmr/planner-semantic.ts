@@ -1,17 +1,22 @@
 import { z } from "zod";
 import { getPlannerPauseSeconds, PlannerDraftSchema, PlannerSectionSchema, type PlannerDraft, type PlannerSection } from "./planner";
 import { createRuleVoiceLongTextPlan, VOICE_PAUSE_RULES } from "./voice-longtext-plan";
+import { PerformancePurposeSchema } from "./performance-segment";
 
 // Generation shares director metadata across a sequence of compact spoken
 // units. Stored drafts remain the existing flat sections contract.
 export const PlannerGeneratedDraftSchema = z.object({
+  performanceVersion: z.literal(1).optional(),
   title: PlannerDraftSchema.shape.title,
   scene: PlannerDraftSchema.shape.scene,
   character: PlannerDraftSchema.shape.character,
-  groups: z.array(PlannerSectionSchema.omit({ text: true, pauseAfter: true, pauseAfterSeconds: true }).extend({
+  groups: z.array(PlannerSectionSchema.omit({ text: true, pauseAfter: true, pauseAfterSeconds: true, kind: true, purpose: true, durationSeconds: true }).extend({
     units: z.array(z.object({
       text: PlannerSectionSchema.shape.text,
       pauseAfter: PlannerSectionSchema.shape.pauseAfter,
+      kind: PlannerSectionSchema.shape.kind,
+      purpose: PlannerSectionSchema.shape.purpose,
+      durationSeconds: PlannerSectionSchema.shape.durationSeconds,
       direction: PlannerSectionSchema.shape.direction.optional(),
       soundSuggestions: PlannerSectionSchema.shape.soundSuggestions.optional(),
     }).strict()).min(1).max(200),
@@ -27,12 +32,33 @@ export const PlannerTemplateGeneratedDraftSchema = PlannerGeneratedDraftSchema.e
   })).min(1).max(24),
 });
 
+/** Newly generated scripts declare every section's speech boundary explicitly. */
+export const PlannerPerformanceGeneratedDraftSchema = PlannerGeneratedDraftSchema.extend({
+  performanceVersion: z.literal(1),
+  groups: z.array(PlannerGeneratedDraftSchema.shape.groups.element.extend({
+    units: z.array(PlannerGeneratedDraftSchema.shape.groups.element.shape.units.element.extend({
+      kind: z.enum(["speech", "silent"]),
+      purpose: PerformancePurposeSchema,
+      direction: PlannerSectionSchema.shape.direction.min(1),
+      soundSuggestions: PlannerSectionSchema.shape.soundSuggestions,
+    }).superRefine((unit, context) => {
+      if (unit.kind === "silent" && (unit.durationSeconds === undefined || unit.purpose === "dialogue")) {
+        context.addIssue({ code: "custom", path: ["durationSeconds"], message: "无台词段需要时长及无台词用途。" });
+      }
+      if (unit.kind === "speech" && unit.durationSeconds !== undefined) {
+        context.addIssue({ code: "custom", path: ["durationSeconds"], message: "台词段不用指定时长。" });
+      }
+    })).min(1).max(200),
+  })).min(1).max(24),
+});
+
 export function expandPlannerGeneratedDraft(value: z.infer<typeof PlannerGeneratedDraftSchema>): PlannerDraft {
   let count = 0;
   const sections = value.groups.flatMap(({ units, ...direction }) => units.map((unit) => ({
     ...direction, ...unit, id: `unit_${String(++count).padStart(3, "0")}`,
   })));
   return normalizePlannerSemanticDraft(PlannerDraftSchema.parse({
+    ...(value.performanceVersion ? { performanceVersion: value.performanceVersion } : {}),
     title: value.title, scene: value.scene, character: value.character, sections,
   }), { preserveUnitBoundaries: true });
 }
@@ -105,6 +131,8 @@ export function normalizePlannerSemanticDraft(draft: PlannerDraft, options: { pr
   const usedIds = new Set(draft.sections.map((section) => section.id));
   let nextId = 1;
   const sections = draft.sections.flatMap((section) => {
+    // Silent descriptions are whole timed events, not text for sentence splitting.
+    if (section.kind === "silent") return [{ ...section, pauseAfterSeconds: 0 }];
     const texts = options.preserveUnitBoundaries ? [section.text] : splitPlannerSemanticText(section.text);
     return texts.map((text, index): PlannerSection => {
       if (text.length > 500) throw new Error("单个语义短句超过 500 字，请在自然停顿处分段。");
@@ -116,7 +144,7 @@ export function normalizePlannerSemanticDraft(draft: PlannerDraft, options: { pr
       }
       const last = index === texts.length - 1;
       const pauseAfter = last ? section.pauseAfter : pauseClass(text);
-      const pauseAfterSeconds = last && options.preserveSectionPauses
+      const pauseAfterSeconds = draft.performanceVersion === 1 ? 0 : last && options.preserveSectionPauses
         ? getPlannerPauseSeconds(section)
         : semanticPauseSeconds(pauseAfter);
       return { ...section, id, text, pauseAfter, pauseAfterSeconds };

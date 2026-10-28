@@ -88,7 +88,7 @@ import type { PlannerBrief, PlannerDraft } from "@/lib/asmr/planner";
 import { addSilentClip, setSilentClipDuration, addVoiceClip, deleteVoiceClip, getVoiceGapAfter, mergeVoiceClipWithNext, moveVoiceClip, setVoiceGapAfter, splitVoiceClip, type VoiceClipMoveDirection } from "@/lib/asmr/voice-segments";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
-import { ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getClipStoryboardReferenceMode, getPreviousVoiceClip, getUsableClipH3Prompts, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
+import { applyClipStoryboardEdits, ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getClipStoryboardReferenceMode, getPreviousVoiceClip, getUsableClipH3Prompts, isClipVideoStoryboardCurrent, type ClipVideoStoryboard, type ClipStoryboardEdits, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
 import { applyStoryboardReview, getStoryboardReviewFingerprint, getStoryboardReviewSummary, StoryboardReviewSchema, type StoryboardReview } from "@/lib/asmr/storyboard-review";
 import { createStoryboardGenerationContextFingerprint } from "@/lib/asmr/storyboard-context";
 import { setProjectStoryboardStyle } from "@/lib/asmr/storyboard-style-project";
@@ -1697,12 +1697,12 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function handleAddSilent(afterClipId?: string) {
     const result = addSilentClip(editableProjectRef.current, afterClipId);
-    commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已插入无对白镜头，可编辑画面描述并生成分镜。");
+    commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已插入无台词段，可编辑画面描述并设计画面与声音。");
     setInspectorTab("storyboard");
   }
 
   function handleSilentDuration(clipId: string, duration: number) {
-    commitScriptEdit(setSilentClipDuration(editableProjectRef.current, clipId, duration), clipId, "无对白镜头时长已同步。");
+    commitScriptEdit(setSilentClipDuration(editableProjectRef.current, clipId, duration), clipId, "无台词段时长已同步。");
   }
 
   function handleParagraphScript(groupId: string, text: string) {
@@ -2012,7 +2012,7 @@ export function StudioApp({ project }: StudioAppProps) {
           throw new Error(engine.longText?.reason || "长文语音分析尚未就绪。");
         }
       } else if (!(initial.videoPlan?.sceneDescription ?? initial.scene.name).trim()) {
-        throw new Error("请先补全工程剧情背景，再批量生成分镜。");
+        throw new Error("请先补全工程剧情背景，再批量设计画面与声音。");
       }
       let provider: "api" | "ollama" = "api";
       if (!audio) {
@@ -2183,12 +2183,12 @@ export function StudioApp({ project }: StudioAppProps) {
     return true;
   }
 
-  function handleEditClipStoryboard(clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera" | "ambientSound" | "asmrSound">>) {
+  function handleEditClipStoryboard(clipId: string, patch: ClipStoryboardEdits) {
     const current = editableProjectRef.current;
     const plan = current.videoPlan;
     const shot = plan?.shots[clipId];
     if (!plan || !shot) return;
-    const next = { ...current, videoPlan: { ...plan, shots: { ...plan.shots, [clipId]: { ...shot, ...patch } } } };
+    const next = { ...current, videoPlan: { ...plan, shots: { ...plan.shots, [clipId]: applyClipStoryboardEdits(shot, patch) } } };
     editableProjectRef.current = next;
     setEditableProject(next);
   }
@@ -2379,7 +2379,7 @@ export function StudioApp({ project }: StudioAppProps) {
 
         <div aria-label="声音与分镜设置" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-studio-line bg-studio-panel/88">
           <div role="tablist" aria-label="片段工作内容" className="flex shrink-0 gap-1 border-b border-studio-line px-3 py-2">
-            {([['audio', '声音'], ['storyboard', '分镜']] as const).map(([tab, label]) => <button key={tab} type="button" role="tab" id={`clip-inspector-tab-${tab}`} aria-selected={inspectorView === tab} aria-controls={`clip-inspector-${tab}`} tabIndex={inspectorView === tab ? 0 : -1} disabled={tab === "storyboard" && selectedClip?.type !== "voice"} onClick={() => setInspectorTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || selectedClip?.type !== "voice") return; event.preventDefault(); const next = event.key === "Home" ? "audio" : event.key === "End" ? "storyboard" : tab === "audio" ? "storyboard" : "audio"; setInspectorTab(next); document.getElementById(`clip-inspector-tab-${next}`)?.focus(); }} className={`min-h-8 rounded-lg px-4 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 disabled:opacity-35 ${inspectorView === tab ? tab === "storyboard" ? "bg-violet-300/15 text-violet-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5"}`}>{label}</button>)}
+            {([['audio', '声音'], ['storyboard', '画面与声音']] as const).map(([tab, label]) => <button key={tab} type="button" role="tab" id={`clip-inspector-tab-${tab}`} aria-selected={inspectorView === tab} aria-controls={`clip-inspector-${tab}`} tabIndex={inspectorView === tab ? 0 : -1} disabled={tab === "storyboard" && selectedClip?.type !== "voice"} onClick={() => setInspectorTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || selectedClip?.type !== "voice") return; event.preventDefault(); const next = event.key === "Home" ? "audio" : event.key === "End" ? "storyboard" : tab === "audio" ? "storyboard" : "audio"; setInspectorTab(next); document.getElementById(`clip-inspector-tab-${next}`)?.focus(); }} className={`min-h-8 rounded-lg px-4 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 disabled:opacity-35 ${inspectorView === tab ? tab === "storyboard" ? "bg-violet-300/15 text-violet-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5"}`}>{label}</button>)}
           </div>
           <div ref={inspectorScrollerRef} id="clip-inspector-audio" role="tabpanel" aria-labelledby="clip-inspector-tab-audio" hidden={inspectorView !== "audio"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] [&>section]:border-0">
           <ClipInspector

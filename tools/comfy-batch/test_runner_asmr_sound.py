@@ -93,6 +93,77 @@ class AsmrSoundTests(unittest.TestCase):
         self.make_runner(concat=True).run()
         self.assertEqual(len(self.remote.posts), 7)
 
+    def test_replace_uses_silent_base_and_only_rebuilds_the_enhanced_preview(self):
+        first = self.make_runner(concat=True)
+        first.run()
+        original = copy.deepcopy(first.state["previews"])
+        self.manifest["shots"][1]["asmrSound"]["mixMode"] = "replace"
+        self.save_manifest()
+        second = self.make_runner(concat=True)
+        result = second.run()
+        self.assertEqual(result["asmr_preview_failed"], 0)
+        self.assertEqual(len(self.remote.model_posts), 4)
+        self.assertEqual(len(self.remote.preview_posts), 3)
+        self.assertEqual(second.state["previews"], original)
+        preview = second.state["asmrPreviews"]["1"]
+        graph = json.loads(second.state_file(preview["payload"]).read_text())["prompt"]
+        self.assertEqual(graph["preview_asmr_mixed_0"]["inputs"]["audio1"], ["preview_padded_0", 0])
+        self.assertEqual(graph["preview_asmr_mixed_1"]["inputs"]["audio1"], ["preview_empty_1", 0])
+        self.assertEqual(graph["preview_asmr_mixed_1"]["inputs"]["audio2"], ["preview_asmr_spatial_1", 0])
+        self.manifest["shots"][1]["asmrSound"].pop("mixMode")
+        self.save_manifest()
+        self.make_runner(concat=True).run()
+        self.assertEqual(len(self.remote.preview_posts), 3, "original overlay preview should be reused")
+
+    def test_rejects_invalid_mix_mode_and_replacing_adopted_speech(self):
+        for mode in ("replace", "discard", None, False):
+            self.manifest["shots"][0]["asmrSound"]["mixMode"] = mode
+            self.save_manifest()
+            with self.assertRaises(runner.BatchError):
+                self.make_runner()
+        self.assertFalse(self.remote.posts)
+
+    def test_performance_parts_preserve_exact_sound_seconds_and_continuity(self):
+        base = copy.deepcopy(self.manifest["shots"][1])
+        self.manifest["shots"] = [self.manifest["shots"][0]] + [
+            {**copy.deepcopy(base), "id": f"long--part-{index:03d}", "order": index + 1,
+             "segmentId": "long", "partIndex": index, "partCount": 2,
+             "referenceMode": "continuous", "durationSeconds": 2.55} for index in (1, 2)]
+        self.save_manifest()
+        batch = self.make_runner(dry_run=True)
+        result = batch.run()
+        self.assertEqual(len(result["dry_run"]), 3)
+        self.assertEqual(len(result["asmr_dry_run"]), 3)
+        for path in result["dry_run"][1:]:
+            graph = json.loads(Path(path).read_text(encoding="utf-8"))["prompt"]
+            self.assertEqual(graph["904"]["inputs"]["duration"], 2.55)
+            self.assertEqual(graph["903"]["inputs"]["length"], 62)
+            self.assertIn("without a cut or pose reset", graph["22"]["inputs"]["prompt"])
+        for path in result["asmr_dry_run"][1:]:
+            graph = json.loads(Path(path).read_text(encoding="utf-8"))["prompt"]
+            self.assertEqual(graph["904"]["inputs"]["duration"], 2.55)
+            self.assertEqual(graph["903"]["inputs"]["length"], 62)
+        self.assertFalse(self.remote.posts)
+
+    def test_incomplete_or_noncontinuous_performance_parts_fail_before_submission(self):
+        base = copy.deepcopy(self.manifest["shots"][1])
+        valid = [self.manifest["shots"][0]] + [
+            {**copy.deepcopy(base), "id": f"long--part-{index:03d}", "order": index + 1,
+             "segmentId": "long", "partIndex": index, "partCount": 2,
+             "referenceMode": "continuous", "durationSeconds": 5} for index in (1, 2)]
+        for change in (lambda shots: shots.pop(),
+                       lambda shots: shots[2].update(referenceMode="new"),
+                       lambda shots: shots[2].update(partIndex=1),
+                       lambda shots: shots[2].update(durationSeconds=5.1),
+                       lambda shots: shots[1].pop("partCount"),
+                       lambda shots: shots[1].update(audio="shots/001/audio.wav")):
+            self.manifest["shots"] = copy.deepcopy(valid)
+            change(self.manifest["shots"])
+            self.save_manifest()
+            with self.assertRaises(runner.BatchError):
+                self.make_runner()
+        self.assertFalse(self.remote.posts)
+
     def test_changing_sound_prompt_only_regenerates_that_sound(self):
         first = self.make_runner()
         first.run()

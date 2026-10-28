@@ -28,7 +28,10 @@ describe("storyboard style persistence and compatibility", () => {
     const entry = getCurrentLibraryEntry(library);
     expect(entry.plannerSource!.brief).toEqual(brief);
     expect(entry.project.videoPlan!.storyboardStyle).toBe("listener_pov");
-    expect(entry.project.videoPlan!.templateDirections).toHaveLength(demo.draft.sections.length);
+    expect(entry.project.videoPlan!.templateDirections).toHaveLength(demo.draft.sections.filter(section => section.kind !== "silent").length);
+    const clips = entry.project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []);
+    expect(clips.every(clip => clip.performance?.segmentId)).toBe(true);
+    expect(clips.filter(clip => clip.kind === "silent")).toHaveLength(demo.draft.sections.filter(section => section.kind === "silent").length);
     expect(entry.project.videoPlan!.referenceTemplate).toBeUndefined();
     for (const mode of ["short", "paragraph"] as const) expect(switchSpeechWorkspace(entry.project, mode).videoPlan?.storyboardStyle).toBe("listener_pov");
     const imported = parseImportedProject(serializeProject(entry.project));

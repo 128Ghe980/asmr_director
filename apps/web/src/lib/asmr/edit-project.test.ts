@@ -9,6 +9,19 @@ import {
 } from "./edit-project";
 
 describe("edit project helpers", () => {
+  it("keeps a performance identity but clears obsolete action and sound intent when its source text changes", () => {
+    const source = structuredClone(demoProject);
+    const original = source.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];
+    original.performance = { version: 1, segmentId: "receive_coat", purpose: "transition", direction: "拿起外套", soundIntent: "布料声" };
+    original.kind = "silent";
+    const unchanged = updateClipInProject(source, original.id, { text: original.text });
+    expect(unchanged.timeline.tracks.find(track => track.track_type === "voice")!.clips[0].performance).toEqual(original.performance);
+    const edited = updateClipInProject(source, original.id, { text: "站在门边等待听者。" });
+    expect(edited.timeline.tracks.find(track => track.track_type === "voice")!.clips[0].performance).toEqual({
+      version: 1, segmentId: "receive_coat", purpose: "transition", direction: "", soundIntent: "",
+    });
+    expect(original.performance.direction).toBe("拿起外套");
+  });
   it("updates a voice clip without mutating the original project", () => {
     const updated = updateClipInProject(demoProject, "voice_001", {
       text: "今晚先把呼吸放慢一点，我会一直在这里。",

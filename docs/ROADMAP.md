@@ -1,10 +1,16 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 当前优先级
+
+2026-10-29 用户决定**保留当前版本，暂缓进一步生成质量优化**：主要使用基本固定机位，闲聊/接话/小玩笑暂不强求；不实施刚提出的动作完成条件、额外语义校对、声位细化及时长不足草稿保留方案。已知时长失败和第4→5段状态问题继续记录，不标为修复或质量通过。本次仅记录并单独提交推送既有75功能文件＋7文档，28项范围外保持；源码复用已验快照，不重跑模型/构建或重启服务。实际commit、远端SHA及保护结果见 `I:/AI/asmr_director/qa/performance-script/2026-10-28/publication.json`；分支`codex/voxcpm2-product-generation`，基线87d3e49。Audio Quality V1继续、其他SFX实验暂停，不新增路线。[发布记录](records/2026-10-28-performance-script.md) / [比较及用户决定](records/2026-10-29-aige-template-comparison.md)。
+
+2026-10-29 近距离互动模板比较（**诊断完成，质量未验收**）：实际120/120/60秒三次策划均因不足时长失败；最后39秒拒绝稿未手改，离线7段设计。固定POV及第3段边做边说接近参考，台词个性不足；第4→5段放手/退后丢失、声位与动作依据仍有问题。10业务/13上游、0TTS/ASR/H3，未听原片音轨，不称听感通过。仅文档/审查，无产品改动、新部署或推送；下方既有部署事实及Audio Quality V1路线保持，其他SFX实验仍暂停。[比较记录](records/2026-10-29-aige-template-comparison.md)。
+
+2026-10-28 表演脚本升级 **本地功能已部署，质量待验**：自动预留ASMR、过渡与互动时间，审核混合脚本→采用人声→设计画面声音；两模板v2节奏、纯无台词直通、长段连续块与600秒指纹修复落地。原版原音、增强版无台词replace/台词overlay，复用ComfyUI/D/SOFA。独立新生成prompt第四轮6业务/7上游通过结构预算，全轮14业务/20上游；仍有逐块动作数量语义不一致。最终75文件隔离全量2266通过/5条件跳过，72文件lint 0errors/1既有warning，完整Webpack/TS通过；3001 build `rfG9d0aAGn_UKKsVC-xYL`，8资源/7参考/两日语WAV及HTTP导出1逻辑18秒→4任务核验通过，75功能文件一致/28范围外未变，3040已停。更新包已校验；随后按2026-10-29用户要求将当前实现单独发布，实际Git结果见本QA publication.json。Computer Use停止，无浏览器验收或实际H3/最终试听，不称导演质量全通过。不新增本机FFmpeg/服务或传统模板；Audio Quality V1继续、其他SFX实验暂停，不新增顶层阶段。[本轮记录及统一验证汇总](records/2026-10-28-performance-script.md) / [中文合同](specs/2026-10-28-performance-script.zh.md) / [English](specs/2026-10-28-performance-script.en.md)。
 
 2026-10-28 按用户新要求增加「近距离互动小剧场」模板：从两参考视频提炼稳定主观机位、角色近前景表演、眼神/微表情反应和动作中的自然交流，保留方法而不固化原剧情。固定listener_pov不等于持续走动；13段202字原创地图示例，独立默认设定，旧交易约束已隔离。5文件122测试/7lint，最后提示修正后61相关测试/单文件lint通过；8业务/8上游文案API验证两主题迁移与有声/空镜ASMR，无TTS/ASR/H3，仍有部分起始状态暗含取放等连续性缺陷。3038预览选择/锁定/示例/采用通过；最终构建并切换3001 build `dbmLqQB5hklhIMQwcnjkw`，8静态资源/7参考/两日语WAV通过，7功能文件一致、28范围外文件和两源视频未变，3038已停止。用户随后要求单独记录推送本模板，范围仅7应用文件及6配套文档；实际提交/远端SHA及保护结果见本QA `publication.json`，本次不重启服务。恢复查[本轮记录](records/2026-10-28-aige-performance-template.md)与QA回执。此前POV/ASMR版已独立推送`816d90a`（55文件，远端核验），新模板另记。Audio Quality V1继续，其他SFX暂停，不新增顶层阶段。[中文合同](specs/2026-10-28-interaction-theatre-template.zh.md) / [English](specs/2026-10-28-interaction-theatre-template.en.md)。
 

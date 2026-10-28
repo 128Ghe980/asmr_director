@@ -7,6 +7,10 @@ export const CreativeTemplateSchema = z.object({
   source: z.object({ filename: text(200), durationSeconds: z.number().finite().positive(), analysisBasis: text(1200) }).strict(),
   creativePrompt: text(6000), sceneDescription: text(4000), storyboardRules: text(6000),
   storyboardStyle: StoryboardStyleSchema.optional(),
+  performancePacing: z.object({
+    speechRatio: z.number().finite().min(0).max(1),
+    rules: text(2000),
+  }).strict().optional(),
   beats: z.array(z.object({ id: text(80), title: text(120), referenceRange: text(80), story: text(1000),
     visual: text(1000), action: text(1000), camera: text(600), sound: text(600), continuity: text(1000) }).strict()).min(1).max(20),
 }).strict().superRefine((template, context) => {
@@ -52,5 +56,6 @@ export function getMatchingTemplateDirections(notes: TemplateDirection[] | undef
 export function creativeTemplateContext(template: CreativeTemplate | undefined) {
   return template ? { title: template.title, summary: template.summary, creativePrompt: template.creativePrompt,
     sceneDescription: template.sceneDescription, storyboardRules: template.storyboardRules,
+    ...(template.performancePacing ? { performancePacing: template.performancePacing } : {}),
     ...(template.storyboardStyle ? { storyboardStyle: template.storyboardStyle } : {}), beats: template.beats } : undefined;
 }

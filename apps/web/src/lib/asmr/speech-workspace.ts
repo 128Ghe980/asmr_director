@@ -104,6 +104,7 @@ export function normalizeSpeechSentences(project: AsmrProject, clipId?: string):
         : clip.start + clip.duration * offset / totalCharacters;
       const duration = end - start;
       return { ...blankClip(clip), id: replacement.ids[index], text, start, duration, semantic_unit: true,
+        ...(clip.performance ? { performance: { ...clip.performance, segmentId: replacement.ids[index], direction: "", soundIntent: "" } } : {}),
         pause_after: index === replacement.texts.length - 1 ? clip.pause_after ?? 0 : 0,
         fade_in: Math.min(clip.fade_in, duration), fade_out: Math.min(clip.fade_out, duration) };
     });
@@ -255,6 +256,8 @@ function syncSource(target: VoiceClip, source: VoiceClip): VoiceClip {
     if (source[field] === undefined) delete (next as Partial<VoiceClip>)[field];
   }
   if (source.kind === "silent") next.duration = source.duration;
+  if (source.performance) next.performance = structuredClone(source.performance);
+  else delete next.performance;
   return next;
 }
 
@@ -273,6 +276,7 @@ export function syncSharedSpeechScript(previous: AsmrProject, next: AsmrProject)
   const after = voices(next);
   const beforeById = new Map(before.map((clip) => [clip.id, clip]));
   const changed = new Set(after.filter((clip) => !beforeById.has(clip.id) || sourceChanged(beforeById.get(clip.id)!, clip)).map((clip) => clip.id));
+  const performanceChanged = after.some(clip => JSON.stringify(clip.performance) !== JSON.stringify(beforeById.get(clip.id)?.performance));
   const silentTiming = after.some((clip) => clip.kind === "silent" && beforeById.get(clip.id)?.duration !== clip.duration);
   const structural = before.map((clip) => `${clip.id}:${clip.kind ?? "speech"}`).join("|") !== after.map((clip) => `${clip.id}:${clip.kind ?? "speech"}`).join("|");
   const speechOrderChanged = before.filter((clip) => clip.kind !== "silent").map((clip) => clip.id).join("|")
@@ -281,7 +285,7 @@ export function syncSharedSpeechScript(previous: AsmrProject, next: AsmrProject)
   // sentence's take. Ordinary word edits retain their independent stale audio.
   const repartitioned = new Set(after.filter((clip) => speechOrderChanged && beforeById.has(clip.id)
     && (beforeById.get(clip.id)!.text !== clip.text || beforeById.get(clip.id)!.kind !== clip.kind)).map((clip) => clip.id));
-  if (!changed.size && !structural && !silentTiming) return captureSpeechWorkspace({ ...next, speechWorkspace: workspace });
+  if (!changed.size && !structural && !silentTiming && !performanceChanged) return captureSpeechWorkspace({ ...next, speechWorkspace: workspace });
   const explicitGroups = next.speechWorkspace?.groups;
   const explicitIds = explicitGroups?.flatMap((group) => group.clipIds) ?? [];
   const speechIds = after.filter((clip) => clip.kind !== "silent").map((clip) => clip.id);
@@ -371,6 +375,9 @@ export function replaceParagraphScript(project: AsmrProject, groupId: string, re
       pause_after: affected.at(-1)!.pause_after ?? 0,
       fade_in: Math.min(affected[0].fade_in, total), fade_out: Math.min(affected[0].fade_out, total) }
     : { ...affected[0], text: edited }];
+  for (const clip of replacements) {
+    if (clip.performance) clip.performance = { ...clip.performance, direction: "", soundIntent: "" };
+  }
   const changedIds = new Set(affected.map((clip) => clip.id));
   const replacementMembers = [...members.slice(0, first), ...replacements, ...members.slice(last + 1)];
   // Paragraph capacity groups pack whole source units; they never split one.
@@ -507,7 +514,8 @@ export function hasSharedSpeechScriptChanges(previous: AsmrProject, next: AsmrPr
   const oldClips = voices(previous), newClips = voices(next);
   return oldClips.length !== newClips.length || newClips.some((clip, index) => {
     const old = oldClips[index];
-    return !old || old.id !== clip.id || sourceChanged(old, clip) || (clip.kind === "silent" && clip.duration !== old.duration);
+    return !old || old.id !== clip.id || sourceChanged(old, clip) || JSON.stringify(old.performance) !== JSON.stringify(clip.performance)
+      || (clip.kind === "silent" && clip.duration !== old.duration);
   });
 }
 

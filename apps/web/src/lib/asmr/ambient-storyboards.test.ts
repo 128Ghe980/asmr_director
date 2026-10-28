@@ -44,7 +44,7 @@ describe("无对白环境镜头", () => {
     expect(getUsableClipH3Prompts(project).has(clip.id)).toBe(false);
     clip.duration = 7; shot.duration = 7; shot.sourceFingerprint = createClipVideoSourceFingerprint(project, clip.id);
     expect(AsmrProjectSchema.parse(project).videoPlan!.shots[clip.id].duration).toBe(7);
-    expect(() => createClipH3Prompt(project, clip.id)).toThrow("5 秒");
+    expect(() => createClipH3Prompt(project, clip.id)).toThrow("连续生成方案");
     expect(clip.duration).toBe(7);
   });
 
@@ -109,11 +109,11 @@ describe("无对白环境镜头", () => {
     expect(body.messages[1].content).not.toContain("fully_copy");
   });
 
-  it("rejects a silent duration above five seconds before any model call without migrating it", async () => {
-    const { input, clip } = fixture(); clip.duration = 5.01;
+  it("rejects an out-of-range performance duration before any model call without migrating it", async () => {
+    const { input, clip } = fixture(); clip.duration = 600.01;
     const fetchImpl = vi.fn<typeof fetch>();
-    await expect(generateClipStoryboard(input, { env, fetchImpl })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("5 秒") });
+    await expect(generateClipStoryboard(input, { env, fetchImpl })).rejects.toMatchObject({ status: 400 });
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(clip.duration).toBe(5.01);
+    expect(clip.duration).toBe(600.01);
   });
 });

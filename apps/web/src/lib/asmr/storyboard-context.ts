@@ -18,7 +18,8 @@ function visibleContext(project: AsmrProject, clipId: string) {
   return shot ? { title: shot.title, visual: shot.visual, action: shot.action,
     ...(shot.storyboardStyle === "listener_pov" ? { camera: shot.camera } : {}),
     ...(shot.ambientSound ? { ambientSound: shot.ambientSound } : {}),
-    ...(shot.asmrSound ? { asmrSound: shot.asmrSound } : {}) } : undefined;
+    ...(shot.asmrSound ? { asmrSound: shot.asmrSound } : {}),
+    ...(shot.parts ? { endingPart: shot.parts.at(-1) } : {}) } : undefined;
 }
 
 /** No audio bytes, asset locations, timeline starts, waits or estimated speech lengths. */
@@ -32,8 +33,10 @@ export function createStoryboardScriptContext(project: AsmrProject, currentClipI
       const durationSeconds = clip.id === currentClipId && typeof currentMeasuredDuration === "number" && Number.isFinite(currentMeasuredDuration) && currentMeasuredDuration > 0
         ? currentMeasuredDuration : knownDuration(clip);
       const storyboardContext = clip.id === currentClipId ? undefined : visibleContext(project, clip.id);
-      const directorNotes = clip.kind === "silent" ? [] : getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text);
+      const directorNotes = clip.performance ? [{ text: clip.text, direction: clip.performance.direction, soundSuggestions: clip.performance.soundIntent }]
+        : clip.kind === "silent" ? [] : getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text);
       return { index, clipId: clip.id, kind: clip.kind === "silent" ? "silent" as const : "speech" as const, text: clip.text,
+        ...(clip.performance ? { performance: clip.performance } : {}),
         ...(durationSeconds === undefined ? {} : { durationSeconds }), ...(storyboardContext ? { storyboardContext } : {}),
         ...(directorNotes.length ? { directorNotes } : {}) };
     }),
@@ -47,6 +50,7 @@ export function createStoryboardGenerationContextFingerprint(project: AsmrProjec
     ...(project.videoPlan?.referenceTemplate ? { referenceTemplate: creativeTemplateContext(project.videoPlan.referenceTemplate) } : {}),
     role: project.character.role, scriptOrder: scriptClips(project).map((clip, index) => ({ index, clipId: clip.id,
       kind: clip.kind === "silent" ? "silent" : "speech", text: clip.text, durationSeconds: knownDuration(clip),
+      ...(clip.performance ? { performance: clip.performance } : {}),
       storyboardContext: visibleContext(project, clip.id),
       ...(clip.kind !== "silent" && getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text).length
         ? { directorNotes: getMatchingTemplateDirections(project.videoPlan?.templateDirections, clip.text) } : {}) })) });

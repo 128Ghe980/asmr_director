@@ -18,8 +18,8 @@ describe("受控工程面板切换", () => {
     const view = render(panels(1));
     const script = screen.getByLabelText("测试文案草稿") as HTMLInputElement;
     const inspector = screen.getByLabelText("测试声音面板草稿") as HTMLInputElement;
-    const scriptTab = screen.getByRole("tab", { name: "文案" });
-    const inspectorTab = screen.getByRole("tab", { name: "声音与分镜" });
+    const scriptTab = screen.getByRole("tab", { name: "表演脚本" });
+    const inspectorTab = screen.getByRole("tab", { name: "声音与画面" });
     expect(inspectorTab.getAttribute("aria-selected")).toBe("true");
     expect(scriptTab.getAttribute("aria-selected")).toBe("false");
     expect(script.isConnected && inspector.isConnected).toBe(true);

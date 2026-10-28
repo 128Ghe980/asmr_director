@@ -55,7 +55,7 @@ async function mountPanel(source?: PlannerSource, onAdopt = vi.fn()) {
   return { ...view, onAdopt };
 }
 function showScene() { fireEvent.click(screen.getByRole("tab", { name: "场景" })); }
-function showScript() { fireEvent.click(screen.getByRole("tab", { name: "文案" })); }
+function showScript() { fireEvent.click(screen.getByRole("tab", { name: "表演脚本" })); }
 const objectUrlDescriptors = new Map(["createObjectURL", "revokeObjectURL"].map((name) => [name, Object.getOwnPropertyDescriptor(URL, name)]));
 function readBlob(blob: Blob): Promise<string> { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsText(blob); }); }
 beforeEach(() => { window.localStorage.clear(); });
@@ -157,7 +157,7 @@ describe("Planner scene workflow replacing first-step storyboard controls", () =
   });
   it("navigates the scene tab with keyboard focus and aborts on unmount", async () => {
     seed(); const api = mockSceneApi(); const late = deferred<Response>(); api.respond(late.promise); const view = await mountPanel();
-    fireEvent.keyDown(screen.getByRole("tab", { name: "文案" }), { key: "ArrowRight" }); expect(document.activeElement?.id).toBe("planner-tab-scene"); expect(screen.getByRole("tabpanel").id).toBe("planner-panel-scene");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "表演脚本" }), { key: "ArrowRight" }); expect(document.activeElement?.id).toBe("planner-tab-scene"); expect(screen.getByRole("tabpanel").id).toBe("planner-panel-scene");
     fireEvent.keyDown(screen.getByRole("tab", { name: "场景" }), { key: "ArrowLeft" }); expect(document.activeElement?.id).toBe("planner-tab-script");
     showScene(); fireEvent.click(screen.getByRole("button", { name: "生成背景" })); await screen.findByRole("button", { name: "取消" }); view.unmount(); expect(api.posts[0].signal?.aborted).toBe(true);
     await act(async () => { late.resolve(sceneResponse(makeDraft())); await late.promise; }); expect(loadPlannerDraft(window.localStorage).state.sceneDescription).toBeNull();

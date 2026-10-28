@@ -38,6 +38,36 @@ beforeEach(() => { vi.stubGlobal("fetch", vi.fn()); vi.spyOn(HTMLAnchorElement.p
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("portable video package export", () => {
+  it.each([5, 3])("validates the generated task count, while displaying three logical performance sections: %s", async (clipCount) => {
+    const project = fixture(), track = project.timeline.tracks.find(track => track.track_type === "voice")!, first = track.clips[0];
+    const sound: AsmrSound = { prompt: "Soft dry taps on the same wooden box.", mixMode: "replace",
+      postProcessing: { start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -6 } };
+    const silent = { ...structuredClone(first), id: "wooden_box_performance", kind: "silent" as const, text: "保持同一机位轻敲木盒。",
+      start: first.start + first.duration, duration: 15, asset: { asset_id: null, uri: null, duration: null },
+      generation: { ...first.generation, status: "asset_pending" as const } };
+    const last = { ...structuredClone(first), id: "closing_line", start: silent.start + silent.duration, text: "这次听清楚了吗？" };
+    track.clips.push(silent, last);
+    project.videoPlan!.shots[silent.id] = { version: 1, promptFormat: "minimax-h3", clipId: silent.id, kind: "silent", duration: 15,
+      sourceFingerprint: createClipVideoSourceFingerprint(project, silent.id), title: "轻敲木盒", visual: "The same box rests on the table.",
+      action: "S1 softly taps the box.", camera: "Keep the same stable listener viewpoint.", ambientSound: "Gentle wooden taps.", asmrSound: sound,
+      parts: Array.from({ length: 3 }, () => ({ durationSeconds: 5, visual: "The box remains in the same position.", action: "Continue the gentle taps.",
+        camera: "Keep the same stable listener viewpoint.", ambientSound: "Gentle wooden taps.", asmrSound: sound })) };
+    project.videoPlan!.shots[last.id] = { ...project.videoPlan!.shots[first.id], clipId: last.id, sourceFingerprint: createClipVideoSourceFingerprint(project, last.id) };
+    vi.mocked(fetch).mockResolvedValue(Response.json({ downloadUrl, filename: getVideoPackageFilename(project), clipCount, size: 1024 }));
+    render(<BatchAudioDownload project={project} />); openVideo();
+    expect(screen.getByText(/当前项目共 3 段表演/)).toBeTruthy();
+    const button = screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false); fireEvent.click(button);
+    if (clipCount === 5) {
+      await screen.findByText("下载已发起，解压后在生成主机打开 run.bat。");
+      expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledOnce();
+    } else {
+      await screen.findByRole("alert");
+      expect(screen.getByRole("alert").textContent).toContain("下载文件暂不可用");
+      expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+    }
+  });
+
   it("shows missing ASMR planning without blocking a legacy video package", async () => {
     const project = fixture(); vi.mocked(fetch).mockResolvedValue(ready(project));
     render(<BatchAudioDownload project={project} />); openVideo();
@@ -121,7 +151,7 @@ describe("portable video package export", () => {
     render(<BatchAudioDownload project={fixture()} />); openVideo();
     const image = new File([new Uint8Array([255, 216, 255])], "my-reference.jpg", { type: "image/jpeg" });
     fireEvent.change(screen.getByLabelText("角色参考图（可选）"), { target: { files: [image] } });
-    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
     fireEvent.click(screen.getByRole("tab", { name: "视频包" }));
     expect(screen.getByText("已选：my-reference.jpg")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "关闭批量下载" }));

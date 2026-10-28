@@ -74,13 +74,13 @@ describe("dual workspace panels", () => {
       onSceneChange={() => {}} onEdit={() => {}} />;
     const view = render(renderEditor(short));
     await screen.findByRole("option", { name: "测试模型" });
-    fireEvent.click(screen.getByRole("button", { name: "生成分镜" }));
+    fireEvent.click(screen.getByRole("button", { name: "设计画面与声音" }));
     await waitFor(() => expect(signals).toHaveLength(1));
     view.rerender(renderEditor(paragraph));
     expect(signals[0]?.aborted).toBe(true);
     await act(async () => { resolveFirst(Response.json({ storyboard: shot })); });
     expect(onSave).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "生成分镜" }));
+    fireEvent.click(screen.getByRole("button", { name: "设计画面与声音" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(paragraph.project_id, shot));
     expect(signals).toHaveLength(2);
   });

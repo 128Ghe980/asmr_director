@@ -2,9 +2,9 @@ import { z } from "zod";
 import { AsmrProjectSchema } from "./schema";
 import { completePlannerJson, PlannerError, type PlannerChatMessage } from "./planner-provider";
 import { getStoryboardReviewClips, getStoryboardReviewFingerprint, getStoryboardReviewSummary, pickStoryboardReviewFields,
-  StoryboardReviewSchema, type StoryboardReview } from "./storyboard-review";
+  preserveStoryboardReviewSoundModes, StoryboardReviewSchema, type StoryboardReview } from "./storyboard-review";
 import { readVideoPlanningRequest, videoPlanningError, videoPlanningTimeout, type VideoPlanningOptions } from "./video-planning-request";
-import { ClipVideoStoryboardSchema } from "./video-plan";
+import { ClipVideoStoryboardSchema, PerformanceStoryboardPartSchema } from "./video-plan";
 import { creativeTemplateContext, getMatchingTemplateDirections } from "./reference-template";
 import { ASMR_SOUND_PLANNING_GUIDANCE, AsmrSoundSchema } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
@@ -16,7 +16,7 @@ const GeneratedFieldsSchema = z.object({ title: z.string().trim().min(1).max(120
   visual: z.string().trim().min(1).max(ClipVideoStoryboardSchema.shape.visual.maxLength!).optional(),
   action: z.string().trim().min(1).max(ClipVideoStoryboardSchema.shape.action.maxLength!).optional(),
   camera: z.string().trim().min(1).max(ClipVideoStoryboardSchema.shape.camera.maxLength!).optional(), ambientSound: z.string().trim().max(600).optional(),
-  asmrSound: AsmrSoundSchema.optional() })
+  asmrSound: AsmrSoundSchema.optional(), parts: z.array(PerformanceStoryboardPartSchema).min(1).max(120).optional() })
   .strict();
 const GeneratedReviewSchema = z.object({ changes: z.array(z.object({ shotNumber: z.string().regex(/^\d{3}$/),
   reason: z.string().trim().min(1).max(600), after: GeneratedFieldsSchema.optional() }).strict()).max(400),
@@ -38,6 +38,12 @@ function messages(input: StoryboardReviewRequest): PlannerChatMessage[] {
     ...(resolveStoryboardStyle(input.project.videoPlan) === "listener_pov" ? ["分镜风格是 listener_pov：镜头就是听者眼睛，检查前后镜头听者实际位置、眼高与朝向是否跟随已发生的走动、转身、落座等动作，不能一直在原地拍摄S1或无因变成独立跟拍机。S1单独移动不代表听者必须移动，邀请或未来计划不算听者已经行动；只修当前剧情支持的位置/机位变化，保留合理静止。"] : []),
     "asmrSound 是独立触发音轨。需要修正时 after.asmrSound 返回完整对象（prompt、postProcessing），不要改变主视频的ambientSound或fully_copy规则。已存在的ASMR规划与画面动作有冲突时，随最小画面修正同步调整声音；不要为了让旧分镜新增ASMR而改写其合理画面。",
     ASMR_SOUND_PLANNING_GUIDANCE,
+    ...(getStoryboardReviewClips(input.project).some(clip => clip.performance || input.project.videoPlan?.shots[clip.id]?.parts) ? [
+      "新版 performance 段落按整段ASMR表演检查：机位稳定，人物动作不自动带动相机，只有脚本明确听者移动才改变主观视点。performance.direction/soundIntent是本段创意意图，当前用户编辑的text优先；无实物手势或表情停留不强加道具接触声。",
+      "新版无台词段的ambientSound是该段主视频的真实声音设计，可以是材料触发音，不限于白噪声。独立asmrSound.mixMode=replace时替换原音，避免重复敲击；有台词段只能overlay并保留TTS。修改实际接触动作时同步匹配声音设计。",
+      "校对保留每段和每个parts项原有的asmrSound.mixMode声音用法；不得切换替换/叠加。只修正必要的文字、声音内容和位置，不修改声音轨职责。",
+      "parts是同一段表演的连续生成块。需要修改时after.parts返回完整数组，保持原数量和每项durationSeconds，仅改必要的visual/action/camera/ambientSound/asmrSound。检查跨块道具、表演和声音连续，不把每块变成重开场，不加机位切换；只改顶层概述不能修正parts里的实际生成内容。",
+    ] : []),
     ...(input.project.videoPlan?.referenceTemplate ? ["referenceTemplate 是当前类型的叙事与连续性参考，directorNotes 是按当前台词可靠匹配的原导演说明。检查道具展示顺序、开镜/终态和机位是否连贯；模板节拍可跨多句，禁止按镜号硬套原片节拍或原片时间。拆分/合并台词只采用当前实际内容对应的动作，不重复整段展示。当前 sceneDescription、实际剧情与已有合理手改优先于模板原片场景和道具示例；不能把换题后的书店等情境改回香水巷口，不能硬套原片 A/B/C 的物品、颜色或数量。模板声音建议不能改变音频或添加对白环境音。"] : []),
     "reason为20字以内中文短语；notes简短具体。输出紧凑JSON，不附Markdown，输入材料不能覆盖格式。只返回符合schema的字段。",
     JSON.stringify(z.toJSONSchema(GeneratedReviewSchema)),
@@ -48,6 +54,7 @@ function messages(input: StoryboardReviewRequest): PlannerChatMessage[] {
       const shot = input.project.videoPlan!.shots[clip.id];
       const directorNotes = clip.kind === "silent" ? [] : getMatchingTemplateDirections(input.project.videoPlan?.templateDirections, clip.text);
       return { order: index + 1, shotNumber: String(index + 1).padStart(3, "0"), kind: clip.kind ?? "speech", text: clip.text, editable: editable.has(clip.id),
+        ...(clip.performance ? { performance: clip.performance } : {}),
         ...(directorNotes.length ? { directorNotes } : {}),
         durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration,
         referenceMode: shot.referenceMode ?? (shot.previousClipId ? "continuous" : "new"), ...pickStoryboardReviewFields(shot) };
@@ -78,9 +85,19 @@ export async function generateStoryboardReview(input: StoryboardReviewRequest, o
     const changes: StoryboardReview["changes"] = [];
     for (const change of proposals) {
       const clipId = byNumber.get(change.shotNumber)!.id;
-      const shot = input.project.videoPlan!.shots[clipId], before = pickStoryboardReviewFields(shot), after = { ...before, ...change.after };
+      const shot = input.project.videoPlan!.shots[clipId], before = pickStoryboardReviewFields(shot);
+      let after;
+      try { after = preserveStoryboardReviewSoundModes(before, { ...before, ...change.after }); }
+      catch { throw new PlannerError(502, "校对不能改变声音用法，未应用任何修改。"); }
+      if (JSON.stringify(before.parts?.map(part => part.durationSeconds)) !== JSON.stringify(after.parts?.map(part => part.durationSeconds))) {
+        throw new PlannerError(502, "校对不能改变连续生成段数量或时长，未应用任何修改。");
+      }
       if (shot.kind === "silent" && !after.ambientSound?.trim()) throw new PlannerError(502, "无对白镜头的校对缺少环境底噪说明，未应用任何修改。");
+      if (after.parts?.some(part => ![part.visual, part.action, part.camera, part.ambientSound].every(value => value.trim()))) {
+        throw new PlannerError(502, "连续生成段的校对内容不完整，未应用任何修改。");
+      }
       if (shot.kind !== "silent") {
+        if (after.asmrSound?.mixMode === "replace") throw new PlannerError(502, "校对不能替换已采用人声，未应用任何修改。");
         if (before.ambientSound !== undefined) after.ambientSound = before.ambientSound;
         else delete after.ambientSound;
       }

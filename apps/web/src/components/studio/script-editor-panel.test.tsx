@@ -119,18 +119,18 @@ describe("台词上下调整", () => {
     expect(input.onSelectClip).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "选区独立成段" }));
     expect(input.onSplitClip).toHaveBeenCalledExactlyOnceWith(first.id, 2, 8);
-    fireEvent.click(screen.getByRole("button", { name: "第 1 段视频分镜" }));
+    fireEvent.click(screen.getByRole("button", { name: "第 1 段画面与声音" }));
     expect(input.onOpenStoryboard).toHaveBeenCalledExactlyOnceWith(first.id);
   });
 
   it("keeps existing callers compatible when no ordering callback is supplied", () => {
     render(<ScriptEditorPanel {...fixture()} />);
     expect(screen.queryByRole("button", { name: "上移第 1 段" })).toBeNull();
-    expect(screen.getByRole("button", { name: "第 1 段视频分镜" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "第 1 段画面与声音" })).toBeTruthy();
   });
 });
 
-describe("每段视频分镜入口", () => {
+describe("每段画面与声音入口", () => {
   it("shows independent ready, pending and incomplete storyboard markers inside the existing right-side buttons", () => {
     const input = storyboardFixture();
     const [first, second, third] = flattenClips(input.project).filter((clip) => clip.type === "voice");
@@ -140,12 +140,12 @@ describe("每段视频分镜入口", () => {
     const before = structuredClone(input.project);
     render(<StrictMode><ScriptEditorPanel {...input} onReferenceModeChange={vi.fn()} /></StrictMode>);
     for (const [index, state, label, color] of [
-      [1, "ready", "分镜已生成", "bg-emerald-200"],
-      [2, "pending", "分镜待生成", "bg-slate-400"],
-      [3, "needs_update", "分镜待更新", "bg-amber-200"],
+      [1, "ready", "设计已完成", "bg-emerald-200"],
+      [2, "pending", "设计待生成", "bg-slate-400"],
+      [3, "needs_update", "设计待更新", "bg-amber-200"],
     ] as const) {
       const marker = screen.getByRole("img", { name: `第 ${index} 段分镜状态：${label}` });
-      const button = screen.getByRole("button", { name: `第 ${index} 段视频分镜` });
+      const button = screen.getByRole("button", { name: `第 ${index} 段画面与声音` });
       expect(marker.dataset.storyboardState).toBe(state);
       expect(marker.className).toContain(color);
       expect(button.contains(marker)).toBe(true);
@@ -166,14 +166,14 @@ describe("每段视频分镜入口", () => {
     const clip = flattenClips(input.project).find((clip) => clip.type === "voice")!;
     const saved = structuredClone(saveShot(input.project, clip));
     const view = render(<ScriptEditorPanel {...input} />);
-    expect(screen.getByRole("img", { name: "第 1 段分镜状态：分镜已生成" }).dataset.storyboardState).toBe("ready");
+    expect(screen.getByRole("img", { name: "第 1 段分镜状态：设计已完成" }).dataset.storyboardState).toBe("ready");
     const changed = structuredClone(input.project);
     const changedClip = flattenClips(changed).find((item) => item.id === clip.id)!;
     if (source === "dialogue" && changedClip.type === "voice") changedClip.text += "慢慢吃。";
     if (source === "audio") changedClip.asset = { asset_id: "another_take", uri: "asset://clip/another_take", duration: 3.21 };
     if (source === "background") changed.videoPlan!.sceneDescription += "窗外正在下雨。";
     view.rerender(<ScriptEditorPanel {...input} project={changed} />);
-    expect(screen.getByRole("img", { name: "第 1 段分镜状态：分镜待更新" }).dataset.storyboardState).toBe("needs_update");
+    expect(screen.getByRole("img", { name: "第 1 段分镜状态：设计待更新" }).dataset.storyboardState).toBe("needs_update");
     expect(changed.videoPlan!.shots[clip.id]).toEqual(saved);
     expect(input.onUpdateClip).not.toHaveBeenCalled();
   });
@@ -188,12 +188,12 @@ describe("每段视频分镜入口", () => {
       referenceMode: "continuous",
     }));
     const view = render(<ScriptEditorPanel {...input} onReferenceModeChange={vi.fn()} />);
-    expect(screen.getByRole("img", { name: "第 2 段分镜状态：分镜已生成" }).dataset.storyboardState).toBe("ready");
+    expect(screen.getByRole("img", { name: "第 2 段分镜状态：设计已完成" }).dataset.storyboardState).toBe("ready");
     const changed = structuredClone(input.project);
     changed.videoPlan!.shots[first.id].visual += " The bowl is now beside S1.";
     view.rerender(<ScriptEditorPanel {...input} project={changed} onReferenceModeChange={vi.fn()} />);
-    expect(screen.getByRole("img", { name: "第 1 段分镜状态：分镜已生成" }).dataset.storyboardState).toBe("ready");
-    expect(screen.getByRole("img", { name: "第 2 段分镜状态：分镜待更新" }).dataset.storyboardState).toBe("needs_update");
+    expect(screen.getByRole("img", { name: "第 1 段分镜状态：设计已完成" }).dataset.storyboardState).toBe("ready");
+    expect(screen.getByRole("img", { name: "第 2 段分镜状态：设计待更新" }).dataset.storyboardState).toBe("needs_update");
     expect(screen.getByRole("button", { name: /^第 2 段：连续镜头，点击/u }).dataset.referenceMode).toBe("continuous");
     expect(changed.videoPlan!.shots[second.id]).toEqual(saved);
     expect(input.onSelectClip).not.toHaveBeenCalled();
@@ -210,7 +210,7 @@ describe("每段视频分镜入口", () => {
     expect(firstToggle.disabled).toBe(true); expect(firstToggle.title).toContain("首段"); expect(firstToggle.dataset.referenceMode).toBe("new");
     fireEvent.click(firstToggle); expect(onReferenceModeChange).not.toHaveBeenCalled();
     const newToggle = screen.getByRole("button", { name: "第 2 段：新镜头，点击切换为连续镜头（用于下次生成）" });
-    const storyboard = screen.getByRole("button", { name: "第 2 段视频分镜" });
+    const storyboard = screen.getByRole("button", { name: "第 2 段画面与声音" });
     expect(storyboard.nextElementSibling).toBe(newToggle); expect(newToggle.title).toBe(newToggle.getAttribute("aria-label"));
     expect(newToggle.className).toContain("h-8 w-8"); expect(newToggle.className).toContain("text-cyan-200");
     const newIcon = newToggle.querySelector("svg")!.outerHTML;
@@ -247,9 +247,9 @@ describe("每段视频分镜入口", () => {
     input.project.timeline.tracks.find((track) => track.track_type === "voice")!.clips[0].start = 80;
     const voices = flattenClips(input.project).filter((clip) => clip.type === "voice");
     render(<StrictMode><ScriptEditorPanel {...input} /></StrictMode>);
-    expect(screen.getAllByRole("button", { name: /^第 \d+ 段视频分镜$/u })).toHaveLength(voices.length);
+    expect(screen.getAllByRole("button", { name: /^第 \d+ 段画面与声音$/u })).toHaveLength(voices.length);
     for (const [index, clip] of voices.entries()) {
-      fireEvent.click(screen.getByRole("button", { name: `第 ${index + 1} 段视频分镜` }));
+      fireEvent.click(screen.getByRole("button", { name: `第 ${index + 1} 段画面与声音` }));
       expect(input.onOpenStoryboard).toHaveBeenNthCalledWith(index + 1, clip.id);
     }
     expect(input.onSelectClip).not.toHaveBeenCalled();
@@ -270,7 +270,7 @@ describe("每段视频分镜入口", () => {
     field.setSelectionRange(2, 8);
     fireEvent.select(field);
     vi.mocked(input.onSelectClip).mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "第 1 段视频分镜" }));
+    fireEvent.click(screen.getByRole("button", { name: "第 1 段画面与声音" }));
     expect(input.onOpenStoryboard).toHaveBeenCalledExactlyOnceWith(clip.id);
     expect(input.onSelectClip).not.toHaveBeenCalled();
     expect(input.onUpdateClip).not.toHaveBeenCalled();
@@ -324,7 +324,7 @@ describe("批量工具条位置与编辑行为", () => {
     const field = screen.getByRole("textbox", { name: "台词" }) as HTMLTextAreaElement;
     field.setSelectionRange(2, 8);
     fireEvent.select(field);
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量设计画面与声音" }));
     view.rerender(<ScriptEditorPanel {...input} busy batchActions={<StudioBatchActions counts={counts} onRun={onRun} onCancel={onCancel} progress={{ action: "storyboard_missing", total: 3, completed: 1, succeeded: 1, failed: 0, skipped: 0 }} />} />);
     expect(field.selectionStart).toBe(2);
     expect(field.selectionEnd).toBe(8);

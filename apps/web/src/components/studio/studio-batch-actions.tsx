@@ -54,13 +54,13 @@ const groups = [
     ],
   },
   {
-    label: "分镜",
+    label: "画面与声音",
     icon: Clapperboard,
     tone: "border-violet-300/15 bg-violet-300/[0.035] text-violet-100",
     buttonTone: "border-violet-300/20 bg-violet-300/[0.06] hover:bg-violet-300/12 focus-visible:outline-violet-300",
     actions: [
-      { action: "storyboard_missing", label: "生成分镜", accessibleLabel: "分镜全部生成", primary: true, title: "生成当前页缺失或待更新的分镜，包括无对白镜头。" },
-      { action: "storyboard_all", label: "重做全部分镜", accessibleLabel: "分镜全部重新生成", primary: false, title: "重新生成当前页全部可用分镜。" },
+      { action: "storyboard_missing", label: "设计画面与声音", accessibleLabel: "批量设计画面与声音", primary: true, title: "生成当前页缺失或待更新的分镜，包括无台词段。" },
+      { action: "storyboard_all", label: "重新设计全部画面与声音", accessibleLabel: "批量重新设计画面与声音", primary: false, title: "重新生成当前页全部可用分镜。" },
     ],
   },
 ] as const;
@@ -91,18 +91,18 @@ export function StudioBatchActions({ counts, audioOverview, overviewStatus = "re
       {overviewStatus === "error" && <span className="text-[10px] text-amber-200/80">统计暂不可用</span>}
     </div>}
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className={`flex gap-1.5 ${group.label === "音频" ? "min-w-[16rem] flex-[2]" : "min-w-[7rem] flex-1"}`}>
+      {groups.map((group) => <div key={group.label} role="group" aria-label={`批量${group.label}`} className={`flex gap-1.5 ${group.label === "音频" ? "min-w-[16rem] flex-[2]" : "min-w-[10rem] flex-1"}`}>
           {group.actions.filter(({ primary }) => primary).map(({ action, label, accessibleLabel, title }) => <button key={action} type="button" aria-label={accessibleLabel} title={action === "storyboard_missing" && regenerateStoryboards ? "当前分镜均已生成，确认后重新生成当前页全部可用分镜。" : title}
             disabled={disabled || active || (action === "storyboard_missing" && regenerateStoryboards ? counts.storyboard_all : counts[action]) <= 0 || (action.startsWith("audio") && audioSettingsStatus !== "ready") || (action === "audio_ungenerated" && overviewStatus !== "ready")} onClick={() => onRun(action === "storyboard_missing" && regenerateStoryboards ? "storyboard_all" : action)}
             className={`inline-flex min-h-8 min-w-0 flex-1 items-center justify-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-35 ${group.buttonTone}`}>
-            <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{action === "storyboard_missing" && regenerateStoryboards ? "重新生成分镜" : label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{action === "audio_ungenerated" && overviewStatus !== "ready" ? "—" : action === "storyboard_missing" && regenerateStoryboards ? counts.storyboard_all : counts[action]}</span>
+            <group.icon className="h-3.5 w-3.5" aria-hidden="true" /><span className="whitespace-nowrap">{action === "storyboard_missing" && regenerateStoryboards ? "重新设计画面与声音" : label}</span><span aria-hidden="true" className="rounded bg-white/5 px-1 py-0.5 text-[10px] leading-none tabular-nums">{action === "audio_ungenerated" && overviewStatus !== "ready" ? "—" : action === "storyboard_missing" && regenerateStoryboards ? counts.storyboard_all : counts[action]}</span>
           </button>)}
       </div>)}
       {postProcessing && <button type="button" aria-label="生成后处理"
         title={postProcessing.ready ? "根据已采用原音和全部分镜设计音场，再逐镜生成独立处理结果；原音保留。" : postProcessing.reason}
         disabled={disabled || active || !postProcessing.ready || Boolean(postProcessing.progress) || !onGeneratePostProcessing}
         onClick={onGeneratePostProcessing}
-        className="inline-flex min-h-8 min-w-[7rem] flex-1 items-center justify-center gap-1.5 rounded-md border border-teal-300/20 bg-teal-300/[0.06] px-2.5 text-xs font-medium text-teal-100 hover:bg-teal-300/12 focus-visible:outline-2 focus-visible:outline-teal-300 disabled:cursor-not-allowed disabled:opacity-35">
+        className="inline-flex min-h-8 min-w-[10rem] flex-1 items-center justify-center gap-1.5 rounded-md border border-teal-300/20 bg-teal-300/[0.06] px-2.5 text-xs font-medium text-teal-100 hover:bg-teal-300/12 focus-visible:outline-2 focus-visible:outline-teal-300 disabled:cursor-not-allowed disabled:opacity-35">
         {postProcessing.progress ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <WandSparkles className="h-3.5 w-3.5" aria-hidden="true" />}
         <span className="whitespace-nowrap">{postProcessing.progress?.phase === "planning" ? "正在设计…" : postProcessing.progress ? "正在后处理…" : "生成后处理"}</span>
       </button>}
@@ -119,10 +119,10 @@ export function StudioBatchActions({ counts, audioOverview, overviewStatus = "re
     </div>}
     {progress && <div className="mt-2 space-y-1.5">
       <div className="flex min-w-0 items-center justify-between gap-2 text-[11px]">
-        <p role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-studio-muted"><span className={`inline-flex items-center gap-1.5 ${audio ? "text-sky-100" : "text-violet-100"}`}><LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />{audio ? "音频" : "分镜"} · 完成 {completed}/{total}</span>{result && <span>{result}</span>}{progress.waitingBetweenItems && <span>任务间隔中（5 秒）</span>}</p>
+        <p role="status" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-studio-muted"><span className={`inline-flex items-center gap-1.5 ${audio ? "text-sky-100" : "text-violet-100"}`}><LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />{audio ? "音频" : "画面与声音"} · 完成 {completed}/{total}</span>{result && <span>{result}</span>}{progress.waitingBetweenItems && <span>任务间隔中（5 秒）</span>}</p>
         <button type="button" onClick={onCancel} aria-label="取消批量生成" className="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-studio-muted hover:bg-white/5 hover:text-studio-text focus-visible:outline-2 focus-visible:outline-sky-300"><X className="h-3 w-3" aria-hidden="true" />取消</button>
       </div>
-      <div role="progressbar" aria-label={`${audio ? "音频" : "分镜"}批量进度`} aria-valuemin={0} aria-valuemax={Math.max(1, total)} aria-valuenow={completed} aria-valuetext={`完成 ${completed}/${total}`} className="h-1 overflow-hidden rounded-full bg-white/5">
+      <div role="progressbar" aria-label={`${audio ? "音频" : "画面与声音"}批量进度`} aria-valuemin={0} aria-valuemax={Math.max(1, total)} aria-valuenow={completed} aria-valuetext={`完成 ${completed}/${total}`} className="h-1 overflow-hidden rounded-full bg-white/5">
         <div className={`h-full rounded-full transition-[width] ${audio ? "bg-sky-300/65" : "bg-violet-300/65"}`} style={{ width: `${total > 0 ? completed / total * 100 : 0}%` }} />
       </div>
     </div>}

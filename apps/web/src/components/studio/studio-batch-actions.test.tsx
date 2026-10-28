@@ -12,8 +12,8 @@ const actions: { action: StudioBatchAction; name: string }[] = [
   { action: "audio_missing", name: "音频全部生成" },
   { action: "audio_ungenerated", name: "生成未生成" },
   { action: "audio_all", name: "音频全部重新生成" },
-  { action: "storyboard_missing", name: "分镜全部生成" },
-  { action: "storyboard_all", name: "分镜全部重新生成" },
+  { action: "storyboard_missing", name: "批量设计画面与声音" },
+  { action: "storyboard_all", name: "批量重新设计画面与声音" },
 ];
 
 function fixture(): Props {
@@ -45,7 +45,7 @@ describe("studio batch actions", () => {
     render(<StudioBatchActions {...fixture()} storyboardReview={{ ready: true, reason: "", busy: true }} onCancelStoryboardReview={cancel}
       postProcessing={{ ready: true, reason: "" }} onGeneratePostProcessing={vi.fn()} />);
     expect(screen.getByText("整批校对中…")).toBeTruthy();
-    for (const name of ["音频全部生成", "分镜全部生成", "生成后处理"]) expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    for (const name of ["音频全部生成", "批量设计画面与声音", "生成后处理"]) expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "取消整批校对" })); expect(cancel).toHaveBeenCalledOnce();
   });
   it("places explicit post-processing immediately after storyboard and explains missing inputs", () => {
@@ -53,7 +53,7 @@ describe("studio batch actions", () => {
     const onGenerate = vi.fn();
     const view = render(<StudioBatchActions {...props} postProcessing={{ ready: false, reason: "请先补齐全部当前分镜。" }} onGeneratePostProcessing={onGenerate} />);
     const button = screen.getByRole("button", { name: "生成后处理" }) as HTMLButtonElement;
-    expect(screen.getByRole("group", { name: "批量分镜" }).nextElementSibling).toBe(button);
+    expect(screen.getByRole("group", { name: "批量画面与声音" }).nextElementSibling).toBe(button);
     expect(button.disabled).toBe(true);
     expect(button.title).toContain("补齐全部当前分镜");
     view.rerender(<StudioBatchActions {...props} postProcessing={{ ready: true, reason: "" }} onGeneratePostProcessing={onGenerate} />);
@@ -67,7 +67,7 @@ describe("studio batch actions", () => {
     const cancel = vi.fn();
     render(<StudioBatchActions {...props} postProcessing={{ ready: true, reason: "", progress: { phase, total: 3, completed: 1, failed: 0 } }} onCancelPostProcessing={cancel} />);
     expect((screen.getByRole("button", { name: "音频全部生成" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "批量设计画面与声音" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole("status").textContent).toContain(phase === "planning" ? "正在设计后处理" : "完成 1/3");
     fireEvent.click(screen.getByRole("button", { name: "取消后处理" }));
     expect(cancel).toHaveBeenCalledOnce();
@@ -116,9 +116,9 @@ describe("studio batch actions", () => {
   it("keeps the primary storyboard action available for regeneration when nothing is missing", () => {
     const props = fixture(); props.counts.storyboard_missing = 0;
     const view = render(<StudioBatchActions {...props} />);
-    const button = screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement;
+    const button = screen.getByRole("button", { name: "批量设计画面与声音" }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
-    expect(button.textContent).toContain("重新生成分镜");
+    expect(button.textContent).toContain("重新设计画面与声音");
     expect(button.textContent).toContain(String(props.counts.storyboard_all));
     fireEvent.click(button); expect(props.onRun).toHaveBeenCalledExactlyOnceWith("storyboard_all");
     view.rerender(<StudioBatchActions {...props} counts={{ ...props.counts, storyboard_all: 0 }} />);
@@ -150,7 +150,7 @@ describe("studio batch actions", () => {
     }
     expect(props.onRun).not.toHaveBeenCalled();
     expect(screen.getByText(audioSettingsStatus === "loading" ? "正在读取声音设置…" : "声音设置读取失败，请刷新重试。")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量设计画面与声音" }));
     expect(props.onRun).toHaveBeenCalledWith("storyboard_missing");
     view.rerender(<StudioBatchActions {...props} audioSettingsStatus="ready" />);
     fireEvent.click(screen.getByRole("button", { name: "生成未生成" }));
@@ -206,14 +206,14 @@ describe("studio batch actions", () => {
   it("updates storyboard progress and unlocks actions after completion", () => {
     const props = fixture();
     const view = render(<StudioBatchActions {...props} progress={{ action: "storyboard_missing", total: 3, completed: 0, succeeded: 0, failed: 0, skipped: 0 }} />);
-    expect(screen.getByRole("status").textContent).toBe("分镜 · 完成 0/3");
+    expect(screen.getByRole("status").textContent).toBe("画面与声音 · 完成 0/3");
     view.rerender(<StudioBatchActions {...props} progress={{ action: "storyboard_missing", total: 3, completed: 2, succeeded: 2, failed: 0, skipped: 0 }} />);
-    expect(screen.getByRole("progressbar", { name: "分镜批量进度" }).getAttribute("aria-valuenow")).toBe("2");
+    expect(screen.getByRole("progressbar", { name: "画面与声音批量进度" }).getAttribute("aria-valuenow")).toBe("2");
     view.rerender(<StudioBatchActions {...props} />);
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.queryByRole("button", { name: "取消批量生成" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "分镜全部生成" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量设计画面与声音" }));
     expect(props.onRun).toHaveBeenCalledExactlyOnceWith("storyboard_missing");
   });
 
@@ -230,7 +230,7 @@ describe("studio batch actions", () => {
   it("keeps primary generation visible and puts both regeneration actions in one expandable menu", () => {
     render(<StudioBatchActions {...fixture()} />);
     const audio = screen.getByRole("group", { name: "批量音频" });
-    const storyboard = screen.getByRole("group", { name: "批量分镜" });
+    const storyboard = screen.getByRole("group", { name: "批量画面与声音" });
     expect(within(audio).getAllByRole("button")).toHaveLength(2);
     const primary = within(audio).getByRole("button", { name: "音频全部生成" });
     const ungenerated = within(audio).getByRole("button", { name: "生成未生成" });
@@ -242,7 +242,7 @@ describe("studio batch actions", () => {
     openMoreActions();
     expect(menu.open).toBe(true);
     expect(screen.getByRole("button", { name: "音频全部重新生成" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "分镜全部重新生成" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "批量重新设计画面与声音" })).toBeTruthy();
     expect(within(menu).getAllByRole("button")).toHaveLength(2);
     expect(within(menu).queryByRole("button", { name: "生成未生成" })).toBeNull();
     expect(screen.getAllByRole("button", { name: "生成未生成" })).toHaveLength(1);

@@ -447,21 +447,21 @@ export function ClipInspector({
   }
 
   if (selectedClip.type === "voice" && selectedClip.kind === "silent") {
-    return <section aria-label="无对白镜头设置" className="rounded-lg border border-violet-300/15 bg-studio-panel/88">
+    return <section aria-label="无台词段设置" className="rounded-lg border border-violet-300/15 bg-studio-panel/88">
       <div className="flex h-12 items-center gap-2 border-b border-studio-line px-4">
         <Clapperboard className="h-4 w-4 text-violet-200" aria-hidden="true" />
-        <h2 className="text-sm font-semibold">无对白镜头</h2>
+        <h2 className="text-sm font-semibold">无台词段</h2>
       </div>
       <div className="space-y-3 px-4 py-4">
         {textEditorExternal ? <p className="whitespace-pre-wrap break-words text-sm leading-6">{selectedClip.text}</p>
-          : <label className="block space-y-2"><span className="text-xs text-studio-muted">画面描述</span><textarea aria-label="无对白镜头画面描述" value={selectedClip.text}
+          : <label className="block space-y-2"><span className="text-xs text-studio-muted">画面描述</span><textarea aria-label="无台词段画面描述" value={selectedClip.text}
             onChange={(event) => updateClip({ text: event.target.value })} className={controlClassName("min-h-24 resize-y leading-6", hasFieldIssues("text"))} {...getFieldControlProps("text")} /></label>}
         <FieldError id={getFieldErrorId("text")} issues={getFieldIssues("text")} />
-        <label className="flex items-center justify-between gap-3"><span className="text-xs text-studio-muted">镜头时长（秒）</span><input aria-label="无对白镜头时长" type="number" min={0.1} max={600} step={0.1}
+        <label className="flex items-center justify-between gap-3"><span className="text-xs text-studio-muted">段落时长（秒）</span><input aria-label="无台词段时长" type="number" min={0.1} max={600} step={0.1}
           value={selectedClip.duration} onChange={(event) => updateClip({ duration: parseNumericInput(event.target.value) })}
           className={controlClassName("max-w-28", hasFieldIssues("duration"))} {...getFieldControlProps("duration")} /></label>
         <FieldError id={getFieldErrorId("duration")} issues={getFieldIssues("duration")} />
-        <p className="rounded-lg border border-violet-300/10 bg-violet-300/5 px-3 py-2 text-xs leading-6 text-studio-muted">按画面描述与时长生成视频分镜。整体试听会保留这一段静音。</p>
+        <p className="rounded-lg border border-violet-300/10 bg-violet-300/5 px-3 py-2 text-xs leading-6 text-studio-muted">按表演内容与时长设计画面和声音。音效将在视频批跑时生成。</p>
       </div>
     </section>;
   }

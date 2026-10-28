@@ -32,7 +32,7 @@ function getClipTitle(clip: TimelineClip): string {
 
 function getClipMetadata(clip: TimelineClip): string {
   return [
-    clip.type === "voice" && clip.kind === "silent" ? "无对白镜头" : getTrackLabel(clip.track),
+    clip.type === "voice" && clip.kind === "silent" ? "无台词段" : getTrackLabel(clip.track),
     formatTimeRange(clip.start, clip.duration),
   ].join(" · ");
 }
@@ -48,7 +48,7 @@ export function StoryboardPanel({
     <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-studio-line bg-studio-panel/88">
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-studio-line px-4">
         <div>
-          <h2 className="text-sm font-semibold text-studio-text">分镜</h2>
+          <h2 className="text-sm font-semibold text-studio-text">表演段落</h2>
           <p className="text-xs text-studio-muted">{clips.length} 个片段</p>
         </div>
       </div>
@@ -75,7 +75,7 @@ export function StoryboardPanel({
                   <p className="line-clamp-2 min-w-0 text-sm font-medium leading-5 text-studio-text">
                     {getClipTitle(clip)}
                   </p>
-                  {clip.type === "voice" && clip.kind === "silent" ? <span className="shrink-0 rounded-md bg-violet-300/10 px-2 py-1 text-[10px] text-violet-200">无对白</span> : <StatusBadge status={clip.generation.status} />}
+                  {clip.type === "voice" && clip.kind === "silent" ? <span className="shrink-0 rounded-md bg-violet-300/10 px-2 py-1 text-[10px] text-violet-200">无台词</span> : <StatusBadge status={clip.generation.status} />}
                 </div>
                 <p className="mt-3 text-xs leading-5 text-studio-muted">
                   {getClipMetadata(clip)}

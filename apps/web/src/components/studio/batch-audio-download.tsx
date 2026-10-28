@@ -12,7 +12,7 @@ import { getCurrentAudioPostProcessingReceipts } from "@/lib/asmr/audio-post-pro
 
 type DownloadMode = "audio" | "storyboard" | "video";
 type DownloadState = { source: string; mode: DownloadMode; status: "idle" | "preparing" | "downloaded" | "error"; error?: string };
-const modes = [{ mode: "audio", label: "音频", icon: Headphones }, { mode: "storyboard", label: "分镜", icon: Clapperboard }, { mode: "video", label: "视频包", icon: Archive }] as const;
+const modes = [{ mode: "audio", label: "音频", icon: Headphones }, { mode: "storyboard", label: "画面与声音", icon: Clapperboard }, { mode: "video", label: "视频包", icon: Archive }] as const;
 
 export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const [open, setOpen] = useState(false);
@@ -34,6 +34,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const progress = getStudioStoryboardProgress(project);
   const video = getVideoPackageSummary(project);
   const voiceClips = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []);
+  const videoTaskCount = voiceClips.reduce((sum, clip) => sum + (project.videoPlan?.shots[clip.id]?.parts?.length ?? 1), 0);
   const speechClips = voiceClips.filter(clip => clip.kind !== "silent");
   const videoIssueIds = new Set(video.issues.map(issue => issue.clipId));
   const videoAsmrReady = voiceClips.filter(clip => !videoIssueIds.has(clip.id) && project.videoPlan?.shots[clip.id]?.asmrSound).length;
@@ -42,9 +43,10 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const status = state?.source === source && state.mode === mode ? state.status : "idle";
   const error = status === "error" ? state?.error : undefined;
   const count = mode === "audio" ? clips.length : mode === "storyboard" ? storyboards.length : video.total;
+  const archiveClipCount = mode === "video" ? videoTaskCount : count;
   const busy = status === "preparing";
   const videoBlocked = mode === "video" && (video.issues.length > 0 || Boolean(referenceError));
-  const modeLabel = mode === "audio" ? "音频" : mode === "storyboard" ? "分镜" : "视频包";
+  const modeLabel = mode === "audio" ? "音频" : mode === "storyboard" ? "画面与声音" : "视频包";
 
   function close() {
     setOpen(false);
@@ -137,7 +139,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
       if (!active()) return;
       if (!archive || typeof archive.downloadUrl !== "string"
         || !/^\/api\/assets\/batch-download\?token=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(archive.downloadUrl)
-        || archive.filename !== filename || archive.clipCount !== count
+        || archive.filename !== filename || archive.clipCount !== archiveClipCount
         || typeof archive.size !== "number" || !Number.isSafeInteger(archive.size) || archive.size <= 0) throw new Error("下载文件暂不可用，请重试。");
       const anchor = document.createElement("a");
       anchor.href = archive.downloadUrl;
@@ -225,8 +227,8 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
         <p className="mt-2.5 text-[11px] leading-5 text-studio-muted">每段一个完整 H3 提示词 TXT，按台词顺序打包为 ZIP。</p>
         <p className="mt-1 text-[11px] leading-5 text-studio-muted">仅打包已保存、完整且未过期的提示词；待生成与需更新段落不包含在内。</p>
       </> : <>
-        <p className="mt-3 text-xs leading-5 text-studio-muted">当前项目共 {video.total} 镜，打包音频、分镜和独立运行程序。</p>
-        <p className="mt-2 text-[11px] leading-5 text-studio-muted">对白音频使用{videoUsesPrepared ? "已生成的后处理成品" : "已采用原音（整批后处理尚未完成）"}。按镜头顺序生成；无对白镜头带环境底噪，最长 5 秒。</p>
+        <p className="mt-3 text-xs leading-5 text-studio-muted">当前项目共 {video.total} 段表演，打包音频、画面与声音方案和独立运行程序。</p>
+        <p className="mt-2 text-[11px] leading-5 text-studio-muted">台词使用{videoUsesPrepared ? "已生成的后处理音频" : "已采用原音"}。按表演顺序生成，无台词段保留完整时长及声音安排。</p>
         {video.total > 0 && <div className="mt-2 rounded-lg border border-violet-300/15 bg-violet-300/[0.035] px-3 py-2 text-[11px] leading-5 text-studio-muted">
           <p>ASMR 触发音：{videoAsmrReady} / {video.total} 镜已规划</p>
           <p>{videoAsmrReady === video.total ? "勾选合并顺序预览后，输出原版与 ASMR 叠加版。" : `补齐剩余 ${video.total - videoAsmrReady} 镜的 ASMR 规划后，可合并叠加版。${video.issues.length ? "" : "当前可导出原版视频包。"}`}</p>

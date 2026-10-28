@@ -61,7 +61,9 @@ export function createStoryboardSourceFingerprint(draft: PlannerDraft): string {
       personality: draft.character.personality,
       speechStyle: draft.character.speechStyle,
     },
-    sections: draft.sections.map(({ id, text }) => ({ id, text })),
+    ...(draft.performanceVersion ? { performanceVersion: draft.performanceVersion } : {}),
+    sections: draft.sections.map(({ id, text, kind, purpose, durationSeconds, direction, soundSuggestions }) => ({ id, text,
+      ...(draft.performanceVersion || kind === "silent" ? { kind: kind ?? "speech", purpose, durationSeconds, direction, soundSuggestions } : {}) })),
   });
 }
 

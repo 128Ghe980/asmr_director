@@ -115,10 +115,10 @@ export function AcceptedVoicePreview({ project, disabled = false, onAudioElement
 
   return <section aria-label="已采用语音整体预览" aria-busy={busy} className="min-w-0 border-b border-studio-line bg-sky-300/[0.025] px-3 py-2">
     <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
-      <div className="flex min-w-0 items-center gap-2 text-[11px] text-studio-muted" title="按镜头顺序连接已采用原声，保留无对白时长与段后等待，跳过未采用台词。">
+      <div className="flex min-w-0 items-center gap-2 text-[11px] text-studio-muted" title="按镜头顺序连接已采用原声，保留无台词时长与段后等待，跳过未采用台词。">
         <Headphones className="h-3.5 w-3.5 shrink-0 text-sky-200" aria-hidden="true" />
         <span>已采用语音 <span className="tabular-nums text-studio-text">{plan.clipCount}/{plan.totalVoiceCount}</span> 段</span>
-        {plan.silentCount > 0 && <span className="text-violet-200">含 {plan.silentCount} 段无对白</span>}
+        {plan.silentCount > 0 && <span className="text-violet-200">含 {plan.silentCount} 段无台词</span>}
         {Boolean(plan.staleCount) && <span className="text-amber-200">{plan.staleCount} 段音频待更新</span>}
       </div>
       <div className="flex items-center gap-1.5">

@@ -152,6 +152,45 @@ describe("portable video packages", () => {
     await archive.cleanup();
   });
 
+  it("expands authored long performance parts and keeps the following speech WAV aligned", async () => {
+    const { project, clips, wav } = await fixture();
+    const clip = clips[0]; clip.kind = "silent"; clip.duration = 12;
+    clip.performance = { version: 1, segmentId: "wooden_box", purpose: "asmr", direction: "敲击同一只盒子，然后停住。", soundIntent: "缓慢木质敲击" };
+    clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+    const shot = project.videoPlan!.shots[clip.id]; delete shot.audio;
+    const sound = { prompt: "Quiet dry wooden taps, then a pause.", mixMode: "replace" as const, postProcessing: {
+      start: { pan: 0, distance: "near" as const }, end: { pan: 0, distance: "near" as const }, movement: "static" as const, gainDb: -6,
+    } };
+    Object.assign(shot, { kind: "silent", duration: 12, ambientSound: "Quiet wooden tapping.", asmrSound: sound,
+      parts: [5, 5, 2].map((durationSeconds, index) => ({ durationSeconds,
+        visual: "S1 holds the same closed wooden box.", action: `Gentle tapping stage ${index + 1}.`, camera: "Fixed listener viewpoint.",
+        ambientSound: `Quiet wooden tapping stage ${index + 1}.`, asmrSound: { ...sound, prompt: `Quiet wooden taps at stage ${index + 1}.` } })),
+      sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id) });
+    config.spatialHrtfPath = path.join(root, "test.sofa");
+    await writeFile(config.spatialHrtfPath, Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]));
+    const before = structuredClone(project);
+    const archive = await prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch") });
+    const files = entries(await readFile(archive.filePath));
+    const manifest = JSON.parse(files.get("project.json")!.toString()) as VideoPackageManifest;
+    expect(manifest.shots.map(entry => [entry.id, entry.order, entry.durationSeconds, entry.referenceMode])).toEqual([
+      ["voice_001--part-001", 1, 5, "new"], ["voice_001--part-002", 2, 5, "continuous"], ["voice_001--part-003", 3, 2, "continuous"],
+      ["voice_002", 4, .1, "new"],
+    ]);
+    expect(archive.clipCount).toBe(4);
+    for (const [index, part] of manifest.shots.slice(0, 3).entries()) {
+      expect(part).toMatchObject({ segmentId: clip.id, partIndex: index + 1, partCount: 3, asmrSound: { mixMode: "replace", durationSeconds: [5, 5, 2][index] } });
+      expect(part.prompt).toContain(`Gentle tapping stage ${index + 1}.`);
+      expect(part.prompt).toContain(`Quiet wooden tapping stage ${index + 1}.`);
+      expect(part.asmrSound?.prompt).toContain(`Quiet wooden taps at stage ${index + 1}.`);
+      expect(part).not.toHaveProperty("audio");
+    }
+    expect(manifest.shots[3].audio).toBe("shots/004/audio.wav");
+    expect(files.get("shots/004/audio.wav")).toEqual(Buffer.from(wav));
+    expect([...files.keys()].filter(file => file.endsWith(".wav"))).toEqual(["shots/004/audio.wav"]);
+    expect(project).toEqual(before);
+    await archive.cleanup();
+  });
+
   it("preflights every required input before creating an archive and identifies the bad shot", async () => {
     const { project, clips } = await fixture();
     await rm(path.join(config.clipAssetRoot, `${clips[1].asset.asset_id}.wav`));

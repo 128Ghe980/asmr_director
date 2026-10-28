@@ -37,7 +37,7 @@ describe("PlannerSceneEditor", () => {
     fireEvent.change(screen.getByLabelText("背景生成要求"), { target: { value: "保留雪地木屋的温暖氛围。" } });
     fireEvent.click(screen.getByRole("button", { name: "重新生成背景" }));
     expect(onGenerate).toHaveBeenCalledExactlyOnceWith("保留雪地木屋的温暖氛围。");
-    expect(screen.queryByText(/已采用音频逐段生成分镜/)).toBeNull();
+    expect(screen.queryByText(/已采用音频逐段设计画面与声音/)).toBeNull();
     expect(screen.queryByText("H3 提示词")).toBeNull();
   });
 

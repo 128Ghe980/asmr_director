@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ProjectVideoPlanSchema } from "./video-plan";
 import { AudioPostProcessingSchema } from "./audio-post-processing-schema";
+import { PerformanceSegmentSchema } from "./performance-segment";
 
 export const ProjectStatusSchema = z.enum([
   "draft",
@@ -80,6 +81,7 @@ export const VoiceClipSchema = ClipBaseSchema.extend({
   track: z.literal("voice"),
   type: z.literal("voice"),
   kind: z.enum(["speech", "silent"]).optional(),
+  performance: PerformanceSegmentSchema.optional(),
   text: z.string().min(1),
   emotion: z.string().min(1),
   style: z.string().min(1),

@@ -301,7 +301,7 @@ describe("已采用音频的单片段分镜", () => {
     const result = await generateClipStoryboard(input, { config: { ...config, clipAssetRoot: path.join(root, "nonexistent") }, fetchImpl,
       env: { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "mock-only", ASMR_PLANNER_API_MODEL: "mock-model" } });
     const material = materialFrom(fetchImpl);
-    expect(clip.text).toBe("待设计：根据前后剧情安排自然衔接的无对白画面。");
+    expect(clip.text).toBe("待设计：根据前后剧情安排自然衔接的无台词画面。");
     expect(material).toMatchObject({ baseScene: project.videoPlan!.sceneDescription, currentIndex: 3, kind: "silent", description: clip.text, durationSeconds: 4 });
     expect(material.scriptOrder.map((entry: { text: string }) => entry.text)).toEqual(lines);
     expect(material.scriptOrder[2].text).toBe("把靴子上的雪抖掉，再进来。");

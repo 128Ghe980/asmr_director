@@ -36,20 +36,29 @@ function inspect(project: AsmrProject): { summary: VideoPackageSummary; shots: V
     const index = position + 1;
     const fail = (message: string) => { issues.push({ clipId: clip.id, index, message }); };
     if (counts.get(clip.id) !== 1) { fail("片段编号重复，请整理本段后导出。"); continue; }
-    if (!clip.text.trim()) { fail("请填写本段文案或无对白镜头描述。"); continue; }
+    if (!clip.text.trim()) { fail("请填写本段台词或无台词表演描述。"); continue; }
     if (clip.kind === "silent") {
-      if (!Number.isFinite(clip.duration) || clip.duration <= 0 || clip.duration > 5) {
-        fail("环境空镜时长须大于 0 且不超过 5 秒。"); continue;
+      if (!Number.isFinite(clip.duration) || clip.duration <= 0 || clip.duration > 600) {
+        fail("无台词段时长须大于 0 且不超过 600 秒。"); continue;
       }
     } else if (clip.audio_stale || clip.generation.status !== "asset_generated" || !clip.asset.asset_id
       || !/^[A-Za-z0-9_-]{1,200}$/.test(clip.asset.asset_id) || clip.asset.uri !== `asset://clip/${clip.asset.asset_id}`) {
       fail("请先生成并采用本段当前人声音频。"); continue;
     }
     const saved = project.videoPlan?.shots[clip.id];
-    if (!saved) { fail("请先生成本段分镜。"); continue; }
+    if (!saved) { fail("请先设计本段画面与声音。"); continue; }
     const parsed = ClipVideoStoryboardSchema.safeParse(saved);
     if (!parsed.success || saved.clipId !== clip.id) { fail("本段分镜资料不完整，请重新生成。"); continue; }
     const storyboard = parsed.data;
+    if (clip.kind === "silent" && clip.duration > 5 && !storyboard.parts?.length) {
+      fail("超过 5 秒的无台词段需要完整的连续画面与声音设计，请重新生成。"); continue;
+    }
+    if (storyboard.parts?.some(part => ![part.visual, part.action, part.camera, part.ambientSound].every(value => value.trim()))) {
+      fail("连续生成段的画面、动作、视点和声音说明尚未填写完整。"); continue;
+    }
+    if (clip.kind !== "silent" && storyboard.asmrSound?.mixMode === "replace") {
+      fail("对白段的声音须叠加到已采用人声，请更新声音设计。"); continue;
+    }
     if (![storyboard.title, storyboard.visual, storyboard.action, storyboard.camera].every(text => text.trim())) {
       fail("请补全本段分镜的标题、画面、动作和镜头说明。"); continue;
     }

@@ -1,10 +1,30 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-10-28 / 近距离互动小剧场模板
+## Current update — 2026-10-29 / 保留现状、记录推送
+
+2026-10-29 用户决定**保留当前版本，暂缓进一步生成质量优化**：主要使用基本固定机位，闲聊/接话/小玩笑暂不强求；不实施刚提出的动作完成条件、额外语义校对、声位细化及时长不足草稿保留方案。已知时长失败和第4→5段状态问题继续记录，不标为修复或质量通过。本次仅记录并单独提交推送既有75功能文件＋7文档，28项范围外保持；源码复用已验快照，不重跑模型/构建或重启服务。实际commit、远端SHA及保护结果见 `I:/AI/asmr_director/qa/performance-script/2026-10-28/publication.json`；分支`codex/voxcpm2-product-generation`，基线87d3e49。Audio Quality V1继续、其他SFX实验暂停，不新增路线。[发布记录](records/2026-10-28-performance-script.md) / [比较及用户决定](records/2026-10-29-aige-template-comparison.md)。
+
+## Earlier update — 2026-10-29 / 近距离互动模板实际比较（仅诊断）
+
+按用户要求用部署版模板v2生成“出门前整理衣领、检查是否睡醒”，与爱哥两参考的画面/字幕比较。120/120/60秒三次策划均在一次修复后仍不足时长，分别估82/87/39秒，应用均拒绝。最后39秒原稿未手改，仅离线做7段设计，使用预估时长的零PCM夹具；合计10业务/13上游，TTS/ASR/H3均0。主QA `I:/AI/asmr_director/qa/reference-templates/2026-10-29/aige-comparison/`，最终证据 `review-raw-candidate/summary.json` 与 `review-project.json`。
+
+固定听者POV较接近参考，第3段确有边整理边说话；4句功能性台词缺少熟悉闲谈与个性。第4段放手/退后意图被前镜整理动作覆盖，5段跳到已完成状态；6段两拍后静等分块正确，但左肩声音仍pan0；1段声音另加未写的移重衣料。未听原片音轨、未生成真实音视频，不称听感或表演质量通过。本轮只记录诊断，没有产品改动/新部署/推送，前轮3001 build `rfG9d0aAGn_UKKsVC-xYL`事实保持。Audio Quality V1继续、其他SFX实验暂停，无新路线。[完整比较与证据](records/2026-10-29-aige-template-comparison.md)。
+
+## Earlier update — 2026-10-28 / 表演脚本与画面声音设计（本地已部署，质量待验）
+
+用户批准保留原操作顺序，在生成脚本内部自动分配说话、ASMR 操作、过渡和互动等待时间，输出可删改的台词/无台词段；采用人声后再“设计画面与声音”。本轮基线为已推送模板版 `87d3e49`，28 项范围外工作继续保留。新草稿携带段类型、用途、稳定源 ID、动作和声音意图；无台词描述不进 TTS，全无台词工程可直接设计及导出。交易/近距离互动模板 v2 有各自节奏和混合示例，旧快照与原 prompt 保持；传统声音为主创意可用，未另加传统模板。
+
+长无台词段保持一个逻辑段，最多 600 秒，先设计每块≤5秒且总时长相等的连续 `parts`，导出展开为稳定任务 ID；第一块原参考，后续连续。界面逻辑段数与 ZIP 任务数分开，台词 WAV 仍按实际时长。主视频原版包含实际非台词声音，增强版新无台词 `replace`、台词 `overlay`，旧缺省仍 overlay；复用已有 ComfyUI/D/SOFA，无新增本机 FFmpeg/服务。只改处理/混音参数只重合片。源编辑失效、逐块编辑和校对可见性、模式保留及空块拒绝已有回归。
+
+功能已于23:46HKT部署本地3001，build `rfG9d0aAGn_UKKsVC-xYL`，PID34800（parent40136，foreground session84893），活动源码 `.local/releases/performance-script/apps/web`，3040预览已停。主QA `I:/AI/asmr_director/qa/performance-script/2026-10-28/` 的final-verification/activation/service-verification记录最终事实。75功能文件隔离全量2266通过/5条件跳过（168文件通过/3跳过），72文件lint 0errors/1既有未用import警告，完整Webpack+TypeScript通过（WASM fallback）；先前全量/构建失败保留，不累计重叠定向结果。600秒/120块前镜指纹超64K已改固定摘要，回归覆盖后继可用及末块编辑失效，旧无parts格式不变。3001核对8资源、7参考、两日语WAV，75文件一致/28范围外未变；同build3040编译HTTP导出真实ZIP3,037,245字节，1逻辑18秒→4任务。启动入口 `I:/AI/asmr_director/service/2026-10-16/start-production.ps1`，回退依据在本QA start-production-before.ps1。该部署随后纳入2026-10-29用户要求的独立Git发布，提交/远端SHA以本QA publication.json为准。
+
+真实文本API前三轮暴露预算、短描述及连续性问题，第三轮live-verified仍因60秒目标估89秒失败。拆出独立新生成prompt后，第四轮live-clean为6业务/7上游、四脚本估52/56/50/60秒，有真实过渡、ASMR和纯无台词；WAV实测6.25秒覆盖假99秒，18秒设计为4×4.5秒英文replace块。四轮累计14业务/20上游，deepseek-v4-pro；仍有概览六次敲击与四块各一次等语义不一致，不称导演质量全通过。没有实际TTS/ASR/H3或最终视听；Computer Use尝试已停止，没有浏览器交互验收。每块不足一帧尾部补齐仍可能累计。更新包 `artifacts/h3-asmr/ASMR-video-runner-performance-script-update-2026-10-28.zip` 已校验14文件，SHA `e5155c3023a2893925ffaaeef82dbdbb1498b9cdccef987a41abd1de64b12950`，见batch/update-package.json；保留旧工程、工作流、素材和outputs。恢复入口：[本轮记录](records/2026-10-28-performance-script.md)、[中文合同](specs/2026-10-28-performance-script.zh.md) / [English](specs/2026-10-28-performance-script.en.md)。Audio Quality V1继续，其他SFX实验暂停，不新增路线。
+
+## Earlier update — 2026-10-28 / 近距离互动小剧场模板
 
 上一版第一人称/逐镜 ASMR 已按用户要求独立记录、提交并推送：`816d90a22fc189ecbbd41d4ad65220954caa21f3`，55 文件（49 功能/6 文档），远端 SHA 已核验；28 范围外工作保持，回执在 `qa/storyboard/2026-10-28-pov-asmr/publication.json`。下述模板是该检查点后的独立工作，不应混淆两轮发布状态。
 

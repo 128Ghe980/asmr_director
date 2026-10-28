@@ -12,7 +12,7 @@ describe("ASMR sound editing", () => {
   it("preserves an empty in-progress edit and commits meaningful prompt text on blur", () => {
     const onChange = vi.fn();
     render(<AsmrSoundEditor sound={sound} duration={2.123} disabled={false} onChange={onChange} />);
-    expect(screen.getByText("ASMR 触发音 · 随本段音频时长")).toBeTruthy();
+    expect(screen.getByText("环境与触发音 · 随本段音频时长")).toBeTruthy();
     const input = screen.getByLabelText("ASMR 触发音提示词");
     fireEvent.change(input, { target: { value: "" } }); fireEvent.blur(input);
     expect(onChange).not.toHaveBeenCalled();

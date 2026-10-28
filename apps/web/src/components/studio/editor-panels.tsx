@@ -10,7 +10,7 @@ export function EditorPanels({ children, activePanel: controlledPanel, onPanelCh
 
   return <div className="flex min-h-0 min-w-0 flex-col gap-2">
     <div role="tablist" aria-label="工程面板" className="flex shrink-0 gap-1 rounded-md bg-white/[0.035] p-1 md:hidden">
-      {["文案", "声音与分镜"].map((label, index) => <button
+      {["表演脚本", "声音与画面"].map((label, index) => <button
         key={label}
         type="button"
         role="tab"

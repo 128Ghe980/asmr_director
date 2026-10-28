@@ -2,7 +2,13 @@
 
 记录日期：2026-06-14
 
-最后更新：2026-10-28
+最后更新：2026-10-29
+
+2026-10-29 用户决定**保留当前版本，暂缓进一步生成质量优化**：主要使用基本固定机位，闲聊/接话/小玩笑暂不强求；不实施刚提出的动作完成条件、额外语义校对、声位细化及时长不足草稿保留方案。已知时长失败和第4→5段状态问题继续记录，不标为修复或质量通过。本次仅记录并单独提交推送既有75功能文件＋7文档，28项范围外保持；源码复用已验快照，不重跑模型/构建或重启服务。实际commit、远端SHA及保护结果见 `I:/AI/asmr_director/qa/performance-script/2026-10-28/publication.json`；分支`codex/voxcpm2-product-generation`，基线87d3e49。Audio Quality V1继续、其他SFX实验暂停，不新增路线。[发布记录](records/2026-10-28-performance-script.md) / [比较及用户决定](records/2026-10-29-aige-template-comparison.md)。
+
+2026-10-29 爱哥参考与当前互动模板实测：同主题三次策划120/120/60秒均失败，修复后估82/87/39秒，失败全部保留；拒绝的39秒原稿未手改，离线7段画面/声音设计成功，仅使用预估时长零PCM。共10业务/13上游，0TTS/ASR/H3。固定POV、第3段边整理边说话成立；4句台词偏功能、缺个性，第4段放手后退被重复整理替代，第5段状态跳变；第6段两拍后静等正确但左肩声音pan0，第1段声音另加移重衣料。原片只查画面/字幕，不能评价听感相似。无产品源码改动、新部署/提交/推送，前轮已部署状态与固定路线保持。[完整诊断](records/2026-10-29-aige-template-comparison.md)。
+
+2026-10-28 表演脚本与声音时间（**本地已部署，质量待验**）：自动安排台词、ASMR、过渡与互动，保留原使用顺序。段类型/意图持久化、模板v2、纯无台词直通、长段连续块及600秒指纹修复落地；原合片原音，增强版台词overlay/新无台词replace，复用ComfyUI/D/SOFA。前三轮失败保留，独立新生成prompt第四轮6业务/7上游通过结构预算，四脚本估52/56/50/60秒；累计14业务/20上游，仍有概览和逐块敲击数量不一致。最终75功能文件隔离全量2266通过/5条件跳过、72文件lint 0errors/1既有warning、完整Webpack/TS通过，23:46HKT切换3001 build `rfG9d0aAGn_UKKsVC-xYL`（PID34800），3040已停。8资源/7参考/两日语WAV、75文件一致/28范围外保持及编译HTTP导出1逻辑18秒→4任务通过，更新ZIP14文件已校验。无浏览器交互验收、实际H3/TTS/ASR或试听，不称表演质量全通过；后续按2026-10-29用户要求单独记录推送，实际Git结果见本QA publication.json。Audio Quality V1继续/其他SFX暂停，无新增本机FFmpeg/服务、传统模板或路线阶段。[记录及统一验证汇总](records/2026-10-28-performance-script.md)；[中文规格](specs/2026-10-28-performance-script.zh.md) / [English](specs/2026-10-28-performance-script.en.md)。
 
 2026-10-28 「近距离互动小剧场」：用户要求从「爱哥」两参考抽取可迁移镜头/表演，不复刻两片剧情。全长抽帧与局部细帧支持稳定听者主观视点、角色靠近/歪头/伸手、注意力切换、具体操作和小反应；无完整音轨听辨/ASR。新增模板`intimate-interaction-theatre`固定listener_pov、六节拍及13段202字原创地图修补示例，独立默认设定，交易模板约束不再强套新模板。7应用文件；122相关测试/7lint通过，最后英文及接触约束修正后61相关测试/单文件lint通过，分组重叠不相加。8业务/8上游deepseek-v4-pro请求无重试，验证两主题迁移和有声/空镜分镜，最终英文、稳定机位、脸部反应→左掌压纸及匹配ASMR成立；仍有起始状态藏动作等策划连续性缺陷，不称完整导演验收。无TTS/ASR/H3；3038预览模板锁定/示例/采用核对通过，用户3001工程未改，最终构建通过并切换3001 build `dbmLqQB5hklhIMQwcnjkw`，活动源码`.local/releases/interaction-theatre-template/apps/web`，启动PID24080；8静态资源/7参考/两日语WAV通过，7功能文件与发布副本一致、28范围外文件和两输入视频保持，3038已停止。用户随后要求单独记录推送本模板，范围仅7应用文件及6配套文档；提交/远端SHA与保护核验见本QA `publication.json`，本次不重启服务。恢复看本轮记录/QA回执。先前POV/ASMR版已单独推送`816d90a`（55文件49功能6文档，远端一致），本模板另记；AudioQualityV1继续/其他SFX暂停。[分析与实现记录](records/2026-10-28-aige-performance-template.md)；[中文规格](specs/2026-10-28-interaction-theatre-template.zh.md) / [English](specs/2026-10-28-interaction-theatre-template.en.md)。
 

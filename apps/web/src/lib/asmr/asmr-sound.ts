@@ -4,6 +4,9 @@ import { AudioPostProcessingAnchorSchema, AudioPostProcessingMovementSchema } fr
 /** The source duration is measured by the server/exporter, never chosen by the model. */
 export const AsmrSoundSchema = z.object({
   prompt: z.string().trim().min(1).max(2000),
+  // Missing means the original overlay behavior. Performance-only sound may replace
+  // the main video's native track, avoiding two copies of the same contact sound.
+  mixMode: z.enum(["overlay", "replace"]).optional(),
   postProcessing: z.object({
     start: AudioPostProcessingAnchorSchema,
     end: AudioPostProcessingAnchorSchema,

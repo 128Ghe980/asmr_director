@@ -95,7 +95,7 @@ function audioButton() {
   return screen.getByRole("button", { name: "生成未生成" }) as HTMLButtonElement;
 }
 function storyboardButton() {
-  return screen.getByRole("button", { name: "分镜全部生成" }) as HTMLButtonElement;
+  return screen.getByRole("button", { name: "批量设计画面与声音" }) as HTMLButtonElement;
 }
 
 type CatalogRequest = {
@@ -186,7 +186,7 @@ function mockBridge() {
 async function mountOnStoryboard(project: AsmrProject) {
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
   // No click, selection or settings-change event is ever sent to the sound tab.
-  fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+  fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
   await waitFor(() => expect(screen.getByRole("status", {
     name: "已采用 1 段，待生成 1 段，已生成未采用 0 段，共 2 段",
   })).toBeTruthy());

@@ -25,6 +25,21 @@ function fillParagraph(project: AsmrProject): AsmrProject {
 }
 
 describe("two speech workspaces with shared source", () => {
+  it("shares performance direction changes across workspaces without invalidating unchanged spoken audio", () => {
+    const source = fixture();
+    voices(source)[0].performance = { version: 1, segmentId: "opening", purpose: "dialogue", direction: "看向听者", soundIntent: "安静" };
+    const project = switchSpeechWorkspace(fillParagraph(ensureSpeechWorkspaces(source)), "short");
+    const edited = structuredClone(project);
+    voices(edited)[0].performance!.direction = "保持手部不动，轻轻挑眉。";
+    const synced = syncSharedSpeechScript(project, edited);
+    expect(synced.speechWorkspace!.paragraph.clips[0].performance).toEqual(voices(edited)[0].performance);
+    expect(synced.speechWorkspace!.paragraph.clips[0].audio_stale).toBeUndefined();
+    expect(voices(synced)[0].audio_stale).toBeUndefined();
+    expect(hasSharedSpeechScriptChanges(project, synced)).toBe(true);
+    const undone = restoreSharedSpeechScript(synced, project);
+    expect(undone.speechWorkspace!.paragraph.clips[0].performance).toEqual(voices(project)[0].performance);
+    expect(voices(undone)[0].asset.asset_id).toBe("short_0");
+  });
   it("keeps existing short audio and sentence identities while initializing an independent empty paragraph bank", () => {
     const project = fixture(); const before = structuredClone(project);
     const initialized = ensureSpeechWorkspaces(project);

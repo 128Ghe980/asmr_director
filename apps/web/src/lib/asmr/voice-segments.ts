@@ -240,9 +240,11 @@ export function splitVoiceClip(project: AsmrProject, clipId: string, start: numb
     const pieceStart = voice.start + duration * boundaries[index] / voice.text.length;
     const pieceEnd = voice.start + duration * boundaries[index + 1] / voice.text.length;
     const pieceDuration = pieceEnd - pieceStart;
+    const id = index === 0 ? voice.id : newVoiceId(project, reserved);
     return pendingVoice({
       ...voice,
-      id: index === 0 ? voice.id : newVoiceId(project, reserved),
+      id,
+      ...(voice.performance ? { performance: { ...voice.performance, segmentId: id, direction: "", soundIntent: "" } } : {}),
       start: pieceStart,
       duration: pieceDuration,
       text,
@@ -277,9 +279,11 @@ export function addVoiceClip(project: AsmrProject, afterClipId?: string): VoiceS
     generation: { status: "asset_pending", model: "gpt-sovits", seed: 0, retry_count: 0, error: null },
     asset: { asset_id: null, uri: null, duration: null },
   };
+  const id = newVoiceId(project);
   const added = pendingVoice({
     ...source,
-    id: newVoiceId(project), text: "在这里输入台词。", start, duration: 4,
+    id, text: "在这里输入台词。", start, duration: 4,
+    ...(source.performance ? { performance: { version: 1 as const, segmentId: id, purpose: "dialogue" as const, direction: "", soundIntent: "" } } : {}),
     kind: "speech", audio_stale: undefined,
     semantic_unit: true,
     pause_after: inheritedPause,
@@ -304,7 +308,9 @@ export function addSilentClip(project: AsmrProject, afterClipId?: string, option
   const edit = addVoiceClip(project, afterClipId);
   if (!edit.selectedClipId) return edit;
   const silent = replaceVoices(edit.project, voices(edit.project).map((clip) => clip.id === edit.selectedClipId ? {
-    ...clip, kind: "silent", text: options.description?.trim() || "待设计：根据前后剧情安排自然衔接的无对白画面。",
+    ...clip, kind: "silent", text: options.description?.trim() || "待设计：根据前后剧情安排自然衔接的无台词画面。",
+    ...(voices(project).some(item => item.performance) ? { performance: { version: 1 as const,
+      segmentId: clip.id, purpose: "transition" as const, direction: "", soundIntent: "" } } : {}),
     semantic_unit: false, audio_stale: undefined, fade_in: 0, fade_out: 0,
   } : clip));
   return { ...edit, project: fitVoiceSegmentTiming(silent, edit.selectedClipId, duration) };
@@ -340,6 +346,8 @@ export function mergeVoiceClipWithNext(project: AsmrProject, clipId: string): Vo
   const duration = Math.max(voice.start + spokenDuration(voice), next.start + spokenDuration(next)) - voice.start;
   const merged = pendingVoice({
     ...voice, text: voice.text + next.text, duration,
+    ...(voice.performance || next.performance ? { performance: { version: 1 as const, segmentId: voice.id,
+      purpose: "dialogue" as const, direction: "", soundIntent: "" } } : {}),
     ...(voice.semantic_unit || next.semantic_unit ? { semantic_unit: true } : {}),
     fade_out: Math.min(next.fade_out, duration),
     pause_after: next.pause_after ?? getVoiceGapAfter(project, next.id) ?? 0,

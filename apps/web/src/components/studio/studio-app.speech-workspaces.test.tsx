@@ -203,17 +203,17 @@ describe("StudioApp paged speech workspaces", () => {
 
   it("shares silent-shot insertion across both views while retaining speech audio", async () => {
     const project = fixture(); mockApi(); await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "下方插入无对白" }));
+    fireEvent.click(screen.getByRole("button", { name: "下方插入无台词" }));
     await waitFor(() => expect(voices(current())).toHaveLength(3));
     const silent = voices(current())[1];
-    expect(silent.text).toBe("待设计：根据前后剧情安排自然衔接的无对白画面。");
+    expect(silent.text).toBe("待设计：根据前后剧情安排自然衔接的无台词画面。");
     expect(current().speechWorkspace!.paragraph.clips[1].text).toBe(silent.text);
     expect(silent.kind).toBe("silent");
     expect(screen.getByTestId("storyboard-clip").textContent).toBe(silent.id);
     expect(current().speechWorkspace!.paragraph.clips[1].id).toBe(silent.id);
     expect(current().speechWorkspace!.paragraph.clips[1].kind).toBe("silent");
     fireEvent.click(screen.getByRole("tab", { name: "整段" }));
-    expect(screen.getByRole("textbox", { name: "无对白镜头描述" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "无台词段描述" })).toBeTruthy();
     expect(voices(current()).filter((clip) => clip.kind !== "silent").map((clip) => clip.asset.asset_id)).toEqual(["paragraph_0", "paragraph_1"]);
     expect(voices(current()).filter((clip) => clip.kind !== "silent").every((clip) => !clip.audio_stale)).toBe(true);
     expect(bridgeFactory).not.toHaveBeenCalled();
@@ -221,18 +221,18 @@ describe("StudioApp paged speech workspaces", () => {
 
   it.each(["short", "paragraph"] as const)("shows the matching inspector for ordinary %s list selections after inserting a silent shot", async (mode) => {
     const project = fixture(); mockApi(); await mount(project);
-    fireEvent.click(screen.getByRole("button", { name: "下方插入无对白" }));
+    fireEvent.click(screen.getByRole("button", { name: "下方插入无台词" }));
     await waitFor(() => expect(voices(current())).toHaveLength(3));
     const silent = voices(current())[1];
     expect(screen.getByTestId("storyboard-clip").textContent).toBe(silent.id);
     if (mode === "paragraph") fireEvent.click(screen.getByRole("tab", { name: "整段" }));
 
     const selectSpeech = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "选择第 3 段" : "选择整段 3" }));
-    const selectSilent = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "选择第 2 段" : "无对白镜头" }));
+    const selectSilent = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "选择第 2 段" : "无台词段" }));
     const focusSpeech = () => fireEvent.focus(mode === "short"
       ? screen.queryByRole("textbox", { name: "第 3 段台词" }) ?? screen.getByRole("textbox", { name: "台词" })
       : screen.getByRole("textbox", { name: "整段 3 文案" }));
-    const openSpeechStoryboard = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "第 3 段视频分镜" : "整段内短句 1 分镜" }));
+    const openSpeechStoryboard = () => fireEvent.click(screen.getByRole("button", { name: mode === "short" ? "第 3 段画面与声音" : "整段内短句 1 分镜" }));
     const expectAudio = () => {
       expect(screen.getByRole("tab", { name: "声音" }).getAttribute("aria-selected")).toBe("true");
       expect(screen.getByRole("tabpanel", { name: "声音" })).toBeTruthy();
@@ -240,8 +240,8 @@ describe("StudioApp paged speech workspaces", () => {
       expect(screen.queryByTestId("storyboard-clip")).toBeNull();
     };
     const expectStoryboard = (clipId: string) => {
-      expect(screen.getByRole("tab", { name: "分镜" }).getAttribute("aria-selected")).toBe("true");
-      expect(screen.getByRole("tabpanel", { name: "分镜" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "画面与声音" }).getAttribute("aria-selected")).toBe("true");
+      expect(screen.getByRole("tabpanel", { name: "画面与声音" })).toBeTruthy();
       expect(screen.getByTestId("storyboard-clip").textContent).toBe(clipId);
       expect(screen.queryByRole("tabpanel", { name: "声音" })).toBeNull();
     };
@@ -271,7 +271,7 @@ describe("StudioApp paged speech workspaces", () => {
     fireEvent.focus(screen.getByRole("textbox", { name: "整段 1 文案" }));
     expect(screen.getByRole("tab", { name: "声音" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("tabpanel", { name: "声音" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
     expect(screen.getByTestId("storyboard-clip").textContent).toBe("voice_1");
     expect(bridgeFactory).not.toHaveBeenCalled();
   });

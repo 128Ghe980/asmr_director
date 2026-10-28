@@ -130,7 +130,7 @@ describe("StudioApp project boundaries with the actual planner and inspector", (
 
   it.each(["planner", "scene"] as const)("cancels an old %s request on project switch and ignores its late response", async (kind) => {
     const original = seed(); seedLegacy(); const api = mockApi(); await mount();
-    if (kind === "planner") fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    if (kind === "planner") fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     else { fireEvent.click(screen.getByRole("tab", { name: "场景" })); fireEvent.click(screen.getByRole("button", { name: "重新生成背景" })); }
     await waitFor(() => expect(api.posts).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "新建项目" })); const createdId = currentProject().project_id;
@@ -152,16 +152,16 @@ describe("StudioApp project boundaries with the actual planner and inspector", (
     fireEvent.click(screen.getByRole("button", { name: "工程编辑" }));
     const script = screen.getByLabelText("文案与分段");
     fireEvent.click(within(script).getByRole("button", { name: "选择第 2 段" }));
-    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
+    fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
     await waitFor(() => expect(control("工程剧情背景").value).toBe("旧工程分镜的剧情背景"));
-    expect(screen.getByLabelText("本段视频分镜").textContent).toContain(draft.sections[1].text);
+    expect(screen.getByLabelText("本段画面与声音").textContent).toContain(draft.sections[1].text);
     fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
     expect(screen.getByRole("tab", { name: "声音" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.queryByLabelText("本段视频分镜")).toBeNull();
+    expect(screen.queryByLabelText("本段画面与声音")).toBeNull();
     expect(screen.getByLabelText("当前范围文本").textContent).not.toContain("旧项目独有");
     fireEvent.click(screen.getByRole("button", { name: "已有书店项目" }));
-    fireEvent.click(screen.getByRole("tab", { name: "分镜" }));
-    await waitFor(() => expect(screen.getByLabelText("本段视频分镜").textContent).toContain(draft.sections[0].text));
+    fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
+    await waitFor(() => expect(screen.getByLabelText("本段画面与声音").textContent).toContain(draft.sections[0].text));
     expect(control("工程剧情背景").value).toBe("旧工程分镜的剧情背景");
     expect(currentProject()).toEqual(original);
     expect(getCurrentLibraryEntry(loadProjectLibrary(window.localStorage, demoProject)).project).toEqual(original);

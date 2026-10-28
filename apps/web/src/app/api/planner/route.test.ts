@@ -85,16 +85,20 @@ describe("/api/planner", () => {
 
   it("returns a real validated provider result without infrastructure fields", async () => {
     const section = {
+      kind: "speech", purpose: "dialogue",
       id: "one", title: "开场", text: "进来坐一会儿吧。", emotion: "温柔", style: "轻声", pace: "slow",
       direction: "自然留白", soundSuggestions: "翻书声", pauseAfter: "medium",
       position: { pan: 0, distance: "near", movement: "static" },
     };
     const draft = {
+      performanceVersion: 1,
       title: "深夜书店", scene: "夜晚书店", character: { role: "店员", personality: ["耐心"], speechStyle: ["轻声"] },
-      sections: [section, { ...section, id: "two", title: "收尾" }],
+      sections: [section, { ...section, id: "paper", title: "慢慢翻书", kind: "silent", purpose: "asmr", durationSeconds: 50,
+        text: "稳稳托住同一本书，慢慢翻动书页，在纸张声之间留出安静间隙。", direction: "起始：双手托着书；动作：逐页缓慢翻动；结束：书仍留在手中。" },
+      { ...section, id: "two", title: "收尾" }],
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ message: { content: JSON.stringify(draft) } })));
-    const response = await POST(request({ action: "generate", provider: "ollama", brief: { theme: "深夜书店" } }));
+    const response = await POST(request({ action: "generate", provider: "ollama", brief: { theme: "深夜书店", durationSeconds: 60 } }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ draft, provider: "ollama" });
   });

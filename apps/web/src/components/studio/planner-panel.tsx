@@ -8,6 +8,7 @@ import {
   PlannerDraftSchema,
   PlannerSectionSchema,
   getPlannerPauseSeconds,
+  getPlannerDurationSummary,
   type PlannerBrief,
   type PlannerDraft,
   type PlannerSection,
@@ -20,7 +21,7 @@ import {
   type PlannerWorkingState,
 } from "@/lib/asmr/planner-persistence";
 import {
-  insertPlannerSection, mergePlannerSection, PlannerReplacementSchema,
+  insertPlannerSection, insertPlannerSilentSection, mergePlannerSection, PlannerReplacementSchema,
   replacePlannerRange, splitPlannerSection, type PlannerTextRange,
 } from "@/lib/asmr/planner-editing";
 import { normalizePlannerSemanticDraft } from "@/lib/asmr/planner-semantic";
@@ -41,6 +42,7 @@ type PlannerPanelProps = {
 const fieldClass = "w-full min-w-0 rounded-lg border border-studio-line bg-black/20 px-3 py-2 text-sm leading-6 text-studio-text outline-none placeholder:text-studio-muted/60 focus:border-sky-300/50 focus:ring-2 focus:ring-sky-300/15 disabled:opacity-50";
 const buttonClass = "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-studio-line px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-sky-300 disabled:cursor-not-allowed disabled:opacity-40";
 const primaryClass = `${buttonClass} border-sky-300/30 bg-sky-300/12 text-sky-100 hover:bg-sky-300/20`;
+const purposeLabels = { dialogue: "交流", asmr: "ASMR 操作", transition: "动作过渡", interaction: "互动停留" } as const;
 
 function validationMessage(issues: { path: PropertyKey[] }[]) {
   const issue = issues[0];
@@ -73,11 +75,12 @@ function downloadDraft(brief: PlannerBrief, draft: PlannerDraft, sceneDescriptio
     `目标时长：${brief.durationSeconds / 60} 分钟（规划参考）`,
     `分镜风格：${STORYBOARD_STYLE_LABELS[effectiveStoryboardStyle(brief)]}`, "",
     ...draft.sections.flatMap((section, index) => [
-      `${index + 1}. ${section.title}`, section.text, "",
+      `${index + 1}. ${section.title}${section.kind === "silent" ? ` · 无台词 · ${section.durationSeconds} 秒` : " · 台词"}`, section.text, "",
       `导演提示：${section.direction || "无"}`,
       `音效建议：${section.soundSuggestions || "无"}`,
       `情绪：${section.emotion}；风格：${section.style}；语速：${section.pace}`,
-      `句后等待：${getPlannerPauseSeconds(section)} 秒`, "",
+      ...(section.kind === "silent" ? [`用途：${purposeLabels[section.purpose ?? "asmr"]}`]
+        : draft.performanceVersion === 1 ? [] : [`句后等待：${getPlannerPauseSeconds(section)} 秒`]), "",
     ]),
     ...(sceneDescription?.trim() ? ["剧情背景", sceneDescription, ""] : []),
     ...(template ? [
@@ -219,7 +222,9 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
   const provider = providers.find((item) => item.id === working.provider);
   const busy = pending !== null;
   const draftValidation = draft ? PlannerDraftSchema.safeParse(draft) : null;
-  const readableCharacters = draft?.sections.reduce((sum, section) => sum + section.text.replace(/\s/g, "").length, 0) ?? 0;
+  const readableCharacters = draft?.sections.reduce((sum, section) => sum + (section.kind === "silent" ? 0 : section.text.replace(/\s/g, "").length), 0) ?? 0;
+  const nonSpeechCount = draft?.sections.filter(section => section.kind === "silent").length ?? 0;
+  const durationSummary = draft ? getPlannerDurationSummary(draft) : undefined;
 
   function changeWorking(next: PlannerWorkingState) {
     const interrupted = !!requestRef.current;
@@ -283,7 +288,9 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
     if (!draft) return;
     setActiveSectionId(id);
     if ("text" in patch) setSelection(null);
-    updateDraft({ sections: draft.sections.map((section) => section.id === id ? { ...section, ...patch } : section) });
+    updateDraft({ sections: draft.sections.map((section) => section.id === id
+      ? { ...section, ...(draft.performanceVersion === 1 && patch.text !== undefined && patch.text !== section.text
+        ? { direction: "", soundSuggestions: "" } : {}), ...patch } : section) });
   }
 
   function editStructure(edit: (current: PlannerDraft) => PlannerDraft) {
@@ -297,6 +304,16 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
       const added = next.sections.find((section) => !draft.sections.some((old) => old.id === section.id));
       setActiveSectionId(added?.id ?? (next.sections.some((section) => section.id === activeSectionId) ? activeSectionId : next.sections[0]?.id ?? null));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "暂时无法修改分段。"); }
+  }
+
+  function moveSection(id: string, offset: -1 | 1) {
+    editStructure(current => {
+      const index = current.sections.findIndex(section => section.id === id);
+      if (index < 0 || index + offset < 0 || index + offset >= current.sections.length) return current;
+      const sections = [...current.sections];
+      [sections[index], sections[index + offset]] = [sections[index + offset], sections[index]];
+      return { ...current, sections };
+    });
   }
 
   function captureSelection(sectionId: string, textarea: HTMLTextAreaElement) {
@@ -361,7 +378,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
       setWorking(nextWorking);
       setCanPersist(true);
       setSaving(true);
-      setNotice(action === "generate" ? "文案已生成。" : range ? "已改写选中文字。" : "已改写所选段落。");
+      setNotice(action === "generate" ? "表演脚本已生成。" : range ? "已改写选中文字。" : "已改写所选段落。");
       setActiveTab("script");
       setSelection(null);
       setInstruction("");
@@ -448,7 +465,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
             <label className="block space-y-1 text-xs text-studio-muted"><span>说话风格</span><input aria-label="说话风格" className={fieldClass} value={brief.style} maxLength={200} onChange={(event) => updateBrief({ style: event.target.value })} /></label>
             <label className="block space-y-1 text-xs text-studio-muted"><span>补充要求</span><textarea aria-label="补充要求 / 避免的内容" className={fieldClass} value={brief.notes} rows={3} maxLength={2000} onChange={(event) => updateBrief({ notes: event.target.value })} /></label>
           </div></details>
-          <button type="button" className={`${primaryClass} min-h-10 w-full`} disabled={busy || !loaded || !provider?.configured || !brief.theme.trim()} onClick={() => void runPlanner("generate")}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{draft ? "重新生成策划稿" : "生成策划稿"}</button>
+          <button type="button" className={`${primaryClass} min-h-10 w-full`} disabled={busy || !loaded || !provider?.configured || !brief.theme.trim()} onClick={() => void runPlanner("generate")}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{draft ? "重新生成表演脚本" : "生成表演脚本"}</button>
           {source ? <details className="text-xs text-studio-muted"><summary className="cursor-pointer">项目原稿</summary><button className={`${buttonClass} mt-2 w-full`} disabled={!loaded} onClick={() => { remember(); changeWorking({ ...working, brief: source.brief, draftBrief: source.brief, draft: structuredClone(source.draft), storyboard: source.storyboard ? structuredClone(source.storyboard) : null, sceneDescription: source.sceneDescription ?? null }); setRewriteId(null); setActiveSectionId(null); setNotice("已载入项目原稿。"); }}>载入当前项目策划稿</button></details> : null}
           {legacyAvailable ? <details className="text-xs text-studio-muted"><summary className="cursor-pointer">恢复旧版草稿</summary><button className={`${buttonClass} mt-2 w-full`} disabled={!loaded} onClick={() => {
             const previous = loadPlannerDraft(window.localStorage);
@@ -462,7 +479,7 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-3">
               <div role="tablist" aria-label="策划内容" className="flex items-center gap-1 rounded-lg border border-studio-line bg-black/20 p-1">
-                {([['script', '文案', FileText], ['scene', '场景', MapPin], ['templates', '参考模板', BookOpen]] as const).map(([tab, label, Icon]) => <button key={tab} type="button" role="tab" id={`planner-tab-${tab}`} aria-selected={activeTab === tab} aria-controls={`planner-panel-${tab}`} tabIndex={activeTab === tab ? 0 : -1} className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 sm:px-3 ${activeTab === tab ? tab === "scene" ? "bg-violet-300/15 text-violet-100" : tab === "templates" ? "bg-amber-200/15 text-amber-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`} onClick={() => switchTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const tabs = ["script", "scene", "templates"] as const; const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[2] : tabs[(tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : 2)) % tabs.length]; switchTab(next); document.getElementById(`planner-tab-${next}`)?.focus(); }}><Icon className="h-3.5 w-3.5" aria-hidden="true" />{label}</button>)}
+                {([['script', '表演脚本', FileText], ['scene', '场景', MapPin], ['templates', '参考模板', BookOpen]] as const).map(([tab, label, Icon]) => <button key={tab} type="button" role="tab" id={`planner-tab-${tab}`} aria-selected={activeTab === tab} aria-controls={`planner-panel-${tab}`} tabIndex={activeTab === tab ? 0 : -1} className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-violet-300 sm:px-3 ${activeTab === tab ? tab === "scene" ? "bg-violet-300/15 text-violet-100" : tab === "templates" ? "bg-amber-200/15 text-amber-100" : "bg-sky-300/15 text-sky-100" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`} onClick={() => switchTab(tab)} onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const tabs = ["script", "scene", "templates"] as const; const next = event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[2] : tabs[(tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : 2)) % tabs.length]; switchTab(next); document.getElementById(`planner-tab-${next}`)?.focus(); }}><Icon className="h-3.5 w-3.5" aria-hidden="true" />{label}</button>)}
               </div>
               <span className="flex items-center gap-1 text-[11px] text-studio-muted" role="status">{!saveError && loaded && !saving ? <Check className="h-3 w-3 text-studio-green" aria-hidden="true" /> : null}{!loaded ? "正在载入" : saveError ? "未保存" : saving ? "保存中…" : "已保存"}</span>
             </div>
@@ -471,34 +488,40 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
           {draft && activeTab !== "templates" ? <div className="mt-2">
             <input aria-label="文案标题" className="w-full min-w-0 bg-transparent py-1 text-xl font-semibold leading-8 outline-none focus:ring-1 focus:ring-sky-300/25" value={draft.title} maxLength={120} onChange={(event) => updateDraft({ title: event.target.value })} />
             {activeTab === "script" ? <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
-              <p className="text-[11px] text-studio-muted">{draft.sections.length} 条台词 · {readableCharacters} 字</p>
+              <p className="text-[11px] leading-5 text-studio-muted">{draft.sections.length - nonSpeechCount} 条台词 · {readableCharacters} 字{nonSpeechCount > 0 ? ` · ${nonSpeechCount} 个无台词段` : ""}{durationSummary && draft.performanceVersion === 1 ? <span className="block">语言预计 {Math.round(durationSummary.speechSeconds)} 秒 · 无台词 {Number(durationSummary.nonSpeechSeconds.toFixed(1))} 秒 · 全片预计 {Math.round(durationSummary.totalSeconds)} 秒</span> : null}</p>
               <details className="text-xs text-studio-muted"><summary className="cursor-pointer">文案操作</summary><div className="pt-2"><button className={buttonClass} onClick={() => editStructure((current) => normalizePlannerSemanticDraft(current, { preserveSectionPauses: true }))}>按语义整理短句</button></div></details>
             </div> : null}
           </div> : null}
         </div>
         <div aria-live="polite" aria-atomic="true" className="max-h-[28%] shrink-0 overflow-y-auto px-4 sm:px-6">
-          {busy ? <div className="flex items-center justify-between gap-2 py-2 text-xs text-sky-100"><span className="flex items-center gap-2"><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />{pending === "generate" ? "正在写文案…" : pending === "scene" ? "正在生成背景…" : "正在改写…"}</span><button className={buttonClass} onClick={cancelRequest}>取消</button></div> : null}
+          {busy ? <div className="flex items-center justify-between gap-2 py-2 text-xs text-sky-100"><span className="flex items-center gap-2"><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />{pending === "generate" ? "正在安排表演并写脚本…" : pending === "scene" ? "正在生成背景…" : "正在改写…"}</span><button className={buttonClass} onClick={cancelRequest}>取消</button></div> : null}
           {notice ? <p className="py-2 text-xs text-studio-muted">{notice}</p> : null}
           {[saveError, error].filter(Boolean).map((message, index) => <p key={index} role="alert" className="py-2 text-xs leading-5 text-amber-100">{message}</p>)}
         </div>
         <div data-planner-scroll role="tabpanel" id={`planner-panel-${activeTab}`} aria-labelledby={`planner-tab-${activeTab}`} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 sm:px-5">
-          {activeTab === "templates" ? <CreativeTemplatePanel templates={CREATIVE_TEMPLATES} selected={brief.referenceTemplate} disabled={!loaded} onApply={applyTemplate} onUpdate={(template) => updateBrief({ referenceTemplate: template })} onLoadDemo={loadTemplateDemo} onRemove={removeTemplate} /> : activeTab === "scene" ? <PlannerSceneEditor draft={draft} sceneDescription={sceneDescription} busy={busy} canGenerate={loaded && !!provider?.configured && !!draftValidation?.success} onGenerate={(instruction) => void generateScene(instruction)} onEdit={editScene} onEditCharacter={(role) => { if (draft) updateDraft({ character: { ...draft.character, role } }); }} onBack={() => switchTab("script")} /> : !draft ? <div className="flex h-full min-h-40 flex-col items-center justify-center px-6 text-center"><Sparkles className="mb-4 h-7 w-7 text-sky-200/60" aria-hidden="true" /><h3 className="text-lg font-semibold">从今晚的一个想法开始</h3><p className="mt-2 max-w-xs text-sm leading-7 text-studio-muted">写下主题，生成一份可以逐句雕琢的陪伴文案。</p><button className={`${buttonClass} mt-4 lg:hidden`} onClick={() => setBriefExpanded(true)}>填写创作设定</button></div> : <div className="mx-auto max-w-[860px] space-y-1">
+          {activeTab === "templates" ? <CreativeTemplatePanel templates={CREATIVE_TEMPLATES} selected={brief.referenceTemplate} disabled={!loaded} onApply={applyTemplate} onUpdate={(template) => updateBrief({ referenceTemplate: template })} onLoadDemo={loadTemplateDemo} onRemove={removeTemplate} /> : activeTab === "scene" ? <PlannerSceneEditor draft={draft} sceneDescription={sceneDescription} busy={busy} canGenerate={loaded && !!provider?.configured && !!draftValidation?.success} onGenerate={(instruction) => void generateScene(instruction)} onEdit={editScene} onEditCharacter={(role) => { if (draft) updateDraft({ character: { ...draft.character, role } }); }} onBack={() => switchTab("script")} /> : !draft ? <div className="flex h-full min-h-40 flex-col items-center justify-center px-6 text-center"><Sparkles className="mb-4 h-7 w-7 text-sky-200/60" aria-hidden="true" /><h3 className="text-lg font-semibold">从今晚的一个想法开始</h3><p className="mt-2 max-w-xs text-sm leading-7 text-studio-muted">写下创意，生成包含台词、声音操作和自然过渡的表演脚本。</p><button className={`${buttonClass} mt-4 lg:hidden`} onClick={() => setBriefExpanded(true)}>填写创作设定</button></div> : <div className="mx-auto max-w-[860px] space-y-1">
             {draft.sections.map((section, index) => {
               const active = activeSectionId === section.id;
+              const silent = section.kind === "silent";
               const range = selection?.sectionId === section.id ? selection : null;
               const selectedText = range && range.start < range.end ? section.text.slice(range.start, range.end) : "";
-              return <article key={section.id} data-planner-unit={section.id} className={`min-w-0 rounded-lg border-l-2 px-2 py-2 sm:px-3 ${active ? "border-sky-300/60 bg-sky-300/[0.045]" : "border-transparent hover:bg-white/[0.025]"}`}>
-                <div className="flex items-start gap-3"><button aria-label={`选择第 ${index + 1} 段`} aria-pressed={active} className="mt-2 w-6 shrink-0 text-left text-[10px] tabular-nums text-studio-muted/55" onClick={() => setActiveSectionId(section.id)}>{String(index + 1).padStart(2, "0")}</button><textarea aria-label={`第 ${index + 1} 段台词`} value={section.text} rows={1} maxLength={3000} placeholder="写下一句台词…" className="min-h-8 w-full min-w-0 resize-none overflow-y-auto rounded-sm bg-transparent py-1 text-[15px] leading-8 text-studio-text outline-none [field-sizing:content] focus:ring-0" onFocus={() => setActiveSectionId(section.id)} onSelect={(event) => captureSelection(section.id, event.currentTarget)} onClick={(event) => captureSelection(section.id, event.currentTarget)} onKeyUp={(event) => captureSelection(section.id, event.currentTarget)} onChange={(event) => updateSection(section.id, { text: event.target.value })} /></div>
+              return <article key={section.id} data-planner-unit={section.id} data-planner-kind={silent ? "silent" : "speech"} className={`min-w-0 rounded-lg border-l-2 px-2 py-2 sm:px-3 ${active ? "border-sky-300/60 bg-sky-300/[0.045]" : "border-transparent hover:bg-white/[0.025]"}`}>
+                {silent ? <div className="mb-1 ml-9 flex flex-wrap items-center gap-2 text-[11px] text-violet-200"><span className="rounded border border-violet-300/20 bg-violet-300/10 px-1.5 py-0.5">无台词 · {purposeLabels[section.purpose ?? "asmr"]}</span><span>{section.durationSeconds ?? 0} 秒</span></div> : null}
+                <div className="flex items-start gap-3"><button aria-label={`选择第 ${index + 1} 段`} aria-pressed={active} className="mt-2 w-6 shrink-0 text-left text-[10px] tabular-nums text-studio-muted/55" onClick={() => setActiveSectionId(section.id)}>{String(index + 1).padStart(2, "0")}</button><textarea aria-label={`第 ${index + 1} 段${silent ? "无台词内容" : "台词"}`} value={section.text} rows={1} maxLength={3000} placeholder={silent ? "写下这一段的动作、声音或等待…" : "写下一句台词…"} className="min-h-8 w-full min-w-0 resize-none overflow-y-auto rounded-sm bg-transparent py-1 text-[15px] leading-8 text-studio-text outline-none [field-sizing:content] focus:ring-0" onFocus={() => setActiveSectionId(section.id)} onSelect={(event) => captureSelection(section.id, event.currentTarget)} onClick={(event) => captureSelection(section.id, event.currentTarget)} onKeyUp={(event) => captureSelection(section.id, event.currentTarget)} onChange={(event) => updateSection(section.id, { text: event.target.value })} /></div>
                 {active ? <div className="ml-9 mt-2 space-y-3 border-t border-sky-300/10 pt-3">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <button aria-label={`AI 改写第 ${index + 1} 段`} className={`${primaryClass}`} aria-expanded={rewriteId === section.id} onClick={() => { setRewriteId(rewriteId === section.id ? null : section.id); setInstruction(""); setError(""); }}><Sparkles className="h-3 w-3" aria-hidden="true" />{selectedText ? "改写选区" : "AI 改写"}</button>
-                    <button className={buttonClass} aria-label={`拆分第 ${index + 1} 段`} disabled={!range} onClick={() => range && editStructure((current) => splitPlannerSection(current, section.id, range))}>{selectedText ? "选区独立成句" : "光标处分句"}</button>
-                    <button className={buttonClass} aria-label={`合并第 ${index + 1} 段与下一段`} disabled={index === draft.sections.length - 1} title="保留前句声音设置，合并导演和音效提示，沿用后句等待。" onClick={() => editStructure((current) => mergePlannerSection(current, section.id))}>合并下句</button>
+                    <button className={buttonClass} aria-label={`拆分第 ${index + 1} 段`} disabled={silent || !range} onClick={() => range && editStructure((current) => splitPlannerSection(current, section.id, range))}>{selectedText ? "选区独立成句" : "光标处分句"}</button>
+                    <button className={buttonClass} aria-label={`合并第 ${index + 1} 段与下一段`} disabled={silent || index === draft.sections.length - 1 || draft.sections[index + 1]?.kind === "silent"} title="合并相邻台词，保留表演段落之间的边界。" onClick={() => editStructure((current) => mergePlannerSection(current, section.id))}>合并下句</button>
                     <button className={buttonClass} aria-label={`在第 ${index + 1} 段后新增`} onClick={() => editStructure((current) => insertPlannerSection(current, section.id))}>下方插入</button>
+                    <button className={`${buttonClass} text-violet-200`} aria-label={`在第 ${index + 1} 段后新增无台词段`} onClick={() => editStructure(current => insertPlannerSilentSection(current, section.id))}>插入无台词段</button>
+                    <button className={buttonClass} aria-label={`上移第 ${index + 1} 段`} disabled={index === 0} onClick={() => moveSection(section.id, -1)}>上移</button>
+                    <button className={buttonClass} aria-label={`下移第 ${index + 1} 段`} disabled={index === draft.sections.length - 1} onClick={() => moveSection(section.id, 1)}>下移</button>
                     <button className={`${buttonClass} text-studio-muted`} aria-label={`删除第 ${index + 1} 段`} onClick={() => editStructure((current) => ({ ...current, sections: current.sections.filter((item) => item.id !== section.id) }))}>删除</button>
                   </div>
-                  {rewriteId === section.id ? <div className="space-y-2 rounded-lg bg-black/15 p-3">{selectedText ? <div className="text-xs"><p className="text-sky-100">仅改写选中文字 · {selectedText.length} 字</p><blockquote className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-studio-muted">{selectedText}</blockquote><button className="mt-1 text-studio-muted underline" onClick={() => setSelection(null)}>改为整段改写</button></div> : <p className="text-xs text-studio-muted">当前改写本条台词，也可在上方选中文字。</p>}<textarea aria-label={`第 ${index + 1} 段改写要求`} value={instruction} onChange={(event) => setInstruction(event.target.value)} className={fieldClass} rows={2} maxLength={2000} placeholder="想怎么改？例如：更像日常聊天，少一点说教。" /><button className={primaryClass} disabled={busy || !instruction.trim() || !provider?.configured} onClick={() => void runPlanner("rewrite")}>{selectedText ? "改写选中文字" : "改写这一段"}</button></div> : null}
-                  <details className="text-xs text-studio-muted"><summary className="cursor-pointer">导演与声音 <span className="ml-2 text-studio-muted/65">句后等待 {getPlannerPauseSeconds(section)} 秒</span></summary><div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2"><label className="space-y-1"><span>台词备注标题</span><input aria-label={`第 ${index + 1} 段标题`} className={fieldClass} value={section.title} maxLength={120} onChange={(event) => updateSection(section.id, { title: event.target.value })} /></label><label className="space-y-1"><span>句后等待（秒）</span><input aria-label={`第 ${index + 1} 段等待秒数`} type="number" min={0} max={30} step={0.05} className={fieldClass} value={getPlannerPauseSeconds(section)} onChange={(event) => { const seconds = Number(event.target.value); if (Number.isFinite(seconds) && seconds >= 0 && seconds <= 30) updateSection(section.id, { pauseAfterSeconds: seconds }); }} /></label>
+                  {rewriteId === section.id ? <div className="space-y-2 rounded-lg bg-black/15 p-3">{selectedText ? <div className="text-xs"><p className="text-sky-100">仅改写选中文字 · {selectedText.length} 字</p><blockquote className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-studio-muted">{selectedText}</blockquote><button className="mt-1 text-studio-muted underline" onClick={() => setSelection(null)}>改为整段改写</button></div> : <p className="text-xs text-studio-muted">当前改写本段内容，也可在上方选中文字。</p>}<textarea aria-label={`第 ${index + 1} 段改写要求`} value={instruction} onChange={(event) => setInstruction(event.target.value)} className={fieldClass} rows={2} maxLength={2000} placeholder="想怎么改？例如：更像日常聊天，少一点说教。" /><button className={primaryClass} disabled={busy || !instruction.trim() || !provider?.configured} onClick={() => void runPlanner("rewrite")}>{selectedText ? "改写选中文字" : "改写这一段"}</button></div> : null}
+                  {silent ? <div className="flex flex-wrap items-end gap-3 text-xs text-violet-200"><label className="space-y-1"><span className="block">段落用途</span><select aria-label={`第 ${index + 1} 段用途`} className={fieldClass} value={section.purpose ?? "asmr"} onChange={event => updateSection(section.id, { purpose: event.target.value as PlannerSection["purpose"] })}>{(["asmr", "transition", "interaction"] as const).map(purpose => <option key={purpose} value={purpose}>{purposeLabels[purpose]}</option>)}</select></label><label className="space-y-1"><span className="block">时长（秒）</span><input aria-label={`第 ${index + 1} 段无台词时长`} type="number" min={0.5} max={600} step={0.5} className={`${fieldClass} max-w-28`} value={section.durationSeconds ?? 5} onChange={event => { const seconds = Number(event.target.value); if (Number.isFinite(seconds) && seconds >= 0.5 && seconds <= 600) updateSection(section.id, { durationSeconds: seconds }); }} /></label></div> : null}
+                  <details className="text-xs text-studio-muted"><summary className="cursor-pointer">导演与声音 <span className="ml-2 text-studio-muted/65">{silent || draft.performanceVersion === 1 ? "表演与声音安排" : `句后等待 ${getPlannerPauseSeconds(section)} 秒`}</span></summary><div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2"><label className="space-y-1"><span>段落备注标题</span><input aria-label={`第 ${index + 1} 段标题`} className={fieldClass} value={section.title} maxLength={120} onChange={(event) => updateSection(section.id, { title: event.target.value })} /></label>{!silent && draft.performanceVersion !== 1 ? <label className="space-y-1"><span>句后等待（秒）</span><input aria-label={`第 ${index + 1} 段等待秒数`} type="number" min={0} max={30} step={0.05} className={fieldClass} value={getPlannerPauseSeconds(section)} onChange={(event) => { const seconds = Number(event.target.value); if (Number.isFinite(seconds) && seconds >= 0 && seconds <= 30) updateSection(section.id, { pauseAfterSeconds: seconds }); }} /></label> : null}
                     <label className="space-y-1"><span>导演提示</span><textarea aria-label={`第 ${index + 1} 段导演提示`} rows={2} className={fieldClass} value={section.direction} maxLength={1000} onChange={(event) => updateSection(section.id, { direction: event.target.value })} /></label><label className="space-y-1"><span>音效建议</span><textarea aria-label={`第 ${index + 1} 段音效建议`} rows={2} className={fieldClass} value={section.soundSuggestions} maxLength={1000} onChange={(event) => updateSection(section.id, { soundSuggestions: event.target.value })} /></label>
                     {([['emotion', '情绪'], ['style', '风格'], ['pace', '语速']] as const).map(([key, label]) => <label key={key} className="space-y-1"><span>{label}</span><input aria-label={`第 ${index + 1} 段${label}`} className={fieldClass} value={section[key]} maxLength={100} onChange={(event) => updateSection(section.id, { [key]: event.target.value })} /></label>)}
                     <label className="space-y-1"><span>左右位置</span><select aria-label={`第 ${index + 1} 段位置`} className={fieldClass} value={section.position.pan < -0.2 ? "left" : section.position.pan > 0.2 ? "right" : "center"} onChange={(event) => updateSection(section.id, { position: { ...section.position, pan: event.target.value === "left" ? -0.7 : event.target.value === "right" ? 0.7 : 0 } })}><option value="left">左侧</option><option value="center">居中</option><option value="right">右侧</option></select></label>
@@ -506,10 +529,10 @@ function PlannerWorkspace({ projectId, source, onAdopt, cachedState, saveSession
                 </div> : null}
               </article>;
             })}
-            <button className="ml-4 mt-4 flex items-center gap-2 px-3 py-2 text-xs text-studio-muted hover:text-sky-100" onClick={() => editStructure((current) => insertPlannerSection(current))}><Plus className="h-3.5 w-3.5" aria-hidden="true" />新增一句</button>
+            <div className="ml-4 mt-4 flex flex-wrap gap-2"><button className={buttonClass} onClick={() => editStructure(current => insertPlannerSection(current))}><Plus className="h-3.5 w-3.5" aria-hidden="true" />新增一句</button><button className={`${buttonClass} text-violet-200`} onClick={() => editStructure(current => insertPlannerSilentSection(current))}><Plus className="h-3.5 w-3.5" aria-hidden="true" />新增无台词段</button></div>
           </div>}
         </div>
-        {draft && activeTab !== "templates" ? <div className="flex shrink-0 items-center justify-end border-t border-studio-line px-4 py-3 sm:px-6"><button aria-label="采用并创建工程" className={`${primaryClass} shrink-0`} disabled={busy || !loaded} onClick={adopt}>创建音频工程<ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button></div> : null}
+        {draft && activeTab !== "templates" ? <div className="flex shrink-0 items-center justify-end border-t border-studio-line px-4 py-3 sm:px-6"><button aria-label="采用并创建工程" className={`${primaryClass} shrink-0`} disabled={busy || !loaded} onClick={adopt}>采用脚本并开始制作<ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></button></div> : null}
       </div>
     </section>
   );

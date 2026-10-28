@@ -1,12 +1,13 @@
-import { PlannerBriefSchema, PlannerDraftSchema, type PlannerBrief, type PlannerDraft } from "./planner";
+import { PlannerBriefSchema, PlannerDraftSchema, type PlannerBrief, type PlannerDraft, type PlannerSection } from "./planner";
 import { CreativeTemplateSchema, type CreativeTemplate } from "./reference-template";
 
 /** Curated from the user's local reference. No source video, voice or likeness is bundled. */
 export const CREATIVE_TEMPLATES: CreativeTemplate[] = [CreativeTemplateSchema.parse({
   id: "forbidden-counter-trade",
-  version: 1,
+  version: 2,
   storyboardStyle: "character_framing",
   title: "禁令下的秘密交易",
+  performancePacing: { speechRatio: 0.4, rules: "介绍当前商品后安排一段真正的无台词材质试听，再回应、归位并换下一件。取放和换物若不能在当前台词内自然完成，单独安排动作过渡；问听者选择后留出互动时间。机位固定，长篇优先延长听声音和比较的时间，不增加商品数量。" },
   summary: "把普通日用品当成稀缺的秘密商品：低声接头、逐件展示、价格递进，最后让听者选择。以单人近景和道具展示，营造神秘、亲近又带一点幽默的陪伴氛围。",
   source: {
     filename: "助眠禁止.mp4",
@@ -18,7 +19,7 @@ export const CREATIVE_TEMPLATES: CreativeTemplate[] = [CreativeTemplateSchema.pa
     "结构依次为：简短接头 → 温和提醒小声、交代禁令 → 确认周围安静 → 展示普通款 → 展示升级款 → 展示夸张珍藏款 → 听者选择 → 收拢结束。借鉴叙事机制和亲近感，重新写原创台词，不翻译原片对白，不照抄真实品牌、价格或表演者身份。",
     "单人对镜讲话，听者不出声。语气亲近、神秘又有一点认真过头的幽默；紧张只是游戏感，避免威胁、追逐、喊叫和突然惊吓。通过短句、留白、轻微的音量变化营造靠近耳边的感觉，不要每句都写“嘘”，不要不断用命令催眠。",
     "先列出至多三件可区分的商品及固定颜色、形状、摆放位置，再逐件介绍。每一小段台词只配一个主要动作或静止反应；把介绍、换物、报价分开，留足展示时间。时长变长时延长观察、等待和比较，不堆新人物、新场景或新道具。",
-    "每个语义台词单元都写对应 direction：当前构图、持物状态、一个可完成动作、结束状态与下一段的衔接。不能只写全篇泛用的“轻声说话”。台词只放可朗读的对白；取物、放回、声音设想只写在导演提示和 soundSuggestions，不塞进括号让 TTS 读出来。",
+    "生成按表演顺序交错的有台词和无台词段。介绍商品后安排有实际时长的ASMR试听，取放、换物和等待按需要单独成段。每段direction写当前构图、持物状态、一个可完成动作、结束状态；speech的text只放可朗读对白，silent的text写表演内容，不需要为每个动作强加台词。",
     "soundSuggestions 可以建议轻触瓶身、瓶盖摩擦或安静环境，但这些是待制作意图，不能声称已有音效。对白视频沿用已采用的人声；若需要真实物件音，应另行制作并试听。结尾回到最初普通款与升级款，承接选择；没有听者可见动作时只呈现等待或确认，不凭空完成付款或交接。",
   ].join("\n\n"),
   sceneDescription: "一个安静、明亮但有隐秘感的巷口小摊，纵深巷道背景始终不变。S1 面向镜头，听者在镜头处且保持画外；角色外貌和服装以角色参考图为准。镜头拍到胸口、双手与嘴部，麦克风固定在画面下沿，不能遮嘴。台面画面左侧放红色带盖小罐 A，中间放蓝色带盖瓶 B，画面右侧放透明方瓶 C。三件无品牌商品开场已在台面上；只把当前介绍的一件举到胸侧，其余留在原位。用轻微眼神警戒建立秘密交易气氛，不引入警察、路人或追逐。",
@@ -29,7 +30,7 @@ export const CREATIVE_TEMPLATES: CreativeTemplate[] = [CreativeTemplateSchema.pa
     "确定道具 A/B/C 的外观和画面左/中/右归位点。拿起、持有、放回是不同状态；已在手里就继续持有，不能每段重新拿起，也不能拿着 A 时凭空变为 B。需要换物时，先交代上一件回到原位，再在下一段取新件；每只手只持一件。",
     "一个音频片段只对应一个主要可见事件。动作复杂时拆分文案或使用单独无对白过渡，不让短音频同时完成取瓶、开盖、喷洒、递交和收钱。示例优先使用不打开的道具，减少瓶盖、喷雾与手指穿模。",
     "一段的结束状态就是下一段的开始状态。结尾重新展示前两件时先把 C 放回，再分步拿 A、B；不能突然多出商品、手臂或画内买家。听者的选择只通过 S1 的反应表达，不生成听者台词或正脸。",
-    "声音建议不是已经存在的音轨。对白镜头必须完整保留采用的人声，不额外编造触发音、音乐或对白；独立无对白镜头的声音遵守当前环境底噪规则。不要为了模板节奏裁掉原音或硬凑参考秒数。",
+    "声音操作段以当前真实材质触发音为主体，写清接触方式、节奏与安静间隙；互动停留可只有环境质感。对白段保留采用的人声，材料声独立设计，避免重复两份同声。不要为了模板节奏裁掉原音或硬凑参考秒数。",
   ].join("\n\n"),
   beats: [
     { id: "contact", title: "低声接头", referenceRange: "约 00:00–00:04", story: "迅速把镜头前的观众变成来询货的熟人，以提问建立参与感。", visual: "原片：巷道背景、单人正面近景、下方麦克风；双手靠近胸口。改编保持同一场景和可见嘴部。", action: "S1 稍微靠近，停在舒适距离看着听者；尚不拿商品。", camera: "稳定正面胸部近景，人物中心位置保持。", sound: "建议自然小声招呼，给听者一个短反应空隙；未确认原片具体触发音。", continuity: "开场三件商品有固定位置，双手空着；结尾仍空手，接下一段警戒。" },
@@ -45,8 +46,9 @@ export const CREATIVE_TEMPLATES: CreativeTemplate[] = [CreativeTemplateSchema.pa
 
 function createInteractionTheatreTemplate(): CreativeTemplate {
   return CreativeTemplateSchema.parse({
-    id: "intimate-interaction-theatre", version: 1, storyboardStyle: "listener_pov",
+    id: "intimate-interaction-theatre", version: 2, storyboardStyle: "listener_pov",
     title: "近距离互动小剧场",
+    performancePacing: { speechRatio: 0.5, rules: "提问后给目光和表情真实的等待时间，任务中的安静操作、无声照料或必要姿势转换成为无台词段。可有无实物表演和近乎安静的互动，不强塞道具敲击；已有材料确实接触时才安排对应触发音。大多数时刻机位稳定，角色自己移动不带动听者视点。" },
     summary: "让听者成为正在被认真照顾的那个人。围绕一件小事，用对视、等待、细微表情和靠近的手部动作推进互动；一点调侃、一点故作严肃，再自然回到温柔。镜头大多停在听者眼前，让表演带动亲近感。",
     source: {
       filename: "1174029976-1-192.mp4 + 42335798032-1-192.mp4（两片合计）",
@@ -59,8 +61,8 @@ function createInteractionTheatreTemplate(): CreativeTemplate {
       "让温柔里有可见的个性：短暂挑眉、歪头观察、轻抿嘴忍笑、认真确认、故作严肃后自己放软，按当下台词选一项。用一点调侃或认真过头的小反差建立熟悉感，随后回到体贴；不羞辱、训斥或制造压迫。不要全程一个微笑，不机械把每句写成安慰或催睡口令，不连续写眨眼、嘘和贴耳低语来代替表演。",
       "注意力在脸部回应、手部处理和安静停顿之间自然转移。一次提问先让表情停住等待，处理材料时让动作清楚，再抬眼确认；不用不停拿新道具维持变化。每个短语义单元只有一个主要意图，可以只有目光或表情，不强迫每句触碰、靠近或变换机位。长篇通过任务进展、关系微变化和停顿展开，不重复同一轮问答。",
       "镜头是听者的眼睛，通常维持听者坐着或站着的眼高和同一轴线；主要由 S1 蹲到目线、前倾、后退或把手伸到镜头下沿制造距离变化。S1 移动不等于镜头跟随。只有剧情明确要求听者走动、转头、低头或落座时才改变视点，并交代新落点。不要每句安排走路，也不要外部摄影机追拍角色。",
-      "每个 unit.direction 写听者视点、S1 当下表情和一个可执行动作的起始/结束。仅写当前真实可见部分；面向镜头的照料可以在画面边缘完成，不新增听者的正脸或全身，不描写无法同时看清的正反打。触碰需要适当停顿与舒适距离，不突然戳到镜头或用遮挡制造惊吓。",
-      "soundSuggestions 跟随实际任务材料和接触：例如当前纸张、布料或轻微放置声，写明相对听者的位置。纯对视反应允许非常轻的衣料变化或安静背景，不给每个表情加敲击或脚步。声音意图用于独立无对白 ASMR 触发音规划，不在 text 中写动作或音效标记；独立音效不增加吹气、呼吸、低语、口腔声或任何人声及配乐。需要清理材料时选用当前已有的布等非口腔动作，不为制造触发音安排向镜头吹气。收尾停在任务完成后的安静陪伴，不强行睡着或切换新故事。",
+      "每个 unit.direction 写听者视点、S1 当下表情和一个可执行动作的起始/结束。等待、无声反应、安静操作或必要过渡使用有实际时长的silent段，与speech段按表演顺序交错；不能只藏在句后pauseAfter中。面向镜头的照料可以在画面边缘完成，不新增听者正脸或全身，不描写无法同时看清的正反打。触碰保持舒适距离，不突然戳到镜头或用遮挡制造惊吓。",
+      "soundSuggestions 跟随实际任务材料和接触：例如当前纸张、布料或轻微放置声，写明相对听者的位置。纯对视反应允许非常轻的衣料变化或安静背景，不给每个表情加敲击或脚步。speech的text只保存台词，silent的text保存表演内容；独立音效不增加吹气、呼吸、低语、口腔声或任何人声及配乐。需要清理材料时选用当前已有的布等非口腔动作，不为制造触发音安排向镜头吹气。收尾停在任务完成后的安静陪伴，不强行睡着或切换新故事。",
     ].join("\n\n"),
     sceneDescription: "按今日主题建立一个安静、可近距离互动的主空间，只保留本次小任务真正需要的少量材料和稳定归位点。听者位于镜头处，以自身眼高看向 S1；S1 的外貌与服装由角色参考图决定。主机位通常稳定，能读清脸部反应，手部工作区在胸侧或镜头下沿；S1 可以靠近、退回或蹲到听者目线，不把听者当成被外部镜头拍摄的人。确需转场时先给出当前任务的动机，再建立听者的新位置。",
     storyboardRules: [
@@ -128,7 +130,29 @@ export function createTemplateDemo(template: CreativeTemplate): {
       position: { pan: 0, distance: "near", movement: "static" },
     })),
   });
-  return { brief, draft, sceneDescription: snapshot.sceneDescription };
+  const performanceDraft = withPerformanceIntervals(draft, {
+    4: [{ title: "听红罐的轻响", purpose: "asmr", durationSeconds: 20,
+      text: "保持正面机位，右手稳持红罐，左手指腹轻敲罐身，疏密稍有变化并留出间隙。",
+      direction: "起始：右手持A，左手空；动作：左手指腹缓慢轻敲罐身，停歇后改变接触位置；结束：左手收回空着，右手仍持A。",
+      soundSuggestions: "前方近处同一带盖小罐的轻柔干净敲击，节奏有间隙，尾部安静，不加人声。" }],
+    7: [{ title: "听蓝瓶的摩擦", purpose: "asmr", durationSeconds: 20,
+      text: "右手稳持蓝瓶，左手指腹沿瓶身缓慢轻擦，停一下再继续，机位保持。",
+      direction: "起始：右手持B，左手空；动作：左手指腹沿B的同一侧轻轻摩擦，保持瓶盖关闭；结束：左手离开，右手仍持B，其他商品不动。",
+      soundSuggestions: "前方近处瓶身的细软指腹摩擦，缓慢接触与安静间隙交替，无开盖或喷洒。" }],
+    9: [{ title: "听方瓶的细响", purpose: "asmr", durationSeconds: 20,
+      text: "右手持透明方瓶，左手指腹在瓶身同一平面轻点，越到后面越疏，最后停住。",
+      direction: "起始：右手持C，左手空；动作：左手指腹在C的平面缓慢轻点；结束：左手收回空着，右手仍持C，盖子保持关闭。",
+      soundSuggestions: "透明玻璃瓶的克制、清脆轻点，峰值柔和，点触间有停顿，末尾自然收住。" }],
+    10: [{ title: "等你慢慢选", purpose: "interaction", durationSeconds: 4,
+      text: "三件商品都在原位，店主保持对视，安静等待。",
+      direction: "起始：A左、B中、C右，双手空；动作：S1看着听者等待，不替听者做决定；结束：物件和手部状态不变。",
+      soundSuggestions: "同一安静巷口的极轻环境质感，没有敲击或新动作声。" }],
+    13: [{ title: "安静收住", purpose: "interaction", durationSeconds: 4,
+      text: "店主持着两件商品，表情放松，在同一机位安静停留。",
+      direction: "起始：右手A、左手B，C在右侧；动作：S1放松目光，保持展示；结束：A 和 B仍分别在原手中，无交付动作。",
+      soundSuggestions: "保持微弱环境质感，无新材料接触声。" }],
+  });
+  return { brief, draft: performanceDraft, sceneDescription: snapshot.sceneDescription };
 }
 
 function createInteractionTheatreDemo(snapshot: CreativeTemplate) {
@@ -167,7 +191,25 @@ function createInteractionTheatreDemo(snapshot: CreativeTemplate) {
       position: { pan: 0, distance: "near", movement: "static" },
     })),
   });
-  return { brief, draft, sceneDescription };
+  const performanceDraft = withPerformanceIntervals(draft, {
+    2: [{ title: "认真等一下", purpose: "interaction", durationSeconds: 3,
+      text: "向导略微侧头，保持对视，给听者一个无声回应的空隙。",
+      direction: "起始：S1双手空，头稍侧，听者同高看向S1；动作：S1安静等待，表情停住；结束：双方位置和材料状态保持，不假定听者已回应。",
+      soundSuggestions: "安静棚下的极轻环境声，无纸张接触。" }],
+    4: [{ title: "慢慢理平折痕", purpose: "asmr", durationSeconds: 18,
+      text: "左手固定地图近侧卷角，右手指腹缓慢抚平中部折痕，分几次接触，间隔安静停留。",
+      direction: "起始：左手压住地图近侧角，右手空，布在右侧；动作：右手指腹沿地图中部折痕轻抚并在间隙抬起；结束：右手离开为空，左手仍固定同一角，布未动。",
+      soundSuggestions: "前方桌面上轻柔纸张与指腹摩擦，间歇进行，末尾停止；没有新纸张、工具或人声。" }],
+    7: [{ title: "让软布停一会儿", purpose: "asmr", durationSeconds: 10,
+      text: "软布留在地图湿角上，右手保持轻压，松一点再轻按，随后安静停住。",
+      direction: "起始：右手持布贴着湿角，左手固定地图；动作：右手在同一处小幅放松后轻压，不来回擦；结束：布仍贴在原角，左右手与听者位置保持。",
+      soundSuggestions: "同一软布与纸角的轻微接触变化，前方桌面，随后安静；不增加水滴或持续擦拭声。" }],
+    12: [{ title: "一起等雨", purpose: "interaction", durationSeconds: 8,
+      text: "向导和听者保持同轴对视，地图和布都留在桌上，安静陪伴一会儿。",
+      direction: "起始：S1双手空，折好地图在中央，布在右侧；动作：S1以放松的目光停留，机位稳定；结束：位置、手部和材料状态不变。",
+      soundSuggestions: "保持已经存在的安静棚下环境质感，材料不再被接触。" }],
+  });
+  return { brief, draft: performanceDraft, sceneDescription };
 }
 
 /** Imported templates retain their own identity; they never inherit another template's story. */
@@ -183,5 +225,20 @@ function createNeutralTemplateDemo(snapshot: CreativeTemplate) {
     sections: [{ id: "template_opening", title: "安静确认", text: "我们慢慢来。你可以先看一会儿。", emotion: "平静", style: brief.style, pace: "自然留白",
       direction: "起始：双方位置沿用当前场景，S1双手空。动作：S1看向听者，停留等待。结束：位置与手部状态不变。", soundSuggestions: "保持当前安静环境，不凭空增加道具接触。", pauseAfter: "medium", position: { pan: 0, distance: "near", movement: "static" } }],
   });
-  return { brief, draft, sceneDescription: snapshot.sceneDescription };
+  return { brief, draft: withPerformanceIntervals(draft, { 0: [{ title: "安静等待", purpose: "interaction", durationSeconds: 5,
+    text: "保持当前场景和机位，面向听者安静等待。", direction: "起始：沿用刚才的站位，S1双手空；动作：S1保持目光，给听者反应时间；结束：站位和手部状态不变。", soundSuggestions: "只保留当前安静环境。" }] }), sceneDescription: snapshot.sceneDescription };
+}
+
+type PerformanceInterval = Pick<PlannerSection, "title" | "text" | "direction" | "soundSuggestions"> & {
+  purpose: "asmr" | "transition" | "interaction"; durationSeconds: number;
+};
+
+/** Demo intervals are authored events; they are not generated by padding speech. */
+function withPerformanceIntervals(draft: PlannerDraft, intervals: Record<number, PerformanceInterval[]>): PlannerDraft {
+  return PlannerDraftSchema.parse({ ...draft, performanceVersion: 1, sections: draft.sections.flatMap((section, index) => [
+    { ...section, kind: "speech", purpose: "dialogue", pauseAfterSeconds: 0 },
+    ...(intervals[index] ?? []).map((interval, intervalIndex) => ({
+      ...section, ...interval, id: `${section.id}_performance_${intervalIndex + 1}`, kind: "silent", pauseAfterSeconds: 0,
+    })),
+  ]) });
 }

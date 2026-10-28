@@ -6,6 +6,7 @@ import { demoProject } from "./mock-project";
 import { AsmrProjectSchema, type AsmrProject, type TimelineClip } from "./schema";
 import {
   addVoiceClip,
+  addSilentClip,
   deleteVoiceClip,
   getVoiceGapAfter,
   mergeVoiceClipWithNext,
@@ -35,6 +36,22 @@ function projectWithAudio() {
 }
 
 describe("user-controlled voice segments", () => {
+  it("gives inserted and split performance sections distinct identities without repeating the original one-off action", () => {
+    const project = projectWithAudio();
+    const original = voiceClips(project)[0];
+    original.performance = { version: 1, segmentId: "take_box", purpose: "dialogue", direction: "拿起盒子", soundIntent: "一次拿取声" };
+    const added = addSilentClip(project, original.id, { description: "保持盒子位置，轻轻敲击。", duration: 20 });
+    const silent = voiceClips(added.project).find(clip => clip.id === added.selectedClipId)!;
+    expect(silent.performance).toEqual({ version: 1, segmentId: silent.id, purpose: "transition", direction: "", soundIntent: "" });
+    expect(silent.duration).toBe(20);
+    const split = splitVoiceClip(project, original.id, 4);
+    const pieces = voiceClips(split.project).slice(0, 2);
+    expect(new Set(pieces.map(clip => clip.performance?.segmentId)).size).toBe(2);
+    expect(pieces.every(clip => clip.performance?.direction === "" && clip.performance.soundIntent === "")).toBe(true);
+    const merged = mergeVoiceClipWithNext(split.project, pieces[0].id);
+    expect(voiceClips(merged.project)[0].performance).toMatchObject({ purpose: "dialogue", direction: "", soundIntent: "" });
+    expect(original.performance.direction).toBe("拿起盒子");
+  });
   it("moves complete adopted paragraphs with their waits while preserving identities and other tracks", () => {
     const project = projectWithAudio();
     const original = voiceClips(project);

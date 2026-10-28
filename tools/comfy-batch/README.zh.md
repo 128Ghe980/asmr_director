@@ -1,6 +1,6 @@
 # ASMR 视频批跑器
 
-**剧情 ASMR 触发音与双版本合片**：新分镜包的每镜 `asmrSound` 会额外生成一条无对白的 ASMR 音视频，对白镜头使用当前 WAV 的真实时长，无对白镜头使用该镜有效时长。勾选合片后，每个候选分别输出原版和叠加 ASMR 的版本。旧包没有该字段时保持原流程。
+**表演脚本与双版本合片**：脚本中的台词、ASMR 操作、动作过渡和互动停留都会导出。较长无台词段按已设计的连续小段执行，每个任务不超过 5 秒；拆任务不改变机位，也不重演已经完成的取放。每段 `asmrSound` 独立生成声音，对白使用当前 WAV 的真实时长，新表演段使用其计划时长。勾选合片后，每个候选分别输出原版和 ASMR 后处理版。旧包没有该字段时保持原流程。
 
 ASMR 叠加版需要将包内 `custom_nodes/asmr_director_audio/` 复制到目标 ComfyUI 的 `custom_nodes/`，按该目录说明安装缺少的 Python 依赖并重启 ComfyUI。它复用本项目现有 D 空间后处理；生成、后处理和合片都在同一 ComfyUI 内运行，运行器本机仍不需要 FFmpeg 或额外 Python 库。原版合片不依赖这两个新增节点。
 
@@ -14,7 +14,7 @@ ASMR 叠加版需要将包内 `custom_nodes/asmr_director_audio/` 复制到目�
 
 ## 更新已有项目包
 
-先关闭旧批跑器，再将更新包中的 **`runner.py`、`run.bat`、`README.zh.md` 三个文件**覆盖到旧项目解压目录。保留 `project.json`、`workflow_api.json`、全部素材及整个 `outputs/`，尤其不要删除 `run-state.json`。更新包不含工作流，不覆盖你已经调整的工作流。
+先关闭旧批跑器，再将更新包中的 **`runner.py`、`run.bat`、`README.zh.md` 三个文件**覆盖到旧项目解压目录，并补齐或更新 `custom_nodes/asmr_director_audio/`。保留 `project.json`、已有的 `workflow_api.json`、全部素材及整个 `outputs/`，尤其不要删除 `run-state.json`。更新包附带标准 `workflow_api.json`，仅在旧包缺少该文件时补齐，不覆盖你已经调整的工作流。使用 ASMR 后处理合片时，将更新后的节点目录也复制到目标 ComfyUI，按节点说明安装缺少的依赖并重启 ComfyUI。
 
 第一次继续运行时，旧 version 1 状态会自动备份为 `run-state.v1-backup-*.json`，再迁入候选 1；输入保持不变时，已有成功结果不会因升级重新生成，未确认任务先对账。继续同一批时将 N 设为原值；改成其他 N 时按补缺／保留规则处理。新导出的完整项目包仍携带运行器、启动器、说明和工作流四个运行文件。
 
@@ -40,6 +40,8 @@ ASMR 叠加版需要将包内 `custom_nodes/asmr_director_audio/` 复制到目�
 ```
 
 所有素材路径均相对项目目录。`characterReference` 可省略，执行时另选角色图。对白使用实际 WAV 时长，`durationSeconds` 不裁掉原对白；相同输入 WAV 同时用于 H3 参考与最终视频音轨，画面向上取整到完整的 24 fps 帧。环境镜头没有输入音频，使用 H3 生成的环境音；ComfyUI 内同时限制画面帧数和环境音长度，最终最长 5 秒。原音作为音轨来源，不表示 WAV 与编码后视频音轨的字节相同。
+
+新版无台词表演任务附带 `segmentId`、`partIndex` 和 `partCount`，用于标识它属于哪段表演。较长表演按连续小段展开，首段使用原参考方式，后续段都从上一段尾帧继续；各段的动作和声音阶段由应用预先设计，运行器不自行编造。一个逻辑段的任务必须完整、相邻、顺序正确，缺失时不会提交。新任务声音精确裁到计划秒数，画面向上对齐到 24 fps 整帧，因此每个任务的容器时长可能多不足一帧；旧包仍沿用原有帧数取整。两种合片均包含全部表演段，不会跳过无台词内容。
 
 `workflow_api.json` 是干净的 API 模板，源自 `asmr04`，保留 H3 模型、20 步和原加速链。默认 1216×672、24 fps。模板原文件不改，运行时增加裁帧、CLF 尾帧和 PNG 保存分支；尾帧来自最终 `CreateVideo` 输出。每镜直接注入最终提示词，角色图是 Picture 1；连续镜头的候选 k 使用相邻上一镜候选 k 成功输出的实际尾帧作为 Picture 2。该候选不存在或失败就用角色图继续，不跨镜借帧，也不改用其他候选。首帧延续仍属于 H3 的参考引导，不保证逐像素一致。
 
@@ -67,6 +69,7 @@ python runner.py "I:\AI\asmr_director\artifacts\我的项目" --concat
 "asmrSound": {
   "prompt": "Close-up of slow fabric brushing. Soft, dry, detailed fabric friction; no voices or music.",
   "durationSeconds": 3.2,
+  "mixMode": "overlay",
   "postProcessing": {
     "start": {"pan": -0.5, "distance": "near"},
     "end": {"pan": 0.25, "distance": "close"},
@@ -78,11 +81,11 @@ python runner.py "I:\AI\asmr_director\artifacts\我的项目" --concat
 
 每镜每候选独立生成一条 ASMR 音视频，不输入角色图或对白音频。H3 内部仍按模型要求对齐帧数，输出画面裁至对应时长的完整 24 fps 帧，音轨裁至目标秒数；画面最多多出不足一帧。无对白镜头也生成触发音。原主视频及其音轨保持，ASMR 原生音视频与独立状态保存在 `outputs/asmr/outputs/`。
 
-最终合片使用 API 规划的起点、终点、移动和增益，对生成音效先转单声道，再使用 D 算法重新定位；这一步在生成音视频后才执行。处理结果裁到该段音频长度，逐镜叠到原轨，再补齐至对应视频帧时长。增益以 dB 控制，混音统一保护峰值，不把后镜声音提前。无对白镜头的原环境音保留并叠入新增触发音。
+最终合片使用 API 规划的起点、终点、移动和增益，对生成音效先转单声道，再使用 D 算法重新定位；这一步在生成音视频后才执行。处理结果裁到该段音频长度，再补齐至对应视频帧时长。增益以 dB 控制，混音统一保护峰值，不把后镜声音提前。`mixMode: "overlay"`（旧包默认）将处理声叠加到原轨；`"replace"` 让它作为无台词段的完整声音来源，避免原视频与独立声音重复敲击或叠加底噪。对白段只允许 overlay，已采用人声始终保留。原版预览使用主视频的原生声音，无台词操作段自身就包含所设计的触发声。
 
 N=1 时原版为 `outputs/preview.mp4`，叠加版为 `outputs/preview-asmr.mp4`；N>1 时分别为 `preview-c001.mp4`、`preview-asmr-c001.mp4` 等。两种合片拥有各自的任务回执。缺音效、规划不完整或缺 D 节点时，仅叠加版待恢复，原版与已生成素材保留；安装节点后继续不会重跑 H3。原生 12 类实验包仍保持独立片段流程。
 
-只改音效提示词会重做对应音效；只改空间设置或增益会复用音效素材并重新合片。`--rerun-asmr 2` 或 `--rerun-asmr-candidates "2:1"` 可仅重抽 ASMR，普通 `--rerun` 仍仅重做主视频。所有音效任务也遵守停止、技术重试、未知提交对账和完整历史复用规则。`--dry-run` 会同时生成主镜及音效 payload，不联网。
+只改音效提示词会重做对应音效；只改空间设置、增益或 mixMode 会复用音效素材并重新合成 ASMR 版，原版预览不重做。`--rerun-asmr 2` 或 `--rerun-asmr-candidates "2:1"` 可仅重抽 ASMR，普通 `--rerun` 仍仅重做主视频。所有音效任务也遵守停止、技术重试、未知提交对账和完整历史复用规则。`--dry-run` 会同时生成主镜及音效 payload，不联网。
 
 窗口高级设置也提供「只重做 ASMR 镜头」和「只重做 ASMR 候选」：分别填写 `2,4` 或 `2:1,4:2`；画面重做使用旁边的画面选项。进度会标明当前正在生成画面、ASMR 触发音、原版合片或 ASMR 叠加版。
 

@@ -38,7 +38,7 @@ function storyboardProject() {
   return project;
 }
 
-function showStoryboards() { fireEvent.click(screen.getByRole("tab", { name: "分镜" })); }
+function showStoryboards() { fireEvent.click(screen.getByRole("tab", { name: "画面与声音" })); }
 
 const downloadUrl = "/api/assets/batch-download?token=1f9ab138-5013-49cf-9f8d-9ba81c5c097a";
 function readyArchive(project = adoptedProject(), kind: "audio" | "storyboard" = "audio") {
@@ -236,7 +236,7 @@ describe("batch storyboard download", () => {
 
   it("supports arrow, Home and End tab navigation without moving focus outside the popover", () => {
     render(<BatchAudioDownload project={storyboardProject()} />); open();
-    const audio = screen.getByRole("tab", { name: "音频" }); const storyboard = screen.getByRole("tab", { name: "分镜" });
+    const audio = screen.getByRole("tab", { name: "音频" }); const storyboard = screen.getByRole("tab", { name: "画面与声音" });
     const video = screen.getByRole("tab", { name: "视频包" });
     act(() => { audio.focus(); });
     fireEvent.keyDown(audio, { key: "ArrowRight" });
@@ -263,7 +263,7 @@ describe("batch storyboard download", () => {
     fireEvent.click(screen.getByRole("button", { name: "下载分镜 TXT" }));
     for (const tab of screen.getAllByRole("tab")) expect((tab as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("tab", { name: "音频" }));
-    expect(screen.getByRole("tab", { name: "分镜" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "画面与声音" }).getAttribute("aria-selected")).toBe("true");
     const signal = vi.mocked(fetch).mock.calls[0][1]?.signal;
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(signal?.aborted).toBe(true);
@@ -272,7 +272,7 @@ describe("batch storyboard download", () => {
     expect(click).not.toHaveBeenCalled();
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
     fireEvent.click(screen.getByRole("button", { name: "下载分镜 TXT" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("分镜包下载连接中断，请重试。"));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("画面与声音包下载连接中断，请重试。"));
     expect(screen.getByRole("button", { name: "重试下载分镜 TXT" })).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "音频" }));
     expect(screen.queryByRole("alert")).toBeNull();
@@ -321,7 +321,7 @@ describe("batch storyboard download", () => {
     fireEvent.click(screen.getByRole("button", { name: "下载分镜 TXT" }));
     await act(async () => { finishOld(stage === "request" ? readyArchive(original, "storyboard") : await readyArchive(original, "storyboard").json()); });
     expect(click).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "正在准备分镜…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "正在准备画面与声音…" })).toBeTruthy();
     await act(async () => { finishNew(readyArchive(changed, "storyboard")); });
     expect(click).toHaveBeenCalledOnce();
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body))).toEqual({ project: changed, kind: "storyboard" });

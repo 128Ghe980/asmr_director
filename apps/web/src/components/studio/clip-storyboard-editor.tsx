@@ -11,7 +11,7 @@ import { AsmrSoundEditor } from "./asmr-sound-editor";
 import {
   ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint,
   getPreviousVoiceClip, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent,
-  getClipStoryboardReferenceMode, type ClipVideoStoryboard, type StoryboardReferenceMode,
+  getClipStoryboardReferenceMode, type ClipVideoStoryboard, type ClipStoryboardEdits, type StoryboardReferenceMode,
 } from "@/lib/asmr/video-plan";
 
 type Provider = { id: "ollama" | "api"; label: string; model: string; configured: boolean };
@@ -25,7 +25,7 @@ type Props = {
   onProviderChange?: (provider: "api" | "ollama") => void;
   onSceneChange: (description: string) => void;
   onSave: (projectId: string, shot: ClipVideoStoryboard) => boolean;
-  onEdit: (clipId: string, patch: Partial<Pick<ClipVideoStoryboard, "title" | "visual" | "action" | "camera" | "ambientSound" | "asmrSound">>) => void;
+  onEdit: (clipId: string, patch: ClipStoryboardEdits) => void;
 };
 
 const buttonClass = "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-300/20 px-2.5 py-1.5 text-xs text-violet-100 transition-colors hover:bg-violet-300/10 focus-visible:outline-2 focus-visible:outline-violet-300 disabled:cursor-not-allowed disabled:opacity-40";
@@ -58,7 +58,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
   const disclosure = useRef<HTMLDetailsElement>(null);
   const effectiveProvider = silent ? "api" : provider;
   const configured = providers.find((item) => item.id === effectiveProvider)?.configured;
-  const invalidSilentDuration = silent && (clip.duration <= 0 || clip.duration > 5);
+  const invalidSilentDuration = silent && (clip.duration <= 0 || clip.duration > 600);
   const sceneDescription = project.videoPlan?.sceneDescription ?? project.scene.name;
   const usePrevious = !!previousFingerprint;
   const waitingForPrevious = referenceMode === "continuous" && !previousFingerprint;
@@ -150,7 +150,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
         throw new Error("台词、音频、镜头模式或参考分镜已更新，请重新生成。");
       }
       if (!onSave(snapshot.project_id, result)) throw new Error("当前段落已更新，请重新生成。");
-      setNotice("本段分镜已生成并保存。");
+      setNotice("本段设计已完成并保存。");
     } catch (caught) {
       if (requestRef.current !== controller) return;
       if (controller.signal.aborted) setNotice("素材已更新，已取消旧分镜请求。");
@@ -192,23 +192,23 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
   }
 
   if (clip?.type !== "voice") return null;
-  return <section aria-label="本段视频分镜" className="min-w-0 space-y-4 px-4 py-4">
+  return <section aria-label="本段画面与声音" className="min-w-0 space-y-4 px-4 py-4">
     <div className="flex items-start gap-3">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-300/10 text-violet-200"><Clapperboard className="h-4 w-4" aria-hidden="true" /></span>
-      <div className="min-w-0"><h2 className="text-sm font-semibold">第 {index + 1} 段 · {silent ? "无对白分镜" : "视频分镜"}</h2></div>
+      <div className="min-w-0"><h2 className="text-sm font-semibold">第 {index + 1} 段 · {silent ? "无台词段 · 画面与声音" : "画面与声音"}</h2></div>
     </div>
-    {invalidSilentDuration ? <p className="text-xs leading-5 text-amber-100">请将无对白镜头时长调整为不超过 5 秒，再生成分镜。</p> : null}
-    {silent && shot && !shot.ambientSound?.trim() ? <p className="text-xs leading-5 text-amber-100">旧无对白分镜缺少环境底噪描述，请重新生成分镜。</p> : null}
+    {invalidSilentDuration ? <p className="text-xs leading-5 text-amber-100">请将无台词段时长调整为 0 至 600 秒之间。</p> : null}
+    {silent && shot && !shot.ambientSound?.trim() ? <p className="text-xs leading-5 text-amber-100">旧无台词分镜缺少环境底噪描述，请重新设计画面与声音。</p> : null}
     <div className="rounded-lg border border-studio-line bg-black/10 px-3 py-2.5">
       <p className="whitespace-pre-wrap break-words text-sm leading-6">{clip.text}</p>
-      {silent ? <p className="mt-2 text-[11px] text-violet-200">无对白 · {clip.duration.toFixed(1)} 秒</p> : sourceFingerprint ? <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-violet-200/80"><span>已采用音频{clip.asset.duration ? ` · ${(shot?.audio?.assetId === clip.asset.asset_id ? shot.audio!.duration : clip.asset.duration).toFixed(3)} 秒` : ""}</span><a href={`/api/assets/clip/${encodeURIComponent(clip.asset.asset_id!)}`} download={`第${String(index + 1).padStart(3, "0")}段音频.wav`} className="inline-flex items-center gap-1 hover:text-violet-100"><Download className="h-3 w-3" aria-hidden="true" />下载本段音频</a></div> : <p className="mt-2 text-xs leading-5 text-amber-100">先生成并采用本段音频，再生成对应分镜。</p>}
+      {silent ? <p className="mt-2 text-[11px] text-violet-200">无台词 · {clip.duration.toFixed(1)} 秒</p> : sourceFingerprint ? <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-violet-200/80"><span>已采用音频{clip.asset.duration ? ` · ${(shot?.audio?.assetId === clip.asset.asset_id ? shot.audio!.duration : clip.asset.duration).toFixed(3)} 秒` : ""}</span><a href={`/api/assets/clip/${encodeURIComponent(clip.asset.asset_id!)}`} download={`第${String(index + 1).padStart(3, "0")}段音频.wav`} className="inline-flex items-center gap-1 hover:text-violet-100"><Download className="h-3 w-3" aria-hidden="true" />下载本段音频</a></div> : <p className="mt-2 text-xs leading-5 text-amber-100">先生成并采用本段音频，再生成对应分镜。</p>}
     </div>
     <details className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted">
       <summary className="cursor-pointer hover:text-studio-text">剧情背景 <span className="ml-1 text-studio-muted/55">全工程参考</span></summary>
       <textarea aria-label="工程剧情背景" disabled={batchBusy} value={sceneDescription} maxLength={4000} rows={3} className={`${fieldClass} mt-3 text-studio-text`} placeholder="雪地中的木屋内，壁炉温暖，窗外飘雪。" onChange={(event) => { if (busy) cancel(); onSceneChange(event.target.value); }} />
       <p className="mt-2 text-[11px] leading-5">仅作剧情参考，分镜选取本段具体画面，不原文复制背景。</p>
     </details>
-    {!sceneDescription.trim() ? <p className="text-xs leading-5 text-amber-100">请补全剧情背景后生成分镜。</p> : null}
+    {!sceneDescription.trim() ? <p className="text-xs leading-5 text-amber-100">请补全剧情背景后设计画面与声音。</p> : null}
     <div className="space-y-3 rounded-lg border border-violet-300/15 bg-violet-300/[0.035] p-3">
       <div className="space-y-2">
         <div role="radiogroup" aria-label="下一次分镜生成模式" className="grid grid-cols-2 gap-2">
@@ -230,7 +230,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <select aria-label="分镜模型" value={effectiveProvider} disabled={busy || batchBusy || silent} onChange={(event) => { const next = event.target.value as "ollama" | "api"; setProvider(next); onProviderChange?.(next); }} className="min-w-0 max-w-40 rounded-md border border-studio-line bg-studio-panel px-2 py-1.5 text-xs text-studio-muted">{providers.length ? providers.map((item) => <option key={item.id} value={item.id} disabled={!item.configured}>{item.label}</option>) : <option value="api">读取模型配置…</option>}</select>
-        {busy ? <button type="button" className={buttonClass} onClick={cancel}><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />取消生成</button> : <button type="button" className={`${buttonClass} bg-violet-300/10`} disabled={batchBusy || waitingForPrevious || invalidSilentDuration || !sourceFingerprint || !sceneDescription.trim() || !configured} onClick={() => void generate()}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{shot ? "重做分镜" : "生成分镜"}</button>}
+        {busy ? <button type="button" className={buttonClass} onClick={cancel}><LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />取消生成</button> : <button type="button" className={`${buttonClass} bg-violet-300/10`} disabled={batchBusy || waitingForPrevious || invalidSilentDuration || !sourceFingerprint || !sceneDescription.trim() || !configured} onClick={() => void generate()}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{shot ? "重新设计" : "设计画面与声音"}</button>}
       </div>
       <details className="border-t border-violet-300/10 pt-2 text-[11px] text-studio-muted"><summary className="cursor-pointer">本段偏好 <span className="ml-1 opacity-60">选填</span></summary><textarea aria-label="本段分镜要求" rows={2} value={instruction} maxLength={1200} disabled={busy || batchBusy} onChange={(event) => setInstruction(event.target.value)} className={`${fieldClass} mt-2 text-studio-text`} placeholder="例如：平缓固定机位，轻轻递来水杯。" /></details>
     </div>
@@ -239,9 +239,21 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
     {shot && !current ? <p role="status" className="rounded-lg border border-amber-200/15 bg-amber-200/5 px-3 py-2 text-xs leading-5 text-amber-100">本段台词、音频、剧情背景或参考分镜已变化。已保留画面说明，请重新生成后使用提示词。</p> : null}
     {shot ? <div className="space-y-3">
       <input aria-label="本段分镜标题" disabled={batchBusy} value={shot.title} maxLength={120} className="w-full min-w-0 rounded bg-transparent py-1 text-sm font-semibold outline-none focus:ring-1 focus:ring-violet-300/25" onChange={(event) => edit({ title: event.target.value })} />
-      {([['visual', '画面', 800], ['action', '动作', 600], ['camera', '镜头', 400]] as const).map(([field, label, maxLength]) => <label key={field} className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">{label}</span><textarea aria-label={`本段分镜${label}`} disabled={batchBusy} className={fieldClass} value={shot[field]} rows={field === "visual" ? 3 : 2} maxLength={maxLength} onChange={(event) => edit({ [field]: event.target.value })} /></label>)}
-      {silent ? <label className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">环境声</span><textarea aria-label="本段分镜环境声" disabled={batchBusy} className={fieldClass} value={shot.ambientSound ?? ""} rows={2} maxLength={600} placeholder="Soft rain outside the window with a faint room tone." onChange={(event) => edit({ ambientSound: event.target.value })} /></label> : null}
-      {shot.asmrSound ? <AsmrSoundEditor key={shot.clipId} sound={shot.asmrSound} duration={silent ? clip.duration : shot.audio?.duration ?? clip.asset.duration ?? 0} silent={silent} disabled={batchBusy} onChange={asmrSound => edit({ asmrSound })} /> : <p className="text-[11px] text-studio-muted">重做分镜可生成本段 ASMR 触发音。</p>}
+      {([['visual', '画面', 800], ['action', '动作', 600], ['camera', '视点', 400]] as const).map(([field, label, maxLength]) => <label key={field} className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">{label}{shot.parts ? "总览" : ""}</span><textarea aria-label={`本段${label}`} disabled={batchBusy} readOnly={Boolean(shot.parts)} className={fieldClass} value={shot[field]} rows={field === "visual" ? 3 : 2} maxLength={maxLength} onChange={(event) => edit({ [field]: event.target.value })} /></label>)}
+      {silent && !shot.parts ? <label className="block min-w-0 space-y-1.5"><span className="text-[11px] font-medium text-studio-muted">环境与触发音</span><textarea aria-label="本段环境与触发音" disabled={batchBusy} className={fieldClass} value={shot.ambientSound ?? ""} rows={2} maxLength={600} placeholder="Soft rain outside the window with a faint room tone." onChange={(event) => edit({ ambientSound: event.target.value })} /></label> : null}
+      {shot.parts ? <details className="rounded-lg border border-violet-300/20 p-3 text-xs text-studio-muted">
+        <summary className="cursor-pointer text-violet-100">连续表演安排 · {shot.parts.length} 段 · {clip.duration} 秒</summary>
+        <div className="mt-3 space-y-3">{shot.parts.map((part, partIndex) => {
+          const start = shot.parts!.slice(0, partIndex).reduce((sum, item) => sum + item.durationSeconds, 0);
+          const updatePart = (patch: Partial<typeof part>) => edit({ parts: shot.parts!.map((item, index) => index === partIndex ? { ...item, ...patch } : item) });
+          return <details key={partIndex} className="rounded-lg border border-studio-line p-3">
+            <summary className="cursor-pointer">{Number(start.toFixed(3))}–{Number((start + part.durationSeconds).toFixed(3))} 秒</summary>
+            <div className="mt-3 space-y-3">{([['visual', '画面', 800], ['action', '动作', 600], ['camera', '视点', 400], ['ambientSound', '环境与触发音', 600]] as const).map(([field, label, maxLength]) => <label key={field} className="block space-y-1.5"><span>{label}</span><textarea aria-label={`连续表演 ${partIndex + 1} ${label}`} disabled={batchBusy} value={part[field]} rows={2} maxLength={maxLength} className={fieldClass} onChange={event => updatePart({ [field]: event.target.value })} /></label>)}
+              <AsmrSoundEditor sound={part.asmrSound} duration={part.durationSeconds} silent disabled={batchBusy} onChange={asmrSound => updatePart({ asmrSound })} />
+            </div>
+          </details>;
+        })}</div>
+      </details> : shot.asmrSound ? <AsmrSoundEditor key={shot.clipId} sound={shot.asmrSound} duration={silent ? clip.duration : shot.audio?.duration ?? clip.asset.duration ?? 0} silent={silent} disabled={batchBusy} onChange={asmrSound => edit({ asmrSound })} /> : <p className="text-[11px] text-studio-muted">重新设计可生成本段环境与触发音。</p>}
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!prompt} onClick={() => void copy()}>{copiedPrompt === prompt && prompt ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}{copiedPrompt === prompt && prompt ? "已复制 H3 提示词" : "复制 H3 提示词"}</button><button type="button" className={buttonClass} disabled={!prompt} onClick={download}><Download className="h-3.5 w-3.5" aria-hidden="true" />下载提示词</button></div>
       <details ref={disclosure} onToggle={fitPromptPreview} className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted"><summary className="cursor-pointer">H3 提示词预览</summary>{prompt ? <textarea ref={preview} aria-label="本段 H3 提示词" readOnly value={prompt} rows={8} spellCheck={false} className="mt-3 w-full min-w-0 resize-none overflow-hidden rounded-lg bg-black/20 px-2 py-2 font-mono text-xs leading-6 outline-none focus:ring-1 focus:ring-violet-300/30" /> : <p className="mt-2 leading-5">补全画面、动作与镜头，并确保分镜对应当前音频。</p>}</details>
     </div> : null}

@@ -79,6 +79,10 @@ function applyClipPatch<TClip extends TimelineClip>(
     ...clip,
     ...rest,
   } as TimelineClip;
+  if (nextClip.type === "voice" && nextClip.performance && patch.text !== undefined
+    && clip.type === "voice" && patch.text !== clip.text) {
+    nextClip.performance = { ...nextClip.performance, direction: "", soundIntent: "" };
+  }
 
   if (position) {
     nextClip.position = {

@@ -82,6 +82,26 @@ function videoShotFixture(project: AsmrProject): ClipVideoStoryboard {
 }
 
 describe("adopting planner drafts", () => {
+  it("adopts a mixed performance with stable intent and a nonspoken boundary in both speech workspaces", () => {
+    const draft = plannerFixture(); draft.performanceVersion = 1; draft.segmentation = "semantic";
+    draft.sections.splice(1, 0, { ...draft.sections[0], id: "cloth_transition", kind: "silent", purpose: "transition",
+      text: "接过外套，轻轻挂回门旁。", durationSeconds: 12, direction: "双手接过衣物后挂好。", soundSuggestions: "一次轻柔布料摩擦", pauseAfterSeconds: 0 });
+    const brief = PlannerBriefSchema.parse({ theme: "接过外套后进屋", storyboardStyle: "listener_pov" });
+    const library = adoptPlannerDraft(createInitialProjectLibrary(demoProject), brief, draft, firstTime);
+    const adopted = library.projects.find(entry => entry.projectId === library.currentProjectId)!;
+    const clips = adopted.project.timeline.tracks.find(track => track.track_type === "voice")!.clips;
+    expect(clips.map(clip => clip.kind ?? "speech")).toEqual(["speech", "silent", "speech"]);
+    expect(clips[1]).toMatchObject({ duration: 12, pause_after: 0, asset: { uri: null }, performance: {
+      version: 1, segmentId: "cloth_transition", purpose: "transition", direction: "双手接过衣物后挂好。", soundIntent: "一次轻柔布料摩擦",
+    } });
+    expect(adopted.project.speechWorkspace!.short.clips).toEqual(adopted.project.speechWorkspace!.paragraph.clips);
+    expect(adopted.project.speechWorkspace!.groups.map(group => group.clipIds)).toEqual([[clips[0].id], [clips[2].id]]);
+    expect(adopted.project.videoPlan!.templateDirections!.map(note => note.text)).toEqual([draft.sections[0].text, draft.sections[2].text]);
+    const storage = createStorage(); saveProjectLibrary(storage, library);
+    const restored = loadProjectLibrary(storage, demoProject).projects.find(entry => entry.projectId === library.currentProjectId)!;
+    expect(restored.plannerSource!.draft).toEqual(draft);
+    expect(restored.project.speechWorkspace!.paragraph.clips[1].performance).toEqual(clips[1].performance);
+  });
   it("adopts optional storyboard metadata as the fifth argument without adding visual notes to audio JSON", () => {
     const initial = createInitialProjectLibrary(demoProject, firstTime);
     const before = structuredClone(initial);

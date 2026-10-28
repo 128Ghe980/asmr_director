@@ -7,11 +7,13 @@ import { getLocalRuntimeConfig, type LocalRuntimeConfig } from "./local-runtime-
 import { decodePcmWav } from "./pcm-audio";
 import { completePlannerJson, PlannerError, PlannerProviderIdSchema, type PlannerChatMessage } from "./planner-provider";
 import { AsmrProjectSchema, type VoiceClip } from "./schema";
-import { ClipVideoStoryboardSchema, StoryboardReferenceModeSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getPreviousClipPromptFingerprint, getPreviousVoiceClip, type ClipVideoStoryboard } from "./video-plan";
+import { ClipVideoStoryboardSchema, PerformanceStoryboardPartSchema, StoryboardReferenceModeSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getPreviousClipPromptFingerprint, getPreviousVoiceClip, type ClipVideoStoryboard, type PerformanceStoryboardPart } from "./video-plan";
 import { readVideoPlanningRequest, videoPlanningError, videoPlanningTimeout, type VideoPlanningOptions } from "./video-planning-request";
 import { createStoryboardScriptContext } from "./storyboard-context";
 import { ASMR_SOUND_PLANNING_GUIDANCE, AsmrSoundSchema } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
+import { performanceStoryboardMessages } from "./performance-storyboard";
+import { performancePartDurations } from "./performance-segment";
 
 export const ClipStoryboardRequestSchema = z.object({
   provider: PlannerProviderIdSchema,
@@ -30,6 +32,7 @@ const GeneratedClipStoryboardSchema = z.object({
   camera: z.string().trim().min(1).max(ClipVideoStoryboardSchema.shape.camera.maxLength!),
   ambientSound: z.string().trim().max(600).optional(),
   asmrSound: AsmrSoundSchema,
+  parts: z.array(PerformanceStoryboardPartSchema).min(1).max(120).optional(),
 }).strict();
 
 const MAX_AUDIO_BYTES = 128 * 1024 * 1024;
@@ -195,8 +198,8 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
   const matches = request.project.timeline.tracks.flatMap((track) => track.track_type === "voice" ? track.clips : []).filter((clip) => clip.id === request.clipId);
   if (matches.length !== 1 || !/\S/u.test(matches[0].text)) throw new PlannerError(400, "请先选择一条有效的人声片段。");
   const clip = matches[0];
-  if (clip.kind === "silent" && (!Number.isFinite(clip.duration) || clip.duration <= 0 || clip.duration > 5)) {
-    throw new PlannerError(400, "请将无对白镜头时长调整为大于 0 且不超过 5 秒，再生成分镜。");
+  if (clip.kind === "silent" && (!Number.isFinite(clip.duration) || clip.duration <= 0 || clip.duration > 600)) {
+    throw new PlannerError(400, "无台词段时长须大于 0 且不超过 600 秒。");
   }
   if (clip.kind !== "silent" && (clip.audio_stale || clip.generation.status !== "asset_generated" || !clip.asset.asset_id || clip.asset.uri !== `asset://clip/${clip.asset.asset_id}`)) {
     throw new PlannerError(400, "请先生成并采用当前片段的本地音频，再生成分镜。");
@@ -219,8 +222,9 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
     if (reference) {
       ({ previousClipId, previousPromptFingerprint } = reference);
       const previous = request.project.videoPlan!.shots[previousClipId];
-      previousPrompt = JSON.stringify({ title: previous.title, visual: previous.visual, action: previous.action,
-        ...(request.referenceMode === "continuous" || previous.storyboardStyle === "listener_pov" ? { camera: previous.camera } : {}) });
+      const ending = previous.parts?.at(-1) ?? previous;
+      previousPrompt = JSON.stringify({ title: previous.title, visual: ending.visual, action: ending.action,
+        ...(request.referenceMode === "continuous" || previous.storyboardStyle === "listener_pov" ? { camera: ending.camera } : {}) });
     }
   } else if (request.includePrevious) {
     const previous = getPreviousVoiceClip(request.project, request.clipId);
@@ -229,7 +233,8 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
     previousClipId = previous.id;
     try {
       const previousShot = request.project.videoPlan!.shots[previous.id];
-      previousPrompt = JSON.stringify({ title: previousShot.title, visual: previousShot.visual, action: previousShot.action, camera: previousShot.camera });
+      const ending = previousShot.parts?.at(-1) ?? previousShot;
+      previousPrompt = JSON.stringify({ title: previousShot.title, visual: ending.visual, action: ending.action, camera: ending.camera });
     }
     catch { throw new PlannerError(409, "上一镜分镜已过期或未补全，请先更新上一镜或关闭连续参考。"); }
   }
@@ -238,27 +243,70 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
       : await readAdoptedAudio(clip, options.config ?? getLocalRuntimeConfig(options.env), options.signal);
     const duration = audio?.duration ?? clip.duration;
     checkCancelled(options.signal);
-    const result = await completePlannerJson({
-      provider: clip.kind === "silent" ? "api" : request.provider,
-      messages: clipMessages(request, clip, duration, previousPrompt),
-      jsonSchema: z.toJSONSchema(GeneratedClipStoryboardSchema),
-    }, { ...options, timeoutMs: videoPlanningTimeout(options), timeoutLimitMs: 600_000, maxTokens: 2048, temperature: .5, messageLimit: 72_000, localCpuOnly: false });
-    checkCancelled(options.signal);
-    const generated = GeneratedClipStoryboardSchema.safeParse(result.value);
-    if (!generated.success) {
-      const issues = storyboardValidationDetails(generated.error, result.value);
-      logInvalidStoryboard(request, result, issues);
-      throw new PlannerError(502, `模型分镜结构不正确：${issues.slice(0, 4).map(issue => issue.detail).join("；")}。请重试。`);
+    const performance = Boolean(clip.performance) || clip.kind === "silent" && duration > 5;
+    const expected = clip.kind === "silent" && duration > 5 ? performancePartDurations(duration) : undefined;
+    const parts: PerformanceStoryboardPart[] = [];
+    let first: z.infer<typeof GeneratedClipStoryboardSchema> | undefined;
+    let provider: "api" | "ollama" = clip.kind === "silent" ? "api" : request.provider, model = "";
+    const started = Date.now(), timeout = videoPlanningTimeout(options);
+    // Bound each response. A long performance can exceed one model's JSON output limit.
+    for (let offset = 0; offset < (expected?.length ?? 1); offset += 8) {
+      checkCancelled(options.signal);
+      const window = expected ? { offset, durations: expected.slice(offset, offset + 8), total: expected.length } : undefined;
+      const schema = window ? GeneratedClipStoryboardSchema.extend({ parts: z.array(PerformanceStoryboardPartSchema).length(window.durations.length) }) : GeneratedClipStoryboardSchema;
+      const jsonSchema = z.toJSONSchema(schema);
+      const messages = performance ? performanceStoryboardMessages(request, clip, duration, jsonSchema, previousPrompt, window)
+        : clipMessages(request, clip, duration, previousPrompt);
+      let data: z.infer<typeof GeneratedClipStoryboardSchema> | undefined;
+      for (let attempt = 0; attempt < (performance ? 2 : 1); attempt++) {
+        const remaining = timeout - (Date.now() - started);
+        if (remaining <= 0) throw new PlannerError(504, "设计画面与声音超时，请重试。");
+        const result = await completePlannerJson({ provider, messages, jsonSchema }, { ...options,
+          timeoutMs: remaining, timeoutLimitMs: 600_000,
+          maxTokens: window ? 2048 + window.durations.length * 1100 : 2048, tokenLimit: 16_384,
+          temperature: .5, messageLimit: 96_000, localCpuOnly: false });
+        checkCancelled(options.signal);
+        const generated = schema.safeParse(result.value);
+        const problems: string[] = [];
+        if (!generated.success) {
+          const issues = storyboardValidationDetails(generated.error, result.value);
+          logInvalidStoryboard(request, result, issues);
+          problems.push(`模型分镜结构不正确：${issues.slice(0, 4).map(issue => issue.detail).join("；")}`);
+        } else {
+          const candidate = generated.data;
+          if (clip.kind === "silent" && !candidate.ambientSound?.trim()) problems.push("模型未返回无台词段的声音描述");
+          if (!window && candidate.parts) problems.push("当前片段不需要拆成连续生成段");
+          if (window && (!candidate.parts || candidate.parts.some((part, index) =>
+            Math.abs(part.durationSeconds - window.durations[index]) > .00001
+            || ![part.visual, part.action, part.camera, part.ambientSound].every(value => value.trim())))) problems.push("连续生成段的时长或内容不完整");
+          const englishFields = [candidate, ...(candidate.parts ?? [])].flatMap(part =>
+            [part.visual, part.action, part.camera, part.ambientSound ?? "", part.asmrSound.prompt]);
+          if (performance && englishFields.some(value => /\p{Script=Han}/u.test(value))) problems.push("除title外，全部画面、动作、机位、声音提示词及每个parts字段必须为英文，不能照抄中文原稿");
+          if (!problems.length) { data = candidate; provider = result.provider; model = result.model; break; }
+        }
+        if (!performance || attempt === 1) throw new PlannerError(502, `${problems.join("；")}。请重试。`);
+        messages.push({ role: "assistant", content: JSON.stringify(result.value) }, { role: "user",
+          content: `修正上一条输出并返回完整JSON，保留原脚本内容、段落顺序、材料身份和规定时长。${problems.join("；")}。All visual/action/camera/ambientSound/asmrSound.prompt fields, including every part, must be English. Do not alter the planned durations.` });
+      }
+      if (!data) throw new PlannerError(502, "画面与声音设计不完整，请重试。");
+      if (performance) data.asmrSound.mixMode = clip.kind === "silent" ? "replace" : "overlay";
+      if (window) {
+        for (const part of data.parts!) part.asmrSound.mixMode = "replace";
+        parts.push(...data.parts!);
+        previousPrompt = JSON.stringify(data.parts!.at(-1));
+      }
+      first ??= data;
     }
-    if (clip.kind === "silent" && !generated.data.ambientSound?.trim()) throw new PlannerError(502, "模型未返回无对白镜头的环境底噪描述，请重新生成分镜。");
-    const { ambientSound, ...directions } = generated.data;
+    const { ambientSound, parts: _parts, ...directions } = first!;
+    void _parts;
     const storyboard = ClipVideoStoryboardSchema.parse({
       ...directions, version: 1, promptFormat: "minimax-h3", clipId: clip.id, sourceFingerprint,
       ...(resolveStoryboardStyle(request.project.videoPlan) === "listener_pov" ? { storyboardStyle: "listener_pov" } : {}),
       ...(clip.kind === "silent" ? { kind: "silent", duration, ambientSound } : { audio }),
+      ...(expected ? { parts } : {}),
       ...(previousClipId && previousPromptFingerprint ? { previousClipId, previousPromptFingerprint } : {}),
       ...(request.referenceMode === undefined ? {} : { referenceMode: request.referenceMode }),
     });
-    return { storyboard, provider: result.provider, model: result.model };
+    return { storyboard, provider, model };
   } catch (error) { throw videoPlanningError(error, "生成片段分镜", options.signal); }
 }

@@ -105,7 +105,7 @@ describe("reference templates in the creation workspace", () => {
     seed(); const api = mockApi(); const { onAdopt } = await mountPanel();
     fireEvent.change(screen.getByRole("combobox", { name: "分镜风格" }), { target: { value: "listener_pov" } });
     api.respond(Response.json({ draft }));
-    fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.draftBrief?.storyboardStyle).toBe("listener_pov"));
     expect((api.posts[0].body.brief as { storyboardStyle: string }).storyboardStyle).toBe("listener_pov");
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
@@ -124,7 +124,7 @@ describe("reference templates in the creation workspace", () => {
     await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.brief.referenceTemplate).toEqual(template));
     expect(loadPlannerDraft(window.localStorage).state.draftBrief).toEqual(brief);
     tab("场景"); expect(control("剧情背景").value).toBe(old.sceneDescription);
-    tab("文案"); expect(control("第 1 段台词").value).toBe(draft.sections[0].text);
+    tab("表演脚本"); expect(control("第 1 段台词").value).toBe(draft.sections[0].text);
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
     expect(onAdopt).toHaveBeenCalledExactlyOnceWith(brief, draft, storyboard, old.sceneDescription);
     tab("参考模板"); fireEvent.click(screen.getByRole("button", { name: "取消使用模板" }));
@@ -144,7 +144,7 @@ describe("reference templates in the creation workspace", () => {
     tab("场景"); expect(control("剧情背景").value).toBe(demo.sceneDescription);
     fireEvent.click(screen.getByRole("button", { name: "撤回修改" }));
     expect(control("剧情背景").value).toBe(old.sceneDescription);
-    tab("文案"); expect(control("文案标题").value).toBe(draft.title);
+    tab("表演脚本"); expect(control("文案标题").value).toBe(draft.title);
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
     expect(onAdopt.mock.calls[1]).toEqual([brief, draft, storyboard, old.sceneDescription]);
   });
@@ -159,7 +159,7 @@ describe("reference templates in the creation workspace", () => {
     const adaptedScene = "书店禁止翻书，店员在柜台边悄悄打开一本旧书。";
     const newOpening = "这本书要轻轻翻，别让门外的人听见。";
     api.respond(Response.json({ draft: { ...draft, title: "新生成的故事", scene: adaptedScene, sections: [{ ...draft.sections[0], text: newOpening }] } }));
-    fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     await waitFor(() => expect(control("文案标题").value).toBe("新生成的故事"));
     expect(control("第 1 段台词").value).toBe(newOpening);
     expect(api.posts[0]).toEqual({ path: "/api/planner", body: { action: "generate", provider: "ollama", brief: { ...brief, referenceTemplate: edited } } });
@@ -185,7 +185,7 @@ describe("reference templates in the creation workspace", () => {
 
   it("fills an empty theme and role without generating a draft, and supports undo before a draft exists", async () => {
     mockApi(); await mountPanel();
-    fireEvent.keyDown(screen.getByRole("tab", { name: "文案" }), { key: "End" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: "表演脚本" }), { key: "End" });
     expect(document.activeElement?.id).toBe("planner-tab-templates");
     fireEvent.click(screen.getByLabelText(`模板：${template.title}`).querySelector("summary")!);
     fireEvent.click(templateCard().getByRole("button", { name: "应用到创作设定" }));
@@ -219,7 +219,7 @@ describe("reference templates in the creation workspace", () => {
     await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.brief.referenceTemplate?.creativePrompt).toBe(""));
     first.unmount(); await mountPanel(); tab("参考模板");
     expect(control("模板创作 Prompt").value).toBe("");
-    fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     expect(screen.getByText(/模板创作 Prompt需要检查/)).toBeTruthy();
     expect(api.posts).toHaveLength(0);
   });
@@ -251,7 +251,7 @@ describe("reference templates in the creation workspace", () => {
     expect(screen.getAllByRole("option").some((option) => option.textContent === template.title)).toBe(true);
     fireEvent.change(selector, { target: { value: template.id } });
     expect(control("今日主题").value).toBe(brief.theme);
-    expect(screen.getByRole("tab", { name: "文案" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "表演脚本" }).getAttribute("aria-selected")).toBe("true");
     expect(control("第 1 段台词").value).toBe(draft.sections[0].text);
     await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.brief.referenceTemplate?.id).toBe(template.id));
     fireEvent.change(selector, { target: { value: "" } });
@@ -296,7 +296,7 @@ describe("reference templates in the creation workspace", () => {
     tab("场景"); expect(control("剧情背景").value).toBe(draft.scene);
     const updatedScene = "深夜小巷的书摊，店员在暖灯下整理唯一的一本旧书。";
     fireEvent.change(control("剧情背景"), { target: { value: updatedScene } });
-    tab("文案"); fireEvent.focus(control("第 1 段台词"));
+    tab("表演脚本"); fireEvent.focus(control("第 1 段台词"));
     fireEvent.click(screen.getByRole("button", { name: "AI 改写第 1 段" }));
     fireEvent.change(control("第 1 段改写要求"), { target: { value: "改得更像巷口交谈" } });
     api.respond(Response.json({ section: { ...draft.sections[0], text: "这本书，我替你留到现在。" } }));

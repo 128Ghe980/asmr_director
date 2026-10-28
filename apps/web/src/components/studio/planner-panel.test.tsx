@@ -107,6 +107,57 @@ afterEach(() => {
 });
 
 describe("PlannerPanel interaction with simulated provider responses", () => {
+  it("edits a generated mixed performance without turning the nonspoken section into dialogue", async () => {
+    const draft: PlannerDraft = { ...makeDraft(), performanceVersion: 1, segmentation: "semantic" };
+    draft.sections.splice(1, 0, { ...draft.sections[0], id: "listen_to_book", kind: "silent", purpose: "asmr",
+      title: "听一会儿纸声", text: "沿同一页轻轻摩擦，留出安静间隙。", durationSeconds: 20, pauseAfterSeconds: 0 });
+    const api = mockPlannerApi();
+    api.respond(Response.json({ draft }));
+    const { onAdopt } = await mountPanel();
+    fireEvent.change(control("今日主题"), { target: { value: brief.theme } });
+    fireEvent.click(screen.getByRole("button", { name: "生成表演脚本" }));
+    await screen.findByLabelText("第 2 段无台词内容");
+    expect(screen.getByText(/3 条台词.*1 个无台词段/)).toBeTruthy();
+    expect(screen.getByText(/无台词 20 秒/)).toBeTruthy();
+    fireEvent.focus(control("第 2 段无台词内容"));
+    expect((screen.getByRole("button", { name: "拆分第 2 段" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "合并第 2 段与下一段" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(control("第 2 段无台词时长"), { target: { value: "25" } });
+    fireEvent.change(control("第 2 段用途"), { target: { value: "transition" } });
+    fireEvent.change(control("第 2 段无台词内容"), { target: { value: "轻轻把书放回原位，再回看听者。" } });
+    fireEvent.click(screen.getByRole("button", { name: "下移第 2 段" }));
+    expect(control("第 3 段无台词内容").value).toBe("轻轻把书放回原位，再回看听者。");
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
+    const adopted = onAdopt.mock.calls[0][1] as PlannerDraft;
+    expect(adopted.performanceVersion).toBe(1);
+    expect(adopted.sections[2]).toMatchObject({ id: "listen_to_book", kind: "silent", purpose: "transition", durationSeconds: 25 });
+    expect(adopted.sections.filter(section => section.kind !== "silent").map(section => section.text)).toEqual(makeDraft().sections.map(section => section.text));
+    await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.draft?.sections[2]).toMatchObject({ kind: "silent", durationSeconds: 25 }));
+  });
+
+  it("inserts and deletes an editable nonspoken section with undo, even in a legacy script", async () => {
+    seedWorkingState(); mockPlannerApi(); const { onAdopt } = await mountPanel();
+    fireEvent.focus(control("第 1 段台词"));
+    fireEvent.click(screen.getByRole("button", { name: "在第 1 段后新增无台词段" }));
+    fireEvent.change(control("第 2 段无台词内容"), { target: { value: "在同一位置耐心等待。" } });
+    fireEvent.change(control("第 2 段无台词时长"), { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: "删除第 2 段" }));
+    expect(screen.queryByLabelText("第 2 段无台词内容")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "撤回修改" }));
+    expect(control("第 2 段无台词内容").value).toBe("在同一位置耐心等待。");
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
+    expect(onAdopt.mock.calls[0][1].sections[1]).toMatchObject({ kind: "silent", durationSeconds: 8 });
+  });
+
+  it("allows an entirely nonspoken performance to be adopted", async () => {
+    const original = makeDraft();
+    const draft: PlannerDraft = { ...original, performanceVersion: 1, sections: [{ ...original.sections[0],
+      kind: "silent", purpose: "asmr", durationSeconds: 30, text: "保持机位，缓慢交替轻敲木盒两侧。", pauseAfterSeconds: 0 }] };
+    seedWorkingState({ draft }); mockPlannerApi(); const { onAdopt } = await mountPanel();
+    expect(screen.getByText(/0 条台词 · 0 字 · 1 个无台词段/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
+    expect(onAdopt.mock.calls[0][1]).toEqual(draft);
+  });
   it("keeps the script readable and exposes editing tools only for the selected sentence", async () => {
     const state = seedWorkingState();
     mockPlannerApi();
@@ -168,7 +219,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     const late = deferred<Response>();
     api.respond(late.promise);
     await mountPanel();
-    if (action === "generate") fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    if (action === "generate") fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     else {
       fireEvent.focus(control("第 2 段台词"));
     fireEvent.click(screen.getByRole("button", { name: "AI 改写第 2 段" }));
@@ -216,7 +267,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     api.respond(Response.json({ draft }));
     const { onAdopt } = await mountPanel();
     fireEvent.change(control("今日主题"), { target: { value: brief.theme } });
-    fireEvent.click(screen.getByRole("button", { name: "生成策划稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成表演脚本" }));
     await waitFor(() => expect(control("第 1 段台词").value).toBe(draft.sections[0].text));
 
     const rewritten = { ...draft.sections[1], text: "你想先看哪一本？这本我刚翻过，还挺有意思。" };
@@ -239,7 +290,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
     const late = deferred<Response>();
     api.respond(late.promise);
     const { onAdopt } = await mountPanel();
-    fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     await screen.findByRole("button", { name: "取消" });
     expect(control("第 1 段台词").disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
@@ -248,7 +299,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
 
     const newest = makeDraft("新请求的策划稿");
     api.respond(Response.json({ draft: newest }));
-    fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     await waitFor(() => expect(control("文案标题").value).toBe(newest.title));
     await act(async () => {
       late.resolve(Response.json({ draft: makeDraft("已取消的过期策划稿") }));
@@ -268,7 +319,7 @@ describe("PlannerPanel interaction with simulated provider responses", () => {
       await requestRewrite(api, failedResponse);
     } else {
       api.respond(failedResponse);
-      fireEvent.click(screen.getByRole("button", { name: "重新生成策划稿" }));
+      fireEvent.click(screen.getByRole("button", { name: "重新生成表演脚本" }));
     }
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("测试服务暂时不可用"));
     expect(control("第 2 段台词").value).toBe(state.draft?.sections[1].text);

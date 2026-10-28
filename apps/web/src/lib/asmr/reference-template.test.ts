@@ -70,7 +70,7 @@ describe("reference template contract and source-bound directions", () => {
     expect(createTemplateDemo({ ...interaction, sceneDescription: "用户编辑后的地图工作室" }).sceneDescription).toBe("用户编辑后的地图工作室");
     expect(example.brief.theme).not.toMatch(/香水|秘密|报价|月亮币/);
     expect(example.draft.sections.every(section => section.direction.includes("起始：") && section.direction.includes("结束："))).toBe(true);
-    expect(example.draft.sections.some(section => section.direction.includes("等待") && section.pauseAfterSeconds! > 1)).toBe(true);
+    expect(example.draft.sections.some(section => section.kind === "silent" && section.direction.includes("等待") && section.durationSeconds! > 1)).toBe(true);
     const unknown = createTemplateDemo({ ...interaction, id: "my-imported-template", title: "我的安静天文台", sceneDescription: "原创天文台场景" });
     expect(unknown.brief.theme).toContain("我的安静天文台");
     expect(unknown.draft.scene).toBe("原创天文台场景");
@@ -92,7 +92,8 @@ describe("reference template survives the complete planning-to-storyboard path",
     expect(context.referenceTemplate!.storyboardRules).toBe(template.storyboardRules);
     expect(context.referenceTemplate!.creativePrompt).toContain("保持对视");
     expect(context.referenceTemplate).not.toHaveProperty("source");
-    expect(context.scriptOrder[4].directorNotes![0].soundSuggestions).toContain("纸角");
+    const paper = context.scriptOrder.find(item => item.directorNotes?.some(note => note.soundSuggestions.includes("纸角")));
+    expect(paper).toBeDefined();
     expect(context.scriptOrder[2].directorNotes![0].direction).toContain("等待");
     expect(AsmrProjectSchema.parse(JSON.parse(serializeProject(project))).videoPlan).toEqual(project.videoPlan);
   });
@@ -165,10 +166,12 @@ describe("reference template survives the complete planning-to-storyboard path",
     expect(createStoryboardScriptContext(project, clips[0].id).scriptOrder[0]).not.toHaveProperty("directorNotes");
   });
   it("uses template context for generation, rewriting and scene planning without changing their output contracts", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(draft) } }))
+    const performanceDraft = { ...draft, performanceVersion: 1, sections: [...draft.sections.map(section => ({ ...section, kind: "speech", purpose: "dialogue" })),
+      { ...draft.sections[1], id: "quiet_sound", kind: "silent", purpose: "asmr", durationSeconds: 50, text: "稳定持有当前的书，指腹缓慢摩擦封面，留出安静间隙。" }] };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(performanceDraft) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(draft.sections[0]) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify({ sceneDescription: "雨夜书店里，店员低声向来客展示书籍。" }) } }));
-    await runPlanner({ action: "generate", provider: "ollama", brief }, { env: {}, fetchImpl });
+    await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60 } }, { env: {}, fetchImpl });
     await runPlanner({ action: "rewrite", provider: "ollama", brief, draft, sectionId: draft.sections[0].id, instruction: "保持道具顺序" }, { env: {}, fetchImpl });
     await generateSceneDescription({ provider: "ollama", draft, instruction: "", referenceTemplate: referenceTemplateFixture }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
@@ -186,11 +189,12 @@ describe("reference template survives the complete planning-to-storyboard path",
   });
   it("repairs a template response that only supplies group directions instead of per-unit intentions", async () => {
     const { text, pauseAfter, ...shared } = draft.sections[0];
-    const missing = { title: draft.title, scene: draft.scene, character: draft.character, groups: [{ ...shared, units: [{ text, pauseAfter }] }] };
-    const complete = { ...missing, groups: [{ ...shared, units: [{ text, pauseAfter, direction: shared.direction }] }] };
+    const silentUnit = { kind: "silent", purpose: "asmr", durationSeconds: 55, text: "保持当前持书状态，指腹缓慢摩擦同一封面。", direction: "起始：持有同一本书；动作：缓慢摩擦封面；结束：同一持书状态。", soundSuggestions: "克制的书封摩擦，间歇停留。", pauseAfter };
+    const missing = { performanceVersion: 1, title: draft.title, scene: draft.scene, character: draft.character, groups: [{ ...shared, units: [{ kind: "speech", purpose: "dialogue", text, pauseAfter, soundSuggestions: "" }, silentUnit] }] };
+    const complete = { ...missing, groups: [{ ...shared, units: [{ kind: "speech", purpose: "dialogue", text, pauseAfter, direction: shared.direction, soundSuggestions: "" }, silentUnit] }] };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(missing) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(complete) } }));
-    const result = await runPlanner({ action: "generate", provider: "ollama", brief }, { env: {}, fetchImpl });
+    const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60 } }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect("draft" in result && result.draft.sections[0].direction).toBe(shared.direction);
     const repair = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string);
