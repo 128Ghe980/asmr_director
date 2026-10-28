@@ -41,7 +41,48 @@ export const CREATIVE_TEMPLATES: CreativeTemplate[] = [CreativeTemplateSchema.pa
     { id: "choose", title: "把选择交给听者", referenceRange: "约 00:54–00:58", story: "问听者选哪件，用留白模拟一次安静的双人互动。", visual: "S1 看向镜头，商品回到台面，买家保持画外。", action: "先把 C 放下，再停留等待选择；没有明确交付动作。", camera: "维持近景和目线，不切出一个凭空出现的买家。", sound: "建议一句提问后留白，不替听者配音。", continuity: "等待不等于已经收款或已经交货；下一段只确认选择。" },
     { id: "close", title: "回到前两件，低声收尾", referenceRange: "约 00:58–01:04.46", story: "原片重新拿出前两件、确认选择和合计价格，结构形成回环。", visual: "红色 A 与蓝色 B 在麦克风两侧，C 留在原处。", action: "改编分步拿起 A 和 B，各占一只手，最后稳定展示；若片段短则仅指向两件而不举起。", camera: "保持开场机位，安静停住结束，不突然黑场惊吓。", sound: "建议放轻最后一句，留出自然收尾；实际时长以成品音轨为准。", continuity: "两件都是此前介绍过的物品；收尾仍在 S1 手中或原位，没有凭空交接。" },
   ],
-})];
+}), createInteractionTheatreTemplate()];
+
+function createInteractionTheatreTemplate(): CreativeTemplate {
+  return CreativeTemplateSchema.parse({
+    id: "intimate-interaction-theatre", version: 1, storyboardStyle: "listener_pov",
+    title: "近距离互动小剧场",
+    summary: "让听者成为正在被认真照顾的那个人。围绕一件小事，用对视、等待、细微表情和靠近的手部动作推进互动；一点调侃、一点故作严肃，再自然回到温柔。镜头大多停在听者眼前，让表演带动亲近感。",
+    source: {
+      filename: "1174029976-1-192.mp4 + 42335798032-1-192.mp4（两片合计）",
+      durationSeconds: 1407.68,
+      analysisBasis: "两份本地视频分别为 442.71 秒及 964.97 秒。依据全片定间隔画面取样与关键转场加密抽帧提炼：稳定的正面近景、随听者所处高度调整的对视、面向镜头的照料动作，以及微笑、歪头、闭眼、认真与调侃之间的表情变化。以下节拍是可组合的原创表演方法，不对应两片的逐段剧情或固定秒数；声音安排属于创作建议，不作为原片音轨的逐项鉴定。",
+    },
+    creativePrompt: [
+      "写一份中文 ASMR 近距离互动小剧场。听者是场景里唯一被互动、被照顾的人，S1 有一件具体而轻巧的任务要和听者一起完成。任务、地点、角色和关系全部来自用户今日主题，可以是整理、修补、辨认或准备一件东西；不固定为任何原片剧情，不沿用表演者身份、外貌、服装或品牌。不要自动变成商品展示、报价或一连串护理项目。",
+      "表演的基本循环是：注意到一个具体细节 → 向听者问一句或示意 → 保持对视，给出反应空隙 → 对听者可能的无声反应做小幅回应 → 完成眼前一个动作。听者没有台词，不替听者配音，也不替听者编造长篇经历或一连串已经发生的动作。可以轻轻确认，但不能每个问题后立刻自问自答。",
+      "让温柔里有可见的个性：短暂挑眉、歪头观察、轻抿嘴忍笑、认真确认、故作严肃后自己放软，按当下台词选一项。用一点调侃或认真过头的小反差建立熟悉感，随后回到体贴；不羞辱、训斥或制造压迫。不要全程一个微笑，不机械把每句写成安慰或催睡口令，不连续写眨眼、嘘和贴耳低语来代替表演。",
+      "注意力在脸部回应、手部处理和安静停顿之间自然转移。一次提问先让表情停住等待，处理材料时让动作清楚，再抬眼确认；不用不停拿新道具维持变化。每个短语义单元只有一个主要意图，可以只有目光或表情，不强迫每句触碰、靠近或变换机位。长篇通过任务进展、关系微变化和停顿展开，不重复同一轮问答。",
+      "镜头是听者的眼睛，通常维持听者坐着或站着的眼高和同一轴线；主要由 S1 蹲到目线、前倾、后退或把手伸到镜头下沿制造距离变化。S1 移动不等于镜头跟随。只有剧情明确要求听者走动、转头、低头或落座时才改变视点，并交代新落点。不要每句安排走路，也不要外部摄影机追拍角色。",
+      "每个 unit.direction 写听者视点、S1 当下表情和一个可执行动作的起始/结束。仅写当前真实可见部分；面向镜头的照料可以在画面边缘完成，不新增听者的正脸或全身，不描写无法同时看清的正反打。触碰需要适当停顿与舒适距离，不突然戳到镜头或用遮挡制造惊吓。",
+      "soundSuggestions 跟随实际任务材料和接触：例如当前纸张、布料或轻微放置声，写明相对听者的位置。纯对视反应允许非常轻的衣料变化或安静背景，不给每个表情加敲击或脚步。声音意图用于独立无对白 ASMR 触发音规划，不在 text 中写动作或音效标记；独立音效不增加吹气、呼吸、低语、口腔声或任何人声及配乐。需要清理材料时选用当前已有的布等非口腔动作，不为制造触发音安排向镜头吹气。收尾停在任务完成后的安静陪伴，不强行睡着或切换新故事。",
+    ].join("\n\n"),
+    sceneDescription: "按今日主题建立一个安静、可近距离互动的主空间，只保留本次小任务真正需要的少量材料和稳定归位点。听者位于镜头处，以自身眼高看向 S1；S1 的外貌与服装由角色参考图决定。主机位通常稳定，能读清脸部反应，手部工作区在胸侧或镜头下沿；S1 可以靠近、退回或蹲到听者目线，不把听者当成被外部镜头拍摄的人。确需转场时先给出当前任务的动机，再建立听者的新位置。",
+    storyboardRules: [
+      "模板节拍是可重复组合的互动方法，不是顺序复刻参考视频的剧情清单；按当前台词、实际时长和导演说明选择一项，不按镜号或原片秒数逐一套用。主题、角色、道具和地点以当前原创工程为准。",
+      "视点属于听者，主要是稳定的同轴正面近景或中近景。camera 写清听者位置与眼高，action 写 S1 的表演；S1 靠近镜头、蹲下对视或手伸到下沿时，听者视点通常不动。只在听者真实行动时改变视点，并承接前镜落点，不用自动推拉代替亲近。",
+      "一个短镜头呈现一个意图：问询、等待、反应或任务动作。优先让微表情有明确变化和停留，例如认真观察后轻微挑眉，不能同时塞入微笑、歪头、眨眼、伸手、取物和贴近。表演变化依台词而来，不逐镜重复同一个微笑或点头。",
+      "问句后的目光与停顿就是互动，不必添加可见的听者回应。听者保持画外，可按剧情偶尔见合理局部手部；不要生成听者台词、正脸或第三人称反打。S1 回应以轻微理解、玩笑收住或表情放软为主，不能凭空确认复杂的听者动作。",
+      "面部回应与手部处理轮换主次。脸部是当前重点时双手保持已建立的状态，做事时让同一件材料和持握关系延续。需要靠近的手从可见起点缓慢进入镜头下沿或一侧，结束留在明确位置；不突然多出手臂，不把画外动作写成已看见的完整过程。",
+      "S1 看得见时，让嘴部配合现有人声；听者因任务看向材料或路径时，允许 S1 留在画外讲话，不为了始终拍脸把视线强行转回。不得凭空改变原声、添加对白或用音效代替口型。对白主轨保留已采用的人声，物件触发音另写 asmrSound。",
+      "转场只能由任务或听者行动引起，先建立离开/进入的动机，再明确新的听者位置、眼高和 S1 方位。不要复刻原片的黑场、住宅、职业身份或具体照料流程；不把一次连续短镜拆成多次场景切换。",
+      "独立 ASMR 只对应当前真实材料接触；纯反应可用微弱衣料或环境质感。空间参数按物体距听者的实际位置，画面近景不自动等于贴耳；不为每个手势添加敲击、脚步或环绕，不添加人声或音乐。动作结束状态和声源终点都承接下一镜。",
+    ].join("\n\n"),
+    beats: [
+      { id: "notice", title: "先看见眼前的人", referenceRange: "可组合 · 开场或新任务", story: "用当前情境中的小细节建立被注意到的感觉。", visual: "听者眼高的同轴近景，S1 的脸部反应清楚。", action: "S1 在舒适距离停住，先看向听者，再观察当前任务的一个细节。", camera: "听者视点稳定；S1 调整姿势来对齐目线。", sound: "自然轻声，句尾给出空间；触发音只来自当前场景。", continuity: "交代双方位置和材料初态，不默认任务已完成或已经接过物件。" },
+      { id: "ask_wait", title: "问一句，认真等一下", referenceRange: "可组合 · 每次需要确认时", story: "让听者的无声参与成为节奏的一部分。", visual: "重点留在目光与细微表情，手部暂时稳定。", action: "一个简短问句后保持对视，轻微侧头等待，不立刻执行下一件事。", camera: "沿用听者当前位置，不以推镜代替等待。", sound: "给自然停顿，不加入替听者说话的音轨。", continuity: "等待不是听者已经点头、起身或交付物品；下一镜仅作合理小回应。" },
+      { id: "playful_response", title: "一点玩笑，再放软", referenceRange: "可组合 · 反应与关系变化", story: "用温和反差让角色有个性，又能让听者放心。", visual: "脸部由短暂认真转为克制笑意，或从忍笑回到专注。", action: "只选一个小表情变化，停住让听者读懂，然后回到当前任务。", camera: "稳定的正面近景，不用夸张推拉或切镜强调笑点。", sound: "用台词与节奏承载玩笑，不加笑声音效或戏剧音乐。", continuity: "反应针对当前语境，不反复回到初次招呼，也不突然换一种人格。" },
+      { id: "task_contact", title: "把小事做得认真", referenceRange: "可组合 · 任务推进", story: "具体而细小的动作支撑照顾感，使声音与剧情有共同动机。", visual: "同一材料进入胸侧或画面下沿，S1 与任务工作区关系明确。", action: "一次只做一种当前需要的接触动作，起点、持握与落点明确。", camera: "听者自然看向任务工作区时可稍低头，否则维持机位。", sound: "只规划这次接触的纸、布或其他实际材料声，保留轻重与空隙。", continuity: "同一物件延续同一形态与持手，取起和归位各自有过渡，不每镜重新开始。" },
+      { id: "close_check", title: "靠近确认，留出余地", referenceRange: "可组合 · 确需近距离处理时", story: "通过适度靠近与观察，把注意力集中在听者身边。", visual: "S1 自然前倾或手从镜头边缘进入，距离改变有清楚来源。", action: "靠近后停在舒适距离完成一个确认；不同时突然触碰或遮满镜头。", camera: "听者视点不追随 S1；位置和眼高承接前镜。", sound: "物体真实靠近时才让触发声接近，不把脸部特写当成声源贴耳。", continuity: "保持已经建立的双手位置，下一镜从靠近后的状态继续或自然退回。" },
+      { id: "settle", title: "事情好了，人还在", referenceRange: "可组合 · 完成与收尾", story: "完成后不急着换任务，让陪伴感落在一个安静的停留里。", visual: "材料已在明确终态，S1 抬眼回到听者，表情放松。", action: "放开已完成的材料或保持原姿势，轻轻确认后停住。", camera: "回到或保留主轴线，不突然黑场、远景或观众反打。", sound: "最后一次材料接触自然落下，其后允许安静，不强塞结束音效。", continuity: "收尾沿用真实完成状态，不擅自宣告听者睡着或转入新的剧情。" },
+    ],
+  });
+}
 
 const DEMO_LINES = [
   ["巷口接头", "来找那种熟悉的味道？靠近一点，我听得见。", "双手空着，正面胸部近景；身体轻微靠近后停住。三件商品仍在台面原位，麦克风在下沿且不遮嘴。"],
@@ -65,6 +106,8 @@ export function createTemplateDemo(template: CreativeTemplate): {
   brief: PlannerBrief; draft: PlannerDraft; sceneDescription: string;
 } {
   const snapshot = CreativeTemplateSchema.parse(structuredClone(template));
+  if (snapshot.id === "intimate-interaction-theatre") return createInteractionTheatreDemo(snapshot);
+  if (snapshot.id !== "forbidden-counter-trade") return createNeutralTemplateDemo(snapshot);
   const brief = PlannerBriefSchema.parse({
     theme: "香水被禁止的巷口小店：小声展示三款没有品牌的香氛，陪听者慢慢挑选。",
     durationSeconds: 180, language: "zh", role: "安静巷口的秘密香氛店主",
@@ -84,6 +127,61 @@ export function createTemplateDemo(template: CreativeTemplate): {
       pauseAfter: "short", pauseAfterSeconds: index === 10 ? 2 : index === 13 ? 2.5 : 0.6,
       position: { pan: 0, distance: "near", movement: "static" },
     })),
+  });
+  return { brief, draft, sceneDescription: snapshot.sceneDescription };
+}
+
+function createInteractionTheatreDemo(snapshot: CreativeTemplate) {
+  const sceneDescription = snapshot.sceneDescription === createInteractionTheatreTemplate().sceneDescription
+    ? "雨停前的安静遮雨棚内，听者坐在木桌一侧，熟悉的旅行向导 S1 坐在对面同一眼高。一张已经摊开的微湿地图在桌面中央，一块干软布在 S1 的右手边；双手开场空着。镜头是听者的眼睛，主要看向 S1，只在查看地图时自然稍微低头。"
+    : snapshot.sceneDescription;
+  const brief = PlannerBriefSchema.parse({
+    theme: "雨停前的地图修补桌：熟悉的旅行向导陪听者把一张折皱的地图轻轻理平、吸干一角，再沿原折痕折好。",
+    durationSeconds: 180, language: "zh", role: "熟悉又有一点俏皮的旅行向导",
+    style: "自然轻声、认真里带一点调侃，提问后停留等待",
+    notes: "原创示例。以对视、表情与同一张地图的小任务推进，不添加听者对白；第一人称机位大多稳定，不为每句安排运镜。",
+    referenceTemplate: snapshot,
+  });
+  const lines = [
+    ["先看见地图", "原来你一路都把它攥在手里呀。先放松，我看看。", "起始：听者坐在桌边，正面看同高的S1；S1双手空，地图在中央，布在右侧。动作：S1看一眼地图后抬眼。结束：视点不动，双手仍空。", "极轻的衣料变化，地图尚未被接触。", "专注，带一点关心"],
+    ["故作严肃", "这道折痕，可不是地图自己偷偷折出来的。", "起始：S1双手空，听者同轴看着S1。动作：S1轻轻挑眉，短暂故作严肃。结束：表情停住，双手与材料不动。", "安静棚下质感，不为表情添加敲击。", "轻微调侃，认真过头的小反差"],
+    ["留给听者", "嗯？是风先动的手？", "起始：同一眼高，S1双手空。动作：S1稍微侧头看向听者，问后停留等待。结束：停在侧头姿势，不虚构听者动作。", "轻微衣料摩擦后安静。", "忍住笑意，耐心等待"],
+    ["自己放软", "好，那今天先不追究风。我们把这个角救回来。", "起始：S1双手空，头稍侧。动作：S1放软表情并回正。结束：S1重新专注于桌面，手仍空，镜头稳定。", "保持微弱环境质感。", "玩笑收住，温和专注"],
+    ["理平一角", "我轻轻压住这里，你看，已经平一点了。", "起始：地图摊在中央，S1双手空。动作：S1左手掌轻压地图近侧卷角。结束：左手留在同一角，右手空；听者视线自然稍低到桌面。", "纸角被轻轻压平的细软纸声，声源在听者前方桌面。", "认真而轻缓"],
+    ["抬眼确认", "这次我够轻了吧？", "起始：S1左手压地图，右手空；听者已看向桌面。动作：S1抬眼等待，听者自然回看S1。结束：同轴对视，持手状态不变。", "保持安静，不重复上一镜的压纸声。", "轻微期待，含笑但不夸张"],
+    ["取软布", "边上还有一点水，我拿这块软布。", "起始：左手仍压地图，右手空，布在S1右侧。动作：右手取起软布。结束：右手持布停在桌边，左手不动。", "软布从桌面提起的一次轻柔摩擦。", "耐心，回到实际任务"],
+    ["轻轻吸干", "不用来回擦，停一小会儿就好。", "起始：右手持布在桌边，左手固定地图。动作：右手把布轻按在湿角上停住。结束：布仍贴着同一角，双手保持。", "软布与纸角一次轻柔接触，然后安静停留；不加连续擦拭。", "轻声示范，专注"],
+    ["软布归位", "嗯，这样就可以了。", "起始：右手的布贴在纸角，左手固定地图。动作：右手将布移回原右侧归位点并松开。结束：布留右侧，右手空，左手仍在纸上。", "布料移开并轻放桌面的细声，前方偏S1右侧。", "小小的满意"],
+    ["松开手", "看，它没有那么脆弱。只是需要慢一点。", "起始：左手仍压地图，右手空。动作：S1左手离开纸角。结束：双手空，地图平放；S1看向听者，镜头稳定。", "手离开纸面的极轻接触声，不添加新的触发物。", "温和确认，不说教"],
+    ["沿旧痕折好", "沿着原来的这一道，轻轻合起来。", "起始：地图平放，双手空。动作：S1双手扶住两侧，沿已有中央折痕合拢一次。结束：地图折在桌面中央，双手轻扶两侧；听者稍低头看地图。", "一次缓慢、柔和的折纸声，前方桌面，不连续反复折叠。", "专注，节奏放慢"],
+    ["事情好了", "好了。这回它可以好好带路了。", "起始：折好的地图在中央，双手扶两侧。动作：S1双手轻轻松开地图。结束：双手空，地图留在桌上，布在右侧。", "松开纸张后的一点回弹声，随后留白。", "轻松，有一点小得意"],
+    ["人还在这里", "雨还没停。路线可以慢慢看，我也不赶时间。", "起始：听者看着折好地图，S1双手空。动作：听者自然抬眼，S1以放松的目光回应后停留。结束：同轴对视，材料不动。", "安静棚下环境质感，任务材料不再被触碰。", "安稳陪伴，自然收尾"],
+  ];
+  const draft = PlannerDraftSchema.parse({
+    segmentation: "semantic", title: "雨停前的地图修补桌 · 中文示例", scene: sceneDescription,
+    character: { role: brief.role, personality: ["细心", "俏皮", "体贴"], speechStyle: ["自然轻声", "反应有停留", "语气随表情变化"] },
+    sections: lines.map(([title, text, direction, soundSuggestions, emotion], index) => ({
+      id: `interaction_${String(index + 1).padStart(2, "0")}`, title, text, direction, soundSuggestions, emotion,
+      style: brief.style, pace: "轻缓自然，不拖长每个字", pauseAfter: "short",
+      pauseAfterSeconds: [2, 5, 12].includes(index) ? 2 : 0.7,
+      position: { pan: 0, distance: "near", movement: "static" },
+    })),
+  });
+  return { brief, draft, sceneDescription };
+}
+
+/** Imported templates retain their own identity; they never inherit another template's story. */
+function createNeutralTemplateDemo(snapshot: CreativeTemplate) {
+  const brief = PlannerBriefSchema.parse({
+    theme: `围绕「${snapshot.title}」创作一段安静互动，具体任务与材料由今日主题决定。`,
+    durationSeconds: 180, language: "zh", role: "与听者安静互动的人", style: "自然轻声，留出回应时间",
+    notes: "可编辑的简短起稿；请按今日主题补充具体任务与人物关系。", referenceTemplate: snapshot,
+  });
+  const draft = PlannerDraftSchema.parse({
+    segmentation: "semantic", title: `${snapshot.title} · 中文起稿`, scene: snapshot.sceneDescription,
+    character: { role: brief.role, personality: ["耐心"], speechStyle: ["自然轻声"] },
+    sections: [{ id: "template_opening", title: "安静确认", text: "我们慢慢来。你可以先看一会儿。", emotion: "平静", style: brief.style, pace: "自然留白",
+      direction: "起始：双方位置沿用当前场景，S1双手空。动作：S1看向听者，停留等待。结束：位置与手部状态不变。", soundSuggestions: "保持当前安静环境，不凭空增加道具接触。", pauseAfter: "medium", position: { pan: 0, distance: "near", movement: "static" } }],
   });
   return { brief, draft, sceneDescription: snapshot.sceneDescription };
 }

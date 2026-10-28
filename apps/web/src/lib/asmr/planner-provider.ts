@@ -182,6 +182,7 @@ function prompts(request: PlannerRequest, jsonSchema: unknown): ChatMessage[] {
   const { referenceTemplate, storyboardStyle, ...creativeBrief } = request.brief;
   const brief = { ...creativeBrief, ...(storyboardStyle ? { storyboardStyle: effectiveStoryboardStyle(request.brief) } : {}) };
   const listenerPov = effectiveStoryboardStyle(request.brief) === "listener_pov";
+  const tradeTemplate = referenceTemplate?.id === "forbidden-counter-trade";
   const wordTarget = Math.round(request.brief.durationSeconds * 2.2);
   const system = [
     "你是中文 ASMR 创意策划与编剧。围绕用户今天的主题，写出完整、可朗读、可编辑的文案。",
@@ -197,12 +198,26 @@ function prompts(request: PlannerRequest, jsonSchema: unknown): ChatMessage[] {
       "soundSuggestions 根据本段真实动作填写可制作的无对白 ASMR 触发音意图，如当前道具的轻触、布料、脚步或贴近环境细声；描述材质、触发动作和相对听者的位置，不加入旁白、耳语、呼吸人声或配乐，不强塞与剧情无关的敲击。",
     ] : []),
     ...(request.brief.referenceTemplate ? [
-      "referenceTemplate 是用户选用的参考作品创作模板。结合当前主题、角色和时长写原创台词，保留其叙事节奏、道具展示方式与镜头连续性；不要照抄参考台词，也不要强套原作品时长、道具或节拍编号。优先满足用户当前明确创作要求。",
-      "每个实际台词单元都要有自足的单镜导演说明。逐单元填写具体 direction，使用‘起始：…；动作：…；结束：…’三项，明确左右手分别空着还是持有哪件道具、道具的台面归位点及当前姿势；静止展示也要明确起止持物状态相同。本 unit 的起始必须承接上一 unit 的结束，包括跨 group 的相邻单元；不能把‘手已持书’当作未描写取物的替代，不能让道具突然换手、换颜色或消失。soundSuggestions 只是声音建议，不代表已生成声音；导演说明不混入 text。",
+      tradeTemplate
+        ? "referenceTemplate 是用户选用的参考作品创作模板。结合当前主题、角色和时长写原创台词，保留其叙事节奏、道具展示方式与镜头连续性；不要照抄参考台词，也不要强套原作品时长、道具或节拍编号。优先满足用户当前明确创作要求。"
+        : "referenceTemplate 是用户选用的创作模板。结合当前主题、角色和时长写原创台词，保留当前模板的互动节奏、表演方式与镜头连续性；不默认所有模板都要交易、报价或逐件展示。不要照抄参考台词、剧情、道具、时长或节拍编号，优先满足用户当前明确创作要求。",
+      tradeTemplate
+        ? "每个实际台词单元都要有自足的单镜导演说明。逐单元填写具体 direction，使用‘起始：…；动作：…；结束：…’三项，明确左右手分别空着还是持有哪件道具、道具的台面归位点及当前姿势；静止展示也要明确起止持物状态相同。本 unit 的起始必须承接上一 unit 的结束，包括跨 group 的相邻单元；不能把‘手已持书’当作未描写取物的替代，不能让道具突然换手、换颜色或消失。soundSuggestions 只是声音建议，不代表已生成声音；导演说明不混入 text。"
+        : "每个实际台词单元都要有自足的单镜导演说明。逐单元填写具体 direction，使用‘起始：…；动作：…；结束：…’三项，明确听者视点、S1当前姿势或表情和本段一个主要意图；只有实际使用道具时才写取放、持握和归位。纯对视、等待或表情反应也是完整事件，不需要新增道具动作。本 unit 的起始必须承接上一 unit 的结束，包括跨 group 的相邻单元；已建立的左右手和物件状态保持连续，不能突然换手、换颜色或消失。soundSuggestions 跟随当前真实接触或安静停留，不给每个表情附加敲击和脚步；导演说明不混入 text。",
       "紧凑 groups 的 units.direction 会完整覆盖 group.direction，不会自动拼接。group.direction 只能写共用背景、构图或持续表演方式（也可为空），绝不能独自承担拿起、放下、交接或换手等一次性动作；这些事件必须完整写进实际对应的 unit.direction。不要把第一个取物动作藏在 group.direction 后，让多个 unit 只写‘持有’。",
-      "同一件道具从取起到归位，尽量始终由同一只手持有；一次只安排一个主要可见事件。展示下一件之前，先写一个适合当前剧情的原创过渡台词单元，配放回动作并结束为空手，下一单元再取新物，不能一句完成放A、取B和开盖。连贯性要求优先于机械凑段数；已完成动作不重复，不在一条短台词中切镜。",
-      "三个连续单元的导演说明示例（A只是当前主题的一件道具；这里不提供台词，text 必须依据当前剧情原创）：①引入A的单元，direction=‘起始：右手空，A在台面左侧，左手空；动作：右手从左侧取起A到胸侧；结束：右手持A，左手仍空。’；②介绍A的单元，direction=‘起始：右手在胸侧持A，左手空；动作：稳定展示A；结束：右手仍在胸侧持A，左手空。’；③结束本次展示的单元，direction=‘起始：右手持A，左手空；动作：右手将A放回台面左侧并松手；结束：A留在左侧，双手空。’取起A必须写在①的unit.direction，不能只写在group.direction；下一件从③的空手终态接续。",
-      "对白期间嘴部始终可见：不要把食指竖在唇前做‘嘘’手势，也不把道具或麦克风移到嘴前；提醒小声可用嘴部以下的轻微掌心向下手势。持物期间不要用手指比价或比数字，不为报价临时换手；用台词与表情报价，保持已确定的左右手持物状态。",
+      ...(tradeTemplate ? [
+        "同一件道具从取起到归位，尽量始终由同一只手持有；一次只安排一个主要可见事件。展示下一件之前，先写一个适合当前剧情的原创过渡台词单元，配放回动作并结束为空手，下一单元再取新物，不能一句完成放A、取B和开盖。连贯性要求优先于机械凑段数；已完成动作不重复，不在一条短台词中切镜。",
+        "三个连续单元的导演说明示例（A只是当前主题的一件道具；这里不提供台词，text 必须依据当前剧情原创）：①引入A的单元，direction=‘起始：右手空，A在台面左侧，左手空；动作：右手从左侧取起A到胸侧；结束：右手持A，左手仍空。’；②介绍A的单元，direction=‘起始：右手在胸侧持A，左手空；动作：稳定展示A；结束：右手仍在胸侧持A，左手空。’；③结束本次展示的单元，direction=‘起始：右手持A，左手空；动作：右手将A放回台面左侧并松手；结束：A留在左侧，双手空。’取起A必须写在①的unit.direction，不能只写在group.direction；下一件从③的空手终态接续。",
+        "持物期间不要用手指比价或比数字，不为报价临时换手；用台词与表情报价，保持已确定的左右手持物状态。",
+      ] : [
+        "一次只安排一个主要可见意图，并保留表演后的停留。先在scene建立完成当前任务真正需要的少量材料与初始归位点，不为后半段制造变化临时新增工具、替换件或新支线。已有物件从取起到放回都保持具体身份；拿起必须从已经建立的可见位置开始，使用前必须有取起，下一单元仍在手里时不能再次拿起，换手或归位必须明确发生。涉及材料的unit.direction写清相关手的起始、动作和结束状态；纯表情单元只说明既有状态不变，无需重复全场清单，也不能悄悄重置为空手。",
+        "起始只能写上一单元结束时已有的状态；蹲下、落座、起身、取放、换手和视点变化必须发生在对应unit的动作里，不能偷写成下一unit起始时已经完成。听者视点的起始继承上一单元结束，不逐句重置到正面看脸。已经低头看材料时，下一句若要对视，必须明确一次自然抬眼；S1抬眼不等于听者也抬眼。位置和眼高在听者没有身体行动时保持，表演者移近或蹲下不带动镜头。尽量在同一基础构图中保留脸部与工作区，注意力转移不自动等于转动镜头；不要为了写起始/结束而给每句强加低头、抬头或走动。",
+        "group.position 描述这组人声相对听者的真实位置，通常 movement=static。一次性的靠近或后退只放在真正移动的独立group，动作完成后的后续反应/做事单元改为终点位置的static，不让多句继承approach并重复靠近。人物目光或表情变化不改变声源位置；物件触发音位置与人声位置分开考虑。",
+        "soundSuggestions 必须是可用于独立无对白音效的材料接触或环境质感，不含吹气、呼吸、口腔声、耳语、笑声或其他人声，不含音乐。即使某动作通常会产生人声，也不能把那个人声写成触发音；按任务改用当前已有材料的非口腔动作，或者保持安静。不能把对视和等待改写成不断展示新物；连贯性要求优先于机械凑段数，不在一条短台词中切镜。",
+      ]),
+      listenerPov
+        ? "S1在听者视野内说话时嘴部自然可见；听者因当前任务看向材料或路径时，允许S1画外说话。表演者可以靠近或蹲到听者眼高，镜头仍属于听者，不为保持嘴部可见而强行追拍；不要用突然遮挡镜头制造惊吓。"
+        : "对白期间嘴部始终可见：不要把食指竖在唇前做‘嘘’手势，也不把道具或麦克风移到嘴前；提醒小声可用嘴部以下的轻微掌心向下手势。",
     ] : []),
     "只输出符合下面 JSON schema 的 JSON 对象，不要 Markdown、解释、代码或任何额外字段。所有字段必须齐全。模型不能决定 assets、jobs、provider、seed、工程 ID 或生成参数。",
     JSON.stringify(jsonSchema),
@@ -213,7 +228,7 @@ function prompts(request: PlannerRequest, jsonSchema: unknown): ChatMessage[] {
       request.brief.referenceTemplate ? "根据以下 brief 创作整份策划稿。groups 只共享角色、表演属性和持续背景；一次性动作全部写在各自的 unit.direction，不能依赖组级方向补齐。id 使用 group_1、group_2 等唯一标识。"
         : "根据以下 brief 创作整份策划稿。groups 只用来共享导演与声音属性，同一角色和表演设置写一次，不需要为每条台词重复。id 使用 group_1、group_2 等唯一标识。",
       `每个 group 内的 units 是实际语义短单元，每条返回 text 与 pauseAfter${request.brief.referenceTemplate ? "，并逐条填写具体 direction（可选 soundSuggestions）覆盖组默认值" : "，需要时可填写 direction 或 soundSuggestions 覆盖组默认值"}；顺序串联所有 groups 的 units 即为完整文案。不要为了凑 group 数量截断同一意思。`,
-      request.brief.referenceTemplate ? "标题简短。每个 unit 必须填写具体非空 direction，按‘起始；动作；结束’写完整的左右手与道具状态，并逐句承接；soundSuggestions 不需要时写空字符串。" : "标题简短，导演说明和音效建议仅在需要时填写，其他时候写空字符串。",
+      request.brief.referenceTemplate ? `标题简短。每个 unit 必须填写具体非空 direction，按‘起始；动作；结束’写完整的${tradeTemplate ? "左右手与道具状态" : "视点、表演和已有道具状态"}，并逐句承接；soundSuggestions 不需要时写空字符串。` : "标题简短，导演说明和音效建议仅在需要时填写，其他时候写空字符串。",
       request.brief.referenceTemplate ? "保持 JSON 紧凑：同一角色与连续相同表演设置共用一个 group，只共享 emotion、style、pace 等表演属性，每个 unit 的 direction 单独填写。场景用 1 至 2 句，direction 和 soundSuggestions 各尽量不超过 80 字，但完整的起止状态优先；emotion、style、pace 各用短语。"
         : "保持 JSON 紧凑：同一角色与连续相同表演设置共用一个 group，通常 1 至 6 个 group 足够；不要每句都重复导演字段。场景用 1 至 2 句，direction 和 soundSuggestions 各最多 80 字，emotion、style、pace 各用短语。",
       ...(listenerPov ? ["第一人称风格下，每个 unit 必须单独填写 direction，明确听者视点的起始、动作和结束，覆盖 group 的共用导演说明；soundSuggestions 也按当前动作填写。"] : []),

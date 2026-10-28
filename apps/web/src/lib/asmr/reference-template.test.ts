@@ -57,9 +57,45 @@ describe("reference template contract and source-bound directions", () => {
     expect(getMatchingTemplateDirections(directions, directions[0].text + "但不要把东西拿出来。")).toEqual([]);
     expect(getMatchingTemplateDirections(undefined, directions[0].text)).toEqual([]);
   });
+  it("keeps curated templates and their examples distinct, with a neutral fallback for imported templates", () => {
+    expect(new Set(CREATIVE_TEMPLATES.map(template => template.id)).size).toBe(CREATIVE_TEMPLATES.length);
+    for (const template of CREATIVE_TEMPLATES) expect(CreativeTemplateSchema.safeParse(template).success).toBe(true);
+    const interaction = CREATIVE_TEMPLATES.find(template => template.id === "intimate-interaction-theatre")!;
+    const example = createTemplateDemo(interaction);
+    expect(interaction.storyboardStyle).toBe("listener_pov");
+    expect(example.brief.referenceTemplate).toEqual(interaction);
+    expect(example.draft.title).toContain("地图修补桌");
+    expect(example.draft.sections.length).toBeGreaterThan(8);
+    expect(example.sceneDescription).toBe(example.draft.scene);
+    expect(createTemplateDemo({ ...interaction, sceneDescription: "用户编辑后的地图工作室" }).sceneDescription).toBe("用户编辑后的地图工作室");
+    expect(example.brief.theme).not.toMatch(/香水|秘密|报价|月亮币/);
+    expect(example.draft.sections.every(section => section.direction.includes("起始：") && section.direction.includes("结束："))).toBe(true);
+    expect(example.draft.sections.some(section => section.direction.includes("等待") && section.pauseAfterSeconds! > 1)).toBe(true);
+    const unknown = createTemplateDemo({ ...interaction, id: "my-imported-template", title: "我的安静天文台", sceneDescription: "原创天文台场景" });
+    expect(unknown.brief.theme).toContain("我的安静天文台");
+    expect(unknown.draft.scene).toBe("原创天文台场景");
+    expect(JSON.stringify(unknown)).not.toContain("月亮币");
+    expect(unknown.draft.title).not.toContain("地图修补桌");
+  });
 });
 
 describe("reference template survives the complete planning-to-storyboard path", () => {
+  it("carries the interaction template's listener view, acting and material intentions into adopted storyboard context", () => {
+    const template = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
+    const example = createTemplateDemo(template);
+    const library = adoptPlannerDraft(createInitialProjectLibrary(demoProject), example.brief, example.draft,
+      new Date("2026-10-28T10:00:00Z"), undefined, example.sceneDescription);
+    const project = library.projects.find(entry => entry.projectId === library.currentProjectId)!.project;
+    const voices = project.timeline.tracks.find(track => track.track_type === "voice")!.clips;
+    const context = createStoryboardScriptContext(project, voices[4].id);
+    expect(project.videoPlan!.storyboardStyle).toBe("listener_pov");
+    expect(context.referenceTemplate!.storyboardRules).toBe(template.storyboardRules);
+    expect(context.referenceTemplate!.creativePrompt).toContain("保持对视");
+    expect(context.referenceTemplate).not.toHaveProperty("source");
+    expect(context.scriptOrder[4].directorNotes![0].soundSuggestions).toContain("纸角");
+    expect(context.scriptOrder[2].directorNotes![0].direction).toContain("等待");
+    expect(AsmrProjectSchema.parse(JSON.parse(serializeProject(project))).videoPlan).toEqual(project.videoPlan);
+  });
   it("adopts the curated fourteen-line example with all source-bound shot directions intact", () => {
     const example = createTemplateDemo(CREATIVE_TEMPLATES[0]);
     const library = adoptPlannerDraft(createInitialProjectLibrary(demoProject), example.brief, example.draft,

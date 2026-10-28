@@ -10,6 +10,7 @@ import { writePcm16Wav } from "./pcm-audio";
 import { addSilentClip } from "./voice-segments";
 import { createClipH3Prompt, createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent, type ClipVideoStoryboard } from "./video-plan";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
+import { CREATIVE_TEMPLATES } from "./creative-templates";
 import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 
 const base = path.resolve(process.env.ASMR_STORYBOARD_TEST_ROOT ?? tmpdir());
@@ -120,6 +121,30 @@ describe("已采用音频的单片段分镜", () => {
     expect(body.messages[0].content).toContain("fully_copy");
     expect(body.messages[0].content).toContain("soundSuggestions 只是语义参考");
     expect(material.audioDurationSeconds).toBe(.3);
+  });
+  it("uses interaction acting and listener viewpoint for both speech and silent ASMR planning", async () => {
+    for (const silent of [false, true]) {
+      const { input, project, voices } = await fixture();
+      const template = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
+      project.videoPlan!.referenceTemplate = structuredClone(template);
+      project.videoPlan!.storyboardStyle = "character_framing";
+      if (silent) { voices[1].kind = "silent"; voices[1].duration = 4; }
+      project.videoPlan!.templateDirections = [{ text: voices[1].text, direction: "S1看向听者后停留，听者视点稳定。", soundSuggestions: "纸叶轻轻落在桌面，不重复敲击。" }];
+      const planned = { ...generated, ...(silent ? { ambientSound: "Quiet greenhouse room tone." } : {}) };
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(silent ? Response.json({ choices: [{ message: { content: JSON.stringify(planned) } }] }) : reply(planned));
+      const result = await generateClipStoryboard(input, { env: silent ? {
+        ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_KEY: "mock-only", ASMR_PLANNER_API_MODEL: "mock-model",
+      } : {}, config, fetchImpl });
+      const material = materialFrom(fetchImpl), system = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages[0].content as string;
+      expect(material.storyboardStyle).toBe("listener_pov");
+      expect(material.referenceTemplate.storyboardRules).toBe(template.storyboardRules);
+      expect(system).toContain("对视、等待或微表情可以构成本镜");
+      expect(system).not.toContain("只借鉴展示、归位和报价的结构");
+      expect(system).not.toContain("说话期间脸和嘴部始终可见");
+      expect(system).toContain("对白镜头与无对白镜头都必须有");
+      expect(result.storyboard.asmrSound).toEqual(asmrSoundFixture);
+      if (!silent) expect(material.scriptOrder[1].directorNotes[0].soundSuggestions).toContain("纸叶");
+    }
   });
   it("ignores a model-added ambient sound on speech shots while retaining the existing speech prompt", async () => {
     const { input, project, voices } = await fixture();

@@ -7,6 +7,7 @@ import {
 } from "./planner-provider";
 import { normalizePlannerSemanticDraft } from "./planner-semantic";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
+import { CREATIVE_TEMPLATES } from "./creative-templates";
 
 const brief = {
   theme: "深夜书店",
@@ -87,7 +88,7 @@ describe("Planner provider", () => {
   });
   it("makes each template unit own its complete prop transition rather than relying on overwritten group directions", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(draft));
-    await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, referenceTemplate: referenceTemplateFixture } }, { env: {}, fetchImpl });
+    await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, referenceTemplate: CREATIVE_TEMPLATES[0] } }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledOnce();
     const messages = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages;
     expect(messages[0].content).toContain("units.direction 会完整覆盖 group.direction，不会自动拼接");
@@ -98,6 +99,30 @@ describe("Planner provider", () => {
     expect(messages[0].content).toContain("持物期间不要用手指比价或比数字");
     expect(messages[1].content).toContain("一次性动作全部写在各自的 unit.direction");
     expect(messages[1].content).not.toContain("groups 只用来共享导演与声音属性");
+  });
+  it("plans a new theme using intimate acting without imposing trading or a face-following camera", async () => {
+    const template = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(draft));
+    await runPlanner({ action: "generate", provider: "ollama", brief: {
+      ...brief, theme: "玻璃温室里一起辨认新芽", storyboardStyle: "character_framing", referenceTemplate: template,
+    } }, { env: {}, fetchImpl });
+    const messages = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages;
+    const system = messages[0].content as string, user = messages[1].content as string;
+    expect(system).toContain("镜头就是听者的眼睛");
+    expect(system).toContain("纯对视、等待或表情反应也是完整事件");
+    expect(system).toContain("允许S1画外说话");
+    expect(system).not.toContain("对白期间嘴部始终可见");
+    expect(system).not.toContain("用台词与表情报价");
+    expect(system).not.toContain("取起A必须写在①");
+    expect(system).toContain("不能偷写成下一unit起始时已经完成");
+    expect(system).toContain("不能再次拿起");
+    expect(system).toContain("不含吹气、呼吸、口腔声");
+    expect(system).toContain("不让多句继承approach并重复靠近");
+    expect(user).toContain("玻璃温室里一起辨认新芽");
+    expect(user).toContain('"storyboardStyle":"listener_pov"');
+    expect(user).toContain(template.creativePrompt.split("\n\n")[1]);
+    expect(user).not.toContain(template.source.filename);
+    expect(user).not.toContain("地图修补桌");
   });
   it("expands compact semantic generation in one call while inheriting shared direction", async () => {
     const { id, title, emotion, style, pace, direction, soundSuggestions, position } = section;

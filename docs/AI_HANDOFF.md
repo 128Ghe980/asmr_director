@@ -4,7 +4,15 @@ Last updated: 2026-10-28
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-10-28 / 第一人称分镜与逐镜 ASMR 叠加
+## Current update — 2026-10-28 / 近距离互动小剧场模板
+
+上一版第一人称/逐镜 ASMR 已按用户要求独立记录、提交并推送：`816d90a22fc189ecbbd41d4ad65220954caa21f3`，55 文件（49 功能/6 文档），远端 SHA 已核验；28 范围外工作保持，回执在 `qa/storyboard/2026-10-28-pov-asmr/publication.json`。下述模板是该检查点后的独立工作，不应混淆两轮发布状态。
+
+用户提供「爱哥」两视频，要求借用镜头/表演方法而非具体剧情。已依据全长抽帧、局部细帧和片内字幕提炼「近距离互动小剧场」(`intimate-interaction-theatre`)：固定 `listener_pov`，多数时刻听者机位稳定，角色靠近、歪头、眼神切换和前景手部动作产生变化；短句/玩笑、反应停顿与操作交替。未听辨完整音轨/ASR，不声称复制原声线或声像。新增六个可组合节拍、13段202字原创地图修补示例；独立默认主题/角色，未知模板中性起稿，旧交易模板的报价与商品展示约束已隔离。7 个应用文件改动，沿用模板快照、逐段导演说明、分镜及 ASMR 链路。
+
+QA `I:/AI/asmr_director/qa/reference-templates/2026-10-28/aige/`：5文件122项及7文件lint通过；最后英文/接触约束修正后2文件61项与该文件lint通过（分组重叠，不相加），未重跑整站。真实 API 共8业务/8上游，均 `deepseek-v4-pro`，无结构重试：两主题策划各首轮/复测、语音/空镜分镜各首轮/复测。复测主题迁移、静态声位及无吹气建议成立，但仍有取放藏于起始状态等连续性缺陷，不能称导演质量全通过。最终分镜英文、固定主观视点，脸部反应→左掌压纸角，声音分别匹配轻环境/衣料与一次纸接触；无真实TTS/ASR/H3。3038预览验证选择锁定、13行示例及采用后模板锁定，用户3001工程未改。最终构建通过并已切换3001：build `dbmLqQB5hklhIMQwcnjkw`，源码 `.local/releases/interaction-theatre-template/apps/web`，启动PID24080；8静态资源、7参考目录及两日语WAV核对通过，7功能文件与发布副本一致、28范围外文件和两输入视频哈希保持，3038已停止。用户随后要求单独记录推送本模板，发布范围仅7应用文件及6配套文档；提交/远端SHA与28范围外文件、两输入保护结果见本QA `publication.json`，与此前816d90a分开记录。复用已验构建，本次不重启服务；恢复见[完整记录](records/2026-10-28-aige-performance-template.md)及QA部署回执。Audio Quality V1继续/其他SFX暂停，不新增路线。[中文合同](specs/2026-10-28-interaction-theatre-template.zh.md) / [English](specs/2026-10-28-interaction-theatre-template.en.md)。
+
+## Earlier update — 2026-10-28 / 第一人称分镜与逐镜 ASMR 叠加
 
 按用户新要求完成创意/工程「角色展示（原风格）」与「第一人称 · 跟随剧情」，模板固定风格；缺省旧数据和原 prompt 保持。第一人称相机属于听者，承接实际位置、眼高和朝向，随剧情走动/转头/落座；S1 可按剧情画外说话，不再因始终可见嘴部而锁回人像。每个新有声/无对白分镜同次 API 给独立 ASMR 触发音及起止声位/移动/增益，时长取实际导出 WAV 或空镜自身时长。编辑、保存、校对和撤回已贯通，旧工程未自动改写。
 

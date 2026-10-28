@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CREATIVE_TEMPLATES, createTemplateDemo } from "@/lib/asmr/creative-templates";
@@ -17,7 +17,8 @@ const draft: PlannerDraft = {
 };
 const storyboard: PlannerStoryboard = { version: 1, title: "书店旧分镜", sourceFingerprint: createStoryboardSourceFingerprint(draft), shots: [{ id: "old_shot", title: "桌边", sourceSectionIds: ["old_1"], visual: "旧画面", action: "旧动作", camera: "旧镜头" }] };
 
-function control(label: string) { return screen.getByLabelText(label) as HTMLInputElement | HTMLTextAreaElement; }
+function templateCard() { return within(screen.getByLabelText(`模板：${template.title}`)); }
+function control(label: string) { return (label.startsWith("模板") ? templateCard() : screen).getByLabelText(label) as HTMLInputElement | HTMLTextAreaElement; }
 function tab(name: string) {
   fireEvent.click(screen.getByRole("tab", { name }));
   if (name === "参考模板") fireEvent.click(screen.getByLabelText(`模板：${template.title}`).querySelector("summary")!);
@@ -51,6 +52,37 @@ beforeEach(() => window.localStorage.clear());
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("reference templates in the creation workspace", () => {
+  it("selects the interaction template and locks listener POV without replacing an existing theme or draft", async () => {
+    seed(); mockApi(); await mountPanel();
+    const interaction = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
+    fireEvent.change(screen.getByRole("combobox", { name: "参考模板" }), { target: { value: interaction.id } });
+    const style = screen.getByRole("combobox", { name: "分镜风格" }) as HTMLSelectElement;
+    expect(style.disabled).toBe(true);
+    expect(style.value).toBe("listener_pov");
+    expect(control("今日主题").value).toBe(brief.theme);
+    expect(control("第 1 段台词").value).toBe(draft.sections[0].text);
+    await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.brief.referenceTemplate).toEqual(interaction));
+    expect(loadPlannerDraft(window.localStorage).state.draftBrief).toEqual(brief);
+  });
+
+  it("fills and loads the interaction example independently of the original trading template", async () => {
+    mockApi(); const { onAdopt } = await mountPanel();
+    const interaction = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
+    const example = createTemplateDemo(interaction);
+    fireEvent.change(screen.getByRole("combobox", { name: "参考模板" }), { target: { value: interaction.id } });
+    expect(control("今日主题").value).toBe(example.brief.theme);
+    expect(control("角色 / 关系").value).toBe(example.brief.role);
+    expect(screen.queryByLabelText("文案标题")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "参考模板" }));
+    const card = screen.getByLabelText(`模板：${interaction.title}`);
+    fireEvent.click(card.querySelector("summary")!);
+    fireEvent.click(within(card).getByRole("button", { name: "载入中文示例稿" }));
+    expect(control("文案标题").value).toBe(example.draft.title);
+    expect(control("第 1 段台词").value).toBe(example.draft.sections[0].text);
+    fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
+    expect(onAdopt).toHaveBeenCalledExactlyOnceWith(example.brief, example.draft, undefined, example.sceneDescription);
+  });
+
   it("persists POV selection, locks a template's own style and restores the independent choice when removed", async () => {
     seed(); mockApi(); const view = await mountPanel();
     const style = screen.getByRole("combobox", { name: "分镜风格" }) as HTMLSelectElement;
@@ -85,7 +117,7 @@ describe("reference templates in the creation workspace", () => {
     tab("参考模板");
     expect(screen.queryByText(/分析依据|不是模型现场生成/)).toBeNull();
     expect(control("模板创作 Prompt").value).toBe(template.creativePrompt);
-    fireEvent.click(screen.getByRole("button", { name: "应用到创作设定" }));
+    fireEvent.click(templateCard().getByRole("button", { name: "应用到创作设定" }));
     expect(control("今日主题").value).toBe(brief.theme);
     expect(control("角色 / 关系").value).toBe(brief.role);
     expect(control("说话风格").value).toBe(brief.style);
@@ -102,7 +134,7 @@ describe("reference templates in the creation workspace", () => {
 
   it("loads the labeled demo with its scene, clears incompatible shots, and restores all prior state with undo", async () => {
     const old = seed(); mockApi(); const { onAdopt } = await mountPanel();
-    tab("参考模板"); fireEvent.click(screen.getByRole("button", { name: "载入中文示例稿" }));
+    tab("参考模板"); fireEvent.click(templateCard().getByRole("button", { name: "载入中文示例稿" }));
     const demo = createTemplateDemo(template);
     expect(control("文案标题").value).toBe(demo.draft.title);
     expect(screen.getByText("已载入中文示例稿。")).toBeTruthy();
@@ -119,7 +151,7 @@ describe("reference templates in the creation workspace", () => {
 
   it("sends edited template instructions to generation and replaces the previous story background on success", async () => {
     seed(); const api = mockApi(); const { onAdopt } = await mountPanel();
-    tab("参考模板"); fireEvent.click(screen.getByRole("button", { name: "应用到创作设定" }));
+    tab("参考模板"); fireEvent.click(templateCard().getByRole("button", { name: "应用到创作设定" }));
     fireEvent.change(control("模板创作 Prompt"), { target: { value: "把禁令改为禁止香氛，保留秘密交易的喜剧结构。" } });
     fireEvent.change(control("模板分镜约束"), { target: { value: "只用一瓶香氛，先放下试香纸再收瓶，始终保持手部连续。" } });
     fireEvent.change(control("模板场景描述"), { target: { value: "巷口小店的同一张桌边，暖灯照着香氛瓶。" } });
@@ -156,19 +188,19 @@ describe("reference templates in the creation workspace", () => {
     fireEvent.keyDown(screen.getByRole("tab", { name: "文案" }), { key: "End" });
     expect(document.activeElement?.id).toBe("planner-tab-templates");
     fireEvent.click(screen.getByLabelText(`模板：${template.title}`).querySelector("summary")!);
-    fireEvent.click(screen.getByRole("button", { name: "应用到创作设定" }));
+    fireEvent.click(templateCard().getByRole("button", { name: "应用到创作设定" }));
     expect(control("今日主题").value).toBe(createTemplateDemo(template).brief.theme);
     expect(control("角色 / 关系").value).toBe(createTemplateDemo(template).brief.role);
     expect(screen.queryByLabelText("文案标题")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "撤回修改" }));
     expect(control("今日主题").value).toBe("");
-    expect(screen.getByRole("button", { name: "应用到创作设定" })).toBeTruthy();
+    expect(templateCard().getByRole("button", { name: "应用到创作设定" })).toBeTruthy();
   });
 
   it("keeps template edits and drafts scoped when switching projects", async () => {
     seed({}, "one"); seed({ brief: { ...brief, theme: "另一个项目" }, draftBrief: { ...brief, theme: "另一个项目" } }, "two");
     mockApi(); const view = await mountPanel("one");
-    tab("参考模板"); fireEvent.click(screen.getByRole("button", { name: "应用到创作设定" }));
+    tab("参考模板"); fireEvent.click(templateCard().getByRole("button", { name: "应用到创作设定" }));
     fireEvent.change(control("模板创作 Prompt"), { target: { value: "只属于项目一的模板" } });
     view.rerender(<PlannerPanel projectId="two" onAdopt={view.onAdopt} />);
     await waitFor(() => expect(control("今日主题").value).toBe("另一个项目"));
@@ -251,9 +283,9 @@ describe("reference templates in the creation workspace", () => {
     const longScene = "暖灯照亮小店，桌面上的香氛排列整齐。".repeat(150);
     expect(longScene.length).toBeGreaterThan(2000); expect(longScene.length).toBeLessThanOrEqual(4000);
     fireEvent.change(control("模板场景描述"), { target: { value: longScene } });
-    fireEvent.click(screen.getByRole("button", { name: "应用到创作设定" }));
+    fireEvent.click(templateCard().getByRole("button", { name: "应用到创作设定" }));
     await waitFor(() => expect(loadPlannerDraft(window.localStorage).state.brief.referenceTemplate?.sceneDescription).toBe(longScene));
-    fireEvent.click(screen.getByRole("button", { name: "载入中文示例稿" }));
+    fireEvent.click(templateCard().getByRole("button", { name: "载入中文示例稿" }));
     fireEvent.click(screen.getByRole("button", { name: "采用并创建工程" }));
     expect(onAdopt.mock.calls[0][1].scene).toBe(longScene);
     expect(onAdopt.mock.calls[0][3]).toBe(longScene);

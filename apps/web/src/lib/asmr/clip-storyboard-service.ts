@@ -128,6 +128,7 @@ function clipMessages(input: ClipStoryboardRequest, clip: VoiceClip, duration: n
   const silent = clip.kind === "silent";
   const continuous = input.referenceMode === "continuous" || (input.referenceMode === undefined && input.includePrevious);
   const listenerPov = resolveStoryboardStyle(input.project.videoPlan) === "listener_pov";
+  const tradeTemplate = input.project.videoPlan?.referenceTemplate?.id === "forbidden-counter-trade";
   return [{ role: "system", content: [
     silent
       ? "为当前无对白 ASMR 镜头制作一个 MiniMax H3 单镜视频分镜，description 是画面描述而非台词。这一镜没有语音、对白或音频参考；返回 title、visual、action、camera、ambientSound、asmrSound。title 可用中文，visual、action、camera、ambientSound 必须是简洁具体的英文，每个字段只写一句。ambientSound 必须非空。"
@@ -144,8 +145,12 @@ function clipMessages(input: ClipStoryboardRequest, clip: VoiceClip, duration: n
     "scriptOrder 是按原稿排列的全部有声台词与无对白动作，currentIndex 是当前镜头的零起始索引。前后文都用于理解因果、人物所在位置和动作是否已完成；已有 storyboardContext 只是可选剧情参考，尚未生成其他镜头也可以规划本镜。只输出当前镜头，不复述全稿，不提前演完未来情节，不把邻句台词当作当前对白。",
     ...(input.project.videoPlan?.templateDirections?.length && !input.project.videoPlan.referenceTemplate ? ["scriptOrder[].directorNotes 是与当前文字可靠匹配的创意阶段导演说明，描述本段事件、听者视点或声音意图。依据当前台词、实测时长及前镜实际终态使用，不按行号硬套、不重复拆分前整段动作；按本次所选分镜风格落实，并将声音意图写入独立asmrSound。"] : []),
     ...(input.project.videoPlan?.referenceTemplate ? [
-      "referenceTemplate 是所选类型的创作与分镜参考；采用其简单场景、运镜约束、道具展示节奏和连续性规则，按当前原创剧情适配，不复制原片台词、时间戳或把模板第N节拍硬配给第N句。template beats 是叙事阶段，一个阶段可跨多条实际台词。",
-      "当前 baseScene、实际台词和本段导演说明优先于模板原片场景、道具与 A/B/C 示例。主题已改成书店等情境时，只借鉴展示、归位和报价的结构，不把香水、巷口、原片商品颜色或数量硬塞回新剧情；保留当前剧情已建立的物品身份与位置。",
+      tradeTemplate
+        ? "referenceTemplate 是所选类型的创作与分镜参考；采用其简单场景、运镜约束、道具展示节奏和连续性规则，按当前原创剧情适配，不复制原片台词、时间戳或把模板第N节拍硬配给第N句。template beats 是叙事阶段，一个阶段可跨多条实际台词。"
+        : "referenceTemplate 是当前类型的创作与分镜参考；采用其视点、互动表演、动作节奏和连续性规则，按当前原创剧情适配。template beats 是可组合的叙事或表演方法，一项可跨多条实际台词；不复制参考剧情、台词、时间戳或把第N节拍硬配给第N句。",
+      tradeTemplate
+        ? "当前 baseScene、实际台词和本段导演说明优先于模板原片场景、道具与 A/B/C 示例。主题已改成书店等情境时，只借鉴展示、归位和报价的结构，不把香水、巷口、原片商品颜色或数量硬塞回新剧情；保留当前剧情已建立的物品身份与位置。"
+        : "当前 baseScene、实际台词和本段导演说明决定任务、地点、角色与材料，模板只提供表演和镜头方法。不能把新主题改回模板示例，也不能一律变成商品展示或报价；保留当前剧情已建立的位置、表情和物件身份。对视、等待或微表情可以构成本镜，不强制取物、触碰或移动镜头。",
       "scriptOrder[].directorNotes 是能与当前文字可靠匹配的原策划逐段导演说明。优先结合当前台词和前镜实际终态落实本段起始、动作和道具终态；拆分台词可能只属于原说明的一部分，合并台词可能含数条说明，必须按当前台词和实测时长择取一个主要事件，不能重演整段动作。无匹配说明时依据全稿语义判断，禁止按索引硬套旧说明。",
       "visual 只描述本镜开始、动作尚未发生时的可见状态，action 描述从该状态发生的事件和终态，二者不能矛盾。例如本镜要从台面取起 A，visual 应写 A 仍在台面、手空着，不能先写 A 已在手中；本镜把 A 放回，visual 才是手持 A。模板要求固定机位时 camera 保持固定，不为了变化自动添加推拉、摇移或跟随；当前具体剧情确有需要时才改变。",
       `导演说明和模板不能覆盖当前音频、${listenerPov ? "第一人称视点" : "嘴部可见"}、参考外貌、单镜时长或无对白规则；soundSuggestions 只是语义参考，不得据此给对白音轨添加音效。`,
@@ -173,6 +178,9 @@ function clipMessages(input: ClipStoryboardRequest, clip: VoiceClip, duration: n
       ...(input.referenceMode ? { referenceMode: input.referenceMode } : {}) })}`,
     `补充要求：${JSON.stringify(input.instruction)}`,
     ...(previousPrompt ? [`${continuous ? "上一镜连续参考" : "上一镜次要剧情上下文"}（只描述画面与动作，不是当前台词或当前音频）：\n${previousPrompt}`] : []),
+    ...(input.project.videoPlan?.referenceTemplate && !tradeTemplate ? [
+      "Output language: title may be Chinese; visual, action, camera, ambientSound and asmrSound.prompt must be English, even when the reference template and director notes are Chinese. Write visual as the visible state BEFORE this shot's action. Keep the listener's established position and eye height unless this shot actually moves the listener. A facial reaction or held gaze does not move props: when there is no material contact, use only a very quiet existing room tone for asmrSound, without inventing paper rustles, table creaks or extra gestures. For a contact shot, describe only the contact that actually occurs and the material already present.",
+    ] : []),
   ].join("\n") }];
 }
 
