@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { compilePlannerDraft, getPlannerDurationSummary, getPlannerPerformanceBudget, PlannerBriefSchema, PlannerDraftSchema, type PlannerDraft } from "./planner";
+import { compilePlannerDraft, estimatePlannerSpeechDuration, getPlannerDurationSummary, getPlannerPerformanceBudget, PlannerBriefSchema, PlannerDraftSchema, type PlannerDraft } from "./planner";
 import { insertPlannerSection, insertPlannerSilentSection, mergePlannerSection, replacePlannerRange, splitPlannerSection } from "./planner-editing";
 import { normalizePlannerSemanticDraft } from "./planner-semantic";
 import { runPlanner } from "./planner-provider";
@@ -16,15 +16,20 @@ const sound = { ...base, id: "tapping", title: "听纸盒", kind: "silent" as co
   text: "角色在同一机位轻敲已经拿在手里的纸盒，疏密变化并停歇。", direction: "起始：右手持纸盒；动作：左指轻敲；结束：两手保持，敲击停止。", soundSuggestions: "柔和纸盒点触，清晰而克制。" };
 const draft: PlannerDraft = { performanceVersion: 1, title: "门口到桌边", scene: "安静房间，纸盒在桌上。", character: { role: "熟人", personality: ["自然"], speechStyle: ["轻声"] }, sections: [base, transition, sound] };
 const brief = PlannerBriefSchema.parse({ theme: "递外套后进屋，听纸盒", durationSeconds: 180 });
-const generatedDraft = { ...draft, sections: [base, transition, { ...sound, durationSeconds: 150 }] };
+const soundSections = (seconds: number) => Array.from({ length: Math.ceil(seconds / 12) }, (_, index) => ({ ...sound, id: `sound_${index}`, durationSeconds: seconds / Math.ceil(seconds / 12) }));
+const generatedDraft = { ...draft, sections: [base, transition, ...soundSections(150)] };
 
 describe("performance scripts", () => {
   it("budgets language separately from operation time and obeys explicit no-speech themes", () => {
     expect(getPlannerPerformanceBudget(brief)).toMatchObject({ speechSeconds: 81, nonSpeechSeconds: 99, spokenCharacters: 178 });
-    expect(getPlannerPerformanceBudget({ ...brief, referenceTemplate: CREATIVE_TEMPLATES[0] })).toMatchObject({ speechSeconds: 72, nonSpeechSeconds: 108 });
+    expect(getPlannerPerformanceBudget({ ...brief, referenceTemplate: CREATIVE_TEMPLATES[0] })).toMatchObject({ speechSeconds: 90, nonSpeechSeconds: 90 });
     expect(getPlannerPerformanceBudget({ ...brief, theme: "传统 ASMR，在麦克风前轻敲" })).toMatchObject({ speechSeconds: 27, nonSpeechSeconds: 153 });
     expect(getPlannerPerformanceBudget({ ...brief, theme: "全程无台词的纸张摩擦" })).toMatchObject({ speechSeconds: 0, nonSpeechSeconds: 180, noSpeech: true });
     expect(getPlannerPerformanceBudget({ ...brief, theme: "纯对白的陪伴" })).toMatchObject({ speechSeconds: 180, nonSpeechSeconds: 0, noSpeech: false });
+    for (const referenceTemplate of CREATIVE_TEMPLATES) {
+      expect(getPlannerPerformanceBudget({ ...brief, referenceTemplate, theme: "全程无台词的安静演出" })).toMatchObject({ speechSeconds: 0, noSpeech: true });
+      expect(getPlannerPerformanceBudget({ ...brief, referenceTemplate, theme: "传统 ASMR，在麦克风前轻敲" }).speechSeconds).toBe(27);
+    }
   });
   it("compiles timed actions in order, preserves identity and recalculates following starts after actual speech", () => {
     const project = compilePlannerDraft(brief, draft, "performance");
@@ -39,6 +44,7 @@ describe("performance scripts", () => {
   it("validates silent duration while allowing all-silent work without producing pretend speech", () => {
     const onlySound = { ...draft, sections: [sound] };
     expect(PlannerDraftSchema.safeParse(onlySound).success).toBe(true);
+    expect(PlannerDraftSchema.safeParse({ ...draft, sections: [{ ...sound, durationSeconds: 600 }] }).success).toBe(true);
     const clips = compilePlannerDraft(brief, onlySound, "all_sound").timeline.tracks[0].clips;
     expect(clips).toHaveLength(1);
     expect(clips[0]).toMatchObject({ kind: "silent", duration: 20, asset: { asset_id: null } });
@@ -75,32 +81,44 @@ describe("performance scripts", () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ message: { content: JSON.stringify(generatedDraft) } }));
     const result = await runPlanner({ action: "generate", provider: "ollama", brief }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect("draft" in result && result.draft.sections.map(section => section.kind)).toEqual(["speech", "silent", "silent"]);
+    expect("draft" in result && result.draft.sections.slice(0, 3).map(section => section.kind)).toEqual(["speech", "silent", "silent"]);
     const body = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string);
     expect(body.format.properties.performanceVersion.const).toBe(1);
     expect(body.messages[1].content).toContain("语言约 81 秒，无台词表演约 99 秒");
     expect(body.messages[0].content).toContain("先在内部");
   });
   it("puts a compact whole-performance budget before schema and template detail without inheriting original plot beats", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ message: { content: JSON.stringify({ ...draft, sections: [base, transition, { ...sound, durationSeconds: 44 }] }) } }));
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ message: { content: JSON.stringify({ ...draft, sections: [base, transition, ...soundSections(44)] }) } }));
     await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60 } }, { env: {}, fetchImpl });
     const messages = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages;
     const system = messages[0].content as string;
     expect(system.split("\n")[1]).toContain("语言约 27 秒，无台词表演约 33 秒");
-    expect(system.split("\n")[2]).toContain("不超过 59 个非空白字符，建议最多 5 个 speech 段");
+    expect(system.split("\n")[2]).toContain("约 59 个非空白字符、3 个完整 speech 段");
     expect(system).toContain("ASMR试听须有独立silent段");
     expect(system).toContain("说完一句话不代表动作已完成");
     expect(system).not.toContain("按朗读顺序连续排列的语义短单元");
     expect(system).not.toContain("每个实际台词单元都要有自足的单镜导演说明");
-    expect(system).toContain("kind:'speech'");
-    expect(system).toContain("kind:'silent'");
+    expect(messages[1].content).toContain("kind:'speech'");
+    expect(messages[1].content).toContain("kind:'silent'");
 
     await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60, referenceTemplate: CREATIVE_TEMPLATES[0] } }, { env: {}, fetchImpl });
     const templateMessages = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages;
-    expect(templateMessages[0].content).toContain("语言约 24 秒，无台词表演约 36 秒");
+    expect(templateMessages[0].content).toContain("语言约 30 秒，无台词表演约 30 秒");
     expect(templateMessages[1].content).toContain(CREATIVE_TEMPLATES[0].performancePacing!.rules);
     expect(templateMessages[1].content).not.toContain('"beats"');
     expect(templateMessages[1].content).not.toContain('"sceneDescription"');
+    const finalCheck = templateMessages[1].content.slice(templateMessages[1].content.lastIndexOf("【本次输出前最后核对"));
+    expect(finalCheck).toContain("总表演目标60秒，合格范围48至72秒");
+    expect(finalCheck).toContain("完整台词先按约30秒");
+    expect(finalCheck).toContain("20至35字");
+    expect(finalCheck).toContain("动作邀请或说明准备做什么的台词在动作之前");
+    expect(finalCheck).toContain("不能空白");
+    expect(finalCheck).toContain("必须返回混合表演脚本");
+    expect(finalCheck).toContain("silent.text中不向听者说话");
+    expect(finalCheck).toContain("角色评论，应写speech");
+    expect(finalCheck).toContain("邀请→动作silent→完成后的回应");
+    expect(finalCheck).not.toContain(CREATIVE_TEMPLATES[0].creativePrompt);
+    expect(templateMessages[1].content).not.toContain('"storyboardRules"');
   });
   it("invalidates old action intentions after a speech split or selected-text rewrite", () => {
     const split = splitPlannerSection(draft, "invite", { start: 6, end: 6 });
@@ -118,33 +136,114 @@ describe("performance scripts", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect("draft" in result && result.draft.sections[1].durationSeconds).toBe(8);
     expect(JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages.at(-1).content).toContain("真正占据时间");
+    const repair = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages.at(-1).content;
+    expect(repair).toContain("上一稿缺少全部silent");
+    expect(repair).toContain("从speech.direction中移到实际silent单元");
+    expect(repair).toContain("不能把缺失的动作当成0秒");
+    expect(repair).not.toContain("台词应合计约180秒");
   });
   it("supports a generated all-sound script and preserves its full planned duration", async () => {
-    const onlySound = { ...draft, sections: [{ ...sound, durationSeconds: 180 }] };
+    const onlySound = { ...draft, sections: soundSections(180) };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ message: { content: JSON.stringify(onlySound) } }));
     const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, theme: "全程无台词的纸盒轻敲" } }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect("draft" in result && getPlannerDurationSummary(result.draft)).toEqual({ speechSeconds: 0, nonSpeechSeconds: 180, totalSeconds: 180 });
   });
-  it.each([36, 92])("repairs a %s-second generation against a 60-second target without scaling the returned content", async durationSeconds => {
-    const original = { ...draft, sections: [{ ...sound, durationSeconds }] };
-    const corrected = { ...draft, sections: [{ ...sound, durationSeconds: 60 }] };
+  it("gives an underlength draft a measured speech budget and short-line list instead of padding silent time", async () => {
+    const shortLines = ["先坐一会儿吧。", "你慢慢听。", "这边也好了。"];
+    const original = { ...draft, sections: [
+      ...shortLines.map((text, index) => ({ ...base, id: `speech_${index}`, text })), ...soundSections(36),
+    ] };
+    const naturalSpeech = "这只纸盒的声音稍微清脆一些，等我换个位置给你听。";
+    const corrected = { ...draft, sections: [
+      ...Array.from({ length: 7 }, (_, index) => ({ ...base, id: `speech_${index}`, text: naturalSpeech })), ...soundSections(36),
+    ] };
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(original) } }))
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(corrected) } }));
+    const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 120, referenceTemplate: CREATIVE_TEMPLATES[1] } }, { env: {}, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect("draft" in result && getPlannerDurationSummary(result.draft).nonSpeechSeconds).toBe(36);
+    const repair = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages.at(-1).content;
+    expect(repair).toContain(`"path":"sections.0","seconds":${estimatePlannerSpeechDuration(shortLines[0])}`);
+    expect(repair).toContain(`"text":"${shortLines[0]}"`);
+    expect(repair).toContain("台词应合计约84秒，至少60秒才能达标");
+    expect(repair).toContain("约7至11个完整speech段，每段8至12秒");
+    expect(repair).toContain("不能仅增加估时数字、延长动作或复制台词");
+    expect(repair).toContain("不要再受最初语言比例限制");
+    expect(repair).not.toContain("完整台词先按约66秒");
+    expect(original.sections.slice(0, 3).map(section => section.text)).toEqual(shortLines);
+  });
+  it.each(["全程无台词的纸盒轻敲", "传统 ASMR，在麦克风前轻敲"])("does not turn the timing repair for %s into a forced speech remainder", async theme => {
+    const original = { ...draft, sections: soundSections(24) };
+    const corrected = { ...draft, sections: soundSections(60) };
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(original) } }))
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(corrected) } }));
+    await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, theme, durationSeconds: 60 } }, { env: {}, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const repair = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages.at(-1).content;
+    expect(repair).not.toContain("台词应合计约");
+    expect(repair).not.toContain("不要再受最初语言比例限制");
+  });
+  it.each([
+    ["asmr", 15], ["transition", 10], ["interaction", 5],
+  ] as const)("repairs a new %s segment over %s seconds without silently shortening its saved value", async (purpose, maximum) => {
+    const target = { ...sound, purpose, durationSeconds: maximum + 0.1 };
+    const padding = soundSections(60 - maximum);
+    const original = { ...draft, sections: [target, ...padding] };
+    const corrected = { ...draft, sections: [{ ...target, durationSeconds: maximum }, ...padding] };
+    expect(PlannerDraftSchema.safeParse(original).success).toBe(true);
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(original) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(corrected) } }));
     const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60, theme: "全程无台词的纸盒轻敲" } }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect("draft" in result && result.draft.sections[0].durationSeconds).toBe(60);
-    expect(original.sections[0].durationSeconds).toBe(durationSeconds);
+    expect(original.sections[0].durationSeconds).toBe(maximum + 0.1);
+    expect("draft" in result && result.draft.sections[0].durationSeconds).toBe(maximum);
+    const messages = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages;
+    expect(messages.at(-1).content).toContain(`sections.0.durationSeconds为${maximum + 0.1}秒，新生成${purpose}段最多${maximum}秒`);
+    expect(messages[0].content).toContain("不能只看purpose标签来分配时长");
+    expect(messages[0].content).toContain("拆开糖纸、递交或取放即使有好听的声音");
+    expect(messages[0].content).not.toContain("10至30秒");
+  });
+  it("repairs speech estimated above 15 seconds at complete-meaning boundaries without truncating text", async () => {
+    const texts = ["你先在这里坐舒服一点，外面的声音很轻，我们慢慢听。", "这只纸盒的声音稍微清脆一些，等我换个位置给你听。"];
+    expect(texts.every(text => estimatePlannerSpeechDuration(text) <= 15)).toBe(true);
+    const longSpeech = { ...base, text: texts.join("") };
+    expect(estimatePlannerSpeechDuration(longSpeech.text)).toBeGreaterThan(15);
+    const padding = soundSections(36);
+    const original = { ...draft, sections: [longSpeech, ...padding] };
+    const corrected = { ...draft, sections: [...texts.map((text, index) => ({ ...base, id: `speech_${index}`, text })), ...padding] };
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(original) } }))
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(corrected) } }));
+    const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60 } }, { env: {}, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect("draft" in result && result.draft.sections.filter(section => section.kind === "speech").map(section => section.text).join("")).toBe(longSpeech.text);
+    const repair = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages.at(-1).content;
+    expect(repair).toContain("单条新台词最多预计15秒");
+    expect(repair).toContain("完整意思或自然话题边界");
+  });
+  it.each([36, 92])("repairs a %s-second generation against a 60-second target without scaling the returned content", async durationSeconds => {
+    const original = { ...draft, sections: soundSections(durationSeconds) };
+    const corrected = { ...draft, sections: soundSections(60) };
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(original) } }))
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(corrected) } }));
+    const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60, theme: "全程无台词的纸盒轻敲" } }, { env: {}, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect("draft" in result && getPlannerDurationSummary(result.draft).nonSpeechSeconds).toBe(60);
+    expect(getPlannerDurationSummary(original).nonSpeechSeconds).toBe(durationSeconds);
     const repair = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages.at(-1).content;
     expect(repair).toContain(`总计${durationSeconds}秒`);
     expect(repair).toContain("允许48至72秒");
     expect(repair).toContain("不机械缩放");
   });
   it.each(["（无台词）", "听。", "继续。"])("repairs placeholder description %s instead of showing an empty action to the user", async text => {
-    const corrected = { ...draft, sections: [{ ...sound, durationSeconds: 60 }] };
+    const corrected = { ...draft, sections: soundSections(60) };
     const fetchImpl = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify({ ...corrected, sections: [{ ...corrected.sections[0], text }] }) } }))
+      .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify({ ...corrected, sections: corrected.sections.map((part, index) => index ? part : { ...part, text }) }) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(corrected) } }));
     const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60, theme: "全程无台词的纸盒轻敲" } }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -154,7 +253,7 @@ describe("performance scripts", () => {
     const malformed = { ...draft, sections: [{ ...transition, text: "", soundSuggestions: undefined, durationSeconds: 92 }] };
     const corrected = { ...draft, sections: [
       { ...transition, durationSeconds: 5, text: "在沙发坐下。" },
-      { ...sound, id: "quiet", purpose: "interaction", durationSeconds: 55, text: "安静陪伴看雪。", soundSuggestions: "安静环境" },
+      ...soundSections(55),
     ] };
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(malformed) } }))

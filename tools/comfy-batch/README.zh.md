@@ -1,12 +1,28 @@
 # ASMR 视频批跑器
 
-**表演脚本与双版本合片**：脚本中的台词、ASMR 操作、动作过渡和互动停留都会导出。较长无台词段按已设计的连续小段执行，每个任务不超过 5 秒；拆任务不改变机位，也不重演已经完成的取放。每段 `asmrSound` 独立生成声音，对白使用当前 WAV 的真实时长，新表演段使用其计划时长。勾选合片后，每个候选分别输出原版和 ASMR 后处理版。旧包没有该字段时保持原流程。
+**表演脚本与双版本合片**：脚本中的台词、ASMR 操作、动作过渡和互动停留都会导出。新设计的无台词动作在 15 秒内一次完成，例如 10 秒递糖动作不会再拆成两次或截成 5 秒。旧工程已保存的小段保持原划分，较长逻辑段重新设计时按每次不超过 15 秒展开；拆任务不重演已经完成的取放。每段 `asmrSound` 独立生成声音，对白使用当前 WAV 的真实时长，新表演段使用其计划时长。勾选合片后，每个候选分别输出原版和 ASMR 后处理版。旧包没有该字段时保持原流程。
 
 ASMR 叠加版需要将包内 `custom_nodes/asmr_director_audio/` 复制到目标 ComfyUI 的 `custom_nodes/`，按该目录说明安装缺少的 Python 依赖并重启 ComfyUI。它复用本项目现有 D 空间后处理；生成、后处理和合片都在同一 ComfyUI 内运行，运行器本机仍不需要 FFmpeg 或额外 Python 库。原版合片不依赖这两个新增节点。
 
-**H3 原生 ASMR 试跑包**：新增显式文生视频模式，用原工作流直接生成触发音和画面，支持每类多个候选及断点继续。文生模式可在窗口「每条时长」或 CLI `--duration-seconds` 自定义秒数，留空使用项目每镜时长；普通参考分镜包不接受此覆盖。该模式不需要角色图或输入音频、不取尾帧、不裁剪原生音轨，默认使用原工作流的分辨率。专用说明 `ASMR_BATCH.zh.md` 和提示词 `ASMR_PROMPTS.zh.md` 随 12 类原生试跑包提供，也保存在开发仓库 `tools/comfy-batch/`；普通网页导出的参考分镜包不附带这些实验材料。以下角色图、连续参考和环境镜头裁至 5 秒的说明适用于原有参考分镜项目包。
+**H3 原生 ASMR 试跑包**：新增显式文生视频模式，用原工作流直接生成触发音和画面，支持每类多个候选及断点继续。文生模式可在窗口「每条时长」或 CLI `--duration-seconds` 自定义不超过 15 秒的秒数，留空使用项目每镜时长；普通参考分镜包不接受此覆盖。该模式不需要角色图或输入音频、不取尾帧、不裁剪原生音轨，默认使用原工作流的分辨率。专用说明 `ASMR_BATCH.zh.md` 和提示词 `ASMR_PROMPTS.zh.md` 随 12 类原生试跑包提供，也保存在开发仓库 `tools/comfy-batch/`；普通网页导出的参考分镜包不附带这些实验材料。以下角色图与连续参考说明适用于参考分镜项目包。
 
 使用 Python 标准库调用已运行的 ComfyUI，不需要安装 pip 包。双击 `run.bat` 打开窗口，选择**解压后的项目文件夹**、角色参考图、ComfyUI 地址和每镜候选数 N 后开始；窗口在后台执行任务。项目中已有角色图时可直接使用，也可在窗口替换。没有 Tk 的 Python 可使用下方命令行。
+
+## 横屏与竖屏
+
+窗口「生成画幅」可选 **按项目 / 原设置、竖屏 9:16、横屏 16:9**，主视频和对应 ASMR 音视频使用同一画幅。开始运行时记住本项目的窗口选择，保存在包内 `runner-settings.json`；重新打开或切换项目文件夹会恢复各自选择。「只检查项目」不修改这份设置。更换运行器时保留该文件即可。命令行不读取窗口偏好，省略画幅参数时使用 `project.json` 的可选字段 `"aspectRatio": "portrait"` 或 `"landscape"`；没有该字段就保留原行为。
+
+```bat
+python runner.py . --aspect-ratio portrait --concat
+python runner.py . --aspect-ratio landscape --concat
+python runner.py . --aspect-ratio workflow --dry-run
+```
+
+`workflow` 明确覆盖项目画幅并回到旧设置：普通参考包默认 1216×672，原生文生包使用工作流中的尺寸节点。旧包不会仅因升级自动改成竖屏。选横屏/竖屏时，若 H3 节点的宽高直连 `ResolutionSelector`（用户原文生工作流为节点 21），运行器只修改其 `aspect_ratio`，保留 `megapixels` 和 `multiple`；节点与取整规则见 [ComfyUI 官方实现](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_extras/nodes_resolution.py)。普通参考包若没有此节点，则分别使用 1216×672 / 672×1216，无需新增 ComfyUI 节点。尺寸需对齐模型的 32 倍数，比例为近似值，不承诺成品像素严格等于 16:9 或 9:16。工作流源文件不会被修改。
+
+切换画幅会按新输入生成主视频及 ASMR 候选，已有成品与状态历史保留；切回原画幅可复用输入相同且完整的历史。合片只使用本次画幅的匹配结果，不混用横竖片段。已有未确认任务仍先对账，不因换画幅重复提交。高级 `--width` / `--height` 保留；与画幅预设同时使用会报错，手填尺寸时先指定 `--aspect-ratio workflow`。
+
+English contract: The GUI offers project/default, portrait, and landscape presets and remembers its choice per package, except during dry-run. CLI overrides the optional manifest `aspectRatio`; explicit `workflow` restores legacy defaults. Presets update a directly linked ResolutionSelector while preserving its pixel budget and alignment, or use 672×1216 / 1216×672 when no selector exists. Main and ASMR generation share dimensions. Existing default fingerprints stay compatible; orientation changes retain prior media and history, and a round trip reuses matching results.
 
 本项目本机的交付包放在 `I:/AI/asmr_director/artifacts/`，验证文件放在 `I:/AI/asmr_director/qa/`；默认成品及状态仍保存在所选包内的 `outputs/`。所有项目输出均保存在 `I:/AI/asmr_director/` 目录内。复制到另一台主机时，包内相对路径保持可用。
 
@@ -18,7 +34,7 @@ ASMR 叠加版需要将包内 `custom_nodes/asmr_director_audio/` 复制到目�
 
 第一次继续运行时，旧 version 1 状态会自动备份为 `run-state.v1-backup-*.json`，再迁入候选 1；输入保持不变时，已有成功结果不会因升级重新生成，未确认任务先对账。继续同一批时将 N 设为原值；改成其他 N 时按补缺／保留规则处理。新导出的完整项目包仍携带运行器、启动器、说明和工作流四个运行文件。
 
-本次更新保留工作流模板及旧任务输入指纹、状态版本；不为新的裁帧方式重新制作已成功的旧视频。旧成功结果缺少尾帧 PNG 时，程序会将旧视频交给 ComfyUI 单独补取尾帧，并保存独立任务回执；不重新运行 H3。
+本次更新保留工作流模板及状态版本。首镜独立起镜，随后最多接续两次；新导出将这个周期写入实际任务。旧包升级运行器也会在内存中执行同一规则，不改磁盘上的 `project.json`。独立起镜使用角色参考图，保持同一机位和构图，不表示切换场景。受新起镜方式影响的镜头及其后续连续组会重新生成；后续连续组的旧缓存可能发生一次更新，原成品和历史均保留。第一组输入相同的成功结果继续复用，之后普通单镜重生仍不自动重跑其后镜头。旧成功结果缺少尾帧 PNG 时，程序会将旧视频交给 ComfyUI 单独补取尾帧，并保存独立任务回执；不重新运行 H3。
 
 ## 项目包
 
@@ -39,9 +55,9 @@ ASMR 叠加版需要将包内 `custom_nodes/asmr_director_audio/` 复制到目�
 }
 ```
 
-所有素材路径均相对项目目录。`characterReference` 可省略，执行时另选角色图。对白使用实际 WAV 时长，`durationSeconds` 不裁掉原对白；相同输入 WAV 同时用于 H3 参考与最终视频音轨，画面向上取整到完整的 24 fps 帧。环境镜头没有输入音频，使用 H3 生成的环境音；ComfyUI 内同时限制画面帧数和环境音长度，最终最长 5 秒。原音作为音轨来源，不表示 WAV 与编码后视频音轨的字节相同。
+所有素材路径均相对项目目录。`characterReference` 可省略，执行时另选角色图。每次生成的源时长上限为 **15 秒**，这是本项目的实用上限。对白按实际 WAV 测量，包含采用的后处理尾音；超过上限会明确报错，`durationSeconds` 不裁掉原对白。相同输入 WAV 同时用于 H3 参考与最终视频音轨，画面向上取整到完整的 24 fps 帧。环境镜头没有输入音频，使用 H3 生成的环境音，并按计划时长保留；不再统一截为 5 秒。H3 的合法帧数对齐允许 15 秒生成到 362 帧（约 15.083 秒），主参考视频与对应 ASMR 触发音仍按需要的源时长裁取。原音作为音轨来源，不表示 WAV 与编码后视频音轨的字节相同。
 
-新版无台词表演任务附带 `segmentId`、`partIndex` 和 `partCount`，用于标识它属于哪段表演。较长表演按连续小段展开，首段使用原参考方式，后续段都从上一段尾帧继续；各段的动作和声音阶段由应用预先设计，运行器不自行编造。一个逻辑段的任务必须完整、相邻、顺序正确，缺失时不会提交。新任务声音精确裁到计划秒数，画面向上对齐到 24 fps 整帧，因此每个任务的容器时长可能多不足一帧；旧包仍沿用原有帧数取整。两种合片均包含全部表演段，不会跳过无台词内容。
+需要分次生成的无台词表演附带 `segmentId`、`partIndex` 和 `partCount`，用于标识它属于哪段表演。各段动作和声音阶段由应用预先设计，运行器不自行编造；中途也遵守最多接续两次的独立起镜周期。一个逻辑段的任务必须完整、相邻、顺序正确，缺失时不会提交。新任务声音精确裁到计划秒数，画面向上对齐到 24 fps 整帧，因此每个任务的容器时长可能多不足一帧；旧包仍沿用原有帧数取整。两种合片均包含全部表演段，不会跳过无台词内容。
 
 `workflow_api.json` 是干净的 API 模板，源自 `asmr04`，保留 H3 模型、20 步和原加速链。默认 1216×672、24 fps。模板原文件不改，运行时增加裁帧、CLF 尾帧和 PNG 保存分支；尾帧来自最终 `CreateVideo` 输出。每镜直接注入最终提示词，角色图是 Picture 1；连续镜头的候选 k 使用相邻上一镜候选 k 成功输出的实际尾帧作为 Picture 2。该候选不存在或失败就用角色图继续，不跨镜借帧，也不改用其他候选。首帧延续仍属于 H3 的参考引导，不保证逐像素一致。
 

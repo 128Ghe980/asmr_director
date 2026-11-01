@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { MAX_VIDEO_GENERATION_SECONDS } from "./video-generation-policy";
+export { MAX_VIDEO_GENERATION_SECONDS } from "./video-generation-policy";
 
 /** Creative intent travels with a segment rather than being recovered from its text. */
 export const PerformancePurposeSchema = z.enum(["dialogue", "asmr", "transition", "interaction"]);
@@ -16,8 +18,8 @@ export function performancePartDurations(durationSeconds: number): number[] {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 600) {
     throw new Error("无台词段时长须大于 0 且不超过 600 秒。");
   }
-  const count = Math.ceil(durationSeconds / 5);
-  // Spread the remainder so a 5.1 second segment does not end in a 0.1 second job.
+  const count = Math.ceil(durationSeconds / MAX_VIDEO_GENERATION_SECONDS);
+  // Spread the remainder so a 15.1 second segment does not end in a 0.1 second job.
   if (count === 1) return [durationSeconds];
   const boundary = (index: number) => Number((durationSeconds * index / count).toFixed(6));
   return Array.from({ length: count }, (_, index) => Number((boundary(index + 1) - boundary(index)).toFixed(6)));

@@ -297,7 +297,7 @@ export function loadProjectLibrary(
 
     if (storedLibrary) {
       const library = parseStoredLibrary(storedLibrary, fallbackProject, now);
-      saveProjectLibrary(storage, library);
+      try { saveProjectLibrary(storage, library); } catch { /* Preserve readable data when storage is full. */ }
       return library;
     }
 
@@ -310,8 +310,10 @@ export function loadProjectLibrary(
       now,
     );
 
-    saveProjectLibrary(storage, library);
-    storage.removeItem(PROJECT_STORAGE_KEY);
+    try {
+      saveProjectLibrary(storage, library);
+      storage.removeItem(PROJECT_STORAGE_KEY);
+    } catch { /* Keep the legacy recovery copy and the already loaded project. */ }
     return library;
   } catch {
     return createInitialProjectLibrary(fallbackProject, now);

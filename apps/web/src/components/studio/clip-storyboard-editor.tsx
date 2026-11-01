@@ -224,6 +224,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
             <p>{referenceMode === "continuous" ? "接续上一镜的场景、构图与动作。" : "按背景与本段内容设计新画面，上一镜仅作剧情参考。"}</p>
             {!previous ? <p>首段从剧情背景开始。</p> : !previousFingerprint && !waitingForPrevious ? <p>上一镜尚未就绪，本次新镜头仅参考背景。</p> : null}
             <p>模式用于下次生成，已有提示词保持原样。</p>
+            <p>批跑最多接续两段，随后独立起镜，减少连续画面的模糊和变暗。</p>
             <p>{silent ? "使用角色参考图 1，无需上传语音。" : "使用角色参考图 1 和本段音频 1。"}</p>
           </div>
         </details>

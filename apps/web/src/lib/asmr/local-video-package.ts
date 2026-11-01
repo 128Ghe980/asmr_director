@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, open, realpath, rm, type FileHandle } from "node:fs/pro
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { renderConciseH3Prompt } from "./h3-prompt";
+import { usesCameraPantomime } from "./camera-pantomime";
+import { applyIndependentShotCadence, MAX_VIDEO_GENERATION_SECONDS } from "./video-generation-policy";
 import { resolveClipAssetPath } from "./local-asset-store";
 import { BatchDownloadError, type PreparedBatchDownload } from "./local-batch-download";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
@@ -124,6 +126,9 @@ async function inspectAudio(entry: VideoPackageSourceShot, config: LocalRuntimeC
       checkCancelled(signal);
       if (error instanceof BatchDownloadError) throw error;
       throw new BatchDownloadError(`第 ${entry.index} 段需要完整有效的 PCM WAV 音频（最长 10 分钟）。`, 422);
+    }
+    if (duration > MAX_VIDEO_GENERATION_SECONDS) {
+      throw new BatchDownloadError(`第 ${entry.index} 段${preparedAssetId ? "后处理音频（含尾音）" : "实际人声"}超过 15 秒，请先拆分并重新生成画面与声音。`, 422);
     }
     const after = await file.stat();
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new BatchDownloadError(`第 ${entry.index} 段音频正在变化，请稍后导出。`, 409);
@@ -285,6 +290,7 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
           dialogue: silent ? "" : entry.clip.text, silent, durationSeconds,
           storyboardStyle: resolveStoryboardStyle(project.videoPlan),
           performance: Boolean(entry.clip.performance || partCount),
+          pantomime: usesCameraPantomime(project.videoPlan?.referenceTemplate),
           ...(silent ? { ambientSound: directions.ambientSound } : {}) }),
         ...(silent ? {} : { audio }),
         ...(directions.asmrSound ? { asmrSound: {
@@ -295,6 +301,7 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
       };
     }),
   };
+  manifest.shots = applyIndependentShotCadence(manifest.shots);
   if (new Set(manifest.shots.map(shot => shot.id)).size !== manifest.shots.length) {
     throw new BatchDownloadError("展开后的片段编号重复，请调整片段编号后导出。", 400);
   }

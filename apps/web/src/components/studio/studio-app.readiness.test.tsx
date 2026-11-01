@@ -186,7 +186,7 @@ function mockBridge() {
 async function mountOnStoryboard(project: AsmrProject) {
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
   // No click, selection or settings-change event is ever sent to the sound tab.
-  fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "画面与声音" }));
   await waitFor(() => expect(screen.getByRole("status", {
     name: "已采用 1 段，待生成 1 段，已生成未采用 0 段，共 2 段",
   })).toBeTruthy());

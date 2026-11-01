@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { CreativeTemplateSchema, getMatchingTemplateDirections } from "./reference-template";
+import { CreativeTemplateSchema, creativeTemplateContext, getMatchingTemplateDirections } from "./reference-template";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
-import { PlannerBriefSchema, type PlannerDraft } from "./planner";
+import { estimatePlannerSpeechDuration, PlannerBriefSchema, type PlannerDraft } from "./planner";
 import { createEmptyPlannerWorkingState, loadPlannerDraft, savePlannerDraft } from "./planner-persistence";
 import { adoptPlannerDraft, createInitialProjectLibrary, createProjectRevision, duplicateLibraryProject, loadProjectLibrary, saveProjectLibrary } from "./project-library";
 import { demoProject } from "./mock-project";
@@ -44,6 +44,11 @@ describe("reference template contract and source-bound directions", () => {
     expect(CreativeTemplateSchema.safeParse({ ...referenceTemplateFixture, beats: [referenceTemplateFixture.beats[0], referenceTemplateFixture.beats[0]] }).success).toBe(false);
     expect(CreativeTemplateSchema.safeParse({ ...referenceTemplateFixture, creativePrompt: " " }).success).toBe(false);
     expect(CreativeTemplateSchema.safeParse({ ...referenceTemplateFixture, source: { ...referenceTemplateFixture.source, durationSeconds: 0 } }).success).toBe(false);
+    expect(CreativeTemplateSchema.safeParse({ ...referenceTemplateFixture, visualPerformance: "physical" }).success).toBe(false);
+    expect(CreativeTemplateSchema.parse(referenceTemplateFixture)).not.toHaveProperty("visualPerformance");
+    const pantomime = CreativeTemplateSchema.parse({ ...referenceTemplateFixture, visualPerformance: "pantomime" });
+    expect(creativeTemplateContext(pantomime)!.visualPerformance).toBe("pantomime");
+    expect(creativeTemplateContext(referenceTemplateFixture)).not.toHaveProperty("visualPerformance");
   });
   it("follows unique exact, split and merged text without relying on clip index", () => {
     expect(getMatchingTemplateDirections(directions, directions[2].text)).toEqual([directions[2]]);
@@ -62,12 +67,14 @@ describe("reference template contract and source-bound directions", () => {
     for (const template of CREATIVE_TEMPLATES) expect(CreativeTemplateSchema.safeParse(template).success).toBe(true);
     const interaction = CREATIVE_TEMPLATES.find(template => template.id === "intimate-interaction-theatre")!;
     const example = createTemplateDemo(interaction);
+    expect(interaction.version).toBe(4);
     expect(interaction.storyboardStyle).toBe("listener_pov");
+    expect(interaction.visualPerformance).toBe("pantomime");
     expect(example.brief.referenceTemplate).toEqual(interaction);
-    expect(example.draft.title).toContain("地图修补桌");
+    expect(example.draft.title).toContain("无实物示例");
     expect(example.draft.sections.length).toBeGreaterThan(8);
     expect(example.sceneDescription).toBe(example.draft.scene);
-    expect(createTemplateDemo({ ...interaction, sceneDescription: "用户编辑后的地图工作室" }).sceneDescription).toBe("用户编辑后的地图工作室");
+    expect(createTemplateDemo({ ...interaction, sceneDescription: "用户编辑后的安静门厅" }).sceneDescription).toBe("用户编辑后的安静门厅");
     expect(example.brief.theme).not.toMatch(/香水|秘密|报价|月亮币/);
     expect(example.draft.sections.every(section => section.direction.includes("起始：") && section.direction.includes("结束："))).toBe(true);
     expect(example.draft.sections.some(section => section.kind === "silent" && section.direction.includes("等待") && section.durationSeconds! > 1)).toBe(true);
@@ -75,12 +82,65 @@ describe("reference template contract and source-bound directions", () => {
     expect(unknown.brief.theme).toContain("我的安静天文台");
     expect(unknown.draft.scene).toBe("原创天文台场景");
     expect(JSON.stringify(unknown)).not.toContain("月亮币");
-    expect(unknown.draft.title).not.toContain("地图修补桌");
+    expect(unknown.draft.title).not.toContain("无实物示例");
+  });
+  it("keeps story intentions in speech while every example action remains an empty-hand performance", () => {
+    const interaction = CREATIVE_TEMPLATES.find(template => template.id === "intimate-interaction-theatre")!;
+    const example = createTemplateDemo(interaction);
+    const speech = example.draft.sections.filter(section => section.kind !== "silent");
+    const quiet = example.draft.sections.filter(section => section.kind === "silent");
+    expect(speech.map(section => section.text).join(" ")).toMatch(/整理一下领子/);
+    expect(speech.map(section => section.text).join(" ")).toMatch(/碎发/);
+    expect(speech.map(section => section.text).join(" ")).toMatch(/脸颊/);
+    for (const section of example.draft.sections) {
+      expect(section.direction).toMatch(/空手|双手空|手空着/);
+      expect(section.direction).not.toMatch(/右手持|左手持|取起|拿起|地图|软布|布贴|纸角/);
+    }
+    expect(quiet.every(section => /空手|双手空|手里.*没有东西/.test(section.text))).toBe(true);
+    expect(quiet.some(section => section.soundSuggestions.includes("独立模拟") && section.soundSuggestions.includes("主画面"))).toBe(true);
+    expect(example.sceneDescription).toContain("完整头部");
+    expect(example.sceneDescription).toContain("空的表演空间");
+    expect(CREATIVE_TEMPLATES[0]).not.toHaveProperty("visualPerformance");
+    expect(createTemplateDemo(CREATIVE_TEMPLATES[0]).draft.sections.some(section => section.direction.includes("取起带盖红色小罐 A"))).toBe(true);
+  });
+  it("keeps current example actions and complete spoken units within the new generation limits", () => {
+    for (const template of CREATIVE_TEMPLATES) {
+      for (const section of createTemplateDemo(template).draft.sections) {
+        if (section.kind === "silent") {
+          const maximum = section.purpose === "interaction" ? 5 : section.purpose === "transition" ? 10 : 15;
+          expect(section.durationSeconds).toBeLessThanOrEqual(maximum);
+        } else expect(estimatePlannerSpeechDuration(section.text)).toBeLessThanOrEqual(15);
+      }
+    }
+  });
+  it("does not silently opt an imported older interaction snapshot into pantomime", () => {
+    const interaction = CREATIVE_TEMPLATES.find(template => template.id === "intimate-interaction-theatre")!;
+    const withoutMode = structuredClone(interaction);
+    delete withoutMode.visualPerformance;
+    const older = CreativeTemplateSchema.parse({ ...withoutMode, version: 2, sceneDescription: "保留的旧版桌面与地图场景" });
+    const example = createTemplateDemo(older);
+    expect(example.brief.referenceTemplate).toEqual(older);
+    expect(example.brief.referenceTemplate).not.toHaveProperty("visualPerformance");
+    expect(example.draft.title).toContain("地图修补桌");
+    expect(example.draft.scene).toBe(older.sceneDescription);
+  });
+  it("still expands the v2 default scene into its original example while preserving a custom legacy scene", () => {
+    const interaction = structuredClone(CREATIVE_TEMPLATES.find(template => template.id === "intimate-interaction-theatre")!);
+    delete interaction.visualPerformance;
+    const older = CreativeTemplateSchema.parse({ ...interaction, version: 2,
+      sceneDescription: "按今日主题建立一个安静、可近距离互动的主空间，只保留本次小任务真正需要的少量材料和稳定归位点。听者位于镜头处，以自身眼高看向 S1；S1 的外貌与服装由角色参考图决定。主机位通常稳定，能读清脸部反应，手部工作区在胸侧或镜头下沿；S1 可以靠近、退回或蹲到听者目线，不把听者当成被外部镜头拍摄的人。确需转场时先给出当前任务的动机，再建立听者的新位置。" });
+    const original = createTemplateDemo(older);
+    expect(original.sceneDescription).toContain("已经摊开的微湿地图");
+    expect(original.draft.scene).toBe(original.sceneDescription);
+    expect(original.brief.referenceTemplate).toEqual(older);
+    const customized = createTemplateDemo({ ...older, sceneDescription: "用户保存的旧版窗边地图室。" });
+    expect(customized.sceneDescription).toBe("用户保存的旧版窗边地图室。");
+    expect(customized.draft.scene).toBe(customized.sceneDescription);
   });
 });
 
 describe("reference template survives the complete planning-to-storyboard path", () => {
-  it("carries the interaction template's listener view, acting and material intentions into adopted storyboard context", () => {
+  it("carries the pantomime template, empty-hand acting and independent sound intentions into adopted storyboard context", () => {
     const template = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
     const example = createTemplateDemo(template);
     const library = adoptPlannerDraft(createInitialProjectLibrary(demoProject), example.brief, example.draft,
@@ -91,9 +151,11 @@ describe("reference template survives the complete planning-to-storyboard path",
     expect(project.videoPlan!.storyboardStyle).toBe("listener_pov");
     expect(context.referenceTemplate!.storyboardRules).toBe(template.storyboardRules);
     expect(context.referenceTemplate!.creativePrompt).toContain("保持对视");
+    expect(context.referenceTemplate!.visualPerformance).toBe("pantomime");
     expect(context.referenceTemplate).not.toHaveProperty("source");
-    const paper = context.scriptOrder.find(item => item.directorNotes?.some(note => note.soundSuggestions.includes("纸角")));
-    expect(paper).toBeDefined();
+    const simulatedSound = context.scriptOrder.find(item => item.directorNotes?.some(note => note.soundSuggestions.includes("独立模拟")));
+    expect(simulatedSound).toBeDefined();
+    expect(simulatedSound!.directorNotes![0].direction).toMatch(/空手|双手空/);
     expect(context.scriptOrder[2].directorNotes![0].direction).toContain("等待");
     expect(AsmrProjectSchema.parse(JSON.parse(serializeProject(project))).videoPlan).toEqual(project.videoPlan);
   });
@@ -167,7 +229,7 @@ describe("reference template survives the complete planning-to-storyboard path",
   });
   it("uses template context for generation, rewriting and scene planning without changing their output contracts", async () => {
     const performanceDraft = { ...draft, performanceVersion: 1, sections: [...draft.sections.map(section => ({ ...section, kind: "speech", purpose: "dialogue" })),
-      { ...draft.sections[1], id: "quiet_sound", kind: "silent", purpose: "asmr", durationSeconds: 50, text: "稳定持有当前的书，指腹缓慢摩擦封面，留出安静间隙。" }] };
+      ...Array.from({ length: 5 }, (_, index) => ({ ...draft.sections[1], id: `quiet_sound_${index}`, kind: "silent", purpose: "asmr", durationSeconds: 10, text: "稳定持有当前的书，指腹缓慢摩擦封面，留出安静间隙。" }))] };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(performanceDraft) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(draft.sections[0]) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify({ sceneDescription: "雨夜书店里，店员低声向来客展示书籍。" }) } }));
@@ -175,12 +237,14 @@ describe("reference template survives the complete planning-to-storyboard path",
     await runPlanner({ action: "rewrite", provider: "ollama", brief, draft, sectionId: draft.sections[0].id, instruction: "保持道具顺序" }, { env: {}, fetchImpl });
     await generateSceneDescription({ provider: "ollama", draft, instruction: "", referenceTemplate: referenceTemplateFixture }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
-    for (const call of fetchImpl.mock.calls) {
+    for (const call of fetchImpl.mock.calls.slice(1)) {
       const content = JSON.parse(call[1]!.body as string).messages[1].content as string;
       expect(content).toContain(referenceTemplateFixture.storyboardRules);
       expect(content.split(referenceTemplateFixture.storyboardRules)).toHaveLength(2);
     }
     const generation = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string);
+    expect(generation.messages[1].content).toContain(referenceTemplateFixture.creativePrompt);
+    expect(generation.messages[1].content).not.toContain('"storyboardRules"');
     expect(generation.messages[0].content).toContain("逐单元填写具体 direction");
     expect(generation.format.properties.groups.items.properties.units.items.properties.direction).toBeDefined();
     expect(generation.format.properties.groups.items.properties.units.items.required).toContain("direction");
@@ -189,9 +253,9 @@ describe("reference template survives the complete planning-to-storyboard path",
   });
   it("repairs a template response that only supplies group directions instead of per-unit intentions", async () => {
     const { text, pauseAfter, ...shared } = draft.sections[0];
-    const silentUnit = { kind: "silent", purpose: "asmr", durationSeconds: 55, text: "保持当前持书状态，指腹缓慢摩擦同一封面。", direction: "起始：持有同一本书；动作：缓慢摩擦封面；结束：同一持书状态。", soundSuggestions: "克制的书封摩擦，间歇停留。", pauseAfter };
-    const missing = { performanceVersion: 1, title: draft.title, scene: draft.scene, character: draft.character, groups: [{ ...shared, units: [{ kind: "speech", purpose: "dialogue", text, pauseAfter, soundSuggestions: "" }, silentUnit] }] };
-    const complete = { ...missing, groups: [{ ...shared, units: [{ kind: "speech", purpose: "dialogue", text, pauseAfter, direction: shared.direction, soundSuggestions: "" }, silentUnit] }] };
+    const silentUnit = { kind: "silent", purpose: "asmr", durationSeconds: 11, text: "保持当前持书状态，指腹缓慢摩擦同一封面。", direction: "起始：持有同一本书；动作：缓慢摩擦封面；结束：同一持书状态。", soundSuggestions: "克制的书封摩擦，间歇停留。", pauseAfter };
+    const missing = { performanceVersion: 1, title: draft.title, scene: draft.scene, character: draft.character, groups: [{ ...shared, units: [{ kind: "speech", purpose: "dialogue", text, pauseAfter, soundSuggestions: "" }, ...Array(5).fill(silentUnit)] }] };
+    const complete = { ...missing, groups: [{ ...shared, units: [{ kind: "speech", purpose: "dialogue", text, pauseAfter, direction: shared.direction, soundSuggestions: "" }, ...Array(5).fill(silentUnit)] }] };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(missing) } }))
       .mockResolvedValueOnce(Response.json({ message: { content: JSON.stringify(complete) } }));
     const result = await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60 } }, { env: {}, fetchImpl });

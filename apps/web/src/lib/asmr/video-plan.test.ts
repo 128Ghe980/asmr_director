@@ -6,10 +6,11 @@ import { demoProject } from "./mock-project";
 import { parseImportedProject, serializeProject } from "./project-persistence";
 import { AsmrProjectSchema, type AsmrProject, type VoiceClip } from "./schema";
 import { asmrSoundFixture } from "./asmr-sound-test-fixture";
+import { CREATIVE_TEMPLATES } from "./creative-templates";
 import {
-  ClipVideoStoryboardSchema, ProjectVideoPlanSchema, createClipH3Prompt,
+  ClipVideoStoryboardSchema, PerformanceStoryboardPartSchema, ProjectVideoPlanSchema, createClipH3Prompt,
   StoryboardReferenceModeSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext,
-  getClipStoryboardReferenceMode, getPreviousClipPromptFingerprint,
+  getClipStoryboardReferenceMode, getPreviousClipPromptFingerprint, getUsableClipH3Prompts,
   getPreviousVoiceClip, isClipVideoStoryboardCurrent, type ClipVideoStoryboard,
 } from "./video-plan";
 
@@ -308,6 +309,44 @@ describe("optional preceding-shot continuity", () => {
 });
 
 describe("storyboard reference modes", () => {
+  it("starts uninitialized clips independently after two tail links for every template", () => {
+    const project = makeProject(), track = project.timeline.tracks.find(track => track.track_type === "voice")!;
+    const first = track.clips[0];
+    track.clips = Array.from({ length: 7 }, (_, index) => ({ ...structuredClone(first), id: `cadence_${index}`, start: index * 10 }));
+    for (const template of [undefined, ...CREATIVE_TEMPLATES]) {
+      project.videoPlan!.referenceTemplate = template;
+      expect(track.clips.map(clip => getClipStoryboardReferenceMode(project, clip.id)))
+        .toEqual(["new", "continuous", "continuous", "new", "continuous", "continuous", "new"]);
+    }
+    project.videoPlan!.referenceModes = { cadence_1: "new", cadence_4: "continuous" };
+    expect(track.clips.map(clip => getClipStoryboardReferenceMode(project, clip.id)))
+      .toEqual(["new", "new", "continuous", "continuous", "continuous", "continuous", "continuous"]);
+    // The explicit continuous selection remains visible; the exported job sequence
+    // applies the hard cadence independently of saved/user preferences.
+    putShot(project, "cadence_6", { referenceMode: "new" });
+    expect(getClipStoryboardReferenceMode(project, "cadence_6")).toBe("new");
+  });
+
+  it("allows complete performance jobs through fifteen seconds while rejecting longer parts", () => {
+    const part = { visual: "S1 holds still.", action: "S1 completes one gentle gesture.", camera: "Static medium shot.",
+      ambientSound: "Quiet room tone.", asmrSound: asmrSoundFixture };
+    expect(PerformanceStoryboardPartSchema.safeParse({ ...part, durationSeconds: 10 }).success).toBe(true);
+    expect(PerformanceStoryboardPartSchema.safeParse({ ...part, durationSeconds: 15 }).success).toBe(true);
+    expect(PerformanceStoryboardPartSchema.safeParse({ ...part, durationSeconds: 15.01 }).success).toBe(false);
+  });
+
+  it("copies a complete ten-second silent action without requiring parts and exposes the same batch prompt", () => {
+    const project = makeProject(), clip = voice(project);
+    clip.kind = "silent"; clip.duration = 10; clip.text = "缓慢递出糖果，停留后收手。";
+    putShot(project, firstId, { kind: "silent", duration: 10, audio: undefined,
+      ambientSound: "Soft wrapper rustle, then quiet.", asmrSound: asmrSoundFixture });
+    const prompt = createClipH3Prompt(project, firstId);
+    expect(prompt).toContain("10 seconds");
+    expect(prompt).not.toContain("Part 1/");
+    expect(getUsableClipH3Prompts(project).get(firstId)).toBe(prompt);
+    expect(getPreviousClipPromptFingerprint(project, secondId)).toBeTruthy();
+  });
+
   it("preserves optional preferences and generated mode in exported project JSON while keeping legacy records unchanged", () => {
     const project = makeProject();
     putShot(project, firstId, { referenceMode: "new" });

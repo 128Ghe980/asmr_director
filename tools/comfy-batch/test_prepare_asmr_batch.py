@@ -165,7 +165,7 @@ class ConverterTests(unittest.TestCase):
                     builder.convert_ui_workflow(self.workflow)
 
     def test_frame_alignment_uses_original_rounding_expression(self):
-        for duration, frames in ((5, 124), (8, 192), (10.5, 260), (12, 294), (149.66, 3592), (0.01, 5)):
+        for duration, frames in ((5, 124), (8, 192), (10.5, 260), (12, 294), (15, 362), (0.01, 5)):
             with self.subTest(duration=duration):
                 self.assertEqual(builder.duration_frames(duration), frames)
 
@@ -361,6 +361,14 @@ class PackageTests(unittest.TestCase):
             result = builder.main([str(self.source), "--output", str(self.output), "--duration-seconds", "10.5"])
         self.assertEqual(result, 0)
         self.assertEqual({shot["durationSeconds"] for shot in builder.read_json(self.output / "project.json")["shots"]}, {10.5})
+
+    def test_cli_rejects_above_fifteen_seconds_before_writing_a_package(self):
+        errors = io.StringIO()
+        with mock.patch.object(builder, "HERE", self.assets), contextlib.redirect_stderr(errors):
+            result = builder.main([str(self.source), "--output", str(self.output), "--duration-seconds", "15.01"])
+        self.assertNotEqual(result, 0)
+        self.assertIn("15-second", errors.getvalue())
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

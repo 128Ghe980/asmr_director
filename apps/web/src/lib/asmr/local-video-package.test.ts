@@ -8,6 +8,7 @@ import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { writePcm16Wav } from "./pcm-audio";
 import { StoredZipWriter } from "./stored-zip";
 import { createClipVideoSourceFingerprint } from "./video-plan";
+import { referenceTemplateFixture } from "./reference-template-test-fixture";
 
 const base = process.platform === "win32" ? "I:/AI/asmr_director/qa/video-package-tests" : tmpdir();
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5V0AAAAASUVORK5CYII=", "base64");
@@ -62,6 +63,41 @@ function entries(bytes: Buffer) {
 }
 
 describe("portable video packages", () => {
+  it("keeps pantomime in exported main prompts while sound-only prompts may use materials", async () => {
+    const { project, clips } = await fixture();
+    project.videoPlan!.referenceTemplate = { ...structuredClone(referenceTemplateFixture), visualPerformance: "pantomime" };
+    project.videoPlan!.storyboardStyle = "listener_pov";
+    clips[1].kind = "silent"; clips[1].duration = 3;
+    clips[1].asset = { asset_id: null, uri: null, duration: null }; clips[1].generation.status = "asset_pending";
+    delete project.videoPlan!.shots[clips[1].id].audio;
+    Object.assign(project.videoPlan!.shots[clips[1].id], { kind: "silent", duration: 3, ambientSound: "Soft fabric-rubbing foley." });
+    for (const clip of clips) {
+      const shot = project.videoPlan!.shots[clip.id];
+      Object.assign(shot, { sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id),
+        visual: "S1 faces the lens with empty hands.", action: "S1 lightly pinches the air below the lens.",
+        camera: "Fixed frontal medium close-up.", asmrSound: { prompt: "Cotton fabric is rubbed slowly for soft foley.",
+          mixMode: clip.kind === "silent" ? "replace" : "overlay", postProcessing: {
+            start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -12,
+          } } });
+    }
+    config.spatialHrtfPath = path.join(root, "test.sofa");
+    await writeFile(config.spatialHrtfPath, Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]));
+    const archive = await prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch") });
+    const files = entries(await readFile(archive.filePath));
+    const manifest = JSON.parse(files.get("project.json")!.toString()) as VideoPackageManifest;
+    expect(manifest.shots.map(shot => shot.durationSeconds)).toEqual([.1, 3]);
+    for (const shot of manifest.shots) {
+      expect(shot.prompt).toContain("hands hold nothing");
+      expect(shot.prompt).not.toContain("when the listener walks");
+      expect(shot.prompt).not.toContain("Cotton fabric is rubbed slowly");
+      expect(shot.asmrSound!.prompt).toContain("Cotton fabric is rubbed slowly");
+      expect(shot.asmrSound!.durationSeconds).toBe(shot.durationSeconds);
+      expect(files.get(`shots/${String(shot.order).padStart(3, "0")}/prompt.txt`)!.toString()).toBe(shot.prompt);
+    }
+    expect(manifest.shots[0].prompt).toContain("fully_copy");
+    expect(manifest.shots[1].prompt).toContain("synchronized foley");
+    await archive.cleanup();
+  });
   it("exports both kinds of ASMR prompt at measured shot lengths and bundles the existing D processor", async () => {
     const { project, clips, wav } = await fixture();
     const sound = { prompt: "A cotton cloth gently glides over a wooden surface, then settles.", postProcessing: {
@@ -152,17 +188,37 @@ describe("portable video packages", () => {
     await archive.cleanup();
   });
 
-  it("expands authored long performance parts and keeps the following speech WAV aligned", async () => {
+  it.each([10, 15])("exports a complete %s-second action as one task with matching ASMR duration", async duration => {
+    const { project, clips } = await fixture();
+    const clip = clips[0]; clip.kind = "silent"; clip.duration = duration;
+    clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+    const shot = project.videoPlan!.shots[clip.id]; delete shot.audio;
+    Object.assign(shot, { kind: "silent", duration, ambientSound: "Brief cotton movement, then quiet.",
+      action: "S1 completes one gentle gesture, then rests both hands.",
+      asmrSound: { prompt: "Brief cotton movement, then quiet.", mixMode: "replace", postProcessing: {
+        start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -6,
+      } }, sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id) });
+    config.spatialHrtfPath = path.join(root, "test.sofa");
+    await writeFile(config.spatialHrtfPath, Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]));
+    const archive = await prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch") });
+    const manifest = JSON.parse(entries(await readFile(archive.filePath)).get("project.json")!.toString()) as VideoPackageManifest;
+    expect(manifest.shots).toHaveLength(2);
+    expect(manifest.shots[0]).toMatchObject({ id: clip.id, durationSeconds: duration, asmrSound: { durationSeconds: duration } });
+    expect(manifest.shots[0]).not.toHaveProperty("partIndex");
+    await archive.cleanup();
+  });
+
+  it("expands authored long performance parts, resets within them and keeps the following speech WAV aligned", async () => {
     const { project, clips, wav } = await fixture();
-    const clip = clips[0]; clip.kind = "silent"; clip.duration = 12;
+    const clip = clips[0]; clip.kind = "silent"; clip.duration = 17;
     clip.performance = { version: 1, segmentId: "wooden_box", purpose: "asmr", direction: "敲击同一只盒子，然后停住。", soundIntent: "缓慢木质敲击" };
     clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
     const shot = project.videoPlan!.shots[clip.id]; delete shot.audio;
     const sound = { prompt: "Quiet dry wooden taps, then a pause.", mixMode: "replace" as const, postProcessing: {
       start: { pan: 0, distance: "near" as const }, end: { pan: 0, distance: "near" as const }, movement: "static" as const, gainDb: -6,
     } };
-    Object.assign(shot, { kind: "silent", duration: 12, ambientSound: "Quiet wooden tapping.", asmrSound: sound,
-      parts: [5, 5, 2].map((durationSeconds, index) => ({ durationSeconds,
+    Object.assign(shot, { kind: "silent", duration: 17, ambientSound: "Quiet wooden tapping.", asmrSound: sound,
+      parts: [5, 5, 5, 2].map((durationSeconds, index) => ({ durationSeconds,
         visual: "S1 holds the same closed wooden box.", action: `Gentle tapping stage ${index + 1}.`, camera: "Fixed listener viewpoint.",
         ambientSound: `Quiet wooden tapping stage ${index + 1}.`, asmrSound: { ...sound, prompt: `Quiet wooden taps at stage ${index + 1}.` } })),
       sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id) });
@@ -173,20 +229,20 @@ describe("portable video packages", () => {
     const files = entries(await readFile(archive.filePath));
     const manifest = JSON.parse(files.get("project.json")!.toString()) as VideoPackageManifest;
     expect(manifest.shots.map(entry => [entry.id, entry.order, entry.durationSeconds, entry.referenceMode])).toEqual([
-      ["voice_001--part-001", 1, 5, "new"], ["voice_001--part-002", 2, 5, "continuous"], ["voice_001--part-003", 3, 2, "continuous"],
-      ["voice_002", 4, .1, "new"],
+      ["voice_001--part-001", 1, 5, "new"], ["voice_001--part-002", 2, 5, "continuous"], ["voice_001--part-003", 3, 5, "continuous"],
+      ["voice_001--part-004", 4, 2, "new"], ["voice_002", 5, .1, "new"],
     ]);
-    expect(archive.clipCount).toBe(4);
-    for (const [index, part] of manifest.shots.slice(0, 3).entries()) {
-      expect(part).toMatchObject({ segmentId: clip.id, partIndex: index + 1, partCount: 3, asmrSound: { mixMode: "replace", durationSeconds: [5, 5, 2][index] } });
+    expect(archive.clipCount).toBe(5);
+    for (const [index, part] of manifest.shots.slice(0, 4).entries()) {
+      expect(part).toMatchObject({ segmentId: clip.id, partIndex: index + 1, partCount: 4, asmrSound: { mixMode: "replace", durationSeconds: [5, 5, 5, 2][index] } });
       expect(part.prompt).toContain(`Gentle tapping stage ${index + 1}.`);
       expect(part.prompt).toContain(`Quiet wooden tapping stage ${index + 1}.`);
       expect(part.asmrSound?.prompt).toContain(`Quiet wooden taps at stage ${index + 1}.`);
       expect(part).not.toHaveProperty("audio");
     }
-    expect(manifest.shots[3].audio).toBe("shots/004/audio.wav");
-    expect(files.get("shots/004/audio.wav")).toEqual(Buffer.from(wav));
-    expect([...files.keys()].filter(file => file.endsWith(".wav"))).toEqual(["shots/004/audio.wav"]);
+    expect(manifest.shots[4].audio).toBe("shots/005/audio.wav");
+    expect(files.get("shots/005/audio.wav")).toEqual(Buffer.from(wav));
+    expect([...files.keys()].filter(file => file.endsWith(".wav"))).toEqual(["shots/005/audio.wav"]);
     expect(project).toEqual(before);
     await archive.cleanup();
   });

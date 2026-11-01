@@ -23,7 +23,7 @@ const section = {
   kind: "speech" as const, purpose: "dialogue" as const,
   id: "section_1",
   title: "迎接客人",
-  text: "进来坐一会儿吧。窗边的位置还空着，我给你留了一盏小灯。书就在你面前，可以从喜欢的那一页开始，今天没有什么需要赶着做的事情，我们慢慢看就好。",
+  text: "窗边的位置还空着，我给你留了一盏小灯。你可以先坐一会儿，慢慢挑。",
   emotion: "温柔",
   style: "自然轻声",
   pace: "slow",
@@ -42,7 +42,7 @@ const draft = {
     personality: ["耐心"],
     speechStyle: ["自然轻声"],
   },
-  sections: [section, { ...section, id: "section_2", title: "安静收尾" }],
+  sections: Array.from({ length: 5 }, (_, index) => ({ ...section, id: index ? `section_${index + 1}` : section.id })),
 };
 
 function ollamaReply(value: unknown) {
@@ -81,7 +81,7 @@ describe("Planner provider", () => {
       notes: "机器人没有人类的睡眠需求；环境保持寒冷，室内有可靠供暖。本次纯对白。", ...(withTemplate ? { referenceTemplate: referenceTemplateFixture } : {}) };
     const freshDraft = { ...draft, title: "智能小屋的寒潮夜", scene: "漫长寒潮中的智能小屋。",
       character: { ...draft.character, role: "机器人管家" },
-      sections: [{ ...section, text: "入口的暖风已调好了。你可以先在这里缓一缓。屋里的温度一直保持着，不用急着继续往前走。今天的巡检也完成了，窗边的密封和照明都正常。等手上的寒意慢慢散去，我们再看看你带回来的东西。如果现在只想安静坐一会儿，也没有关系，我会留在这里。你可以先靠在门边休息，我会把入口附近的位置留空，方便你慢慢进来。" }] };
+      sections: ["入口的暖风已调好了。你可以先在这里缓一缓，不用急着往前走。", "今天的巡检已经完成，窗边的密封和照明都正常，可以放心。", "等手上的寒意慢慢散去，我们再看看你今天带回来的东西。", "如果现在只想安静坐一会儿，也没有关系，我会留在这里。", "门边的位置已经留空，方便你慢慢进来，先感受一下暖风吧。"].map((text, index) => ({ ...section, id: `robot_${index}`, text })) };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(freshDraft));
     const result = await runPlanner({ action: "generate", provider: "ollama", brief: currentBrief }, { env: {}, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledOnce();
@@ -110,8 +110,8 @@ describe("Planner provider", () => {
     expect(messages[1].content).not.toContain(CREATIVE_TEMPLATES[0].sceneDescription);
     expect(messages[1].content).not.toContain("groups 只用来共享导演与声音属性");
   });
-  it("plans a new theme using intimate acting without imposing trading or a face-following camera", async () => {
-    const template = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
+  it("keeps legacy intimate snapshots on their original listener-POV contract", async () => {
+    const template = { ...CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!, version: 2, visualPerformance: undefined };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ollamaReply(draft));
     await runPlanner({ action: "generate", provider: "ollama", brief: {
       ...brief, theme: "玻璃温室里一起辨认新芽", storyboardStyle: "character_framing", referenceTemplate: template,
@@ -147,10 +147,9 @@ describe("Planner provider", () => {
     expect(result.draft.sections.map((item) => item.text)).toEqual(units.map((unit) => unit.text));
     expect(result.draft.sections.every((item) => item.direction === direction && item.pauseAfterSeconds === 0)).toBe(true);
   });
-  it.each(["compact", "flat"] as const)("preserves valid %s API units with several sentence endings beyond brevity targets", async representation => {
-    const texts = ["你累了吧？先歇会儿，饭马上就好。", "先慢慢呼吸。我就在这里。".repeat(12)];
-    expect(texts[1].length).toBeGreaterThan(100);
-    expect(texts[1].length).toBeLessThanOrEqual(500);
+  it.each(["compact", "flat"] as const)("preserves complete %s API units with several sentence endings within the time cap", async representation => {
+    const texts = ["你累了吧？先歇会儿，饭马上就好。", ...Array(4).fill("慢慢看。我在这里。你不用急。光线很柔和。想先从哪边开始？")];
+    expect(texts[1].split("。").length).toBeGreaterThan(3);
     const modelSections = texts.map((text, index) => ({ ...section, id: `source_${index + 1}`, text, pauseAfter: index ? "long" as const : "short" as const }));
     const { id, title, emotion, style, pace, direction, soundSuggestions, position } = section;
     const compact = { performanceVersion: 1, title: draft.title, scene: draft.scene, character: draft.character, groups: [{ id, title, emotion, style, pace, direction, soundSuggestions, position,
@@ -164,8 +163,8 @@ describe("Planner provider", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
     if (!("draft" in result)) throw new Error("Expected draft");
     expect(result.draft.sections.map(item => item.text)).toEqual(texts);
-    expect(result.draft.sections.map(item => item.id)).toEqual(representation === "compact" ? ["unit_001", "unit_002"] : ["source_1", "source_2"]);
-    expect(result.draft.sections.map(item => item.pauseAfterSeconds)).toEqual([0, 0]);
+    expect(result.draft.sections.map(item => item.id)).toEqual(texts.map((_, index) => representation === "compact" ? `unit_${String(index + 1).padStart(3, "0")}` : `source_${index + 1}`));
+    expect(result.draft.sections.map(item => item.pauseAfterSeconds)).toEqual(texts.map(() => 0));
     expect(result.draft.sections.every(item => item.direction === section.direction)).toBe(true);
     expect(modelReply).toEqual(before);
     const request = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);

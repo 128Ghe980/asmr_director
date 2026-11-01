@@ -171,7 +171,7 @@ class TextToVideoTests(unittest.TestCase):
         self.assertEqual(native["target_duration"], 141 / 24)
         legacy = runner.shot_facts(self.package, shot)
         self.assertEqual(legacy["generation_frames"], 124)
-        self.assertEqual(legacy["target_frames"], 120)
+        self.assertEqual(legacy["target_frames"], 124)
 
     def test_duration_override_is_memory_only_and_exposes_requested_and_aligned_seconds(self):
         original_manifest = (self.package / "project.json").read_bytes()
@@ -228,17 +228,29 @@ class TextToVideoTests(unittest.TestCase):
             self.assertTrue((restored.output / after["output"]).is_file())
 
     def test_invalid_duration_fails_before_network_or_arithmetic_overflow(self):
-        for value in (0, -1, float("nan"), float("inf"), 1e308, 10 ** 400, 150, 149.7, True, "bad"):
+        for value in (0, -1, float("nan"), float("inf"), 1e308, 10 ** 400, 15.01, 150, 149.7, True, "bad"):
             with self.subTest(value=str(value)[:30]), self.assertRaises(runner.BatchError):
                 self.make_runner(duration_seconds=value)
-        for value in (1e308, 10 ** 400, 150):
+        for value in (15.01, 1e308, 10 ** 400, 150):
             self.manifest["shots"][0]["durationSeconds"] = value
             self.save_manifest()
             with self.subTest(manifest=str(value)[:30]), self.assertRaises(runner.BatchError):
                 self.make_runner()
-        self.assertEqual(runner.native_duration_frames(3592 / 24)[1], 3592)
+        self.assertEqual(runner.native_duration_frames(15)[1], 362)
         self.assertEqual(runner.native_duration_frames(.01)[1], 5)
         self.assertFalse(self.remote.gets or self.remote.posts or self.remote.uploads)
+
+    def test_reference_and_native_modes_keep_complete_ten_and_fifteen_second_actions(self):
+        for duration, frames in ((10, 243), (15, 362)):
+            shot = {**self.manifest["shots"][0], "durationSeconds": duration}
+            for mode in (runner.REFERENCE_TO_VIDEO, runner.TEXT_TO_VIDEO):
+                with self.subTest(duration=duration, mode=mode):
+                    facts = runner.shot_facts(self.package, shot, mode)
+                    self.assertEqual(facts["source_duration"], duration)
+                    self.assertEqual(facts["generation_frames"], frames)
+                    self.assertEqual(facts["target_frames"], frames if mode == runner.TEXT_TO_VIDEO else duration * 24)
+        with self.assertRaisesRegex(runner.BatchError, "15 秒"):
+            runner.shot_facts(self.package, {**shot, "durationSeconds": 15.01})
 
     def test_gui_and_cli_duration_are_optional_or_finite_positive(self):
         self.assertIsNone(runner.gui_options({"package": "project", "duration_seconds": "  "})["duration_seconds"])

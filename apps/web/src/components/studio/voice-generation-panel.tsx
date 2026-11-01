@@ -1,5 +1,7 @@
 "use client";
 
+import { canForceSplitVoiceCandidate } from "@/lib/asmr/voice-candidate-auto-split";
+
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { getAudioCandidateWorkspaceMode, getVoiceCandidateSourceFingerprint, type AudioCandidate } from "@/lib/asmr/audio-candidate";
@@ -406,8 +408,7 @@ export function VoiceGenerationPanel({
           : candidate.provenance.generationMode === "long_text" ? windowedSourceFingerprint : sourceFingerprint);
         const paragraphReview = candidate.provenance.paragraph?.checkStatus === "review";
         const forced = Boolean(candidate.provenance.forcedSegmentation);
-        const forceAvailable = !forced && (candidate.provenance.generationMode === "paragraph" ? paragraphReview
-          : candidate.provenance.generationMode === "long_text" && candidate.provenance.longText?.groups.some((group) => group.checkStatus === "review"));
+        const forceAvailable = canForceSplitVoiceCandidate(candidate);
         const forcing = forceSplittingCandidateId === candidate.candidateId;
         const cuttingOnlyParagraph = isCuttingOnlyParagraph(candidate.provenance.paragraph);
         const manuallyConfirmed = Boolean(candidate.provenance.paragraph && isVoiceParagraphManuallyConfirmed(candidate.provenance.paragraph));

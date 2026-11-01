@@ -145,7 +145,7 @@ function mockBridge(candidates: AudioCandidate[]) {
 
 async function mount(project: AsmrProject) {
   const view = render(<StrictMode><StudioApp project={project} /></StrictMode>);
-  fireEvent.click(screen.getByLabelText("批量更多操作"));
+  fireEvent.click(await screen.findByLabelText("批量更多操作"));
   await waitFor(() => expect((screen.getByRole("button", { name: "音频全部重新生成" }) as HTMLButtonElement).disabled).toBe(false));
   await act(async () => {});
   return view;

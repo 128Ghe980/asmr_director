@@ -41,6 +41,7 @@ export type ProjectWorkspaceSummaryInput = {
   isDirty: boolean;
   restoreState: "demo" | "restored";
   storageAvailable?: boolean;
+  storageSaving?: boolean;
   validationIssueCount: number;
 };
 
@@ -84,10 +85,12 @@ function getSaveStateBadge({
   isDirty,
   restoreState,
   storageAvailable = true,
+  storageSaving = false,
 }: Pick<
   ProjectWorkspaceSummaryInput,
-  "isDirty" | "restoreState" | "storageAvailable"
+  "isDirty" | "restoreState" | "storageAvailable" | "storageSaving"
 >): ProjectWorkspaceBadge {
+  if (storageSaving) return { label: "正在保存", tone: "neutral" };
   if (!storageAvailable) {
     return {
       label: "本地保存不可用",
@@ -139,6 +142,7 @@ export function getProjectWorkspaceSummary({
   isDirty,
   restoreState,
   storageAvailable = true,
+  storageSaving = false,
   validationIssueCount,
 }: ProjectWorkspaceSummaryInput): ProjectWorkspaceSummary {
   const duration = formatSeconds(project.duration);
@@ -159,6 +163,7 @@ export function getProjectWorkspaceSummary({
       isDirty,
       restoreState,
       storageAvailable,
+      storageSaving,
     }),
     validation: getValidationBadge(validationIssueCount),
     preview: {

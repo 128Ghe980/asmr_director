@@ -19,7 +19,8 @@ const generated = { title: "暖光迎接", visual: "S1 stands beside a warmly li
 function reply(value: unknown) { return Response.json({ message: { content: JSON.stringify(value) } }); }
 function materialFrom(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>) {
   const body = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
-  return JSON.parse(body.messages[1].content.split("\n")[0].slice("当前镜头素材：".length));
+  const text = body.messages[1].content.split("\n")[0] as string;
+  return JSON.parse(text.startsWith("当前镜头素材：") ? text.slice("当前镜头素材：".length) : text);
 }
 
 beforeEach(async () => {
@@ -76,6 +77,13 @@ async function coldEntrySilentFixture(description?: string) {
 }
 
 describe("已采用音频的单片段分镜", () => {
+  it("rejects a measured speech WAV over fifteen seconds before contacting the model", async () => {
+    const { input, voices } = await fixture();
+    await writeFile(path.join(config.clipAssetRoot, `${voices[1].asset.asset_id}.wav`), writePcm16Wav(new Float32Array(8000 * 16), 8000));
+    const fetchImpl = vi.fn<typeof fetch>();
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({ status: 413, message: expect.stringContaining("15 秒") });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
   it("plans a moving listener viewpoint and an independent ASMR track while keeping the measured source duration", async () => {
     const { input, project, voices } = await fixture();
     project.videoPlan!.storyboardStyle = "listener_pov";
@@ -122,7 +130,7 @@ describe("已采用音频的单片段分镜", () => {
     expect(body.messages[0].content).toContain("soundSuggestions 只是语义参考");
     expect(material.audioDurationSeconds).toBe(.3);
   });
-  it("uses interaction acting and listener viewpoint for both speech and silent ASMR planning", async () => {
+  it("routes explicit pantomime snapshots through the performance contract even without performance metadata", async () => {
     for (const silent of [false, true]) {
       const { input, project, voices } = await fixture();
       const template = CREATIVE_TEMPLATES.find(item => item.id === "intimate-interaction-theatre")!;
@@ -138,11 +146,12 @@ describe("已采用音频的单片段分镜", () => {
       const material = materialFrom(fetchImpl), system = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages[0].content as string;
       expect(material.storyboardStyle).toBe("listener_pov");
       expect(material.referenceTemplate.storyboardRules).toBe(template.storyboardRules);
-      expect(system).toContain("对视、等待或微表情可以构成本镜");
+      expect(material.referenceTemplate.visualPerformance).toBe("pantomime");
+      expect(system).toContain("visualPerformance=pantomime");
+      expect(system).toContain("不能改成整理S1自身衣物");
       expect(system).not.toContain("只借鉴展示、归位和报价的结构");
-      expect(system).not.toContain("说话期间脸和嘴部始终可见");
-      expect(system).toContain("对白镜头与无对白镜头都必须有");
-      expect(result.storyboard.asmrSound).toEqual(asmrSoundFixture);
+      expect(system).not.toContain("只用本段实际材料");
+      expect(result.storyboard.asmrSound).toEqual({ ...asmrSoundFixture, mixMode: silent ? "replace" : "overlay" });
       if (!silent) expect(material.scriptOrder[1].directorNotes[0].soundSuggestions).toContain("纸叶");
     }
   });
@@ -312,7 +321,7 @@ describe("已采用音频的单片段分镜", () => {
     expect(system).toContain("从完整 scriptOrder、当前镜头位置及前后台词");
     expect(system).toContain("不凭空预设道具、地点或人物行为");
     expect(system).toContain("白噪声或底噪");
-    expect(system).toContain("不超过 5 秒");
+    expect(system).toContain("不超过 15 秒");
     expect(result.storyboard).toMatchObject({ ...response, kind: "silent", duration: 4 });
     expect(result.storyboard).not.toHaveProperty("audio");
     expect(fetchImpl).toHaveBeenCalledOnce();

@@ -49,7 +49,8 @@ import { adoptAudioCandidate, canUndoLastAudioCandidate, getLastAudioCandidateAc
 import { VoiceGenerationOptionsSchema, type VoiceGenerationOptions, type LongTextRetry } from "@/lib/asmr/voice-generation-options";
 import { getVoiceGenerationContext } from "@/lib/asmr/voice-generation-context";
 import { getVoiceParagraphContext } from "@/lib/asmr/voice-paragraph-context";
-import { captureSpeechWorkspace, ensureSpeechWorkspaces, getParagraphGroup, getSpeechWorkspaceMode, getSpeechWorkspaceProject, hasSharedSpeechScriptChanges, mergeSpeechWorkspaceProject, replaceParagraphScript, restoreSharedSpeechScript, restoreSpeechWorkspaceArrangement, switchSpeechWorkspace, syncSharedSpeechScript } from "@/lib/asmr/speech-workspace";
+import { canForceSplitVoiceCandidate, forceSplitAttemptKey, getNextAutomaticForceSplitCandidate } from "@/lib/asmr/voice-candidate-auto-split";
+import { captureSpeechWorkspace, getParagraphGroup, getSpeechWorkspaceMode, getSpeechWorkspaceProject, hasSharedSpeechScriptChanges, mergeSpeechWorkspaceProject, replaceParagraphScript, restoreSharedSpeechScript, restoreSpeechWorkspaceArrangement, switchSpeechWorkspace, syncSharedSpeechScript } from "@/lib/asmr/speech-workspace";
 import type { VoiceProviderCatalog } from "@/lib/asmr/voice-provider-catalog";
 import type { VoiceReferenceImportResult } from "./voice-reference-import";
 import type { AudioAnalysis } from "@/lib/asmr/audio-analysis";
@@ -62,14 +63,13 @@ import {
   duplicateLibraryProject,
   getCurrentLibraryEntry,
   getProjectLibrarySummaries,
-  loadProjectLibrary,
   replaceLibraryProject,
   restoreProjectRevision,
-  saveProjectLibrary,
   selectLibraryProject,
   setLibraryProjectMixFingerprint,
   updateLibraryProject,
 } from "@/lib/asmr/project-library";
+import { loadBrowserProjectLibrary, saveBrowserProjectLibrary } from "@/lib/asmr/browser-project-storage";
 import {
   commitProjectMixFailure,
   commitProjectMixSuccess,
@@ -120,6 +120,7 @@ type StudioAppProps = {
   project: AsmrProject;
 };
 class PostProcessingSaveError extends Error {}
+class ProjectSaveSupersededError extends Error {}
 
 function defaultClipId(project: AsmrProject) {
   const clips = flattenClips(project);
@@ -217,14 +218,19 @@ export function StudioApp({ project }: StudioAppProps) {
   const [candidateListState, setCandidateListState] = useState<{ projectId: string; workspaceMode: SpeechWorkspaceMode; status: "loading" | "ready" | "error" }>();
   const [candidateActionBusy, setCandidateActionBusy] = useState(false);
   const [forceSplittingCandidateId, setForceSplittingCandidateId] = useState<string>();
+  const [automaticForceSplit, setAutomaticForceSplit] = useState(false);
+  const automaticForceSplitAttemptsRef = useRef(new Set<string>());
+  const pausedAutomaticForceSplitScopesRef = useRef(new Set<string>());
   const [confirmingCandidateId, setConfirmingCandidateId] = useState<string>();
-  const candidateRecheckRunRef = useRef<{ controller: AbortController; projectId: string; clipId: string; kind?: "confirm" | "force" } | null>(null);
+  const candidateRecheckRunRef = useRef<{ controller: AbortController; projectId: string; clipId: string; kind?: "confirm" | "force"; automatic?: boolean; scope?: string } | null>(null);
   const handleCancelCandidateRecheck = useCallback((notify = true) => {
     const run = candidateRecheckRunRef.current;
     if (!run) return;
+    if (notify && run.automatic && run.scope) pausedAutomaticForceSplitScopesRef.current.add(run.scope);
     candidateRecheckRunRef.current = null;
     run.controller.abort();
     setForceSplittingCandidateId(undefined);
+    setAutomaticForceSplit(false);
     setConfirmingCandidateId(undefined);
     if (notify) setVoiceError(run.kind === "confirm" ? "已取消采用，当前人声保持；可刷新候选查看试听确认是否已保存。" : "已取消强制切分，原候选已保留。");
   }, []);
@@ -273,6 +279,8 @@ export function StudioApp({ project }: StudioAppProps) {
   const projectLibraryRef = useRef(projectLibrary);
   const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
   const [storageAvailable, setStorageAvailable] = useState(true);
+  const [storageSaving, setStorageSaving] = useState(false);
+  const storageSaveVersionRef = useRef(0);
   const [importError, setImportError] = useState<string>();
   const [restoreState, setRestoreState] = useState<"demo" | "restored">("demo");
   const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysis>();
@@ -362,6 +370,7 @@ export function StudioApp({ project }: StudioAppProps) {
         isDirty,
         restoreState,
         storageAvailable,
+        storageSaving,
         validationIssueCount: validationIssues.length,
       }),
     [
@@ -369,6 +378,7 @@ export function StudioApp({ project }: StudioAppProps) {
       isDirty,
       restoreState,
       storageAvailable,
+      storageSaving,
       validationIssues.length,
     ],
   );
@@ -454,7 +464,11 @@ export function StudioApp({ project }: StudioAppProps) {
 
   useEffect(() => () => {
     handleCancelCandidateRecheck(false);
-  }, [editableProject.project_id, activeClipId, speechMode, handleCancelCandidateRecheck]);
+  }, [editableProject.project_id, speechMode, handleCancelCandidateRecheck]);
+
+  useEffect(() => () => {
+    if (!candidateRecheckRunRef.current?.automatic) handleCancelCandidateRecheck(false);
+  }, [activeClipId, handleCancelCandidateRecheck]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -566,9 +580,36 @@ export function StudioApp({ project }: StudioAppProps) {
       referenceMode: reference.referenceModes.includes("with_reference_text") ? "with_reference_text" : "reference_only" }, mode);
   }
 
-  function commitCandidateLibrary(next: typeof projectLibrary) {
+  const saveLibrarySnapshot = useCallback(async (next: typeof projectLibrary) => {
+    const version = ++storageSaveVersionRef.current;
+    setStorageSaving(true);
+    try {
+      await saveBrowserProjectLibrary(window.localStorage, next);
+      if (version === storageSaveVersionRef.current) setStorageAvailable(true);
+    } catch (error) {
+      if (version === storageSaveVersionRef.current) setStorageAvailable(false);
+      throw error;
+    } finally {
+      if (version === storageSaveVersionRef.current) setStorageSaving(false);
+    }
+  }, []);
+
+  async function saveBeforeApplying(next: typeof projectLibrary, active: () => boolean = () => true) {
+    const session = generationSessionRef.current, revision = editRevisionRef.current;
+    const expected = JSON.stringify(editableProjectRef.current);
+    await saveLibrarySnapshot(next);
+    if (!active() || session !== generationSessionRef.current || revision !== editRevisionRef.current
+        || JSON.stringify(editableProjectRef.current) !== expected) {
+      // Reconcile the durable snapshot as well as the UI if the user changed
+      // projects/edits while a persist-first action was waiting for its commit.
+      await saveLibrarySnapshot(getLibraryWithCurrentProject());
+      throw new ProjectSaveSupersededError("工程已修改或操作已取消，本次结果未应用；当前工程已保留。");
+    }
+  }
+
+  async function commitCandidateLibrary(next: typeof projectLibrary, active?: () => boolean) {
     // Persist first: storage failure must leave the original audible project intact.
-    saveProjectLibrary(window.localStorage, next);
+    await saveBeforeApplying(next, active);
     clearGenerationSession();
     setScriptHistory([]);
     projectLibraryRef.current = next;
@@ -577,7 +618,6 @@ export function StudioApp({ project }: StudioAppProps) {
     editableProjectRef.current = entry.project;
     setEditableProject(entry.project);
     setProjectMixFingerprint(entry.project.speechWorkspace ? entry.project.speechWorkspace[getSpeechWorkspaceMode(entry.project)].mixFingerprint : entry.mixFingerprint);
-    setStorageAvailable(true);
     setVoiceError(undefined);
   }
 
@@ -605,8 +645,8 @@ export function StudioApp({ project }: StudioAppProps) {
         ...entry, project: mergeSpeechWorkspaceProject(current, mode, entry.project),
         mixFingerprint: mode === getSpeechWorkspaceMode(current) ? undefined : projectMixFingerprint,
       } : entry) };
-      try { commitCandidateLibrary(next); }
-      catch { setStorageAvailable(false); throw new Error("采用未保存，原声已保留。请检查本地存储后重试。"); }
+      try { await commitCandidateLibrary(next); }
+      catch (error) { throw new Error(error instanceof Error ? error.message : "采用未保存，原声已保留。请检查本地存储后重试。"); }
     } catch (error) {
       if (session === generationSessionRef.current) setVoiceError(error instanceof Error ? error.message : "未能采用候选。");
     } finally { setCandidateActionBusy(false); }
@@ -625,24 +665,24 @@ export function StudioApp({ project }: StudioAppProps) {
     finally { setCandidateActionBusy(false); }
   }
 
-  function handleUndoVoiceCandidate() {
+  async function handleUndoVoiceCandidate() {
     if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy) return;
     try {
       const current = updateLibraryProject(projectLibraryRef.current, editableProject);
       const next = undoLastAudioCandidate(current);
-      try { commitCandidateLibrary(next); }
-      catch { setStorageAvailable(false); throw new Error("撤回未保存，请检查本地存储后重试。"); }
+      await commitCandidateLibrary(next);
     } catch (error) { setVoiceError(error instanceof Error ? error.message : "未能撤回采用。"); }
   }
 
-  async function handleForceSplitVoiceCandidate(candidate: AudioCandidate) {
-    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy || singleStoryboardBusyRef.current || candidatesLoading) return;
+  const handleForceSplitVoiceCandidate = useCallback(async (candidate: AudioCandidate, automatic = false) => {
+    if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy || singleStoryboardBusyRef.current || candidatesLoading
+        || batchRunRef.current || Object.values(generationRuntimeStateRef.current.jobsById).some(isActiveGenerationJob)) return;
     const projectSnapshot = structuredClone(editableProjectRef.current);
-    const clip = flattenClips(projectSnapshot).find((item) => item.id === activeClipId);
+    const clip = flattenClips(projectSnapshot).find((item) => item.id === candidate.clipId);
     const mode = getSpeechWorkspaceMode(projectSnapshot);
     if (!clip || clip.type !== "voice" || clip.kind === "silent" || candidate.status !== "ready"
         || candidate.projectId !== projectSnapshot.project_id || candidate.clipId !== clip.id
-        || getAudioCandidateWorkspaceMode(candidate) !== mode || candidate.provenance.forcedSegmentation) return;
+        || getAudioCandidateWorkspaceMode(candidate) !== mode || !canForceSplitVoiceCandidate(candidate)) return;
     const paragraphForce = candidate.provenance.generationMode === "paragraph" && candidate.provenance.paragraph?.checkStatus === "review";
     const longTextForce = candidate.provenance.generationMode === "long_text"
       && candidate.provenance.longText?.groups.some((group) => group.checkStatus === "review");
@@ -653,13 +693,19 @@ export function StudioApp({ project }: StudioAppProps) {
     if (candidate.sourceFingerprint !== sourceFingerprint) {
       setVoiceError("文案或后续上下文已修改，暂不能强制切分此候选。"); return;
     }
-    const run = { controller: new AbortController(), projectId: projectSnapshot.project_id, clipId: clip.id, kind: "force" as const };
+    const scope = JSON.stringify([projectSnapshot.project_id, mode]);
+    if (automatic && (pausedAutomaticForceSplitScopesRef.current.has(scope)
+        || automaticForceSplitAttemptsRef.current.has(forceSplitAttemptKey(candidate)))) return;
+    if (!automatic) pausedAutomaticForceSplitScopesRef.current.delete(scope);
+    automaticForceSplitAttemptsRef.current.add(forceSplitAttemptKey(candidate));
+    const run = { controller: new AbortController(), projectId: projectSnapshot.project_id, clipId: clip.id, kind: "force" as const, automatic, scope };
     candidateRecheckRunRef.current = run;
     const session = generationSessionRef.current;
     const editRevision = editRevisionRef.current;
     const savedContext = JSON.stringify(candidate.provenance.longText?.context);
     let failureMessage = "无法连接本地服务，请确认 3001 服务正在运行后重试；原候选已保留。";
     setForceSplittingCandidateId(candidate.candidateId);
+    setAutomaticForceSplit(automatic);
     setVoiceError(undefined);
     try {
       const response = await fetch("/api/audio-candidates/" + encodeURIComponent(candidate.candidateId) + "/force-split", {
@@ -717,9 +763,22 @@ export function StudioApp({ project }: StudioAppProps) {
       if (candidateRecheckRunRef.current === run) {
         candidateRecheckRunRef.current = null;
         setForceSplittingCandidateId(undefined);
+        setAutomaticForceSplit(false);
       }
     }
-  }
+  }, [voiceBusy, candidatesLoading, voiceCandidates]);
+
+  useEffect(() => {
+    if (audioOverviewStatus !== "ready" || voiceBusy || referenceImportBusy || singleStoryboardBusy
+        || candidateRecheckRunRef.current || batchRunRef.current
+        || pausedAutomaticForceSplitScopesRef.current.has(JSON.stringify([editableProject.project_id, speechMode]))) return;
+    const candidate = getNextAutomaticForceSplitCandidate(editableProject, voiceCandidates, automaticForceSplitAttemptsRef.current);
+    if (!candidate) return;
+    // Defer until effect cleanup has run, including StrictMode's initial replay.
+    let canceled = false;
+    queueMicrotask(() => { if (!canceled) void handleForceSplitVoiceCandidate(candidate, true); });
+    return () => { canceled = true; };
+  }, [audioOverviewStatus, voiceBusy, referenceImportBusy, singleStoryboardBusy, editableProject, speechMode, voiceCandidates, handleForceSplitVoiceCandidate]);
 
   async function handleConfirmParagraphText(candidate: AudioCandidate, confirmedClipIds: string[]) {
     if (referenceImportBusyRef.current || candidateRecheckRunRef.current || voiceBusy || singleStoryboardBusyRef.current || candidatesLoading) return;
@@ -800,8 +859,8 @@ export function StudioApp({ project }: StudioAppProps) {
       const next = { ...adoptedLibrary, projects: adoptedLibrary.projects.map((entry) => entry.projectId === latest.project_id ? {
         ...entry, project: mergeSpeechWorkspaceProject(latest, "paragraph", entry.project), mixFingerprint: undefined,
       } : entry) };
-      try { commitCandidateLibrary(next); }
-      catch { setStorageAvailable(false); failureMessage = "试听确认已保存，但采用未能保存；当前人声保持。请检查本地存储后重试采用。"; throw new Error(failureMessage); }
+      try { await commitCandidateLibrary(next, () => candidateRecheckRunRef.current === run && !run.controller.signal.aborted); }
+      catch { failureMessage = "试听确认已保存，但采用未能保存；当前人声保持。请检查本地存储后重试采用。"; throw new Error(failureMessage); }
     } catch {
       if (candidateRecheckRunRef.current === run && !run.controller.signal.aborted && session === generationSessionRef.current) setVoiceError(failureMessage);
     } finally {
@@ -823,20 +882,19 @@ export function StudioApp({ project }: StudioAppProps) {
   useEffect(() => {
     let isCancelled = false;
 
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
       if (isCancelled) {
         return;
       }
 
       try {
-        const loadedLibrary = loadProjectLibrary(
+        const loadedLibrary = await loadBrowserProjectLibrary(
           window.localStorage,
           project,
         );
+        if (isCancelled) return;
         const loadedEntry = getCurrentLibraryEntry(loadedLibrary);
 
-        saveProjectLibrary(window.localStorage, loadedLibrary);
-        setStorageAvailable(true);
         projectLibraryRef.current = loadedLibrary;
         setProjectLibrary(loadedLibrary);
         setEditableProject(loadedEntry.project);
@@ -848,7 +906,9 @@ export function StudioApp({ project }: StudioAppProps) {
             : "restored",
         );
         setSelectedClipId(defaultClipId(loadedEntry.project));
+        try { await saveLibrarySnapshot(loadedLibrary); } catch { /* Show loaded projects even if saving is unavailable. */ }
       } catch {
+        if (isCancelled) return;
         const fallbackLibrary = createInitialProjectLibrary(project);
         setStorageAvailable(false);
         projectLibraryRef.current = fallbackLibrary;
@@ -857,14 +917,14 @@ export function StudioApp({ project }: StudioAppProps) {
         setRestoreState("demo");
         setSelectedClipId(defaultClipId(project));
       } finally {
-        setHasLoadedStorage(true);
+        if (!isCancelled) setHasLoadedStorage(true);
       }
     });
 
     return () => {
       isCancelled = true;
     };
-  }, [project]);
+  }, [project, saveLibrarySnapshot]);
 
   useEffect(() => {
     if (!hasLoadedStorage || validationIssues.length > 0) {
@@ -883,12 +943,7 @@ export function StudioApp({ project }: StudioAppProps) {
         editableProject.speechWorkspace ? captureSpeechWorkspace(editableProject, { mixFingerprint: activeMixFingerprint }) : editableProject,
       );
 
-      try {
-        saveProjectLibrary(window.localStorage, nextLibrary);
-        setStorageAvailable(true);
-      } catch {
-        setStorageAvailable(false);
-      }
+      void saveLibrarySnapshot(nextLibrary).catch(() => {});
 
       projectLibraryRef.current = nextLibrary;
       setProjectLibrary(nextLibrary);
@@ -897,7 +952,7 @@ export function StudioApp({ project }: StudioAppProps) {
     return () => {
       isCancelled = true;
     };
-  }, [editableProject, hasLoadedStorage, validationIssues.length, activeMixFingerprint]);
+  }, [editableProject, hasLoadedStorage, validationIssues.length, activeMixFingerprint, saveLibrarySnapshot]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1028,12 +1083,7 @@ export function StudioApp({ project }: StudioAppProps) {
     projectLibraryRef.current = nextLibrary;
     setProjectLibrary(nextLibrary);
 
-    try {
-      saveProjectLibrary(window.localStorage, nextLibrary);
-      setStorageAvailable(true);
-    } catch {
-      setStorageAvailable(false);
-    }
+    void saveLibrarySnapshot(nextLibrary).catch(() => {});
   }
 
   function activateLibraryProject(
@@ -1147,6 +1197,7 @@ export function StudioApp({ project }: StudioAppProps) {
     }
 
     if (update.type === "candidate") {
+      pausedAutomaticForceSplitScopesRef.current.delete(JSON.stringify([editableProjectRef.current.project_id, mode]));
       setRuntimeState(clearGenerationJob(generationRuntimeStateRef.current, update.job.jobId));
       candidateJobIdsRef.current.delete(update.job.jobId);
       delete generationReasonsRef.current[update.job.jobId];
@@ -1826,37 +1877,40 @@ export function StudioApp({ project }: StudioAppProps) {
     setBatchNotice("已停止后续排队，正在取消当前生成。");
   }
 
-  function saveStoryboardRevision(next: AsmrProject) {
+  async function saveStoryboardRevision(next: AsmrProject, active?: () => boolean) {
     const library = updateLibraryProject(projectLibraryRef.current, next);
-    try { saveProjectLibrary(window.localStorage, library); }
-    catch { setStorageAvailable(false); throw new Error("校对修订未能保存，已有分镜保持。请释放浏览器存储空间后重试。"); }
+    try { await saveBeforeApplying(library, active); }
+    catch (error) {
+      if (error instanceof ProjectSaveSupersededError) throw error;
+      throw new Error("校对修订未能保存，已有分镜保持。请检查本地存储后重试。");
+    }
     editableProjectRef.current = next; projectLibraryRef.current = library;
-    setProjectLibrary(library); setEditableProject(next); setStorageAvailable(true);
+    setProjectLibrary(library); setEditableProject(next);
   }
 
-  function applyReview(review: StoryboardReview, automatic: boolean) {
+  async function applyReview(review: StoryboardReview, automatic: boolean, active?: () => boolean) {
     const current = editableProjectRef.current;
     if (getStoryboardReviewFingerprint(current) !== review.inputFingerprint) throw new Error("剧情或分镜已修改，请重新整批校对。");
     const next = applyStoryboardReview(current, review);
-    if (review.changes.length) saveStoryboardRevision(next);
+    if (review.changes.length) await saveStoryboardRevision(next, active);
     setStoryboardReviewResult({ review, automatic, applied: true, afterFingerprint: getStoryboardReviewFingerprint(next) });
     setStoryboardReviewNotice(review.changes.length ? `已应用 ${review.changes.length} 镜校对修订，可展开查看或撤回；原音保留。` : "整批校对完成，未建议修改分镜。");
   }
 
-  function handleApplyStoryboardReview() {
+  async function handleApplyStoryboardReview() {
     if (voiceBusy || singleStoryboardBusyRef.current || referenceImportBusyRef.current || !storyboardReviewResult || storyboardReviewResult.applied) return;
-    try { applyReview(storyboardReviewResult.review, false); }
+    try { await applyReview(storyboardReviewResult.review, false); }
     catch (error) { setStoryboardReviewNotice(error instanceof Error ? error.message : "校对修订未能应用，已有分镜保持。"); }
   }
 
-  function handleUndoStoryboardReview() {
+  async function handleUndoStoryboardReview() {
     const result = storyboardReviewResult, current = editableProjectRef.current;
     if (voiceBusy || singleStoryboardBusyRef.current || referenceImportBusyRef.current || !result?.applied) return;
     if (getStoryboardReviewFingerprint(current) !== result.afterFingerprint) { setStoryboardReviewNotice("分镜或其来源已修改，不能撤回这次校对。"); return; }
     try {
       const inverse: StoryboardReview = { inputFingerprint: getStoryboardReviewFingerprint(current), notes: [],
         changes: result.review.changes.map(change => ({ ...change, before: change.after, after: change.before })) };
-      saveStoryboardRevision(applyStoryboardReview(current, inverse));
+      await saveStoryboardRevision(applyStoryboardReview(current, inverse));
       setStoryboardReviewResult(undefined); setStoryboardReviewNotice("已撤回本次校对修订，当前音频和处理设置保留。");
     } catch (error) { setStoryboardReviewNotice(error instanceof Error ? error.message : "校对修订未能撤回。"); }
   }
@@ -1885,7 +1939,7 @@ export function StudioApp({ project }: StudioAppProps) {
       if (!parsed.success || parsed.data.inputFingerprint !== run.fingerprint || parsed.data.changes.some(change => !editableClipIds.includes(change.clipId))) throw new Error("校对结果与本次分镜不一致，已有分镜保持。");
       // Validate the entire proposed patch atomically before exposing or applying it.
       applyStoryboardReview(editableProjectRef.current, parsed.data);
-      if (automatic) applyReview(parsed.data, true);
+      if (automatic) await applyReview(parsed.data, true, active);
       else { setStoryboardReviewResult({ review: parsed.data, automatic: false, applied: false }); setStoryboardReviewNotice("整批校对完成，请查看改动后决定是否应用。"); }
     } catch (error) {
       if (active()) setStoryboardReviewNotice(`整批校对未完成：${error instanceof Error ? error.message : "请稍后重试。"}已有分镜保留，可继续后处理或导出。`);
@@ -1917,11 +1971,10 @@ export function StudioApp({ project }: StudioAppProps) {
       }
       return current;
     };
-    const persistResult = (next: AsmrProject) => {
+    const persistResult = async (next: AsmrProject) => {
       const library = updateLibraryProject(projectLibraryRef.current, next);
-      try { saveProjectLibrary(window.localStorage, library); }
+      try { await saveBeforeApplying(library, active); }
       catch {
-        setStorageAvailable(false);
         run.stoppedReason = "后处理记录未能保存，已停止后续处理。请释放浏览器存储空间后重试；原音和已保存结果保留。";
         run.controller.abort();
         throw new PostProcessingSaveError(run.stoppedReason);
@@ -1931,7 +1984,6 @@ export function StudioApp({ project }: StudioAppProps) {
       projectLibraryRef.current = library;
       setProjectLibrary(library);
       setEditableProject(next);
-      setStorageAvailable(true);
     };
     const request = async (url: string, project: AsmrProject, clipId?: string) => {
       const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, signal: run.controller.signal,
@@ -1947,7 +1999,7 @@ export function StudioApp({ project }: StudioAppProps) {
       const current = currentInput();
       const processing = AudioPostProcessingSchema.safeParse(body.processing);
       if (!processing.success) throw new Error("后处理规划资料不完整，请重新生成。");
-      persistResult(applyAudioPostProcessingPlan(current, processing.data));
+      await persistResult(applyAudioPostProcessingPlan(current, processing.data));
       const clipIds = getAudioPostProcessingClips(editableProjectRef.current).filter(clip => clip.kind !== "silent").map(clip => clip.id);
       const failures: string[] = [];
       let completed = 0;
@@ -1960,7 +2012,7 @@ export function StudioApp({ project }: StudioAppProps) {
           const rendered = await request("/api/audio-post-processing/render", snapshot, clipId);
           const receipt = AudioPostProcessingReceiptSchema.safeParse(rendered.receipt);
           if (!receipt.success) throw new Error("本镜后处理资料不完整，请重试。");
-          persistResult(applyAudioPostProcessingResult(currentInput(), clipId, receipt.data));
+          await persistResult(applyAudioPostProcessingResult(currentInput(), clipId, receipt.data));
         } catch (error) {
           if (!active() || error instanceof PostProcessingSaveError) throw error;
           failures.push(`第 ${index + 1} 镜：${error instanceof Error ? error.message : "后处理失败"}`);
@@ -2281,6 +2333,8 @@ export function StudioApp({ project }: StudioAppProps) {
     activateLibraryProject(nextLibrary, "demo");
   }
 
+  if (!hasLoadedStorage) return <div role="status" className="p-6 text-studio-muted">正在读取项目…</div>;
+
   return (
     <ProjectWorkspace
       project={editableProject}
@@ -2337,6 +2391,10 @@ export function StudioApp({ project }: StudioAppProps) {
               <StudioBatchActions counts={batchCounts} audioOverview={audioOverview} overviewStatus={audioOverviewStatus} audioSettingsStatus={voiceSettingsStatus} disabled={!hasLoadedStorage || referenceImportBusy || voiceBusy || singleStoryboardBusy} progress={batchProgress} onRun={(action) => void handleRunBatch(action)} onCancel={handleCancelBatch}
                 postProcessing={{ ready: postProcessingSummary.ready, reason: postProcessingSummary.reason, progress: postProcessingProgress }} onGeneratePostProcessing={() => void handleGeneratePostProcessing()} onCancelPostProcessing={() => handleCancelPostProcessing()}
                 storyboardReview={{ ready: storyboardReviewSummary.ready, reason: storyboardReviewSummary.reason, busy: storyboardReviewBusy }} onReviewStoryboards={() => void reviewStoryboards()} onCancelStoryboardReview={() => handleCancelStoryboardReview()} />
+              {automaticForceSplit && <div role="status" className="flex items-center justify-between gap-3 border-b border-studio-line px-3 py-2 text-xs text-studio-muted">
+                <span>正在自动强制切分，完成后可试听候选。</span>
+                <button type="button" className="shrink-0 rounded-md border border-studio-line px-2 py-1 hover:text-studio-text" onClick={() => handleCancelCandidateRecheck()}>取消自动切分</button>
+              </div>}
               {(batchNotice || storyboardReviewResult || storyboardReviewNotice || editableProject.audioPostProcessing || postProcessingNotice) && <StudioOperationResults key={`${editableProject.project_id}:${speechMode}`}
                 summary={[
                   batchNotice?.split(/[\n。]/, 1)[0],

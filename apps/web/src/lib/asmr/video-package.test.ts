@@ -62,23 +62,23 @@ describe("video package input snapshot", () => {
     expect(getVideoPackageSummary(project).issues[0]).toMatchObject({ clipId: clips[0].id, index: 1 });
   });
 
-  it("includes silent clips without audio but requires ambient directions and at most five seconds", () => {
+  it("includes single silent jobs up to fifteen seconds without requiring parts", () => {
     const { project, clips } = fixture();
     const clip = clips[1];
-    clip.kind = "silent"; clip.duration = 5;
+    clip.kind = "silent"; clip.duration = 15;
     clip.generation.status = "asset_pending";
     clip.asset = { asset_id: null, uri: null, duration: null };
     const shot = project.videoPlan!.shots[clip.id];
     delete shot.audio;
-    Object.assign(shot, { kind: "silent", duration: 5, ambientSound: "Quiet rain against the window.",
+    Object.assign(shot, { kind: "silent", duration: 15, ambientSound: "Quiet rain against the window.",
       sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id) });
     expect(getVideoPackageSummary(project).ready).toBe(3);
     delete (shot as typeof shot & { ambientSound?: string }).ambientSound;
     expect(getVideoPackageSummary(project).issues[0].message).toContain("环境");
     Object.assign(shot, { ambientSound: "Gentle room tone." });
-    clip.duration = 5.1; shot.duration = 5.1;
+    clip.duration = 15.1; shot.duration = 15.1;
     shot.sourceFingerprint = createClipVideoSourceFingerprint(project, clip.id);
-    expect(getVideoPackageSummary(project).issues[0].message).toContain("5 秒");
+    expect(getVideoPackageSummary(project).issues[0].message).toContain("15 秒");
   });
 
   it("accepts a long logical segment only with complete continuous parts", () => {

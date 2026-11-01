@@ -256,6 +256,52 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(len(self.remote.posts), 3)
         self.assertEqual(self.remote.posts[-1]["prompt"]["22"]["inputs"]["prompt"], "CHANGED_FIRST")
 
+    def test_old_long_chain_resets_in_memory_and_replaces_only_affected_cached_groups(self):
+        base = self.manifest["shots"][1]
+        self.manifest["shots"] = [{**copy.deepcopy(base), "id": f"shot-{index}", "order": index,
+            "referenceMode": "new" if index == 1 else "continuous"} for index in range(1, 7)]
+        self.save_manifest()
+        original = (self.package / "project.json").read_bytes()
+        # Seed outputs made by the former runner, before the cadence rule.
+        with mock.patch.object(runner, "apply_independent_shot_cadence", side_effect=copy.deepcopy):
+            old = self.make_runner()
+        self.assertEqual(old.run()["succeeded"], 6)
+        prior = copy.deepcopy(old.state["shots"])
+        repaired = self.make_runner()
+        self.assertEqual([shot["referenceMode"] for shot in repaired.shots],
+                         ["new", "continuous", "continuous", "new", "continuous", "continuous"])
+        self.assertEqual((self.package / "project.json").read_bytes(), original)
+        # A fresh export already writes the reset as new. Its cache identity
+        # must agree with the old-package repair, including the two followers.
+        self.manifest["shots"][3]["referenceMode"] = "new"
+        self.save_manifest()
+        explicit_manifest = (self.package / "project.json").read_bytes()
+        upgraded = self.make_runner()
+        self.assertEqual(upgraded.shots, repaired.shots)
+        self.assertEqual(upgraded.run()["succeeded"], 6)
+        self.assertEqual(len(self.remote.posts), 9)
+        for index in (1, 2, 3):
+            self.assertEqual(upgraded.state["shots"][f"shot-{index}"], prior[f"shot-{index}"])
+        for index in (4, 5, 6):
+            receipt = upgraded.candidate_entry(f"shot-{index}")
+            self.assertNotEqual(receipt["fingerprint"], prior[f"shot-{index}"]["candidates"]["1"]["fingerprint"])
+            if index > 4:
+                self.assertEqual(receipt["referenceCadenceAnchor"], "shot-4")
+        self.assertEqual(upgraded.candidate_entry("shot-4")["referenceMode"], "new")
+        self.assertNotIn("ref_images.ref_image_1", self.remote.posts[6]["prompt"]["22"]["inputs"])
+        self.assertEqual((self.package / "project.json").read_bytes(), explicit_manifest)
+        self.assertEqual(self.make_runner().run()["succeeded"], 6)
+        self.assertEqual(len(self.remote.posts), 9)
+
+    def test_actual_postprocessed_wav_above_fifteen_seconds_fails_before_submission(self):
+        with wave.open(str(self.wav), "wb") as audio:
+            audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+            audio.writeframes(b"\0\0" * (16 * 8000))
+        batch = self.make_runner(only="1")
+        with self.assertRaisesRegex(runner.BatchError, "实际人声.*15 秒"):
+            runner.shot_facts(batch.root, batch.shots[0])
+        self.assertFalse(self.remote.posts or self.remote.uploads)
+
     def test_explicit_failure_retries_bounded_and_next_shot_runs_independently(self):
         self.manifest["shots"][0]["prompt"] = "FAIL_THIS"
         self.save_manifest()
@@ -310,13 +356,13 @@ class RunnerTests(unittest.TestCase):
 
     def test_dry_run_does_not_connect_and_supports_missing_character(self):
         self.manifest.pop("characterReference")
-        self.manifest["shots"][1]["durationSeconds"] = 99
+        self.manifest["shots"][1]["durationSeconds"] = 15
         self.save_manifest()
         batch = self.make_runner(comfy_url="http://127.0.0.1:1", dry_run=True)
         result = batch.run()
         self.assertEqual(len(result["dry_run"]), 2)
         payload = json.loads(Path(result["dry_run"][1]).read_text(encoding="utf-8"))
-        self.assertEqual(payload["_dry_run"]["targetDurationSeconds"], 5)
+        self.assertEqual(payload["_dry_run"]["targetDurationSeconds"], 15)
         self.assertEqual(payload["prompt"]["20"]["inputs"]["image"], "__CHARACTER_IMAGE__")
         self.assertFalse(self.remote.gets)
         self.assertFalse(batch.state_path.exists())

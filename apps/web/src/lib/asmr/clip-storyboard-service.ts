@@ -13,7 +13,8 @@ import { createStoryboardScriptContext } from "./storyboard-context";
 import { ASMR_SOUND_PLANNING_GUIDANCE, AsmrSoundSchema } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
 import { performanceStoryboardMessages } from "./performance-storyboard";
-import { performancePartDurations } from "./performance-segment";
+import { MAX_VIDEO_GENERATION_SECONDS, performancePartDurations } from "./performance-segment";
+import { hasImaginedPantomimeTarget, usesCameraPantomime } from "./camera-pantomime";
 
 export const ClipStoryboardRequestSchema = z.object({
   provider: PlannerProviderIdSchema,
@@ -36,7 +37,7 @@ const GeneratedClipStoryboardSchema = z.object({
 }).strict();
 
 const MAX_AUDIO_BYTES = 128 * 1024 * 1024;
-const MAX_AUDIO_SECONDS = 600;
+const MAX_AUDIO_SECONDS = MAX_VIDEO_GENERATION_SECONDS;
 
 export type ClipStoryboardRequest = z.infer<typeof ClipStoryboardRequestSchema>;
 export type ClipStoryboardResult = { storyboard: ClipVideoStoryboard; provider: "ollama" | "api"; model: string };
@@ -122,7 +123,7 @@ async function readAdoptedAudio(clip: VoiceClip, config: LocalRuntimeConfig, sig
     duration = audio.samples.length / audio.channels / audio.sampleRate;
     if (audio.sampleRate < 8000 || audio.sampleRate > 192000 || !Number.isFinite(duration) || duration <= 0) throw new Error("Invalid PCM audio");
   } catch { throw new PlannerError(422, "已采用的素材需要有效的 PCM WAV 音频。"); }
-  if (duration > MAX_AUDIO_SECONDS) throw new PlannerError(413, "分镜生成暂支持每段最长 10 分钟的音频。");
+  if (duration > MAX_AUDIO_SECONDS) throw new PlannerError(413, "每次视频生成最长 15 秒，请先将本段人声拆成完整意思的短段并采用。");
   return { assetId: clip.asset.asset_id, uri: clip.asset.uri, duration };
 }
 
@@ -166,7 +167,7 @@ function clipMessages(input: ClipStoryboardRequest, clip: VoiceClip, duration: n
         ? "S1是对听者说话的角色；听者看向S1时让口型与现有音频同步。听者因剧情看路、转头或观察道具时允许S1留在画外，不用强制嘴部可见打断第一人称观察或位移；仍只用原音，不新增台词。"
         : "S1 是画内说话人；说话期间脸和嘴部始终可见。按事件选择景别，中景可同时看清手部、道具和可见嘴部，不把每镜强制为中近景；需要时自然跟随人物或调整构图。动作顺应当前音频，不挤占开口、不遮嘴、不长时间转头或背身。",
     ...(silent ? ["description 若只是‘待设计’或一般承接要求，它不是已发生的剧情事件；从完整 scriptOrder、当前镜头位置及前后台词安排一个本镜时长内可完成的动作或景物停留，承接已有场景和动作状态，不凭空预设道具、地点或人物行为。用户明确填写了具体画面或动作意图时优先遵循，再与前后剧情自然衔接。"] : []),
-    silent ? "角色图 1 的外貌服装和无对白规则会由服务器统一加入最终提示词。用户指定的 durationSeconds 决定镜头长度且不超过 5 秒，不修改时长、不编造音频资产、不要求 WAV。visual、action、camera 仅描述本镜画面，不把 description 改写成台词；ambientSound 单独描述环境声。"
+    silent ? "角色图 1 的外貌服装和无对白规则会由服务器统一加入最终提示词。用户指定的 durationSeconds 决定镜头长度且不超过 15 秒，在同一镜头内完整完成当前动作，不修改时长、不编造音频资产、不要求 WAV。visual、action、camera 仅描述本镜画面，不把 description 改写成台词；ambientSound 单独描述环境声。"
       : `角色图 1 的外貌服装、${listenerPov ? "第一人称视点、可见时的口型" : "可见嘴部、口型"}与音轨规则会由服务器统一加入最终提示词，visual、action、camera 不重复这些固定要求，只写这一镜独有的画面、动作和机位。`,
     ...(silent ? [] : ["当前台词将由服务器逐字注入最终 prompt，你不能返回或改写台词。当前实测音频时长决定这一镜的长度；不能修改时长、编造时间戳、选择或返回音频资产。最终音轨 fully_copy 完整复制当前 TTS，保留原词原声原速原停顿，不生成新增对白、配音、环境音、音效或背景音乐，non_diegetic_music: N/A。"]),
     ...(previousPrompt ? [silent ? "上一镜仅提供场景与动作结束状态，不复制上一镜台词或音频；本镜只有环境底噪，不生成对白。"
@@ -243,8 +244,9 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
       : await readAdoptedAudio(clip, options.config ?? getLocalRuntimeConfig(options.env), options.signal);
     const duration = audio?.duration ?? clip.duration;
     checkCancelled(options.signal);
-    const performance = Boolean(clip.performance) || clip.kind === "silent" && duration > 5;
-    const expected = clip.kind === "silent" && duration > 5 ? performancePartDurations(duration) : undefined;
+    const pantomime = usesCameraPantomime(request.project.videoPlan?.referenceTemplate);
+    const performance = Boolean(clip.performance) || clip.kind === "silent" && duration > 5 || pantomime;
+    const expected = clip.kind === "silent" && duration > MAX_VIDEO_GENERATION_SECONDS ? performancePartDurations(duration) : undefined;
     const parts: PerformanceStoryboardPart[] = [];
     let first: z.infer<typeof GeneratedClipStoryboardSchema> | undefined;
     let provider: "api" | "ollama" = clip.kind === "silent" ? "api" : request.provider, model = "";
@@ -282,11 +284,12 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
           const englishFields = [candidate, ...(candidate.parts ?? [])].flatMap(part =>
             [part.visual, part.action, part.camera, part.ambientSound ?? "", part.asmrSound.prompt]);
           if (performance && englishFields.some(value => /\p{Script=Han}/u.test(value))) problems.push("除title外，全部画面、动作、机位、声音提示词及每个parts字段必须为英文，不能照抄中文原稿");
+            if (pantomime && hasImaginedPantomimeTarget(candidate)) problems.push("visual/action/camera及parts不能描写invisible或imaginary实体，包括否定描述；也不写as if holding/opening/touching等以物件解释手势的比喻。只写空手指形、镜头方位、移动轨迹和停顿；不要写手拿着或触碰想象中的物件。真实材料名称只属于声音字段");
           if (!problems.length) { data = candidate; provider = result.provider; model = result.model; break; }
         }
         if (!performance || attempt === 1) throw new PlannerError(502, `${problems.join("；")}。请重试。`);
         messages.push({ role: "assistant", content: JSON.stringify(result.value) }, { role: "user",
-          content: `修正上一条输出并返回完整JSON，保留原脚本内容、段落顺序、材料身份和规定时长。${problems.join("；")}。All visual/action/camera/ambientSound/asmrSound.prompt fields, including every part, must be English. Do not alter the planned durations.` });
+          content: `修正上一条输出并返回完整JSON，${pantomime ? "保留当前段任务、空手模拟方式、固定机位、分块阶段和规定时长，不复制邻段动作或声音。" : "保留原脚本内容、段落顺序、材料身份和规定时长。"}${problems.join("；")}。All visual/action/camera/ambientSound/asmrSound.prompt fields, including every part, must be English. Do not alter the planned durations.` });
       }
       if (!data) throw new PlannerError(502, "画面与声音设计不完整，请重试。");
       if (performance) data.asmrSound.mixMode = clip.kind === "silent" ? "replace" : "overlay";

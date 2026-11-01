@@ -120,11 +120,11 @@ describe("whole-batch storyboard review UI", () => {
     const requestsBeforeViewing = vi.mocked(fetch).mock.calls.length;
     fireEvent.click(within(openResults()).getByRole("button", { name: "应用修订" }));
     expect(vi.mocked(fetch).mock.calls).toHaveLength(requestsBeforeViewing);
-    expect(Object.values(stored(project).videoPlan!.shots)[0].action).toBe("Receives the coat and lowers it");
+    await waitFor(() => expect(Object.values(stored(project).videoPlan!.shots)[0].action).toBe("Receives the coat and lowers it"));
     closeResults();
     fireEvent.click(screen.getByRole("button", { name: "修改无关音量" }));
     fireEvent.click(within(openResults()).getByRole("button", { name: "撤回校对" }));
-    expect(current().videoPlan).toEqual(before);
+    await waitFor(() => expect(current().videoPlan).toEqual(before));
     expect(current().timeline.tracks.find(track => track.track_type === "voice")!.clips[0].volume_db).toBe(-7);
     expect(api.posts).toHaveLength(1); expect(bridge.generateClip).not.toHaveBeenCalled();
   });
@@ -200,6 +200,7 @@ describe("whole-batch storyboard review UI", () => {
   });
   it("cannot undo over a later storyboard edit", async () => {
     const api = mockApi(); await mount(); manual(); await api.finishReview(0); fireEvent.click(within(openResults()).getByRole("button", { name: "应用修订" }));
+    await screen.findByRole("button", { name: "撤回校对" });
     closeResults();
     fireEvent.click(screen.getByRole("tab", { name: "画面与声音" })); fireEvent.click(screen.getByRole("button", { name: "手改已设计画面与声音" }));
     const dialog = openResults();
@@ -225,7 +226,7 @@ describe("whole-batch storyboard review UI", () => {
     const originalSet = Storage.prototype.setItem;
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) { if (String(value).includes("Receives the coat")) throw new Error("synthetic storage full"); originalSet.call(this, key, value); });
     fireEvent.click(within(openResults()).getByRole("button", { name: "应用修订" }));
-    expect(current().videoPlan).toEqual(before); expect(within(screen.getByRole("dialog", { name: "操作结果" })).getByText(/校对修订未能保存/)).toBeTruthy();
+    expect(current().videoPlan).toEqual(before); expect(await within(screen.getByRole("dialog", { name: "操作结果" })).findByText(/校对修订未能保存/)).toBeTruthy();
   });
   it("discards a generated shot if a following line changes while its request is pending", async () => {
     const api = mockApi(); await mount(); regenerate(); await waitFor(() => expect(api.posts).toHaveLength(1));

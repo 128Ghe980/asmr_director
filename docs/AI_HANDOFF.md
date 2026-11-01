@@ -1,10 +1,68 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-10-29
+Last updated: 2026-11-02
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-10-29 / 保留现状、记录推送
+## Current update — 2026-11-02 / 先发布当前版本，再改ASMR质感与音量
+
+用户认可prompt语义大体可用，关注真实生成同质化、不像专门ASMR、听感奇怪及音量高低差，要求先记录推送再改。发布既有77文件+本轮记录，历史28范围外保持；精确SHA及实际Git结果见`qa/asmr-sound/2026-11-02-quality/baseline-scope-audit.json`和`baseline-publication.json`。旧D先−27LUFS再空间/gain，混音仅削峰，未按最终用途平衡。下一版聚焦ASMR制作质感、声音多样性及trigger/ambience响度处理，不扩大为全面表演重写；发布事实与后续实现分开。[发布及反馈记录](records/2026-11-02-asmr-quality-baseline-publication.md)。Audio Quality V1与其他暂停保持。
+
+## Earlier update — 2026-11-01 / 万圣节独立声音提示词诊断
+
+用户要求检查变装稿白噪音prompt。39条逐段对照：16触发声、20台词+3过渡底声；23条安静段与导出代码统一的材料/接触动作包装冲突，第11段轻敲却禁止实际接触，4/17/19/21/23/25/29左右意图被mono后中央static处理丢掉。第29次数用词有歧义；第33拆糖及6/19/27最终时序基本合理。底声−30/−36、实际触发−12/−18，不凭文字断言响度或人声泄漏。仅诊断，源码/工程/ZIP/浏览器/部署不变，0模型调用、无提交推送。证据 `qa/halloween/2026-10-30-new/prompt-review-2026-11-01.json`；[详细记录](records/2026-11-01-halloween-sound-prompt-audit.md)。Audio Quality V1与其他暂停保持；当前服务仍下述storage release。
+
+## Earlier update — 2026-10-30 / 新万圣节已入库，保存容量修复已部署
+
+用户问“39段是什么、项目列表没看到”：39为20台词+19无台词表演的时间线，最终合成一个视频；批跑另有39同长ASMR任务。上轮未导入，本轮真实UI导入后发现localStorage保存失败，现改为IndexedDB主库、保留旧库迁移来源，修复读出后回写失败误回退示例，并按事务完成/写入顺序显示保存状态，保护保存等待期间的新编辑与取消。生产4文件+测试8文件仅叠加到原干净release；隔离18文件216测试全过、lint零警告、Webpack/TS通过。
+
+23:03HKT已切3001至`.local/releases/project-library-storage/apps/web`，build `OjWEvWXsfoGeJ_UBk30pg`，启动父39496；入口仍`I:/AI/asmr_director/service/2026-10-16/start-production.ps1`，回退脚本位于本QA。服务HTTP200、8静态资产/7参考/4原始及后处理WAV字节核验通过。重新导入完整JSON后真实刷新，页面仍显示新版《万圣节夜游前的小小变装仪式》已保存，18项目（17旧+1新）、20采用/19无台词/39设计/20D全部在，39段文本等于交付源。
+
+QA `I:/AI/asmr_director/qa/project-library/2026-10-30-storage/`优先读final-acceptance，再查activation、service-verification、ui-after-reload及import-saved-after-reload.png；release-verification是部署前构建历史回执。完整交付JSON/ZIP保持，本轮0DP/TTS/ASR/H3、无提交推送；不重跑已完成内容helper。此结果覆盖下方旧“未入库/无UI持久化”的当时状态，H3成片和第18段发音试听仍未验收；No-sleep暂停及Audio Quality V1路线保持。[完整记录](records/2026-10-30-project-library-storage.md)。
+
+## Earlier update — 2026-10-30 / 新万圣节空手互动批跑包已交付
+
+用户要求重新生成万圣节并监督DP迭代。新稿《万圣节夜游前的小小变装仪式》，工程`asmr_planner_20261030_124255`，近距离空手v4/竖屏，20新真实人声+19无台词，工程278.16秒。脚本11、设计83、D规划1，共95个唯一deepseek-v4-pro响应留证；三轮画面设计修正动作超时、重复递糖/挥手、轻点丢失和拟音错配，39段核心独立复核过，未手改生成字段。整理6秒、拆糖7秒、递糖5秒，持续触发≤10；13独立镜头、最多两次尾帧接续、无parts。
+
+20条VoxCPM2 soft_zh/reference_only/clip/CFG2/10真实采用，20D经HTTP完成。guard最低2.106GiB、无中止且正常退出；ASR17精确+2同音字，1句“夜游前”识别“也有钱”仍待听，页面第18段提示，不称全部发音通过。新包`I:/AI/asmr_director/artifacts/h3-asmr/Halloween-new-2026-10-30/Halloween-new-ASMR-batch.zip`，40,511,599bytes，SHA`c0b21c5cf971f0ecb344e8c4e208f2ad5909a11b294009d5cc91074f1d64388e`；113文件/78禁网payload、原音/D/DP字段/14资源通过，39主+39ASMR，含尾音预计291.583秒约4分52。同期完整JSON/39卡20音频试听HTML交付。HTTP仅传输副本压缩重复元数据，完整工程/所有设计保留。
+
+QA `qa/halloween/2026-10-30-new/` 看package-verification、independent-design-review、asr/final-review和sealed finish-checkpoint；勿重跑已完成helper。浏览器导入操作执行前被中断，旧工程未动；无UI持久化或H3成片验收。无产品改动、部署、提交推送，仍3001 performance-pacing build `R7R1RdTxRIJFu2Ught-nO`。旧No-sleep暂停不恢复，Audio Quality V1路线不变。[完整记录](records/2026-10-30-halloween-pantomime-production.md)。
+
+## Earlier update — 2026-10-30 / 完整动作、15秒任务及周期独立镜头已部署
+
+用户指出原17内容段被拆成35任务、拆糖25秒、台词碎及尾帧累积暗糊。新创作完整台词约20–35字/6–12秒，一次动作通常3–8秒/最多10，反应上限5、过渡10、持续触发15；时间不足充实当前主题，不能拖动作凑。近距离v4/禁令v3，旧快照不重写。新≤15秒无台词不再5秒分块，真实WAV含后处理尾音≤15；runner取消5秒截断，合法帧量化15秒→362帧保留。全部模板/展开任务首镜new、最多连续两次再new，旧包runner内存应用并更新缓存身份，不改磁盘工程。独立ASMR仍无参考H3文生视频取音+D处理，非单纯白噪音。
+
+本QA `I:/AI/asmr_director/qa/performance-script/2026-10-30-pacing/`：12业务/18真实DP；最终near 6台词+5无台词105秒（静音4–8），counter 9+5共136秒（4–9），目标120且均一次修复。节奏结构通过，独立审查记录静止手势配拟音、递糖跨台词/等待和物件初态等残留，非全语义通过；原始失败保留。独立设计递糖5秒/拆糖10秒均无parts，后者修复invisible/imaginary目标后纯空手动作。0新TTS/ASR/H3，No-sleep内存阻塞不恢复。
+
+隔离451测试/24文件lint/webpack+TS，完整UTF8 Python122通过。18:23HKT3001已切换`.local/releases/performance-pacing/apps/web`，build `R7R1RdTxRIJFu2Ught-nO`，启动父5408；入口仍service/2026-10-16/start-production.ps1，回退本QA/start-production-before.ps1。8资源/7参考/2日语WAV/11源码/28范围外通过，实际两HTTP ZIP共30禁网payload通过。交付artifacts/h3-asmr下`ASMR-whole-action-trial-2026-10-30.zip`（拆糖10+递糖5秒，2主+2ASMR）及`ASMR-video-runner-pacing-update-2026-10-30.zip`。只升级runner不会改变旧稿25秒或合并已有5秒parts，须修改内容并重新设计导出；旧包原音保持。无浏览器视觉或H3成片验收，未提交推送，Audio Quality V1路线及其他暂停不变。[完整记录](records/2026-10-30-performance-pacing.md)。
+
+## Earlier update — 2026-10-30 / 近距离互动空手对镜纠正已部署
+
+用户针对万圣节视频的无头衣领/孤立脸要求改为无实物表演，并在充值后要求真实DP反复验证。近距离互动模板v3显式 `visualPerformance:pantomime`，固定完整S1/空手/机位，操作以镜头坐标定位；剧情仍可说领子/脸/头发，画面只写手势，独立拟音材料只供取音。旧模板快照未自动升级，原万圣节包/工程/音频保持。创意/改写、短段与长段设计、整批校对、H3预览/批量/ZIP共10生产文件贯通；parts阶段与当前任务聚焦、无台词精确预算修复反馈、纯凝视安静均落地。
+
+2026-10-29真实DP20业务/24上游，均deepseek-v4-pro：最终5案例核心空手语义通过，120秒策划首稿87秒、一次修复113秒（35台词+78无台词），0新TTS/ASR/H3和零PCM。QA `I:/AI/asmr_director/qa/reference-templates/2026-10-29/pantomime/`；`final-independent-review.json`核对全部原始响应及哈希，`trials/final-pass-20261029T114853792/` 是5段组合验证工程，生成字段未手改，只重算来源/前镜指纹。仍有少量拟音时序/声位不够细、review漏检旧重复收尾；不是全面导演质量验收。
+
+2026-10-30恢复时3001已无监听，随后启动新隔离发布 `.local/releases/camera-pantomime/apps/web`，build `d_ve0slMiD3J1OqoU2Mgq`，当时Node36840/父30300；未停止任何进程。273项隔离测试、19文件lint、最终措辞15相关复验及Webpack/TS通过；8静态资源/7参考/2日语WAV/10源码/28范围外核对通过。实际HTTP导出5段54.2秒→13主+13ASMR，42条ZIP、原音字节、DP字段、DSP与声音职责通过，见 `http-export-verification.json`。启动入口仍在service/2026-10-16/start-production.ps1，旧脚本备份在本QA可回退。未做浏览器视觉或H3成片验收，未提交/推送；新选v3模板生效，旧保存工程保留其模板快照。完整恢复见[记录](records/2026-10-29-camera-pantomime.md)。
+
+只按最新指令重开空手演出问题，Audio Quality V1与其他暂停不变。DP余额已恢复，但下述No-sleep RAM阻塞未解除，不自动重试TTS或将旧无余额事实当成当前DP状态。
+
+## Earlier update — 2026-10-29 / 助眠禁止新内容等待内存恢复
+
+用户要求再做助眠禁止版本且禁止万圣节，沿用约5分钟/竖屏。新稿《清醒用品，请小声挑》使用forbidden-counter-trade/character_framing，10台词+18无台词270秒，全部助手创作；外部DeepSeek只读余额检查仍不可用，0付费模型调用。初稿/28段设计草案已准备，QA `no-sleep/2026-10-29/`，工程asmr_no_sleep_20261029102721。首条soft_zh完整6.9s参考、reference_only/clip真实TTS在1.452GiB余量被50ms/1.5GiBguard终止，无成功WAV；native16532和guard15872均退出，未同条件重试或关闭用户应用。备用GPT-SoVITS未运行，不启动替代。根已询问用户保存并关闭暂不用大软件，等待答复与实测资源改善；不可据时间过去重试。恢复按voice-checkpoint、guard/stop-receipt和[本轮记录](records/2026-10-29-no-sleep-production.md)，先新guard+单句成功再继续。尚无正式批跑包/H3/人声后处理完成；不覆盖旧万圣节或浏览器工程，不改路线/产品源码/部署，无提交推送。
+
+## Earlier update — 2026-10-29 / 批跑器横竖画幅已完成
+
+用户要求可自定义横屏/竖屏。`tools/comfy-batch`四文件完成GUI/CLI/包默认 `aspectRatio`，linked ResolutionSelector改比例并保留像素预算，标准模板为672×1216/1216×672；旧缺省指纹保持，主/ASMR两路一致，切回历史及未知任务恢复有回归。Python3.12.8运行器146项通过，生产3001真实HTTP导出已包含最新runner，离线三设置18payload通过。更新包 `artifacts/h3-asmr/ASMR-video-runner-aspect-update-2026-10-29.zip`（46,612bytes；SHA及验证在 `qa/video-batch/2026-10-29-aspect/update-package.json`），仅覆盖运行器/说明，不含工作流/工程/素材。无3001重启、H3或提交推送；Tk截图超时，不能称视觉验收通过。28范围外保持，Audio Quality V1路线不变。[记录](records/2026-10-29-batch-aspect-ratio.md)。同时请求的万圣节加长版已交付：10条旧真实人声+16无台词275秒，工程297.4秒，含D尾音和帧对齐预计304.25秒。26设计中16来自API、10在余额不足后由助手补写，10条旧D方案经本地重新渲染获得新回执；69主+69ASMR任务，163文件/138禁网payload通过。最终portrait ZIP为8,192,619bytes，SHA b1aff4c0fba0b067f7f23f24e4a7ff574fb67b4392e9eaab59f3b5f2c958cc9d，位于artifacts/h3-asmr/Halloween-extended-2026-10-29/。UI载入显示26设计/后处理10/10，但本地保存不可用，完整JSON另存；不称浏览器持久保存或H3成片成功。QA reused-voices/delivery-finalization.json和封存checkpoint为恢复入口，不重跑已封存helper；原14句失败稿、两次TTS资源中止及402/413均留证，guard已停。[加长版完整记录](records/2026-10-29-halloween-extended.md)。
+
+## Earlier update — 2026-10-29 / 可强制切分的候选自动执行
+
+按用户要求将原手动强切改为当前工程/工作区空闲时串行自动执行，涵盖加载历史与新生成/批量完成；只新增候选供试听、不自动采用。页面会话内尝试去重、已有派生结果去重，失败继续其余源并可手动重试；选段不中断，切工程/模式取消，显式取消暂停队列，手动重试/新生成候选恢复。首次相关测试3个旧禁止POST断言失败已更新fixture，最终18文件301通过/1条件跳过、lint退出0（1既有warning）、Webpack/TS构建通过。3001已更新 build `6i9y2gc1uL9nGDjYlbvGT`，活动源码 `.local/releases/automatic-force-split/apps/web`，PID19492/parent37260；入口仍为 `service/2026-10-16/start-production.ps1`。8资源/7参考/两日语WAV/6源码/28范围外哈希通过，3041预览停止；QA `I:/AI/asmr_director/qa/force-split/2026-10-29-auto/`。无真实模型调用、浏览器交互验收或新增提交推送。Audio Quality V1继续，其余暂停保持。[本轮记录](records/2026-10-29-automatic-force-split.md)。
+
+## Earlier update — 2026-10-29 / 万圣节内容已导出批跑包
+
+用户要求不等待逐步修改，一口气完成万圣节ASMR并下载批跑。已用近距离互动模板生成《女巫的出门前检查》：10真实台词+7无台词段，全部采用、17段画面声音设计及10条D后处理完成，已回填用户UI。交付`I:/AI/asmr_director/artifacts/h3-asmr/Halloween-2026-10-29/Halloween-ASMR-batch.zip`，11,593,732bytes，SHA256`bcec7c8e569dc0c55132ef4022e6c96e9e687cfa81d2978bee5c14d96a89b4bd`。35主任务+35ASMR；工程142.4秒，包因10条后处理各0.65秒尾音为148.9秒，24fps预计149.083秒（约2分29秒）。独立95文件/10WAV/连续块/资源/70payload无联网dry-run通过；实际H3与最终合片未执行，运行前需角色图及包内音频节点。ASR7条精确、3处短词差异未主观确认。长文6次资源保护中止后本任务改`clip`成功，另2次技术重试；50ms/1.5GiB保护保持，失败及成功都留证。QA`qa/halloween/2026-10-29/`，恢复看checkpoint、package-verification/receipt、asr/verification与[记录](records/2026-10-29-halloween-production.md)。无产品源码修改、部署或本轮Git发布；此前质量优化暂缓与路线保持。
+
+## Earlier update — 2026-10-29 / 保留现状、记录推送
 
 2026-10-29 用户决定**保留当前版本，暂缓进一步生成质量优化**：主要使用基本固定机位，闲聊/接话/小玩笑暂不强求；不实施刚提出的动作完成条件、额外语义校对、声位细化及时长不足草稿保留方案。已知时长失败和第4→5段状态问题继续记录，不标为修复或质量通过。本次仅记录并单独提交推送既有75功能文件＋7文档，28项范围外保持；源码复用已验快照，不重跑模型/构建或重启服务。实际commit、远端SHA及保护结果见 `I:/AI/asmr_director/qa/performance-script/2026-10-28/publication.json`；分支`codex/voxcpm2-product-generation`，基线87d3e49。Audio Quality V1继续、其他SFX实验暂停，不新增路线。[发布记录](records/2026-10-28-performance-script.md) / [比较及用户决定](records/2026-10-29-aige-template-comparison.md)。
 

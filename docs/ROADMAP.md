@@ -1,10 +1,30 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-10-29
+Last updated: 2026-11-02
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 当前优先级
+
+2026-11-02 用户要求先记录推送既有版本，再改善独立声音的ASMR质感、材质/节奏多样性和各段响度平衡。仍在Audio Quality V1内；旧prompt诊断不代替生成听感验收，其他暂停不变。发布依据与后续实现分开记录。[当前反馈与发布](records/2026-11-02-asmr-quality-baseline-publication.md)。
+
+2026-11-01 按用户要求只读检查万圣节独立声音prompt：发现安静段套用接触动作包装、第11段空手约束污染取音、左右声位配置未落实等问题，尚未实施修复。39条源与ZIP保持，0模型调用、无产品改动/部署/提交；当前Audio Quality V1与其他暂停不变。[诊断与证据](records/2026-11-01-halloween-sound-prompt-audit.md)。
+
+2026-10-30 新万圣节工程已入库并跨真实刷新保留：39为20台词+19无台词，批跑另有39ASMR。导入时发现旧localStorage容量问题，现以IndexedDB保存完整库、保留旧迁移来源，修复读取/保存失败处理和异步提交状态。4生产+8测试隔离发布，18文件216测试、lint零警告、Webpack/TS通过；23:03HKT3001 build `OjWEvWXsfoGeJ_UBk30pg`，8静态资产/7参考/4WAV字节核验过。实际刷新后18项目（17旧+1新）、20采用/19无台词/39设计/20D、已保存状态和39源文本均在。本轮0DP/TTS/ASR/H3、原JSON/ZIP保持、无提交推送，仅完成当前Audio Quality V1内可靠性修复；No-sleep及其他暂停、顶层路线不变。[完整记录](records/2026-10-30-project-library-storage.md)。
+
+2026-10-30 新万圣节空手互动内容交付：真实DP三轮画面纠错，脚本/设计/后处理共95响应；20新台词+19无台词、13独立镜头、无parts，整理6秒/拆糖7秒/递糖5秒。20真实人声及D完成，竖屏39主+39ASMR包113文件/78禁网payload通过，预计291.583秒约4分52。ASR17精确+2同音字+1近音短语待听，浏览器未导入，H3待目标机；无产品改动/部署/提交推送。仅完成当前Audio Quality V1内的新内容任务，原No-sleep暂停及其他路线不变。[完整记录与交付](records/2026-10-30-halloween-pantomime-production.md)。
+
+2026-10-30 按用户要求修正完整动作和表演节奏：新创作一次动作≤10秒、持续触发≤15、完整台词；新≤15秒无台词不拆5秒块，实际WAV含尾音15秒上限，runner取消旧截断。全部模板/实际任务最多接续两次尾帧再独立起镜，旧数据保持。12业务/18上游DP，最终105/136秒两稿节奏结构过、5秒递糖/10秒拆糖无parts，仍记录物件初态/拟音细节问题。隔离451测试、Python122、lint/构建通过；3001 build `R7R1RdTxRIJFu2Ught-nO`已部署，HTTP30禁网payload通过，试跑包和runner更新包交付。0新TTS/ASR/H3，无提交推送；属于当前Audio Quality V1，其他暂停及No-sleep阻塞不变。[记录](records/2026-10-30-performance-pacing.md) / [中文合同](specs/2026-10-30-performance-pacing.zh.md) / [English](specs/2026-10-30-performance-pacing.en.md)。
+
+2026-10-30 按用户最新授权完成近距离互动模板v3空手对镜纠正：剧情任务转换为固定完整人物的镜头前模拟手势，创意/改写/设计/校对/H3预览/ZIP贯通，独立拟音不回灌实体；旧快照保持。真实DP20业务/24上游，最终5案例核心描述通过、120秒策划修复后113秒，原始失败保留；未称全部音画时序/校对召回或H3视听通过。隔离273测试+最终措辞15相关复验、lint/构建通过；3001 build `d_ve0slMiD3J1OqoU2Mgq` 已启动，HTTP导出5段54.2秒→13+13任务验证通过，10源码/28范围外保持。只重开本次明确要求，Audio Quality V1与其他暂停保持；No-sleep仍等内存条件，不因DP充值恢复TTS。无本轮提交推送。[开发与实测记录](records/2026-10-29-camera-pantomime.md) / [中文合同](specs/2026-10-29-camera-pantomime.zh.md) / [English](specs/2026-10-29-camera-pantomime.en.md)。
+
+2026-10-29 按用户要求准备无万圣节的助眠禁止新稿：10台词+18声音段270秒，全部助手创作。首句新TTS被既有内存保护终止，无成功WAV；已停且等待用户腾出内存，不在相同条件下重试。内容准备已完成，正式语音/后处理/批跑尚未完成，原产品路线不变。[生产及恢复记录](records/2026-10-29-no-sleep-production.md)。
+
+2026-10-29 批跑器横/竖画幅选择已完成：GUI/CLI/包默认贯通，两路视频与恢复指纹同步，旧默认保持。146运行器回归及3001导出后的18离线payload通过；更新包已交付，不含工作流/工程/素材，不重启3001。真实H3和Tk视觉未验收。万圣节加长版已交付竖屏包：10条旧真实人声+16无台词段，26设计（16API/10助手补写）、10本地D回执，69+69任务，预计304.25秒；138禁网payload通过。页面载入成功但提示本地保存不可用，完整JSON另存。Audio Quality V1继续，其他暂停不变。[画幅记录](records/2026-10-29-batch-aspect-ratio.md) / [加长版交付](records/2026-10-29-halloween-extended.md)。
+
+2026-10-29 可强制切分的长文/整段候选改为工作区空闲时自动串行处理，原音保留、结果只新增候选、不自动采用；取消/重试和过期响应保护保留。18相关文件301通过/1条件跳过，lint/build通过，3001 build `6i9y2gc1uL9nGDjYlbvGT` 已部署且HTTP资源与参考音频核对通过，28范围外保持。此轮未提交推送或调用真实模型；Audio Quality V1继续、其他SFX和模板质量优化暂停，不新增路线。[实现及验证](records/2026-10-29-automatic-force-split.md)。
+
+2026-10-29 万圣节内容生产已完成到批跑导出：《女巫的出门前检查》10条真实人声/7无台词、17段设计/10条D后处理，35主任务+35ASMR，包与无联网干跑验证通过。实际H3合片待用户目标主机执行，含尾音约2分29秒；本轮不改产品、不新增路线、不恢复暂缓的质量优化。[内容与验证记录](records/2026-10-29-halloween-production.md)。
 
 2026-10-29 用户决定**保留当前版本，暂缓进一步生成质量优化**：主要使用基本固定机位，闲聊/接话/小玩笑暂不强求；不实施刚提出的动作完成条件、额外语义校对、声位细化及时长不足草稿保留方案。已知时长失败和第4→5段状态问题继续记录，不标为修复或质量通过。本次仅记录并单独提交推送既有75功能文件＋7文档，28项范围外保持；源码复用已验快照，不重跑模型/构建或重启服务。实际commit、远端SHA及保护结果见 `I:/AI/asmr_director/qa/performance-script/2026-10-28/publication.json`；分支`codex/voxcpm2-product-generation`，基线87d3e49。Audio Quality V1继续、其他SFX实验暂停，不新增路线。[发布记录](records/2026-10-28-performance-script.md) / [比较及用户决定](records/2026-10-29-aige-template-comparison.md)。
 

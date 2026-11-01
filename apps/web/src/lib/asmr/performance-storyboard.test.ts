@@ -38,23 +38,31 @@ function fetchForParts(transform?: (value: Record<string, unknown>) => void) {
 }
 
 describe("performance segment planning", () => {
+  it.each([10, 15])("keeps a %s-second action in one complete generation", async duration => {
+    const { storyboard } = await generateClipStoryboard(fixture(duration), { env, fetchImpl: fetchForParts() });
+    expect(storyboard.duration).toBe(duration);
+    expect(storyboard.parts).toBeUndefined();
+    expect(storyboard.action).toContain("then holds it still");
+    expect(storyboard.asmrSound?.mixMode).toBe("replace");
+  });
   it("keeps long and fractional durations within backend limits without losing the planned duration", () => {
-    for (const duration of [.1, 5, 5.1, 20, 45, 120.23, 599.99, 600]) {
+    for (const duration of [.1, 5, 5.1, 10, 15, 15.1, 20, 45, 120.23, 599.99, 600]) {
       const parts = performancePartDurations(duration);
-      expect(parts.every(value => value > 0 && value <= 5)).toBe(true);
+      expect(parts.every(value => value > 0 && value <= 15)).toBe(true);
       expect(parts.reduce((sum, value) => sum + value, 0)).toBeCloseTo(duration, 5);
     }
+    expect(performancePartDurations(600)).toHaveLength(40);
   });
-  it("designs a 20-second ASMR performance with four continuous parts and one primary sound source", async () => {
+  it("designs a legacy 20-second ASMR performance with two complete parts and one primary sound source", async () => {
     const input = fixture(), fetchImpl = fetchForParts();
     const { storyboard } = await generateClipStoryboard(input, { env, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(storyboard.parts?.map(part => part.durationSeconds)).toEqual([5, 5, 5, 5]);
+    expect(storyboard.parts?.map(part => part.durationSeconds)).toEqual([10, 10]);
     expect(storyboard.parts?.every(part => part.asmrSound.mixMode === "replace")).toBe(true);
     expect(storyboard.asmrSound?.mixMode).toBe("replace");
     input.project.videoPlan!.shots[input.clipId] = storyboard;
     expect(getStoryboardReviewSummary(input.project).ready).toBe(true);
-    expect(createClipH3Prompt(input.project, input.clipId)).toContain("Part 4/4");
+    expect(createClipH3Prompt(input.project, input.clipId)).toContain("Part 2/2");
     expect(createClipH3Prompt(input.project, input.clipId)).toContain("Sound is the main content");
     const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
     expect(body.messages[0].content).toContain("无实物表演");
@@ -62,11 +70,11 @@ describe("performance segment planning", () => {
   });
   it("bounds longer responses and supplies the preceding window ending to the next window", async () => {
     const fetchImpl = fetchForParts();
-    const { storyboard } = await generateClipStoryboard(fixture(45), { env, fetchImpl });
+    const { storyboard } = await generateClipStoryboard(fixture(135), { env, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(storyboard.parts).toHaveLength(9);
     const second = JSON.parse(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body)).messages[1].content.split("\n")[0]);
-    expect(second.current.window).toEqual({ offset: 8, durations: [5], total: 9 });
+    expect(second.current.window).toEqual({ offset: 8, durations: [15], total: 9 });
     expect(second.previousEnding).toContain("hand position 8");
   });
   it("rejects wrong part lengths instead of returning an incomplete plan", async () => {
@@ -81,7 +89,7 @@ describe("performance segment planning", () => {
     });
     const result = await generateClipStoryboard(fixture(), { env, fetchImpl });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(result.storyboard.parts!.map(part => part.durationSeconds)).toEqual([5, 5, 5, 5]);
+    expect(result.storyboard.parts!.map(part => part.durationSeconds)).toEqual([10, 10]);
     expect(result.storyboard.parts![0].action).toContain("Continue light taps");
     const request = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
     expect(request.messages.at(-1).content).toContain("must be English");
@@ -97,7 +105,7 @@ describe("performance segment planning", () => {
     expect(createClipVideoSourceFingerprint(input.project, input.clipId)).not.toBe(before);
     expect(isClipVideoStoryboardCurrent(input.project, input.clipId)).toBe(false);
     expect(applyClipStoryboardEdits(storyboard, { action: "Hold still." }).parts).toBeUndefined();
-    expect(applyClipStoryboardEdits(storyboard, { title: "改标题" }).parts).toHaveLength(4);
+    expect(applyClipStoryboardEdits(storyboard, { title: "改标题" }).parts).toHaveLength(2);
   });
   it("applies and reverses detailed review edits while prohibiting timing changes", async () => {
     const input = fixture();
@@ -139,7 +147,7 @@ describe("performance segment planning", () => {
     const track = input.project.timeline.tracks.find(track => track.track_type === "voice")!;
     const current = track.clips[0]; current.duration = 600;
     storyboard.duration = 600; storyboard.sourceFingerprint = createClipVideoSourceFingerprint(input.project, current.id);
-    storyboard.parts = Array.from({ length: 120 }, () => ({ ...structuredClone(storyboard.parts![0]), visual: "The same quiet room and wooden box. ".repeat(20), action: "Continue the existing gentle contact. ".repeat(12) }));
+    storyboard.parts = Array.from({ length: 40 }, () => ({ ...structuredClone(storyboard.parts![0]), durationSeconds: 15, visual: "The same quiet room and wooden box. ".repeat(20), action: "Continue the existing gentle contact. ".repeat(12) }));
     input.project.videoPlan!.shots[current.id] = storyboard;
     const next = { ...structuredClone(current), id: "after_long", start: 600, duration: 4, text: "放下木盒，保持安静。" };
     track.clips.push(next);
@@ -150,7 +158,7 @@ describe("performance segment planning", () => {
       previousPromptFingerprint: fingerprint, referenceMode: "continuous" });
     input.project.videoPlan!.shots[next.id] = successor;
     expect(isClipVideoStoryboardCurrent(input.project, next.id)).toBe(true);
-    storyboard.parts[119].action = "Gently stop tapping with the same box still held.";
+    storyboard.parts[39].action = "Gently stop tapping with the same box still held.";
     expect(getPreviousClipPromptFingerprint(input.project, next.id)).not.toBe(fingerprint);
     expect(isClipVideoStoryboardCurrent(input.project, next.id)).toBe(false);
   });

@@ -2,9 +2,11 @@ import { z } from "zod";
 
 import type { AsmrProject, TimelineClip } from "./schema";
 import { renderConciseH3Prompt } from "./h3-prompt";
+import { usesCameraPantomime } from "./camera-pantomime";
 import { CreativeTemplateSchema, TemplateDirectionsSchema, getMatchingTemplateDirections } from "./reference-template";
 import { AsmrSoundSchema } from "./asmr-sound";
 import { StoryboardStyleSchema, resolveStoryboardStyle } from "./storyboard-style";
+import { applyIndependentShotCadence, MAX_VIDEO_GENERATION_SECONDS } from "./video-generation-policy";
 
 type VoiceClip = Extract<TimelineClip, { type: "voice" }>;
 const assetIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
@@ -14,7 +16,7 @@ export const StoryboardReferenceModeSchema = z.enum(["continuous", "new"]);
 export type StoryboardReferenceMode = z.infer<typeof StoryboardReferenceModeSchema>;
 
 export const PerformanceStoryboardPartSchema = z.object({
-  durationSeconds: z.number().finite().positive().max(5),
+  durationSeconds: z.number().finite().positive().max(MAX_VIDEO_GENERATION_SECONDS),
   visual: z.string().max(800), action: z.string().max(600), camera: z.string().max(400),
   ambientSound: z.string().max(600), asmrSound: AsmrSoundSchema,
 }).strict();
@@ -126,15 +128,22 @@ export function getPreviousVoiceClip(project: AsmrProject, clipId: string): Voic
 
 /** Preferences apply to the next generation, while saved shots retain their own provenance. */
 export function getClipStoryboardReferenceMode(project: AsmrProject, clipId: string): StoryboardReferenceMode {
-  if (orderedVoiceClips(project)[0]?.id === clipId) return "new";
+  const clips = orderedVoiceClips(project), index = clips.findIndex(clip => clip.id === clipId);
+  if (index <= 0) return "new";
   const shot = project.videoPlan?.shots[clipId];
   const selected = project.videoPlan?.referenceModes?.[clipId] ?? shot?.referenceMode;
   if (selected) return selected;
   // Legacy saved shots retain their original mode, including independent shots
-  // without mode metadata. Only uninitialized short-workspace shots use the default.
+  // without mode metadata. Export applies the tail-chain limit to actual jobs.
   if (shot) return shot.previousClipId ? "continuous" : "new";
-  return project.speechWorkspace?.activeMode !== "paragraph" && getPreviousVoiceClip(project, clipId)
-    ? "continuous" : "new";
+  if (project.speechWorkspace?.activeMode === "paragraph") return "new";
+  const requested = clips.slice(0, index + 1).map(clip => {
+    const saved = project.videoPlan?.shots[clip.id];
+    const referenceMode = project.videoPlan?.referenceModes?.[clip.id] ?? saved?.referenceMode
+      ?? (saved ? saved.previousClipId ? "continuous" : "new" : "continuous");
+    return { referenceMode };
+  });
+  return applyIndependentShotCadence(requested)[index].referenceMode;
 }
 
 /** Source identity excludes timeline waiting, clip estimates, gain and spatial DSP. */
@@ -160,7 +169,7 @@ function sourceFingerprint(project: AsmrProject, clip: VoiceClip): string {
 
 function completeShot(shot: ClipVideoStoryboard): boolean {
   return [shot.title, shot.visual, shot.action, shot.camera].every((value) => Boolean(value.trim()))
-    && (shot.kind !== "silent" || Boolean(shot.ambientSound?.trim()) && ((shot.duration ?? 0) <= 5 || Boolean(shot.parts?.length)))
+    && (shot.kind !== "silent" || Boolean(shot.ambientSound?.trim()) && ((shot.duration ?? 0) <= MAX_VIDEO_GENERATION_SECONDS || Boolean(shot.parts?.length)))
     && (!shot.parts || shot.parts.every(part => [part.visual, part.action, part.camera, part.ambientSound].every(value => value.trim())));
 }
 
@@ -241,22 +250,22 @@ export function createClipH3Prompt(project: AsmrProject, clipId: string): string
   const state = storyboardStates(project).get(clipId);
   if (!state) throw new Error("当前片段还没有视频分镜。");
   if (!state.current) throw new Error("文案、音频、场景或前一镜已更新，请重新生成当前视频分镜。");
-  if (clip.kind === "silent" && clip.duration > 5 && !state.shot.parts?.length) throw new Error("长无台词段需要连续生成方案，请重新设计画面与声音。");
+  if (clip.kind === "silent" && clip.duration > MAX_VIDEO_GENERATION_SECONDS && !state.shot.parts?.length) throw new Error("长无台词段需要分段生成方案，请重新设计画面与声音。");
   if (clip.kind === "silent" && !state.shot.ambientSound?.trim()) throw new Error("旧无对白分镜缺少环境底噪描述，请重新生成分镜。");
   if (!completeShot(state.shot) || !effectiveSceneDescription(project).trim()) {
     throw new Error("请补全全局场景及当前镜头的标题、画面、动作和镜头说明。");
   }
-  return renderClipH3Prompt(clip, state.shot);
+  return renderClipH3Prompt(clip, state.shot, usesCameraPantomime(project.videoPlan?.referenceTemplate));
 }
 
-function renderClipH3Prompt(clip: VoiceClip, shot: ClipVideoStoryboard): string {
+function renderClipH3Prompt(clip: VoiceClip, shot: ClipVideoStoryboard, pantomime = false): string {
   if (shot.parts) return shot.parts.map((part, index) => `Part ${index + 1}/${shot.parts!.length}\n${renderConciseH3Prompt({
-    ...part, dialogue: "", silent: true, performance: true, storyboardStyle: shot.storyboardStyle,
+    ...part, dialogue: "", silent: true, performance: true, storyboardStyle: shot.storyboardStyle, pantomime,
   })}`).join("\n\n");
   return renderConciseH3Prompt({ visual: shot.visual, action: shot.action, camera: shot.camera,
     dialogue: clip.kind === "silent" ? "" : clip.text, silent: clip.kind === "silent",
     durationSeconds: clip.kind === "silent" ? shot.duration : shot.audio?.duration, ambientSound: shot.ambientSound,
-    storyboardStyle: shot.storyboardStyle, performance: Boolean(clip.performance) });
+    storyboardStyle: shot.storyboardStyle, performance: Boolean(clip.performance), pantomime });
 }
 
 /** Evaluate every saved shot once; values are identical to usable single-clip prompts. */
@@ -267,7 +276,7 @@ export function getUsableClipH3Prompts(project: AsmrProject): Map<string, string
   const states = storyboardStates(project, clips);
   for (const clip of clips) {
     const state = states.get(clip.id);
-    if (state?.current && completeShot(state.shot)) prompts.set(clip.id, renderClipH3Prompt(clip, state.shot));
+    if (state?.current && completeShot(state.shot)) prompts.set(clip.id, renderClipH3Prompt(clip, state.shot, usesCameraPantomime(project.videoPlan?.referenceTemplate)));
   }
   return prompts;
 }

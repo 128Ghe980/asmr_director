@@ -136,7 +136,7 @@ describe("explicit audio post-processing flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "生成后处理" }));
     const originalSet = Storage.prototype.setItem;
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
-      if (String(value).includes('"audioPostProcessing"')) throw new Error("synthetic storage full");
+      if (String(value).includes("audioPostProcessing")) throw new Error("synthetic storage full");
       originalSet.call(this, key, value);
     });
     await api.finishPlan();
@@ -151,7 +151,7 @@ describe("explicit audio post-processing flow", () => {
     await api.finishPlan(); await waitFor(() => expect(api.posts).toHaveLength(2));
     const originalSet = Storage.prototype.setItem;
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
-      if (String(value).includes('"processed_0"')) throw new Error("synthetic storage full");
+      if (String(value).includes("processed_0")) throw new Error("synthetic storage full");
       originalSet.call(this, key, value);
     });
     await api.finishRender(1);

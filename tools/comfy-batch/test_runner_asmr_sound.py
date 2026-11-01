@@ -23,7 +23,7 @@ class AsmrSoundTests(unittest.TestCase):
         support.RunnerTests.setUp(self)
         for index, shot in enumerate(self.manifest["shots"]):
             shot["asmrSound"] = {"prompt": f"ASMR_SOUND_{index}; gentle fabric, no voices or music.",
-                "durationSeconds": 99, "postProcessing": {
+                "durationSeconds": 14, "postProcessing": {
                     "start": {"pan": -.5, "distance": "near"}, "end": {"pan": .25, "distance": "close"},
                     "movement": "left_to_right", "gainDb": -9}}
         self.remote.classes.update({"AsmrDirectorSpatialAudio": {}, "AsmrDirectorMixAudio": {}})
@@ -145,16 +145,15 @@ class AsmrSoundTests(unittest.TestCase):
             self.assertEqual(graph["903"]["inputs"]["length"], 62)
         self.assertFalse(self.remote.posts)
 
-    def test_incomplete_or_noncontinuous_performance_parts_fail_before_submission(self):
+    def test_incomplete_or_invalid_performance_parts_fail_before_submission(self):
         base = copy.deepcopy(self.manifest["shots"][1])
         valid = [self.manifest["shots"][0]] + [
             {**copy.deepcopy(base), "id": f"long--part-{index:03d}", "order": index + 1,
              "segmentId": "long", "partIndex": index, "partCount": 2,
              "referenceMode": "continuous", "durationSeconds": 5} for index in (1, 2)]
         for change in (lambda shots: shots.pop(),
-                       lambda shots: shots[2].update(referenceMode="new"),
                        lambda shots: shots[2].update(partIndex=1),
-                       lambda shots: shots[2].update(durationSeconds=5.1),
+                       lambda shots: shots[2].update(durationSeconds=15.1),
                        lambda shots: shots[1].pop("partCount"),
                        lambda shots: shots[1].update(audio="shots/001/audio.wav")):
             self.manifest["shots"] = copy.deepcopy(valid)
@@ -163,6 +162,27 @@ class AsmrSoundTests(unittest.TestCase):
             with self.assertRaises(runner.BatchError):
                 self.make_runner()
         self.assertFalse(self.remote.posts)
+
+    def test_complete_ten_and_fifteen_second_actions_keep_matching_sound_and_allow_part_resets(self):
+        base = copy.deepcopy(self.manifest["shots"][1])
+        self.manifest["shots"] = [
+            {**copy.deepcopy(base), "id": f"long--part-{index:03d}", "order": index,
+             "segmentId": "long", "partIndex": index, "partCount": 2,
+             "referenceMode": "new", "durationSeconds": duration} for index, duration in enumerate((10, 15), 1)]
+        self.save_manifest()
+        batch = self.make_runner(dry_run=True)
+        result = batch.run()
+        self.assertEqual(len(result["dry_run"]), 2)
+        self.assertEqual(len(result["asmr_dry_run"]), 2)
+        for index, duration in enumerate((10, 15)):
+            for paths in (result["dry_run"], result["asmr_dry_run"]):
+                graph = json.loads(Path(paths[index]).read_text(encoding="utf-8"))["prompt"]
+                self.assertEqual(graph["904"]["inputs"]["duration"], duration)
+                self.assertEqual(graph["903"]["inputs"]["length"], duration * 24)
+                self.assertEqual(graph["22"]["inputs"]["length"], (243, 362)[index])
+                self.assertNotIn("ref_images.ref_image_1", graph["22"]["inputs"])
+                self.assertNotIn("without a cut or pose reset", graph["22"]["inputs"]["prompt"])
+        self.assertFalse(self.remote.posts or self.remote.uploads)
 
     def test_changing_sound_prompt_only_regenerates_that_sound(self):
         first = self.make_runner()

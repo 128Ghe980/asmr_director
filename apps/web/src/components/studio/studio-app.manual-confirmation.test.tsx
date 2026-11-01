@@ -93,6 +93,9 @@ function api(candidate: AudioCandidate) {
     if (url.startsWith("/api/audio-candidates/" + candidate.candidateId + "?") && !init?.method) return await new Promise<Response>((resolve, reject) => {
       reads.push({ url, resolve, reject });
     });
+    if (url === "/api/audio-candidates/" + candidate.candidateId + "/force-split" && init?.method === "POST") {
+      return Response.json({ error: "测试强制切分暂不可用，原音保留。" }, { status: 503 });
+    }
     throw new Error("Unexpected paragraph adoption request: " + url);
   });
   vi.stubGlobal("fetch", fetcher);
@@ -109,9 +112,10 @@ async function mount(project: AsmrProject) {
   return view;
 }
 function start() { fireEvent.click(screen.getByRole("button", { name: "采用候选 1" })); }
-function noConfirmationOrGeneration(mock: ReturnType<typeof api>) {
+function noConfirmationOrGeneration(mock: ReturnType<typeof api>, automaticallyAttempted?: AudioCandidate) {
   expect(mock.fetcher.mock.calls.some(([input]) => String(input).includes("/confirm-text"))).toBe(false);
-  expect(mock.fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  expect(mock.fetcher.mock.calls.filter(([, init]) => init?.method === "POST").map(([input]) => String(input)))
+    .toEqual(automaticallyAttempted ? ["/api/audio-candidates/" + automaticallyAttempted.candidateId + "/force-split"] : []);
   expect(bridgeFactory).not.toHaveBeenCalled();
 }
 beforeEach(() => {
@@ -204,7 +208,7 @@ describe("StudioApp ordinary adoption of safely split legacy paragraphs", () => 
     await mock.complete(); noConfirmationOrGeneration(mock);
   });
 
-  it("keeps unsplit review audio available while preventing ordinary slice adoption", async () => {
+  it("keeps unsplit review audio available after automatic force splitting fails while preventing ordinary slice adoption", async () => {
     const { project, candidate } = fixture();
     candidate.provenance.paragraph!.checkStatus = "review";
     candidate.provenance.paragraph!.segments = [];
@@ -212,10 +216,11 @@ describe("StudioApp ordinary adoption of safely split legacy paragraphs", () => 
     const mock = api(candidate);
     render(<StrictMode><StudioApp project={project} /></StrictMode>);
     await screen.findByText("完整原音 · 未保存切片");
+    await screen.findByText("测试强制切分暂不可用，原音保留。");
     expect((screen.getByRole("button", { name: "采用候选 1" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText("候选 1 试听").getAttribute("src")).toContain("source_original");
     start(); expect(mock.reads).toHaveLength(0); expect(current()).toEqual(project);
-    noConfirmationOrGeneration(mock);
+    noConfirmationOrGeneration(mock, candidate);
   });
 
   it("ignores the response after the paragraph copy changes during adoption", async () => {

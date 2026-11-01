@@ -6,6 +6,11 @@ import {
 } from "./edit-project";
 import { demoProject } from "./mock-project";
 import { getProjectWorkspaceSummary } from "./project-summary";
+
+it("shows saving until the current asynchronous commit finishes", () => {
+  expect(getProjectWorkspaceSummary({ project: demoProject, isDirty: true, restoreState: "restored",
+    storageAvailable: true, storageSaving: true, validationIssueCount: 0 }).saveState.label).toBe("正在保存");
+});
 import {
   getBinauralLabel,
   getLanguageLabel,

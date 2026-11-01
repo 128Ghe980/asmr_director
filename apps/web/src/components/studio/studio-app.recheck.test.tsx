@@ -70,6 +70,9 @@ function api(candidate: AudioCandidate) {
       return Response.json({ candidates: candidate.projectId === projectId ? [candidate] : [] });
     }
     if (url.startsWith("/api/audio-candidates/" + candidate.candidateId + "?") && !init?.method) return Response.json({ candidate });
+    if (url === "/api/audio-candidates/" + candidate.candidateId + "/force-split" && init?.method === "POST") {
+      return Response.json({ error: "测试强制切分暂不可用，原音保留。" }, { status: 503 });
+    }
     if (url.startsWith("/api/voice-generation-recordings?")) return Response.json({ recordings: [], nextCursor: null });
     if (url.startsWith("/api/assets/analysis")) return Response.json({ analysis: { bars: [10], duration: 3, sampleRate: 48000, channels: 1, peakDbfs: -12, rmsDbfs: -20, clippedSampleCount: 0 } });
     throw new Error("Unexpected candidate request: " + url);
@@ -83,10 +86,11 @@ async function mount(project: AsmrProject) {
   await screen.findByRole("article", { name: "候选 1" });
   await waitFor(() => expect((screen.getByRole("button", { name: "测试生成音频" }) as HTMLButtonElement).disabled).toBe(false));
 }
-function expectNoRetry(fetcher: ReturnType<typeof api>) {
+function expectNoRetry(fetcher: ReturnType<typeof api>, automaticallyAttempted?: AudioCandidate) {
   expect(screen.queryByRole("button", { name: /重新切分|重新识别|取消切分/ })).toBeNull();
   expect(fetcher.mock.calls.some(([input]) => String(input).endsWith("/recheck"))).toBe(false);
-  expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST").map(([input]) => String(input)))
+    .toEqual(automaticallyAttempted ? ["/api/audio-candidates/" + automaticallyAttempted.candidateId + "/force-split"] : []);
   expect(bridgeFactory).not.toHaveBeenCalled();
 }
 beforeEach(() => {
@@ -99,16 +103,18 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("StudioApp saved audio without a manual cutting retry entry", () => {
-  it.each(["legacy", "cutting_only"])("keeps %s original playback and generation available without a retry action", async mode => {
+  it.each(["legacy", "cutting_only"])("keeps %s original playback and generation available after automatic force splitting fails, without a recheck action", async mode => {
     const { project, candidate, voice } = fixture();
     if (mode === "cutting_only") candidate.provenance.longText!.groups[0].recognition = {
       analysisMode: "cutting_only", stage: "boundary_check", expectedText: voice.text, sourceTranscript: voice.text,
     };
     const original = JSON.stringify(candidate); const fetcher = api(candidate); await mount(project);
+    await screen.findByText("测试强制切分暂不可用，原音保留。");
+    await waitFor(() => expect((screen.getByRole("button", { name: "测试生成音频" }) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.getByLabelText("候选 1 试听").getAttribute("src")).toContain("keep_0");
     expect(screen.getByLabelText("候选 1 第 1 组试听").getAttribute("src")).toContain("keep_0");
     expect(currentProject()).toEqual(project); expect(JSON.stringify(candidate)).toBe(original);
-    expectNoRetry(fetcher);
+    expectNoRetry(fetcher, candidate);
   });
 
   it("still adopts a saved candidate through the ordinary checked GET without retrying ASR or generating audio", async () => {

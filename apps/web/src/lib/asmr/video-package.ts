@@ -1,6 +1,7 @@
 import { sanitizeDownloadName } from "./batch-download";
 import type { AsmrProject, VoiceClip } from "./schema";
 import { ClipVideoStoryboardSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceMode, type ClipVideoStoryboard, type StoryboardReferenceMode } from "./video-plan";
+import { MAX_VIDEO_GENERATION_SECONDS } from "./performance-segment";
 
 export type VideoPackageIssue = { clipId: string; index: number; message: string };
 export type VideoPackageSummary = { total: number; ready: number; issues: VideoPackageIssue[] };
@@ -50,8 +51,11 @@ function inspect(project: AsmrProject): { summary: VideoPackageSummary; shots: V
     const parsed = ClipVideoStoryboardSchema.safeParse(saved);
     if (!parsed.success || saved.clipId !== clip.id) { fail("本段分镜资料不完整，请重新生成。"); continue; }
     const storyboard = parsed.data;
-    if (clip.kind === "silent" && clip.duration > 5 && !storyboard.parts?.length) {
-      fail("超过 5 秒的无台词段需要完整的连续画面与声音设计，请重新生成。"); continue;
+    if (clip.kind === "silent" && clip.duration > MAX_VIDEO_GENERATION_SECONDS && !storyboard.parts?.length) {
+      fail("超过 15 秒的无台词段需要完整的分段画面与声音设计，请重新生成。"); continue;
+    }
+    if (clip.kind !== "silent" && storyboard.audio && storyboard.audio.duration > MAX_VIDEO_GENERATION_SECONDS) {
+      fail("每次视频生成最长 15 秒，请先拆分本段人声并重新设计画面。"); continue;
     }
     if (storyboard.parts?.some(part => ![part.visual, part.action, part.camera, part.ambientSound].every(value => value.trim()))) {
       fail("连续生成段的画面、动作、视点和声音说明尚未填写完整。"); continue;

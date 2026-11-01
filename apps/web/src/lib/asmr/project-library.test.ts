@@ -43,6 +43,14 @@ function createStorage(initial: Record<string, string> = {}) {
 const firstTime = new Date("2026-07-12T01:02:03.000Z");
 const secondTime = new Date("2026-07-12T02:03:04.000Z");
 
+it("returns the readable saved library when normalization cannot write into full storage", () => {
+  const saved = createInitialProjectLibrary({ ...demoProject, project_id: "keep_saved_project", title: "保留已保存项目" }, firstTime);
+  const original = JSON.stringify(saved);
+  const full = { ...createStorage({ [PROJECT_LIBRARY_STORAGE_KEY]: original }), setItem() { throw new Error("Quota exceeded"); } };
+  expect(loadProjectLibrary(full, demoProject, secondTime)).toEqual(saved);
+  expect(full.getItem(PROJECT_LIBRARY_STORAGE_KEY)).toBe(original);
+});
+
 function plannerFixture(): PlannerDraft {
   return {
     title: "深夜书店", scene: "安静的小书店",

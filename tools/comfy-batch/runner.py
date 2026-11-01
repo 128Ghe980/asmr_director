@@ -23,10 +23,13 @@ import uuid
 import wave
 
 FPS = 24
+MAX_VIDEO_GENERATION_SECONDS = 15
 RUNNER_VERSION = 1
 STATE_VERSION = 2
 TEXT_TO_VIDEO = "text-to-video"
 REFERENCE_TO_VIDEO = "reference-to-video"
+ASPECT_RATIOS = {"portrait": "9:16 (Portrait Widescreen)", "landscape": "16:9 (Widescreen)"}
+GUI_ASPECT_RATIOS = {"按项目 / 原设置": None, "竖屏 9:16": "portrait", "横屏 16:9": "landscape"}
 TAIL_NODE = "901"
 TAIL_SAVE_NODE = "902"
 FRAME_LIMIT_NODE = "903"
@@ -131,6 +134,8 @@ def load_package(folder):
     generation_mode = manifest.get("generationMode", REFERENCE_TO_VIDEO)
     if generation_mode not in (REFERENCE_TO_VIDEO, TEXT_TO_VIDEO):
         raise BatchError("generationMode 必须为 reference-to-video 或 text-to-video。")
+    if manifest.get("aspectRatio", "workflow") not in ("workflow", *ASPECT_RATIOS):
+        raise BatchError("aspectRatio 必须为 workflow、portrait 或 landscape。")
     if generation_mode == TEXT_TO_VIDEO and manifest.get("characterReference") is not None:
         raise BatchError("文生视频项目不使用 characterReference 角色图。")
     shots = manifest.get("shots")
@@ -157,6 +162,8 @@ def load_package(folder):
             native_duration_frames(duration)
         if type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0:
             raise BatchError(f"镜头 {shot['id']} 的时长无效。")
+        if duration > MAX_VIDEO_GENERATION_SECONDS:
+            raise BatchError(f"镜头 {shot['id']} 超过单次 15 秒上限，请先拆分后重新导出。")
         if shot["kind"] == "speech" and not isinstance(shot.get("audio"), str):
             raise BatchError(f"对白镜头 {shot['id']} 缺少音频。")
         if shot.get("asmrSound") is not None:
@@ -169,11 +176,9 @@ def load_package(folder):
             if (generation_mode != REFERENCE_TO_VIDEO or shot["kind"] != "ambient"
                     or not isinstance(shot.get("segmentId"), str) or not shot["segmentId"]
                     or type(shot.get("partIndex")) is not int or type(shot.get("partCount")) is not int
-                    or not 1 <= shot["partIndex"] <= shot["partCount"] <= 120 or duration > 5
+                    or not 1 <= shot["partIndex"] <= shot["partCount"] <= 120 or duration > MAX_VIDEO_GENERATION_SECONDS
                     or shot.get("audio") is not None):
-                raise BatchError("连续表演任务需要完整的段落编号、序号及不超过 5 秒的时长。")
-            if shot["partIndex"] > 1 and shot["referenceMode"] != "continuous":
-                raise BatchError("同一表演段的后续任务必须连续承接上一段。")
+                raise BatchError("表演任务需要完整的段落编号、序号及不超过 15 秒的时长。")
         if "trimToDuration" in shot and (generation_mode != TEXT_TO_VIDEO or type(shot["trimToDuration"]) is not bool):
             raise BatchError("trimToDuration 只支持文生视频的布尔设置。")
         ids.add(shot["id"])
@@ -216,6 +221,28 @@ def load_package(folder):
     return root, manifest, template, file_hash(template_path)
 
 
+def apply_independent_shot_cadence(shots):
+    """Bound tail-frame reuse for old and new packages without rewriting inputs."""
+    effective, tail_links, anchor = [], 0, None
+    for index, shot in enumerate(shots):
+        mode = shot["referenceMode"]
+        if mode == "new":
+            tail_links, anchor = 0, shot["id"] if index else None
+        elif index == 0 or tail_links >= 2:
+            mode, tail_links = "new", 0
+            anchor = shot["id"] if index else None
+        else:
+            tail_links += 1
+        item = {**shot, "referenceMode": mode}
+        if mode == "continuous" and anchor is not None:
+            # The independent anchor is part of a follower's input. This also
+            # invalidates old continuous caches when a newly exported manifest
+            # already marks its reset explicitly, rather than needing repair.
+            item["_cadenceAnchor"] = anchor
+        effective.append(item)
+    return effective
+
+
 def native_duration_frames(value):
     """Validate before multiplication/rounding, then apply the source H3 rule."""
     try:
@@ -226,6 +253,8 @@ def native_duration_frames(value):
         raise BatchError("每条时长必须是大于 0 的有限秒数。") from error
     if not math.isfinite(duration) or duration <= 0:
         raise BatchError("每条时长必须是大于 0 的有限秒数。")
+    if duration > MAX_VIDEO_GENERATION_SECONDS:
+        raise BatchError("每次视频生成最长 15 秒，请缩短或拆分本段后重试。")
     if duration > 3600 / FPS:
         raise BatchError("请求时长超过 H3 单次 3600 帧输入上限，请缩短每条时长。")
     frames = max(5, round(duration * FPS))
@@ -245,6 +274,8 @@ def shot_facts(root, shot, generation_mode=REFERENCE_TO_VIDEO):
                 if audio.getcomptype() != "NONE" or not audio.getnframes() or audio.getframerate() <= 0:
                     raise BatchError("对白需要有效的未压缩 PCM WAV。")
                 duration = audio.getnframes() / audio.getframerate()
+                if duration > MAX_VIDEO_GENERATION_SECONDS:
+                    raise BatchError("实际人声（含后处理尾音）超过单次 15 秒上限，请拆分后重新导出。")
                 remaining = audio.getnframes() * audio.getnchannels() * audio.getsampwidth()
                 while remaining:
                     block = audio.readframes(65536)
@@ -261,7 +292,7 @@ def shot_facts(root, shot, generation_mode=REFERENCE_TO_VIDEO):
             if shot.get("trimToDuration"):
                 target_frames = max(1, math.ceil(duration * FPS - 1e-9))
         else:
-            duration = min(float(shot["durationSeconds"]), 5.0)
+            duration, _ = native_duration_frames(shot["durationSeconds"])
             target_frames = max(1, math.ceil(duration * FPS - 1e-9) if "segmentId" in shot else math.floor(duration * FPS + 1e-9))
     generation_frames = max(5, target_frames)
     generation_frames += (5 - generation_frames) % 17
@@ -304,7 +335,7 @@ def prune_graph(graph, include_tail=True):
 
 
 def build_graph(template, shot, facts, character=None, audio=None, tail=None, width=None, height=None, seed=1, output_prefix=None,
-                generation_mode=REFERENCE_TO_VIDEO):
+                generation_mode=REFERENCE_TO_VIDEO, use_template_resolution=False):
     graph = copy.deepcopy(template)
     reference = graph["22"]["inputs"]
     if generation_mode == TEXT_TO_VIDEO:
@@ -323,7 +354,8 @@ def build_graph(template, shot, facts, character=None, audio=None, tail=None, wi
                 "audio": ["4", 0], "start_index": 0.0, "duration": duration}}
             graph["11"]["inputs"].update({"images": [FRAME_LIMIT_NODE, 0], "audio": [AMBIENT_AUDIO_LIMIT_NODE, 0]})
         return prune_graph(graph, include_tail=False)
-    width, height = 1216 if width is None else width, 672 if height is None else height
+    width = (reference["width"] if use_template_resolution else 1216) if width is None else width
+    height = (reference["height"] if use_template_resolution else 672) if height is None else height
     for key in list(reference):
         if key.startswith(("ref_images", "ref_audios", "ref_videos", "ref_video_audios")):
             del reference[key]
@@ -348,7 +380,7 @@ def build_graph(template, shot, facts, character=None, audio=None, tail=None, wi
             raise BatchError("工作流占用了批跑器环境音节点 904，请更换该自定义节点编号。")
         graph[AMBIENT_AUDIO_LIMIT_NODE] = {"class_type": "TrimAudioDuration", "inputs": {
             "audio": ["4", 0], "start_index": 0.0,
-            "duration": facts.get("performance_sound_duration", facts.get("target_frames", min(facts["generation_frames"], 5 * FPS)) / FPS)}}
+            "duration": facts.get("performance_sound_duration", facts.get("target_frames", facts["generation_frames"]) / FPS)}}
         graph["11"]["inputs"]["audio"] = [AMBIENT_AUDIO_LIMIT_NODE, 0]
     if tail:
         graph["900"] = {"class_type": "LoadImage", "inputs": {"image": tail}}
@@ -552,7 +584,7 @@ class RunLock:
 
 class BatchRunner:
     def __init__(self, package, *, comfy_url="http://127.0.0.1:8188", character_image=None,
-                 output_root=None, width=None, height=None, seed=1, duration_seconds=None,
+                 output_root=None, width=None, height=None, aspect_ratio=None, seed=1, duration_seconds=None,
                  retries=1, job_timeout=0, poll_interval=2, missing_grace=12,
                  candidates=1, rerun_candidates=None, request_timeout=30,
                  disconnect_timeout=300, heartbeat_interval=15, status_callback=None, stop_event=None,
@@ -561,7 +593,7 @@ class BatchRunner:
         self.root, self.manifest, self.template, self.template_sha = load_package(package)
         self.generation_mode = self.manifest.get("generationMode", REFERENCE_TO_VIDEO)
         self.text_to_video = self.generation_mode == TEXT_TO_VIDEO
-        self.shots = self.manifest["shots"]
+        self.shots = apply_independent_shot_cadence(self.manifest["shots"])
         if duration_seconds is not None:
             if not self.text_to_video:
                 raise BatchError("自定义每条时长仅支持文生视频；参考视频项目按原音频和镜头时长运行。")
@@ -570,7 +602,30 @@ class BatchRunner:
             for shot in self.shots:
                 shot["durationSeconds"] = duration_seconds
         self.log = log
-        if not self.text_to_video:
+        self.aspect_ratio = self.manifest.get("aspectRatio", "workflow") if aspect_ratio is None else aspect_ratio
+        if self.aspect_ratio not in ("workflow", *ASPECT_RATIOS):
+            raise BatchError("画幅必须为 workflow、portrait 或 landscape。")
+        self.use_template_resolution = False
+        self.resolution_identity = None
+        if self.aspect_ratio != "workflow":
+            if width is not None or height is not None:
+                raise BatchError("画幅选项不能与 --width/--height 同时使用；自定义尺寸时请加 --aspect-ratio workflow。")
+            inputs = self.template["22"]["inputs"]
+            width_link, height_link = inputs.get("width"), inputs.get("height")
+            selector = None
+            if (isinstance(width_link, list) and len(width_link) == 2 and isinstance(width_link[0], str) and width_link[1] == 0
+                    and height_link == [width_link[0], 1]
+                    and self.template.get(width_link[0], {}).get("class_type") == "ResolutionSelector"):
+                selector = self.template[width_link[0]]["inputs"]
+            if selector is not None:
+                selected_ratio = ASPECT_RATIOS[self.aspect_ratio]
+                if not self.text_to_video or selector.get("aspect_ratio") != selected_ratio:
+                    self.resolution_identity = {"node": width_link[0], "aspect_ratio": selected_ratio}
+                selector["aspect_ratio"] = selected_ratio
+                self.use_template_resolution = True
+            else:
+                width, height = (672, 1216) if self.aspect_ratio == "portrait" else (1216, 672)
+        elif not self.text_to_video:
             width, height = 1216 if width is None else width, 672 if height is None else height
         if any(type(value) is not int or value <= 0 or value % 32 for value in (width, height) if value is not None):
             raise BatchError("宽高必须为 32 的正整数倍。")
@@ -700,6 +755,8 @@ class BatchRunner:
         return result
 
     def save(self):
+        self.state["frameSettings"] = {"aspectRatio": self.aspect_ratio, "width": self.width, "height": self.height,
+                                      "resolutionSelector": self.resolution_identity}
         self.state["updatedAt"] = time.time()
         atomic_json(self.state_path, self.state)
 
@@ -739,6 +796,10 @@ class BatchRunner:
                     "durationSeconds": facts["source_duration"], "audio": facts["audio_sha256"],
                     "character": self.character_sha, "template": self.template_sha,
                     "width": self.width, "height": self.height, "seed": self.seed}
+        if self.resolution_identity is not None:
+            identity["resolutionSelector"] = self.resolution_identity
+        if "_cadenceAnchor" in shot:
+            identity["referenceCadenceAnchor"] = shot["_cadenceAnchor"]
         if self.text_to_video:
             identity.update({"generationMode": TEXT_TO_VIDEO, "character": None,
                              "generationFrames": facts["generation_frames"], "fps": FPS,
@@ -925,7 +986,8 @@ class BatchRunner:
             # Preflight only the active graph; speech does not need audio decode.
             graph = build_graph(self.template, shot, {"generation_frames": 124}, "placeholder",
                                 tail="placeholder" if shot["referenceMode"] == "continuous" else None,
-                                width=self.width, height=self.height, generation_mode=self.generation_mode)
+                                width=self.width, height=self.height, generation_mode=self.generation_mode,
+                                use_template_resolution=self.use_template_resolution)
             active_graphs.append(graph)
             classes.update(node["class_type"] for node in graph.values())
         missing = sorted(classes - set(info))
@@ -1203,11 +1265,13 @@ class BatchRunner:
         if self.stop_event.is_set():
             return
         # Previous-tail identity is intentionally excluded: a changed shot never reruns descendants.
-        entry = {"fingerprint": fingerprint, "status": "preparing", "kind": shot["kind"], "attempt_count": 0,
+        entry = {"fingerprint": fingerprint, "status": "preparing", "kind": shot["kind"], "referenceMode": shot["referenceMode"], "attempt_count": 0,
                  "shot_id": shot_id, "candidate_index": candidate, "generation": generation,
                  "base_seed": self.seed, "seed": self.seed_for(shot, candidate, generation),
                  "audio_sha256": facts["audio_sha256"],
                  **{key: facts[key] for key in ("source_duration", "target_frames", "target_duration", "generation_frames")}}
+        if "_cadenceAnchor" in shot:
+            entry["referenceCadenceAnchor"] = shot["_cadenceAnchor"]
         if existing and not force and existing.get("fingerprint") == fingerprint:
             entry["attempt_count"] = existing.get("attempt_count", 0)
         if existing:
@@ -1256,7 +1320,7 @@ class BatchRunner:
                 entry["effective_reference_mode"] = "continuous" if tail else "new"
                 graph = build_graph(self.template, shot, facts, character, audio, tail, self.width, self.height, self.seed,
                                     f"asmr-batch/{slug(self.manifest['projectId'])}/{shot['order']:03d}_{entry['submission_id']}",
-                                    generation_mode=self.generation_mode)
+                                    generation_mode=self.generation_mode, use_template_resolution=self.use_template_resolution)
                 graph["10"]["inputs"]["noise_seed"] = entry["seed"]
                 payload_file = work / "payload.json"
                 atomic_json(payload_file, {"prompt": graph, "client_id": entry["submission_id"], "extra_data": {"asmr_batch_submission_id": entry["submission_id"]}})
@@ -1323,13 +1387,13 @@ class BatchRunner:
                         if index > 0 and shot["referenceMode"] == "continuous" else None)
                 graph = build_graph(self.template, shot, facts, "__CHARACTER_IMAGE__",
                                     shot.get("audio"), tail, self.width, self.height, self.seed,
-                                    generation_mode=self.generation_mode)
+                                    generation_mode=self.generation_mode, use_template_resolution=self.use_template_resolution)
                 actual_seed = self.seed_for(shot, candidate)
                 graph["10"]["inputs"]["noise_seed"] = actual_seed
                 name = f"{shot['order']:03d}" + (f"_c{candidate:03d}" if self.candidates > 1 else "")
                 target = directory / (name + ".json")
                 atomic_json(target, {"prompt": graph, "_dry_run": {
-                    "shotId": shot["id"], "candidateIndex": candidate, "seed": actual_seed,
+                    "shotId": shot["id"], "candidateIndex": candidate, "seed": actual_seed, "aspectRatio": self.aspect_ratio,
                     "fingerprint": self.fingerprint(shot, facts, candidate),
                     **({"requestedDurationSeconds": facts["source_duration"]} if self.text_to_video else {}),
                     "targetDurationSeconds": facts["target_duration"], "generationFrames": facts["generation_frames"],
@@ -1390,6 +1454,7 @@ class BatchRunner:
             heartbeat_interval=self.heartbeat_interval, status_callback=report, stop_event=self.stop_event,
             only=only, rerun=rerun, rerun_candidates=rerun_candidates, dry_run=self.dry_run,
             log=lambda value: self.log("ASMR · " + str(value)))
+        self.sound_runner.aspect_ratio = self.aspect_ratio
         return self.sound_runner
 
     def set_preview(self, candidate, receipt, with_asmr=False):
@@ -1672,6 +1737,9 @@ class BatchRunner:
             return "unavailable"
 
     def run(self):
+        label = {"portrait": "竖屏 9:16", "landscape": "横屏 16:9", "workflow": "项目原设置"}[self.aspect_ratio]
+        size = f"{self.width}×{self.height}" if self.width is not None and self.height is not None else "按工作流分辨率节点"
+        self.log(f"生成画幅：{label}（{size}）。")
         if self.dry_run:
             result = self.dry_payloads()
             sound_runner = self.prepare_sound_runner()
@@ -1758,6 +1826,8 @@ def parser():
     result.add_argument("--character-image", help="替换项目角色图")
     result.add_argument("--comfy-url", default="http://127.0.0.1:8188")
     result.add_argument("--output-root", type=Path, help="输出/状态/临时目录，默认项目内 outputs")
+    result.add_argument("--aspect-ratio", choices=("workflow", *ASPECT_RATIOS),
+                        help="portrait=竖屏9:16，landscape=横屏16:9，workflow=原设置；省略使用项目 aspectRatio")
     result.add_argument("--width", type=int, help="覆盖宽度；参考模式默认 1216，文生视频默认使用工作流")
     result.add_argument("--height", type=int, help="覆盖高度；参考模式默认 672，文生视频默认使用工作流")
     result.add_argument("--duration-seconds", type=positive_duration_seconds,
@@ -1818,6 +1888,9 @@ def gui_options(raw, *, dry_run=False, concat=False):
     values = {key: str(value).strip() for key, value in raw.items()}
     if not values.get("package"):
         raise BatchError("请选择包含 project.json 的项目文件夹。")
+    aspect_label = values.get("aspect_ratio", "按项目 / 原设置")
+    if aspect_label not in GUI_ASPECT_RATIOS:
+        raise BatchError("请选择按项目 / 原设置、竖屏 9:16 或横屏 16:9。")
     try:
         candidates = positive_integer(values.get("candidates", "1"))
         minutes = nonnegative_seconds(values.get("job_minutes", "0"))
@@ -1830,6 +1903,7 @@ def gui_options(raw, *, dry_run=False, concat=False):
     return {"package": values["package"], "character_image": values.get("character_image") or None,
             "comfy_url": values.get("comfy_url") or "http://127.0.0.1:8188",
             "candidates": candidates, "job_timeout": seconds, "duration_seconds": duration_seconds,
+            "aspect_ratio": GUI_ASPECT_RATIOS[aspect_label],
             "only": values.get("only") or None, "rerun": values.get("rerun") or None,
             "rerun_candidates": values.get("rerun_candidates") or None,
             "rerun_asmr": values.get("rerun_asmr") or None,
@@ -1966,6 +2040,39 @@ def gui_default_package():
     return str(folder) if (folder / "project.json").is_file() else ""
 
 
+def gui_aspect_ratio_label(package):
+    """Read this package's last GUI choice, falling back to its exported default."""
+    if not package:
+        return "按项目 / 原设置"
+    folder = Path(package).expanduser()
+    try:
+        manifest = json.loads((folder / "project.json").read_text(encoding="utf-8-sig"))
+        if not isinstance(manifest, dict) or manifest.get("format") != "asmr-video-package":
+            return "按项目 / 原设置"
+        choice = manifest.get("aspectRatio")
+        try:
+            saved = json.loads((folder / "runner-settings.json").read_text(encoding="utf-8-sig"))
+            if (isinstance(saved, dict) and saved.get("version") == 1
+                    and saved.get("projectId") == manifest.get("projectId")
+                    and saved.get("aspectRatio") in (None, *ASPECT_RATIOS)):
+                choice = saved.get("aspectRatio")
+        except (OSError, ValueError):
+            pass
+        return next((label for label, value in GUI_ASPECT_RATIOS.items() if value == choice), "按项目 / 原设置")
+    except (OSError, ValueError):
+        return "按项目 / 原设置"
+
+
+def save_gui_aspect_ratio(batch, choice):
+    # Dry-run may write payload evidence, but never changes the remembered UI choice.
+    if batch.dry_run:
+        return
+    if choice not in (None, *ASPECT_RATIOS):
+        raise BatchError("不能保存无效画幅。")
+    atomic_json(batch.root / "runner-settings.json", {"version": 1,
+                "projectId": batch.manifest["projectId"], "aspectRatio": choice})
+
+
 def launch_gui():
     try:
         import tkinter as tk
@@ -1982,18 +2089,32 @@ def launch_gui():
     frame.columnconfigure(1, weight=1)
     fields = {"package": tk.StringVar(value=gui_default_package()), "character_image": tk.StringVar(), "comfy_url": tk.StringVar(value="http://127.0.0.1:8188"),
               "candidates": tk.StringVar(value="1"), "job_minutes": tk.StringVar(value="0"), "duration_seconds": tk.StringVar(),
+              "aspect_ratio": tk.StringVar(value=gui_aspect_ratio_label(gui_default_package())),
               "only": tk.StringVar(), "rerun": tk.StringVar(), "rerun_candidates": tk.StringVar(),
               "rerun_asmr": tk.StringVar(), "rerun_asmr_candidates": tk.StringVar()}
+    loaded_package = [fields["package"].get()]
+
+    def refresh_package_aspect():
+        package = fields["package"].get().strip()
+        if package != loaded_package[0]:
+            fields["aspect_ratio"].set(gui_aspect_ratio_label(package))
+            loaded_package[0] = package
+
     dry = tk.BooleanVar(value=False)
     concat_flag = tk.BooleanVar(value=False)
     for row, (key, label) in enumerate((("package", "项目文件夹"), ("character_image", "角色图（文生视频无需）"), ("comfy_url", "ComfyUI 地址"))):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=5)
-        ttk.Entry(frame, textvariable=fields[key]).grid(row=row, column=1, sticky="ew", padx=8)
+        input_field = ttk.Entry(frame, textvariable=fields[key])
+        input_field.grid(row=row, column=1, sticky="ew", padx=8)
+        if key == "package":
+            input_field.bind("<FocusOut>", lambda _event: refresh_package_aspect())
         if key != "comfy_url":
             def browse(field=key):
                 value = filedialog.askdirectory(title="选择解压后的项目文件夹") if field == "package" else filedialog.askopenfilename(title="选择角色图")
                 if value:
                     fields[field].set(value)
+                    if field == "package":
+                        refresh_package_aspect()
             ttk.Button(frame, text="选择", command=browse).grid(row=row, column=2)
     controls = ttk.Frame(frame)
     controls.grid(row=4, column=0, columnspan=3, sticky="ew", pady=8)
@@ -2005,6 +2126,11 @@ def launch_gui():
     duration_controls.grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
     ttk.Label(duration_controls, text="每条时长（秒，留空用项目；文生视频）").grid(row=0, column=0, sticky="w")
     ttk.Entry(duration_controls, textvariable=fields["duration_seconds"], width=12).grid(row=0, column=1, padx=8)
+    aspect_controls = ttk.Frame(controls)
+    aspect_controls.grid(row=2, column=0, columnspan=4, sticky="w", pady=(8, 0))
+    ttk.Label(aspect_controls, text="生成画幅").grid(row=0, column=0, sticky="w")
+    ttk.Combobox(aspect_controls, textvariable=fields["aspect_ratio"], values=list(GUI_ASPECT_RATIOS),
+                 state="readonly", width=23).grid(row=0, column=1, padx=8)
     ttk.Checkbutton(frame, text="只检查项目并准备 payload（不连接 ComfyUI）", variable=dry).grid(row=5, column=0, columnspan=3, sticky="w", pady=4)
     ttk.Checkbutton(frame, text="合并顺序预览（含 ASMR 时同时输出原版与叠加版）", variable=concat_flag).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
     advanced = ttk.LabelFrame(frame, text="选填；镜头可用 ID 或序号，候选用 镜头:候选号", padding=8)
@@ -2074,8 +2200,10 @@ def launch_gui():
 
         def worker():
             try:
-                result = BatchRunner(**values, log=lambda message: post("log", message),
-                                     status_callback=lambda event: post("progress", dict(event)), stop_event=stop).run()
+                batch = BatchRunner(**values, log=lambda message: post("log", message),
+                                    status_callback=lambda event: post("progress", dict(event)), stop_event=stop)
+                save_gui_aspect_ratio(batch, values["aspect_ratio"])
+                result = batch.run()
                 post("result", result)
             except Exception as error:
                 post("log", f"未完成：{error}")

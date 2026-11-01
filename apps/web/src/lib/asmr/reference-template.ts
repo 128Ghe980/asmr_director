@@ -7,6 +7,7 @@ export const CreativeTemplateSchema = z.object({
   source: z.object({ filename: text(200), durationSeconds: z.number().finite().positive(), analysisBasis: text(1200) }).strict(),
   creativePrompt: text(6000), sceneDescription: text(4000), storyboardRules: text(6000),
   storyboardStyle: StoryboardStyleSchema.optional(),
+  visualPerformance: z.literal("pantomime").optional(),
   performancePacing: z.object({
     speechRatio: z.number().finite().min(0).max(1),
     rules: text(2000),
@@ -57,5 +58,6 @@ export function creativeTemplateContext(template: CreativeTemplate | undefined) 
   return template ? { title: template.title, summary: template.summary, creativePrompt: template.creativePrompt,
     sceneDescription: template.sceneDescription, storyboardRules: template.storyboardRules,
     ...(template.performancePacing ? { performancePacing: template.performancePacing } : {}),
-    ...(template.storyboardStyle ? { storyboardStyle: template.storyboardStyle } : {}), beats: template.beats } : undefined;
+    ...(template.storyboardStyle ? { storyboardStyle: template.storyboardStyle } : {}),
+    ...(template.visualPerformance ? { visualPerformance: template.visualPerformance } : {}), beats: template.beats } : undefined;
 }

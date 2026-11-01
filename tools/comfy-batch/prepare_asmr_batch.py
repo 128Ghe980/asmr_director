@@ -18,6 +18,7 @@ import sys
 
 
 HERE = Path(__file__).resolve().parent
+MAX_VIDEO_GENERATION_SECONDS = 15
 FRAME_EXPRESSION = "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17"
 PROMPT_FIELDS = ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music")
 SOURCE_CLASSES = {
@@ -86,8 +87,8 @@ def duration_frames(duration):
         raise PreparationError("Duration must be a finite positive number (not a boolean).")
     # Check the bound before multiplication or float conversion: a JSON integer
     # can be arbitrarily large, and a finite float can overflow after * 24.
-    if duration > 3600 / 24:
-        raise PreparationError("Duration exceeds the H3 3600-frame limit.")
+    if duration > MAX_VIDEO_GENERATION_SECONDS:
+        raise PreparationError("Duration exceeds the 15-second per-generation limit; shorten or split the clip.")
     frames = max(5, round(duration * 24))
     frames += (5 - frames % 17) % 17
     if frames > 3600:

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +10,7 @@ import { prepareBatchDownload } from "./local-batch-download";
 import { prepareVideoPackage } from "./local-video-package";
 import { prepareVoicePreview } from "./local-voice-preview";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
-import { decodePcmWav } from "./pcm-audio";
+import { decodePcmWav, writePcm16Wav } from "./pcm-audio";
 import { makePreparedAudioFixture, readStoredZip } from "./post-processing-test-fixtures";
 import { readPreparedAudioSource } from "./prepared-audio-source";
 
@@ -25,6 +26,15 @@ beforeEach(async () => {
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 describe("delivery of explicitly prepared audio", () => {
+  it("rejects actual processed audio over fifteen seconds, even when the original and cached duration are short", async () => {
+    const { project, clipIds, raw } = await makePreparedAudioFixture(config, 1);
+    const longer = Buffer.from(writePcm16Wav(new Float32Array(16000 * 16), 16000));
+    await writeFile(path.join(config.clipAssetRoot, "prepared_0.wav"), longer);
+    project.audioPostProcessing!.results[clipIds[0]].outputSha256 = createHash("sha256").update(longer).digest("hex");
+    await expect(prepareVideoPackage(project, config, undefined, { runnerRoot, tempRoot: path.join(root, "tmp") }))
+      .rejects.toMatchObject({ statusCode: 422, message: expect.stringContaining("后处理音频（含尾音）超过 15 秒") });
+    expect(await readFile(path.join(config.clipAssetRoot, "original_0.wav"))).toEqual(raw);
+  });
   it("keeps original preview independent and concatenates stored processed bytes without timeline waits or another render", async () => {
     const { project, raw, processed } = await makePreparedAudioFixture(config);
     const original = getAcceptedVoicePreviewPlan(project);
