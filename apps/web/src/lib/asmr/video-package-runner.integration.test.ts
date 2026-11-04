@@ -28,7 +28,7 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
       project.videoPlan = { version: 1, sceneDescription: "窗边的木桌，窗外有细雨。", shots: {} };
       const track = project.timeline.tracks.find(track => track.track_type === "voice")!;
       const template = structuredClone(track.clips[0]);
-      track.clips = [0, 1, 2].map(index => ({ ...structuredClone(template), id: `smoke_${index + 1}`, start: 100 + index * 30, duration: index === 1 ? 5 : 20, pause_after: 20 }));
+      track.clips = [0, 1, 2].map(index => ({ ...structuredClone(template), id: `smoke_${index + 1}`, start: 100 + index * 30, duration: index === 1 ? 5 : 20, pause_after: 20, tail_pause_seconds: 0 }));
       for (const [index, clip] of track.clips.entries()) {
         clip.text = index === 1 ? "窗外细雨，杯边轻雾。" : "这是合成测试，不是正式配音。";
         if (index === 1) {
@@ -37,7 +37,7 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
           clip.generation.status = "asset_pending";
         } else {
           clip.generation.status = "asset_generated";
-          clip.asset = { asset_id: clip.id, uri: `asset://clip/${clip.id}`, duration: 99 };
+          clip.asset = { asset_id: clip.id, uri: `asset://clip/${clip.id}`, duration: 9 };
           const samples = Float32Array.from({ length: index === 0 ? 14880 : 21600 }, (_, n) => .05 * Math.sin(2 * Math.PI * 440 * n / 48000));
           await writeFile(path.join(assets, `${clip.id}.wav`), writePcm16Wav(samples, 48000));
         }
@@ -46,7 +46,7 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
           sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id),
           title: "测试分镜", visual: "A cup beside a rain-streaked window.", action: "Steam rises gently.", camera: "Static close-up.",
           ...(clip.kind === "silent" ? { kind: "silent" as const, duration: 5, ambientSound: "Soft rain outside, with a faint indoor room tone." }
-            : { audio: { assetId: clip.id, uri: clip.asset.uri!, duration: 99 } }),
+            : { audio: { assetId: clip.id, uri: clip.asset.uri!, duration: 9 } }),
           referenceMode: index === 0 ? "new" : "continuous",
         };
       }
@@ -116,7 +116,7 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
       const track = project.timeline.tracks.find(track => track.track_type === "voice")!;
       const template = structuredClone(track.clips[0]);
       track.clips = [0, 1, 2].map(index => ({ ...structuredClone(template), id: `asmr_smoke_${index + 1}`, start: index * 20,
-        duration: index === 1 ? 2.5 : 9, pause_after: 12 }));
+        duration: index === 1 ? 2.5 : 9, pause_after: 12, tail_pause_seconds: 0 }));
       const expectedDurations = [.31, 2.5, .45];
       for (const [index, clip] of track.clips.entries()) {
         clip.text = index === 1 ? "角色安静地把布放回桌边。" : "这是合成验证，不是真实配音。";
@@ -126,7 +126,7 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
           clip.generation.status = "asset_pending";
         } else {
           clip.generation.status = "asset_generated";
-          clip.asset = { asset_id: clip.id, uri: `asset://clip/${clip.id}`, duration: 99 };
+          clip.asset = { asset_id: clip.id, uri: `asset://clip/${clip.id}`, duration: 9 };
           const samples = Float32Array.from({ length: Math.round(expectedDurations[index] * 48000) }, (_, n) => .03 * Math.sin(2 * Math.PI * 440 * n / 48000));
           await writeFile(path.join(assets, `${clip.id}.wav`), writePcm16Wav(samples, 48000));
         }
@@ -136,10 +136,10 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
           storyboardStyle: "listener_pov", title: "布料触发音", visual: "Listener eye-height view of a soft cloth on the desk.",
           action: "The cloth slides gently over the wood.", camera: "Listener looks down at the cloth without an external cut.",
           ...(clip.kind === "silent" ? { kind: "silent" as const, duration: 2.5, ambientSound: "Quiet room tone." }
-            : { audio: { assetId: clip.id, uri: clip.asset.uri!, duration: 99 } }),
+            : { audio: { assetId: clip.id, uri: clip.asset.uri!, duration: 9 } }),
           referenceMode: index === 0 ? "new" : "continuous",
-          asmrSound: { prompt: `Soft dry cloth friction, action ${index + 1}, gentle natural pauses.`, postProcessing: {
-            start: { pan: -.5, distance: "near" }, end: { pan: .25, distance: "close" }, movement: "left_to_right", gainDb: -12,
+          asmrSound: { role: index === 0 ? "ambience" : "trigger", prompt: `Soft dry cloth friction, action ${index + 1}, gentle natural pauses.`, postProcessing: {
+            start: { pan: -.5, distance: "near" }, end: { pan: .25, distance: "close" }, movement: "left_to_right", gainDb: index === 0 ? -30 : -12,
           } },
         };
       }
@@ -160,6 +160,7 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
       const manifest = JSON.parse(await readFile(path.join(extracted, "project.json"), "utf8")) as VideoPackageManifest;
       expect(manifest.shots.map(shot => shot.durationSeconds)).toEqual(expectedDurations);
       expect(manifest.shots.map(shot => shot.asmrSound?.durationSeconds)).toEqual(expectedDurations);
+      expect(manifest.shots.map(shot => shot.asmrSound?.role)).toEqual(["ambience", "trigger", "trigger"]);
       expect(manifest.shots.map(shot => shot.referenceMode)).toEqual(["new", "continuous", "continuous"]);
       expect(manifest.shots.every(shot => shot.prompt.includes("The camera is the listener's own eyes"))).toBe(true);
       expect(manifest.shots.every(shot => shot.asmrSound?.prompt.includes("No speech") && shot.asmrSound.prompt.includes("non_diegetic_music: N/A"))).toBe(true);
@@ -197,24 +198,35 @@ describe.skipIf(!python)("real package to portable Python runner", () => {
       expect(new Set(payloads.flatMap(item => [item.main._dry_run.seed, item.sound._dry_run.seed])).size).toBe(12);
       const verifyScript = path.join(root, "verify-bundled-node.py");
       await writeFile(verifyScript, [
-        "import importlib.util,json,sys,pathlib,numpy as np",
+        "import importlib.util,inspect,json,sys,pathlib,numpy as np",
         "folder=pathlib.Path(sys.argv[1])",
         "spec=importlib.util.spec_from_file_location('asmr_export_smoke',folder/'__init__.py',submodule_search_locations=[str(folder)])",
         "node=importlib.util.module_from_spec(spec);sys.modules[spec.name]=node;spec.loader.exec_module(node)",
-        "assert set(node.NODE_CLASS_MAPPINGS)=={'AsmrDirectorSpatialAudio','AsmrDirectorMixAudio'}",
+        "assert set(node.NODE_CLASS_MAPPINGS)=={'AsmrDirectorSpatialAudio','AsmrDirectorBalancedSpatialAudio','AsmrDirectorMixAudio'}",
         "profile=node._profile(); duration=.31; n=round(duration*48000)",
         "source=np.stack([np.sin(2*np.pi*440*np.arange(n)/48000)*.04,np.sin(2*np.pi*440*np.arange(n)/48000)*.02])",
         "output=node.spatial_samples(source,48000,duration,-.5,'near',.25,'close','left_to_right',-12,profile=profile)",
         "assert output.shape==(2,n) and np.isfinite(output).all() and np.any(output)",
+        "balanced_class=node.NODE_CLASS_MAPPINGS['AsmrDirectorBalancedSpatialAudio']",
+        "required=balanced_class.INPUT_TYPES()['required']",
+        "assert required['reference_audio']==('AUDIO',) and required['role']==(['trigger','ambience'],) and required['mix_mode']==(['overlay','replace'],)",
+        "inspect.signature(balanced_class().process).bind(**{name:None for name in required})",
+        "balanced=node.balanced_spatial_samples(source,48000,source,48000,duration,-.5,'near',.25,'close','left_to_right',-12,'trigger','replace',profile=profile)",
+        "assert balanced.shape==(2,n) and np.isfinite(balanced).all() and np.any(balanced)",
+        "assert node.engine.true_peak(balanced.T)<=node.BALANCED_PEAK+1e-7",
+        "ambience=node.balanced_spatial_samples(source,48000,source,48000,duration,-.5,'near',.25,'close','left_to_right',-30,'ambience','overlay',profile=profile)",
+        "assert node._loudness(ambience.T)<=node._loudness(source.T)+1e-5",
         "mixed=node.mix_samples(np.zeros((2,16000)),48000,output,48000)",
         "assert mixed.shape==(2,16000) and np.isfinite(mixed).all() and not np.any(mixed[:,n:])",
-        "print(json.dumps({'imported':True,'realHrtf':True,'spatialSamples':output.shape[1],'mixSamples':mixed.shape[1],'truePeak':node.engine.true_peak(mixed.T),'gpuCalls':0}))",
+        "print(json.dumps({'imported':True,'realHrtf':True,'balancedNodeBinding':True,'balancedSamples':balanced.shape[1],'balancedLufs':node._loudness(balanced.T),'ambienceLufs':node._loudness(ambience.T),'spatialSamples':output.shape[1],'mixSamples':mixed.shape[1],'truePeak':node.engine.true_peak(mixed.T),'gpuCalls':0}))",
       ].join("\n"));
       const nodeRun = spawnSync(spatialPython!, [verifyScript, nodeRoot], { encoding: "utf8", timeout: 60000,
         env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1" } });
       expect(nodeRun.status, nodeRun.stderr + nodeRun.stdout).toBe(0);
       const nodeEvidence = JSON.parse(nodeRun.stdout.trim());
       expect(nodeEvidence.spatialSamples).toBe(14880);
+      expect(nodeEvidence.balancedNodeBinding).toBe(true);
+      expect(nodeEvidence.balancedSamples).toBe(14880);
       expect(hash(await readFile(hrtf))).toBe(hrtfBefore);
       await writeFile(path.join(root, "smoke-evidence.json"), JSON.stringify({ verified: true, syntheticAudio: true, realH3Calls: 0,
         networkCalls: 0, shots: 3, candidatesPerShot: 2, mainPayloads: 6, soundPayloads: 6,

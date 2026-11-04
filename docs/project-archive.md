@@ -2,7 +2,13 @@
 
 记录日期：2026-06-14
 
-最后更新：2026-11-02
+最后更新：2026-11-05
+
+2026-11-05 用户要求记录推一版：将11-02 ASMR质感与响度、11-04跨无台词窗口与0.35秒实际尾留白合并归档发布，69已验证文件+1发布记录共70项。前两轮最终哈希逐项核对，28历史范围外保留；分支codex/voxcpm2-product-generation，实际commit/远端SHA见本轮publication回执。无新生成、测试重跑、构建或部署；AudioQualityV1及其他暂停不变。[发布范围与证据](records/2026-11-05-asmr-quality-continuity-publication.md)。
+
+2026-11-04 22:29HKT 完成11-02额度中断的人声连续性/交付留白：v2窗口跳过silent取后文、末条也补句prefix；原音/D后数字零默认0.35秒、旧非零保留与显式0关闭，视频/ASMR同长≤15秒，两工作区选中段编辑。637 Web+2Python包/D集成、lint/构建/服务与UI验证通过，3001切至voice-continuity build `sXd34soKlctj7F4E1TWu0`；当前用户16文本/11采用/11D保持。旧39段万圣节重导出19处各0.35秒，78禁网payload/竖屏/独立节奏通过；原工程/旧包/40WAV及28范围外保持，0新模型调用、未提交推送。只完成AudioQualityV1子项，其他暂停不变。[完整记录](records/2026-11-04-voice-continuity.md)。
+
+2026-11-02 04:19HKT ASMR声音新版部署到3001 build `62UR1pURBeVJ2uNUJxtY1`。先推既有78文件`1afcc47`，再新增材质ASMR指导、trigger/ambience、D后测量平衡/静音保护、用途编辑及完整节点更新包。15真实DP，四触发一环境及80秒新稿结构通过，声位/材质、多样性局限保留，0H3听感验收。385 Web+153 runner+16 DSP+2实际导出集成及lint/构建过，HTTP5+5禁网任务/8静态7参考4WAV、实际刷新39文本20采用39设计20D保存通过。旧工程/包及28范围外保持，本轮新实现未提交，不改变Audio Quality V1路线及其他暂停。[完整记录](records/2026-11-02-asmr-sound-quality.md)。
 
 2026-11-02 用户反馈独立声音同质化、缺乏专门ASMR取音质感及段间音量不均，要求先推送既有版本再改。基线发布审查77已有文件+本轮记录、28范围外保持；实际Git结果见本轮QA，后续质量实现另记。[反馈与发布范围](records/2026-11-02-asmr-quality-baseline-publication.md)。
 

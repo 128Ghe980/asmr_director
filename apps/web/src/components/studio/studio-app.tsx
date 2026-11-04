@@ -1679,7 +1679,12 @@ export function StudioApp({ project }: StudioAppProps) {
 
   function syncExplicitWaits(next: AsmrProject): AsmrProject {
     return { ...next, timeline: { ...next.timeline, tracks: next.timeline.tracks.map((track) => track.track_type !== "voice" ? track : {
-      ...track, clips: track.clips.map((clip) => clip.pause_after === undefined ? clip : { ...clip, pause_after: getVoiceGapAfter(next, clip.id) ?? clip.pause_after }),
+      ...track, clips: track.clips.map((clip) => {
+        if (clip.pause_after === undefined && clip.tail_pause_seconds === undefined) return clip;
+        const pause = getVoiceGapAfter(next, clip.id) ?? clip.pause_after ?? 0;
+        return { ...clip, pause_after: pause, ...(clip.tail_pause_seconds !== undefined
+          ? { tail_pause_seconds: pause <= 30 ? pause : undefined } : {}) };
+      }),
     }) } };
   }
 
@@ -2384,7 +2389,7 @@ export function StudioApp({ project }: StudioAppProps) {
         <div className="h-full min-h-0 min-w-0">
           <ScriptEditorPanel
             workspaceTabs={<div role="tablist" aria-label="语音生成方式" className="inline-flex rounded-lg bg-black/15 p-0.5">{([['short', '短句'], ['paragraph', '整段']] as const).map(([mode, label]) => <button key={mode} type="button" role="tab" aria-selected={speechMode === mode} aria-label={label} onClick={() => handleSpeechModeChange(mode)} title={mode === "short" ? "原有流程：短句 + 长生成取前部" : "整段一次生成，检查后切成短句"} className={`min-h-8 rounded-md px-4 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-sky-300 ${speechMode === mode ? "bg-sky-300/12 text-sky-100 shadow-sm" : "text-studio-muted hover:bg-white/5 hover:text-studio-text"}`}>{label}</button>)}</div>}
-            paragraphBody={speechMode === "paragraph" ? <ParagraphScriptList project={editableProject} selectedClipId={activeClipId} onSelectClip={handleSelectClip} onUpdateParagraph={handleParagraphScript} onUpdateClip={handleUpdateClip} onDurationChange={handleSilentDuration} onOpenStoryboard={(id) => { setSelectedClipId(id); setInspectorTab("storyboard"); setEditorPanel(1); }} onDeleteClip={(id) => { const result = deleteVoiceClip(editableProjectRef.current, id); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除镜头。"); }} /> : undefined}
+            paragraphBody={speechMode === "paragraph" ? <ParagraphScriptList project={editableProject} selectedClipId={activeClipId} onSelectClip={handleSelectClip} onUpdateParagraph={handleParagraphScript} onUpdateClip={handleUpdateClip} onDurationChange={handleSilentDuration} onGapChange={(clipId, seconds) => commitScriptEdit(setVoiceGapAfter(editableProjectRef.current, clipId, seconds), clipId, `本段音频末尾留白 ${seconds} 秒。`)} onOpenStoryboard={(id) => { setSelectedClipId(id); setInspectorTab("storyboard"); setEditorPanel(1); }} onDeleteClip={(id) => { const result = deleteVoiceClip(editableProjectRef.current, id); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除镜头。"); }} /> : undefined}
             audioStates={audioProgress.byClip} audioStatesStatus={audioOverviewStatus}
             key={editableProject.project_id}
             batchActions={<>
@@ -2425,7 +2430,7 @@ export function StudioApp({ project }: StudioAppProps) {
             onDeleteClip={(clipId) => { const result = deleteVoiceClip(editableProjectRef.current, clipId); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已删除片段，可撤回编辑。"); }}
             onSplitClip={handleSplitVoice}
             onMergeClip={(clipId) => { const result = mergeVoiceClipWithNext(editableProjectRef.current, clipId); commitScriptEdit(result.project, result.selectedClipId ?? undefined, "已合并，可重新选择修改或生成的范围。"); }}
-            onGapChange={(clipId, seconds) => commitScriptEdit(setVoiceGapAfter(editableProjectRef.current, clipId, seconds), clipId, `下一段将在人声结束后等待 ${seconds} 秒。`)}
+            onGapChange={(clipId, seconds) => commitScriptEdit(setVoiceGapAfter(editableProjectRef.current, clipId, seconds), clipId, `本段音频末尾留白 ${seconds} 秒。`)}
             onRewriteClip={handleRewriteVoice}
             onUndo={handleUndoScriptEdit}
             onOpenStoryboard={(clipId) => {

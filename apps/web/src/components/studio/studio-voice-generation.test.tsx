@@ -9,6 +9,7 @@ import { getProjectMixFingerprint, isCurrentProjectMixFingerprint } from "@/lib/
 import { demoProject } from "@/lib/asmr/mock-project";
 import { PlannerBriefSchema, type PlannerDraft } from "@/lib/asmr/planner";
 import { PROJECT_LIBRARY_STORAGE_KEY, createInitialProjectLibrary, getCurrentLibraryEntry, saveProjectLibrary, type ProjectLibrary } from "@/lib/asmr/project-library";
+import { PROJECT_LIBRARY_BACKUP_KEY } from "@/lib/asmr/browser-project-storage";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { makeVoiceCandidateFixture } from "@/lib/asmr/voice-candidate-fixture";
 import { flattenClips } from "@/lib/asmr/view-model";
@@ -320,15 +321,17 @@ describe("StudioApp voice candidate workflow with simulated HTTP", () => {
     await mount(project);
     const adopt = await screen.findByRole("button", { name: "采用候选 1" });
     const storedBefore = window.localStorage.getItem(PROJECT_LIBRARY_STORAGE_KEY);
+    const backupBefore = window.localStorage.getItem(PROJECT_LIBRARY_BACKUP_KEY);
     const originalSetItem = Storage.prototype.setItem;
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
-      if (key === PROJECT_LIBRARY_STORAGE_KEY) throw new DOMException("Quota exceeded", "QuotaExceededError");
+      if (key === PROJECT_LIBRARY_STORAGE_KEY || key === PROJECT_LIBRARY_BACKUP_KEY) throw new DOMException("Quota exceeded", "QuotaExceededError");
       return originalSetItem.call(this, key, value);
     });
     fireEvent.click(adopt);
     await waitFor(() => expect(screen.getByText(/采用未保存，原声已保留/)).toBeTruthy());
     expect(audioAssetId()).toBe("original_0");
     expect(window.localStorage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).toBe(storedBefore);
+    expect(window.localStorage.getItem(PROJECT_LIBRARY_BACKUP_KEY)).toBe(backupBefore);
   });
 
   it("does not overwrite an edit made while the candidate availability check is pending", async () => {

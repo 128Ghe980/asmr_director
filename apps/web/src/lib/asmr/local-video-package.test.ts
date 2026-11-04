@@ -35,7 +35,7 @@ async function fixture() {
   project.videoPlan = { version: 1, sceneDescription: "安静的窗边", shots: {}, referenceModes: {} };
   const wav = writePcm16Wav(new Float32Array(1600).fill(.125), 16000);
   for (const clip of clips) {
-    clip.duration = .02; clip.pause_after = 10;
+    clip.duration = .02; clip.pause_after = 10; clip.tail_pause_seconds = 0;
     clip.generation.status = "asset_generated";
     clip.asset = { asset_id: `take_${clip.id}`, uri: `asset://clip/take_${clip.id}`, duration: 4.321 };
     await writeFile(path.join(config.clipAssetRoot, `${clip.asset.asset_id}.wav`), wav);
@@ -63,6 +63,28 @@ function entries(bytes: Buffer) {
 }
 
 describe("portable video packages", () => {
+  it.each(["trigger", "ambience"] as const)("preserves explicit %s role through ZIP export while legacy shots remain unclassified", async role => {
+    const { project, clips } = await fixture();
+    const sound = { role, prompt: role === "trigger" ? "Cotton jersey layers slide against each other with a low soft shff." : "Steady quiet indoor air without any contact sounds.", postProcessing: {
+      start: { pan: 0, distance: "near" as const }, end: { pan: 0, distance: "near" as const }, movement: "static" as const, gainDb: role === "trigger" ? -12 : -30,
+    } };
+    project.videoPlan!.shots[clips[0].id].asmrSound = sound;
+    const { role: omittedRole, ...legacy } = sound;
+    expect(omittedRole).toBe(role);
+    project.videoPlan!.shots[clips[1].id].asmrSound = legacy;
+    config.spatialHrtfPath = path.join(root, "test.sofa");
+    await writeFile(config.spatialHrtfPath, Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]));
+    const archive = await prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch") });
+    const files = entries(await readFile(archive.filePath));
+    const manifest = JSON.parse(files.get("project.json")!.toString()) as VideoPackageManifest;
+    expect(manifest.shots[0].asmrSound?.role).toBe(role);
+    expect(manifest.shots[0].asmrSound?.postProcessing).toEqual(sound.postProcessing);
+    expect(manifest.shots[0].asmrSound?.prompt).toContain(sound.prompt);
+    expect(manifest.shots[1].asmrSound).not.toHaveProperty("role");
+    expect(manifest.shots[0].prompt).not.toContain(sound.prompt);
+    expect(manifest.shots[0].prompt).toContain("fully_copy");
+    await archive.cleanup();
+  });
   it("keeps pantomime in exported main prompts while sound-only prompts may use materials", async () => {
     const { project, clips } = await fixture();
     project.videoPlan!.referenceTemplate = { ...structuredClone(referenceTemplateFixture), visualPerformance: "pantomime" };

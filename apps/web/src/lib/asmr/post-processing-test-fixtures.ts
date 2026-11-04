@@ -26,7 +26,7 @@ export async function makePreparedAudioFixture(config: LocalRuntimeConfig, count
   const processed = Buffer.from(writePcm16Wav(samples, 48000, 2));
   await mkdir(config.clipAssetRoot, { recursive: true });
   for (const [index, clip] of originals.entries()) {
-    clip.start = index * .1; clip.duration = .1; clip.pause_after = 25;
+    clip.start = index * .1; clip.duration = .1; clip.pause_after = 25; clip.tail_pause_seconds = 0;
     clip.fade_in = .05; clip.fade_out = .05; clip.volume_db = -12;
     clip.generation.status = "asset_generated";
     clip.asset = { asset_id: `original_${index}`, uri: `asset://clip/original_${index}`, duration: .1 };

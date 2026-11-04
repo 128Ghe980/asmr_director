@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getAudioPostProcessingClips } from "@/lib/asmr/audio-post-processing";
+import { getAudioPostProcessingClips, getAudioPostProcessingSummary } from "@/lib/asmr/audio-post-processing";
 import { AudioPostProcessingPanel } from "./audio-post-processing-panel";
 import { processedProject } from "./audio-post-processing-test-fixture";
 
@@ -57,7 +57,7 @@ describe("stored audio post-processing results", () => {
     expect(fetcher.mock.calls.every(call => String(call[0]).startsWith("/api/assets/voice-preview"))).toBe(true);
   });
 
-  it.each(["cancel", "changed_input"] as const)("discards a late whole-preview response after %s", async (reason) => {
+  it.each(["cancel", "changed_input", "changed_pause"] as const)("discards a late whole-preview response after %s", async (reason) => {
     let finish!: (response: Response) => void;
     const fetcher = vi.fn((_url: unknown, init?: RequestInit) => init?.method === "DELETE" ? Promise.resolve(new Response(null, { status: 204 })) : new Promise<Response>(resolve => { finish = resolve; }));
     vi.stubGlobal("fetch", fetcher);
@@ -65,7 +65,14 @@ describe("stored audio post-processing results", () => {
     const view = render(<AudioPostProcessingPanel project={project} />);
     fireEvent.click(screen.getByRole("button", { name: "后处理整体试听" }));
     if (reason === "cancel") fireEvent.click(screen.getByRole("button", { name: "取消后处理整体试听" }));
-    else { const changed = structuredClone(project); changed.title += "已修改"; view.rerender(<AudioPostProcessingPanel project={changed} />); }
+    else {
+      const changed = structuredClone(project);
+      if (reason === "changed_pause") {
+        getAudioPostProcessingClips(changed)[0].tail_pause_seconds = 0;
+        expect(getAudioPostProcessingSummary(changed).complete).toBe(true);
+      } else changed.title += "已修改";
+      view.rerender(<AudioPostProcessingPanel project={changed} />);
+    }
     await act(async () => { finish(Response.json(metadata())); });
     await waitFor(() => expect(fetcher.mock.calls.some(call => call[1]?.method === "DELETE")).toBe(true));
     expect(screen.queryByLabelText("后处理整体成品试听")).toBeNull();

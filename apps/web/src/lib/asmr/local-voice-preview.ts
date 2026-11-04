@@ -6,6 +6,7 @@ import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { writePcm16Wav } from "./pcm-audio";
 import type { AsmrProject } from "./schema";
 import { readPreparedAudioSource } from "./prepared-audio-source";
+import { getPcmSilenceFrameCount } from "./wav-tail-padding";
 
 export class VoicePreviewError extends Error {
   constructor(message: string, public readonly statusCode = 500) { super(message); this.name = "VoicePreviewError"; }
@@ -116,7 +117,11 @@ export async function prepareVoicePreview(project: AsmrProject, config: LocalRun
       } else if (entry.silenceDurationSeconds > MAX_CLIP_SECONDS) throw new VoicePreviewError("无对白镜头最长支持 10 分钟。", 413);
       const frames = Math.max(1, Math.round(source ? source.frames * SAMPLE_RATE / source.sampleRate
         : "silenceDurationSeconds" in entry ? entry.silenceDurationSeconds * SAMPLE_RATE : 0));
-      const gapFrames = Math.round(entry.gapAfterSeconds * SAMPLE_RATE);
+      // Match the delivery WAV's source-rate rounding before preview resampling.
+      // These samples are appended here once; stored D assets remain unchanged.
+      const gapFrames = source
+        ? Math.max(0, Math.round((source.frames + getPcmSilenceFrameCount(entry.gapAfterSeconds, source.sampleRate)) * SAMPLE_RATE / source.sampleRate) - frames)
+        : getPcmSilenceFrameCount(entry.gapAfterSeconds, SAMPLE_RATE);
       const nextFrames = outputFrames + frames + gapFrames;
       if (!Number.isSafeInteger(nextFrames) || nextFrames > (dependencies.maxDurationSeconds ?? MAX_DURATION_SECONDS) * SAMPLE_RATE)
         throw new VoicePreviewError("整体预览过长，请分工程预览（最长 20 分钟）。", 413);

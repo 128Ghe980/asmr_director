@@ -93,8 +93,12 @@ describe("/api/planner", () => {
     const draft = {
       performanceVersion: 1,
       title: "深夜书店", scene: "夜晚书店", character: { role: "店员", personality: ["耐心"], speechStyle: ["轻声"] },
-      sections: [section, { ...section, id: "paper", title: "慢慢翻书", kind: "silent", purpose: "asmr", durationSeconds: 50,
-        text: "稳稳托住同一本书，慢慢翻动书页，在纸张声之间留出安静间隙。", direction: "起始：双手托着书；动作：逐页缓慢翻动；结束：书仍留在手中。" },
+      sections: [section, ...[
+        { id: "paper", title: "慢慢翻书", text: "稳稳托住同一本书，慢慢翻动书页，在纸张声之间留出安静间隙。", direction: "起始：双手托着书；动作：逐页缓慢翻动；结束：书仍留在手中。", soundSuggestions: "近距离、轻柔的翻页声。" },
+        { id: "cover", title: "轻敲书封", text: "把合拢的书放稳，指腹从书封中部到边缘轻轻敲出几组疏朗节奏。", direction: "起始：书封朝上；动作：变换落点轻敲；结束：手指离开书封。", soundSuggestions: "书封中部低沉、边缘清脆的轻敲声。" },
+        { id: "edge", title: "轻刷书边", text: "让拇指缓缓掠过书页侧边，换一个小角度，再听一次细密的纸张摩擦。", direction: "起始：一手固定书脊；动作：拇指缓缓掠过页边；结束：拇指停在书下方。", soundSuggestions: "轻细、干爽的纸页边缘刷动声。" },
+        { id: "cloth", title: "整理桌布", text: "用掌心沿桌布两侧缓缓抚平褶皱，指腹轻轻擦过几处不同纹理。", direction: "起始：书已放在旁边；动作：从桌布两侧向外轻抚；结束：双手收回桌沿。", soundSuggestions: "柔软、贴近的织物摩擦声。" },
+      ].map(sound => ({ ...section, ...sound, kind: "silent", purpose: "asmr", durationSeconds: 12 })),
       { ...section, id: "two", title: "收尾" }],
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ message: { content: JSON.stringify(draft) } })));

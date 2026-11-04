@@ -6,6 +6,7 @@ import { getAcceptedVoicePreviewPlan } from "./accepted-voice-preview";
 import { getStudioBatchTargets } from "./studio-batch-generation";
 import { getStudioAudioOverview } from "./studio-audio-overview";
 import { getVoiceGenerationContext } from "./voice-generation-context";
+import { splitVoiceClauses } from "./voice-longtext-plan";
 import { getMissingProjectMixClipIds } from "./project-mix-state";
 import { renderProjectMixWav } from "./project-mix-renderer";
 import { decodePcmWav } from "./pcm-audio";
@@ -177,7 +178,7 @@ describe("silent editorial shots", () => {
     expect(getStudioBatchTargets(project, "audio_missing")).toEqual([]);
     expect(getStudioBatchTargets(project, "storyboard_missing")).toEqual(clips.map(clip => clip.id));
     expect(getStudioAudioOverview(project, [])).toEqual({ adopted: 2, pending: 0, unadopted: 0, total: 2 });
-    expect(getVoiceGenerationContext(project, clips[0].id)).toEqual({ version: 1, followingClauses: [], isFinal: true });
+    expect(getVoiceGenerationContext(project, clips[0].id)).toEqual({ version: 2, followingClauses: splitVoiceClauses(clips[2].text), isFinal: false });
     expect(getVoiceGenerationContext(project, clips[1].id)).toBeUndefined();
     expect(getMissingProjectMixClipIds(project)).toEqual([]);
     const plan = getAcceptedVoicePreviewPlan(project);

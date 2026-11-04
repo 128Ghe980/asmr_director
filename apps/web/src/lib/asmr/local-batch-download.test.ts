@@ -87,6 +87,49 @@ describe("complete adopted batch archive", () => {
     await archive.cleanup();
   });
 
+  it("adds the delivery pause once after the complete D tail and preserves both source backups", async () => {
+    const { project, raw, processed } = await makePreparedAudioFixture(config, 2);
+    project.timeline.tracks.find(track => track.track_type === "voice")!.clips.forEach(clip => { clip.pause_after = 0; delete clip.tail_pause_seconds; });
+    const before = JSON.stringify(project);
+    const archive = await prepareBatchDownload(project, config, undefined, { tempRoot });
+    const entries = zipEntries(await readFile(archive.filePath));
+    const deliveries = [...entries].filter(([name]) => name.includes("/交付音频/"));
+    const first = decodePcmWav(deliveries[0][1]), last = decodePcmWav(deliveries[1][1]);
+    expect(first.samples.length / 2 / first.sampleRate).toBe(1.1);
+    expect(last.samples.length / 2 / last.sampleRate).toBe(.75);
+    expect(Buffer.from(deliveries[0][1].subarray(44, processed.length))).toEqual(processed.subarray(44));
+    expect(deliveries[0][1].subarray(processed.length).every(value => value === 0)).toBe(true);
+    expect([...entries].filter(([name]) => name.includes("/无后处理/")).map(([, bytes]) => Buffer.from(bytes))).toEqual([raw, raw]);
+    expect([...entries].filter(([name]) => name.includes("/后处理/")).map(([, bytes]) => Buffer.from(bytes))).toEqual([processed, processed]);
+    const manifest = JSON.parse(new TextDecoder().decode([...entries].find(([name]) => name.endsWith("导出清单.json"))![1]));
+    expect(manifest.clips.map((clip: { durationSeconds: number; deliveryDurationSeconds: number; tailPauseSeconds: number }) =>
+      [clip.durationSeconds, clip.deliveryDurationSeconds, clip.tailPauseSeconds])).toEqual([[.75, 1.1, .35], [.75, .75, 0]]);
+    expect(JSON.stringify(project)).toBe(before);
+    expect(await readFile(path.join(config.clipAssetRoot, "prepared_0.wav"))).toEqual(processed);
+    await archive.cleanup();
+  });
+
+  it("provides a padded raw delivery when no D result exists, including before a silent shot", async () => {
+    const raw = Buffer.from(writePcm16Wav(new Float32Array(2400).fill(.2), 24000));
+    await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), raw);
+    const project = projectWithVoice(), track = project.timeline.tracks.find(track => track.track_type === "voice")!;
+    track.clips[0].pause_after = 0;
+    track.clips.push({ ...structuredClone(track.clips[0]), id: "silent_after", start: 2, kind: "silent", duration: 1,
+      asset: { asset_id: null, uri: null, duration: null } });
+    const archive = await prepareBatchDownload(project, config, undefined, { tempRoot });
+    const entries = zipEntries(await readFile(archive.filePath));
+    const delivery = [...entries].find(([name]) => name.includes("/交付音频/"))![1];
+    expect([...entries].filter(([name]) => name.includes("/交付音频/"))).toHaveLength(1);
+    expect([...entries].some(([name]) => name.includes("/后处理/"))).toBe(false);
+    expect(Buffer.from([...entries].find(([name]) => name.includes("/无后处理/"))![1])).toEqual(raw);
+    const pcm = decodePcmWav(delivery);
+    expect(pcm.sampleRate).toBe(24000); expect(pcm.channels).toBe(1);
+    expect(pcm.samples.length / pcm.sampleRate).toBe(.45);
+    expect(Buffer.from(delivery.subarray(44, raw.length))).toEqual(raw.subarray(44));
+    expect(delivery.subarray(raw.length).every(value => value === 0)).toBe(true);
+    await archive.cleanup();
+  });
+
   it("exports mono and stereo originals even when no explicit processing result exists", async () => {
     const raw = writePcm16Wav(new Float32Array(9600).fill(.1), 48000, 2);
     await writeFile(path.join(config.clipAssetRoot, "adopted.wav"), raw);

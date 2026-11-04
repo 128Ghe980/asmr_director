@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { getVoiceCandidateRequestFingerprint, getVoiceCandidateSourceFingerprint } from "./audio-candidate";
 import { getClipGenerationFingerprint, isCurrentClipGenerationFingerprint } from "./generation-fingerprint";
 import { demoProject } from "./mock-project";
-import { getVoiceGenerationContext } from "./voice-generation-context";
-import { buildLongTextInputs, continuationClause, createSemanticVoiceLongTextPlan, splitVoiceClauses } from "./voice-longtext-plan";
+import { getVoiceGenerationContext, VoiceGenerationContextSchema } from "./voice-generation-context";
+import { buildLongTextInputs, continuationClause, createSemanticVoiceLongTextPlan, splitVoiceClauses, VOICE_CONTINUATION_CLAUSES } from "./voice-longtext-plan";
 
 function fixture() {
   const project = structuredClone(demoProject);
@@ -17,7 +17,7 @@ describe("semantic voice forward context", () => {
     const { project, voices } = fixture();
     voices.reverse();
     const context = getVoiceGenerationContext(project, "voice_002")!;
-    expect(context).toEqual({ version: 1, followingClauses: ["先放松肩膀。", "慢慢呼吸。", "今晚好好休息。"], isFinal: false });
+    expect(context).toEqual({ version: 2, followingClauses: ["先放松肩膀。", "慢慢呼吸。", "今晚好好休息。"], isFinal: false });
     const target = voices.find((clip) => clip.id === "voice_002")!;
     const input = buildLongTextInputs(createSemanticVoiceLongTextPlan(target.text, context), context);
     expect(input).toHaveLength(1);
@@ -29,18 +29,62 @@ describe("semantic voice forward context", () => {
     expect(input[0].paddingClauses.length).toBeGreaterThan(0);
   });
 
-  it("gives only the true last voice a natural ending and preserves unmarked legacy behavior", () => {
+  it("pads the true last semantic voice and preserves unmarked legacy behavior", () => {
     const { project, voices } = fixture();
     const last = voices[3];
     const context = getVoiceGenerationContext(project, last.id)!;
     const input = buildLongTextInputs(createSemanticVoiceLongTextPlan(last.text, context), context)[0];
-    expect(context).toEqual({ version: 1, followingClauses: [], isFinal: true });
-    expect(input.text).toBe(last.text);
-    expect(input.isFinal).toBe(true);
-    expect(input.paddingClauses).toEqual([]);
+    expect(context).toEqual({ version: 2, followingClauses: [], isFinal: false });
+    expect(input.text).toBe([last.text, ...VOICE_CONTINUATION_CLAUSES].map(continuationClause).join(""));
+    expect(input.isFinal).toBe(false);
+    expect(input.followingText).toBe(VOICE_CONTINUATION_CLAUSES[0]);
+    expect(input.paddingClauses).toEqual(VOICE_CONTINUATION_CLAUSES);
     delete voices[1].semantic_unit;
     expect(getVoiceGenerationContext(project, voices[1].id)).toBeUndefined();
     expect(getVoiceGenerationContext(project, "missing")).toBeUndefined();
+  });
+
+  it("crosses several silent clips without reading their descriptions, previous speech or repeating the target", () => {
+    const { project, voices } = fixture();
+    const target = voices[1];
+    voices[2].kind = "silent";
+    voices[2].text = "双手整理衣领，这段绝不能朗读。";
+    const extraSilent = { ...voices[2], id: "second_silent", start: voices[2].start + .1, text: "无台词刷扫描述。" };
+    voices.push(extraSilent);
+    const before = structuredClone(project);
+    const context = getVoiceGenerationContext(project, target.id)!;
+    const input = buildLongTextInputs(createSemanticVoiceLongTextPlan(target.text, context), context)[0];
+    expect(context).toEqual({ version: 2, followingClauses: [voices[3].text], isFinal: false });
+    expect(input.text.startsWith([target.text, voices[3].text].map(continuationClause).join(""))).toBe(true);
+    expect(input.followingText).toBe(voices[3].text);
+    expect(input.text).not.toMatch(/已经说过|衣领|刷扫描述/);
+    expect(input.text.split("请坐近一点")).toHaveLength(2);
+    expect(splitVoiceClauses(input.text)).toHaveLength(16);
+    expect(getVoiceGenerationContext(project, extraSilent.id)).toBeUndefined();
+    expect(project).toEqual(before);
+    const fingerprint = getVoiceCandidateSourceFingerprint(target, context);
+    voices[2].text = "修改无台词动作不改变语音输入。";
+    expect(getVoiceCandidateSourceFingerprint(target, getVoiceGenerationContext(project, target.id))).toBe(fingerprint);
+    voices[3].text = "后面的真正台词已修改。";
+    expect(getVoiceCandidateSourceFingerprint(target, getVoiceGenerationContext(project, target.id))).not.toBe(fingerprint);
+    voices[3].kind = "silent";
+    const finalContext = getVoiceGenerationContext(project, target.id)!;
+    expect(finalContext).toEqual({ version: 2, followingClauses: [], isFinal: false });
+    const finalInput = buildLongTextInputs(createSemanticVoiceLongTextPlan(target.text, finalContext), finalContext)[0];
+    expect(finalInput.followingText).toBe(VOICE_CONTINUATION_CLAUSES[0]);
+    expect(finalInput.text).not.toMatch(/后面的真正台词|衣领|刷扫描述/);
+  });
+
+  it("accepts old snapshots without rewriting them but gives v2 jobs distinct fingerprints", () => {
+    const { project, voices } = fixture();
+    const context = getVoiceGenerationContext(project, voices[1].id)!;
+    const legacy = { ...context, version: 1 as const };
+    expect(VoiceGenerationContextSchema.parse(legacy)).toEqual(legacy);
+    expect(VoiceGenerationContextSchema.parse(context)).toEqual(context);
+    expect(VoiceGenerationContextSchema.safeParse({ version: 2, followingClauses: [], isFinal: true }).success).toBe(false);
+    expect(VoiceGenerationContextSchema.safeParse({ version: 3, followingClauses: [], isFinal: false }).success).toBe(false);
+    expect(getVoiceCandidateSourceFingerprint(voices[1], context)).not.toBe(getVoiceCandidateSourceFingerprint(voices[1], legacy));
+    expect(getClipGenerationFingerprint(voices[1], { voiceContext: context })).not.toBe(getClipGenerationFingerprint(voices[1], { voiceContext: legacy }));
   });
 
   it("bounds the actual window to 500 characters without skipping over a long intervening clip", () => {

@@ -24,13 +24,14 @@ export const StoryboardReviewSchema = z.object({
 export type StoryboardReview = z.infer<typeof StoryboardReviewSchema>;
 export type StoryboardReviewFields = z.infer<typeof StoryboardReviewFieldsSchema>;
 /** A text review cannot silently change which audio track owns a performance. */
-export function preserveStoryboardReviewSoundModes(before: StoryboardReviewFields, after: StoryboardReviewFields): StoryboardReviewFields {
+export function preserveStoryboardReviewSoundModes(before: StoryboardReviewFields, after: StoryboardReviewFields, preserveMissingRoles = true): StoryboardReviewFields {
   const keep = (oldSound: StoryboardReviewFields["asmrSound"], sound: StoryboardReviewFields["asmrSound"]) => {
     if (!sound) return sound;
     if (sound.mixMode !== undefined && sound.mixMode !== (oldSound?.mixMode ?? "overlay")) {
       throw new Error("校对不能改变声音用法，请在声音设置中调整。");
     }
     const result = { ...sound };
+    if (preserveMissingRoles && result.role === undefined && oldSound?.role !== undefined) result.role = oldSound.role;
     if (oldSound?.mixMode === undefined) delete result.mixMode;
     else result.mixMode = oldSound.mixMode;
     return result;
@@ -95,7 +96,9 @@ export function applyStoryboardReview(project: AsmrProject, input: StoryboardRev
   const replacements = review.changes.map(change => {
     const current = project.videoPlan?.shots[change.clipId];
     if (!ids.has(change.clipId) || !current || JSON.stringify(pickStoryboardReviewFields(current)) !== JSON.stringify(change.before)) throw new Error("校对前的分镜已变化，未应用任何修改。");
-    const replacement = { ...current, ...preserveStoryboardReviewSoundModes(change.before, change.after) };
+    // Generated sparse changes have already inherited omitted roles in the service.
+    // A saved full before/after pair must also restore a legacy role-less plan on undo.
+    const replacement = { ...current, ...preserveStoryboardReviewSoundModes(change.before, change.after, false) };
     if (change.after.ambientSound === undefined) delete replacement.ambientSound;
     if (change.after.asmrSound === undefined) delete replacement.asmrSound;
     if (change.after.parts === undefined) delete replacement.parts;

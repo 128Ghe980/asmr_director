@@ -5,6 +5,9 @@ import type { AsmrProject } from "@/lib/asmr/schema";
 import { getSpeechParagraphs } from "@/lib/asmr/speech-workspace";
 import { flattenClips } from "@/lib/asmr/view-model";
 import type { ClipPatch } from "@/lib/asmr/edit-project";
+import { getVoiceGapAfter } from "@/lib/asmr/voice-segments";
+import { getSegmentPauseSeconds } from "@/lib/asmr/voice-delivery-timing";
+import { SegmentPauseInput } from "./segment-pause-input";
 
 type Props = {
   project: AsmrProject;
@@ -13,11 +16,12 @@ type Props = {
   onUpdateParagraph: (id: string, text: string) => void;
   onUpdateClip: (id: string, patch: ClipPatch) => void;
   onDurationChange: (id: string, duration: number) => void;
+  onGapChange?: (id: string, seconds: number) => void;
   onOpenStoryboard?: (id: string) => void;
   onDeleteClip: (id: string) => void;
 };
 
-export function ParagraphScriptList({ project, selectedClipId, onSelectClip, onUpdateParagraph, onUpdateClip, onDurationChange, onOpenStoryboard, onDeleteClip }: Props) {
+export function ParagraphScriptList({ project, selectedClipId, onSelectClip, onUpdateParagraph, onUpdateClip, onDurationChange, onGapChange, onOpenStoryboard, onDeleteClip }: Props) {
   const paragraphs = getSpeechParagraphs(project);
   const silent = flattenClips(project).filter((clip) => clip.type === "voice" && clip.kind === "silent");
   const entries = [
@@ -46,9 +50,15 @@ export function ParagraphScriptList({ project, selectedClipId, onSelectClip, onU
         <textarea aria-label={`整段 ${index + 1} 文案`} value={paragraph.text} onFocus={() => onSelectClip(selected && selectedClipId ? selectedClipId : paragraph.clipIds[0])} onChange={(event) => onUpdateParagraph(paragraph.id, event.target.value)} rows={3} className="block w-full min-w-0 resize-none rounded-md border border-studio-line bg-black/10 px-2.5 py-2 text-sm leading-7 outline-none [field-sizing:content] focus:border-sky-300/50" />
         {selected && <div className="mt-3 space-y-1 border-t border-studio-line pt-2">
           <p className="mb-2 text-[11px] text-studio-muted">生成后按这些短句切分；每句保留独立的画面与声音安排。</p>
-          {paragraph.clips.map((item, sentence) => <div key={item.id} className={`flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 ${item.id === selectedClipId ? "bg-sky-300/5" : ""}`}>
+          {paragraph.clips.map((item, sentence) => <div key={item.id} className={`min-w-0 rounded-md px-2 py-1.5 ${item.id === selectedClipId ? "bg-sky-300/5" : ""}`}>
+            <div className="flex min-w-0 items-center gap-2">
             <button type="button" aria-label={`选择整段内短句 ${sentence + 1}`} onClick={() => onSelectClip(item.id)} className="flex min-w-0 flex-1 items-start gap-2 text-left text-xs leading-5"><span className="shrink-0 text-studio-muted/70">{sentence + 1}</span><span className="min-w-0 break-words text-studio-muted">{item.text}</span></button>
             {onOpenStoryboard && <button type="button" aria-label={`整段内短句 ${sentence + 1} 分镜`} title="查看或生成本句分镜" onClick={() => { onSelectClip(item.id); onOpenStoryboard(item.id); }} className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-studio-line text-violet-200 hover:bg-violet-300/10"><Clapperboard className="h-3.5 w-3.5" /></button>}
+            </div>
+            {item.id === selectedClipId && onGapChange && getVoiceGapAfter(project, item.id) !== null && <div className="mt-1.5 pl-5">
+              <SegmentPauseInput key={`${item.id}:${getSegmentPauseSeconds(project, item.id)}`} value={getSegmentPauseSeconds(project, item.id)}
+                label={`整段内短句 ${sentence + 1} 段间留白秒数`} onChange={seconds => onGapChange(item.id, seconds)} />
+            </div>}
           </div>)}
         </div>}
       </article>;

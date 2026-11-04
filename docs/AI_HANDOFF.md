@@ -1,10 +1,32 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-11-02
+Last updated: 2026-11-05
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-11-02 / 先发布当前版本，再改ASMR质感与音量
+## Current update — 2026-11-05 / 质量与连续性版本发布归档
+
+用户要求记录推送。将11-02 ASMR质感/响度与11-04窗口/留白两轮已验证改动一并归档，69既有文件加本次发布记录共70项，分支 `codex/voxcpm2-product-generation`，基线1afcc47。69源码/测试/文档与最终验证哈希一致，28历史范围外保持；不混入空间实验，不重跑模型、重建或重启。精确commit/远端SHA与发布状态以 `I:/AI/asmr_director/qa/voice-continuity/2026-11-02-window-pause/publication-2026-11-05.json` 为准，前两轮记录“未提交”为当时历史状态。运行仍为下述voice-continuity build，AudioQualityV1与其他暂停保持。[发布记录](records/2026-11-05-asmr-quality-continuity-publication.md)。
+
+## Earlier update — 2026-11-04 / 跨无台词窗口与实际段尾留白已部署
+
+11-02 开始、额度中断后本日完成。短句 context v2 跨 silent 取真实后文、不足补固定续句，实际最后台词也 prefix 取目标；v1 旧数据兼容、已采用音频保留，模型/参考/CFG/步数不变。非最终人声默认交付尾静音 0.35 秒；旧非零 pause 保留，显式 tail_pause_seconds=0 可关；无台词不默认加。原音/D 后追加数字零，备份 PCM 不改；整体试听/音频 ZIP“交付音频”/视频 WAV 一致，主镜及 ASMR 同长，含 D 尾音与留白最多 15 秒。两页仅选中段露同一控件，改留白不重生 TTS/D。
+
+隔离 19 生产+23 测试/fixture，637 Web 测试、42 文件 lint、Webpack/完整 TS 通过，另 2 真实 Python 包/D 集成过。实际旧39段20人声输入 probe 从旧18误末段变20 prefix。3001 现为 `.local/releases/voice-continuity/apps/web`，build `sXd34soKlctj7F4E1TWu0`，22:29HKT 启动父21360；原入口不变，备份在QA。服务8静态/7参考/4WAV核验过；真实刷新用户当前《直播间里的助眠小时光》16文本、11采用/5无台词/16设计/11D、保存保持，首段0.35可见，未改工程。
+
+旧39段万圣节重导出 `artifacts/h3-asmr/Halloween-new-2026-10-30/Halloween-new-ASMR-tail-pause-2026-11-04.zip`：42,437,421 bytes，113项，SHA `100acb19c04a845a005244f5504cb84303efc0bf7254ccc18938e5969faf237c`。19条各加16800零帧，末条不加，20 D原PCM及19silent保持；39主+39ASMR禁网payload、672×1216/13独立/最多2接续过，总297.81秒、预计24fps298.1667秒。原JSON/旧ZIP/40WAV、28范围外保护；无新DP/TTS/ASR/H3，无新音色/成片听感结论，未提交推送，已发布基线仍1afcc47。旧包须重导，新窗口只影响后续生成。
+
+QA沿用 `I:/AI/asmr_director/qa/voice-continuity/2026-11-02-window-pause`，优先读 `release-verification.json`、`activation.json`、`service-verification.json`、`ui-verification.json`、`package-verification.json`、`final-verification.json`。独立91测试为子集；早期大Buffer测试超时和旧存储模拟失败保留日志并已修正。受保护README仍有历史说明，以[本轮记录](records/2026-11-04-voice-continuity.md)及[中文合同](specs/2026-11-04-voice-continuity.zh.md)/[English](specs/2026-11-04-voice-continuity.en.md)为准。Audio Quality V1及其他暂停保持。
+
+## Earlier update — 2026-11-02 / 独立ASMR质感与响度平衡已本地部署
+
+先按用户要求发布既有78文件：`1afcc4753d3033b052434b7f276b8e060c44432d` 已推到 `codex/voxcpm2-product-generation` 并核远端。之后本轮新代码未提交：新创意/设计/校对强调ASMR真实材质接触与可听差异，role区分trigger/ambience；新节点在D后有限校平、环境不抬底噪，旧缺role原prompt/D路径保持。网页新增用途/相对微调。注意仅manifest prompt不变时role/gain改动才只重合；网页换role也换包装prompt，会重生该音效。
+
+真实DP15上游（12设计+3策划），最终4trigger1ambience、同90秒brief重试80秒结构通过；仍有双侧外扫错设单向声像/糖纸材质二选一/文案偏软接触局限，0新TTS/ASR/H3，无试听。385 Web相关+153 runner+16 DSP+2真实导出集成通过（专门23 runner已包含在153中），15文件lint/完整Webpack+TS通过。3001现为 `.local/releases/asmr-sound-quality/apps/web`，build `62UR1pURBeVJ2uNUJxtY1`，04:19HKT启动，原无监听；8静态/7参考/4WAV字节通过。真实刷新原39文本/20采用/39设计/20D/保存保持，只查看新控件未改工程。
+
+完整更新包 `I:/AI/asmr_director/artifacts/h3-asmr/ASMR-video-runner-sound-quality-update-2026-11-02.zip`（14项，含engine/SOFA，排除workflow/工程/outputs）须同步本地runner与目标ComfyUI节点并重启；新生成自动role，旧无role不自动升级。生产HTTP五段35秒、5+5禁网payload验证过，QA没有导入用户库。主QA `I:/AI/asmr_director/qa/asmr-sound/2026-11-02-quality` 查 `baseline-publication.json`、`real-dp-review.json`、`release-verification.json`、`activation.json`、`service-verification.json`、`ui-verification.json`、`delivery.json`、`final-verification.json`。28范围外与旧工程/ZIP保护；Audio Quality V1与其他暂停保持，未称H3音质验收。[完整记录](records/2026-11-02-asmr-sound-quality.md) / [中文合同](specs/2026-11-02-asmr-sound-quality.zh.md) / [English](specs/2026-11-02-asmr-sound-quality.en.md)。
+
+## Earlier update — 2026-11-02 / 先发布当前版本，再改ASMR质感与音量
 
 用户认可prompt语义大体可用，关注真实生成同质化、不像专门ASMR、听感奇怪及音量高低差，要求先记录推送再改。发布既有77文件+本轮记录，历史28范围外保持；精确SHA及实际Git结果见`qa/asmr-sound/2026-11-02-quality/baseline-scope-audit.json`和`baseline-publication.json`。旧D先−27LUFS再空间/gain，混音仅削峰，未按最终用途平衡。下一版聚焦ASMR制作质感、声音多样性及trigger/ambience响度处理，不扩大为全面表演重写；发布事实与后续实现分开。[发布及反馈记录](records/2026-11-02-asmr-quality-baseline-publication.md)。Audio Quality V1与其他暂停保持。
 

@@ -11,6 +11,7 @@ function fixture() {
   clips.splice(3);
   project.videoPlan = { version: 1, sceneDescription: "雨夜的房间", shots: {}, referenceModes: {} };
   for (const clip of clips) {
+    clip.tail_pause_seconds = 0;
     clip.generation.status = "asset_generated";
     clip.asset = { asset_id: `take_${clip.id}`, uri: `asset://clip/take_${clip.id}`, duration: 4.321 };
     project.videoPlan.shots[clip.id] = {

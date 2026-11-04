@@ -4,6 +4,7 @@ import type { PlannerChatMessage } from "./planner-provider";
 import { createStoryboardScriptContext } from "./storyboard-context";
 import { MAX_VIDEO_GENERATION_SECONDS, performancePartDurations } from "./performance-segment";
 import { CAMERA_PANTOMIME_GUIDANCE, usesCameraPantomime } from "./camera-pantomime";
+import { ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE } from "./asmr-sound";
 
 /** New performance scripts use sound-led staging; the legacy prompt stays intact. */
 export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip: VoiceClip, duration: number,
@@ -50,9 +51,11 @@ export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip
     pantomime
       ? "asmrSound.prompt是独立拟音制作描述，按当前soundIntent选择匹配本段动作的音色、触发方式、节奏和安静间隙；声音与手势同时开始、停顿和结束，不提前播放未来动作。即使前后段手位相近，任务不同也要重新匹配声音，不能照搬previousEnding或邻段的材质与音色。声音素材视频可以拍真实材料或手部接触，但只提取声音，这些物件不能回灌主画面的visual/action。纯凝视、表情、等待只使用安静环境。prompt只描述这条独立声音文件本身，不评论主视频人声，不写focus on voice，不引用S1、Picture、Audio或台词；没有触发动作时直接描述极轻室内底声。纯拟音不得生成对白、低语、呼吸、口腔声、歌声或音乐，保持干燥、少混响、无人工声像移动。"
       : "asmrSound.prompt 是独立声音制作描述，以材料、接触方式、柔和音色、节奏与安静间隙为核心，避免无关布景和运镜。动作应与主画面发生在同一段内，不能提前播放下一段触发音。只用本段实际材料；无接触的停留使用安静既有环境，不强制发声。纯触发音不得生成对白、低语、呼吸、口腔声、歌声或音乐，原始素材保持干燥、少混响、无人工声像移动。",
+    ASMR_SOUND_PRODUCTION_GUIDANCE,
+    ASMR_SOUND_ROLE_GUIDANCE,
     pantomime
-      ? "postProcessing按模拟手势对应的拟音位置选择：start/end.pan=-1左至1右，distance=far/mid/near/close/very_close，movement随手势方向，无位移则static且start=end；gainDb按主声或伴随声音克制选择。S1人声通常保持原位，拟音位置独立，不需要画面出现真实发声物件。处理在音效生成后进行。"
-      : "postProcessing 由你依据声源相对听者的位置选择：start/end.pan=-1左至1右，distance=far/mid/near/close/very_close，movement符合实际位移，无位移static且start=end；gainDb按主声或伴随声音克制选择。角色人声与物件声的位置独立，相机靠近不等于声音贴耳。处理在音效生成后进行。",
+      ? "postProcessing按模拟手势对应的拟音位置选择：start/end.pan=-1左至1右，distance=far/mid/near/close/very_close，movement随手势方向，无位移则static且start=end。S1人声通常保持原位，拟音位置独立，不需要画面出现真实发声物件。处理在音效生成后进行。"
+      : "postProcessing 由你依据声源相对听者的位置选择：start/end.pan=-1左至1右，distance=far/mid/near/close/very_close，movement符合实际位移，无位移static且start=end。角色人声与物件声的位置独立，相机靠近不等于声音贴耳。处理在音效生成后进行。",
     silent
       ? "无台词段 asmrSound.mixMode 必须为 replace。它与 ambientSound 描述同一声音意图：原版使用主视频原音，增强版使用独立音效并替换原音，避免两份敲击叠加。"
       : pantomime

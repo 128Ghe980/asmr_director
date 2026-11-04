@@ -88,6 +88,8 @@ def validate_asmr_sound(value):
         raise BatchError("ASMR 触发音提示词过长。")
     if value.get("mixMode", "overlay") not in ("overlay", "replace"):
         raise BatchError("ASMR 声音合成方式必须为 overlay 或 replace。")
+    if "role" in value and value["role"] not in ("trigger", "ambience"):
+        raise BatchError("ASMR 声音用途必须为 trigger 或 ambience。")
     settings = value.get("postProcessing")
     if not isinstance(settings, dict):
         raise BatchError("ASMR 触发音缺少后处理设置。")
@@ -1582,12 +1584,15 @@ class BatchRunner:
                         raise BatchError(f"镜头 {shot['id']} 候选 {candidate} 的 ASMR 触发音未完成或已过期。")
                     settings = shot["asmrSound"]["postProcessing"]
                     mix_mode = shot["asmrSound"].get("mixMode", "overlay")
-                    sounds.append((sound_path, settings, sound_duration(facts), mix_mode))
+                    role = shot["asmrSound"].get("role")
+                    sounds.append((sound_path, settings, sound_duration(facts), mix_mode, role))
                     sound_identity = ["asmr-spatial-d-v1", sound_entry["fingerprint"], sound_entry["output_sha256"], settings, sound_duration(facts)]
                     # Preserve existing overlay receipts. Replacing a nonspeech
                     # track affects only the enhanced preview, never model jobs.
                     if mix_mode == "replace":
                         sound_identity.append("replace")
+                    if role is not None:
+                        sound_identity.append(["asmr-balanced-v1", role])
                     identities.append(sound_identity)
         except (BatchError, OSError, ValueError) as error:
             replace_receipt({"status": "unavailable", "last_error": str(error)})
@@ -1625,9 +1630,14 @@ class BatchRunner:
             if len(clips) > 1:
                 required.append("AudioConcat")
             if with_asmr:
-                required.extend(["AsmrDirectorSpatialAudio", "AsmrDirectorMixAudio"])
+                required.append("AsmrDirectorMixAudio")
+                required.extend(sorted({"AsmrDirectorBalancedSpatialAudio" if sound[4] is not None
+                                        else "AsmrDirectorSpatialAudio" for sound in sounds}))
             missing = [node for node in required if node not in info]
             if missing:
+                if any(node.startswith("AsmrDirector") for node in missing):
+                    raise BatchError("远端缺少 ASMR 后处理节点：" + ", ".join(missing)
+                                     + "；请更新包内 custom_nodes/asmr_director_audio 到 ComfyUI 并重启。已有视频和音效保留，继续运行可补合片。")
                 raise BatchError("远端缺少原生预览节点：" + ", ".join(missing) + "；各镜视频已保留。")
             graph, links, audio_link = {}, [], None
             for index, path in enumerate(clips):
@@ -1651,13 +1661,17 @@ class BatchRunner:
                 graph[padded] = {"class_type": "AudioMerge", "inputs": {
                     "audio1": [empty, 0], "audio2": [audio, 0], "merge_method": "add"}}
                 if with_asmr:
-                    sound_path, settings, source_duration, mix_mode = sounds[index]
+                    sound_path, settings, source_duration, mix_mode, role = sounds[index]
                     sound_audio, spatial, mixed = [f"preview_asmr_{kind}_{index}" for kind in ("audio", "spatial", "mixed")]
                     graph[sound_audio] = {"class_type": "LoadAudio", "inputs": {"audio": self.upload(sound_path)}}
                     graph[spatial] = {"class_type": "AsmrDirectorSpatialAudio", "inputs": {
                         "audio": [sound_audio, 0], "start_pan": settings["start"]["pan"], "start_distance": settings["start"]["distance"],
                         "end_pan": settings["end"]["pan"], "end_distance": settings["end"]["distance"], "movement": settings["movement"],
                         "gain_db": settings["gainDb"], "duration_seconds": source_duration}}
+                    if role is not None:
+                        graph[spatial]["class_type"] = "AsmrDirectorBalancedSpatialAudio"
+                        graph[spatial]["inputs"].update({"role": role, "mix_mode": mix_mode,
+                            "reference_audio": [padded, 0]})
                     graph[mixed] = {"class_type": "AsmrDirectorMixAudio", "inputs": {
                         "audio1": [empty if mix_mode == "replace" else padded, 0], "audio2": [spatial, 0]}}
                     padded = mixed

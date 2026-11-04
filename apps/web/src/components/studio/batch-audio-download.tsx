@@ -200,11 +200,12 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
       <div className="mt-3 rounded-lg border border-white/[0.07] bg-black/15 p-3">
         <div className="flex min-w-0 items-center gap-2 text-xs font-medium"><Folder className="h-4 w-4 shrink-0 text-amber-200/80" aria-hidden="true" /><span className="truncate" title={getBatchDownloadFolderName(project)}>{getBatchDownloadFolderName(project)}</span></div>
         <div className="ml-2 mt-3 space-y-3 border-l border-white/10 pl-3">
+          <div className="flex items-start gap-2"><Folder className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-200" aria-hidden="true" /><div><p className="text-xs font-medium">交付音频</p><p className="mt-0.5 text-[11px] leading-5 text-studio-muted">优先使用当前后处理成品，每段末尾保留设置的留白，可直接按编号衔接。</p></div></div>
           <div className="flex items-start gap-2"><Folder className="mt-0.5 h-3.5 w-3.5 shrink-0 text-studio-muted" aria-hidden="true" /><div><p className="text-xs font-medium">无后处理</p><p className="mt-0.5 text-[11px] leading-5 text-studio-muted">已采用原声，保留原始音频文件。</p></div></div>
           <div className="flex items-start gap-2"><Headphones className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-200/80" aria-hidden="true" /><div><p className="text-xs font-medium">后处理</p><p className="mt-0.5 text-[11px] leading-5 text-studio-muted">附上已生成且当前有效的后处理成品；请先在分镜右侧点击「生成后处理」。下载直接读取文件。</p></div></div>
         </div>
       </div>
-      <p className="mt-2.5 text-[11px] leading-5 text-studio-muted">两个版本使用相同编号，按时间线顺序排列。</p>
+      <p className="mt-2.5 text-[11px] leading-5 text-studio-muted">各文件夹使用相同编号，按时间线顺序排列。</p>
       </> : mode === "storyboard" ? <>
         <p className="mt-3 text-xs leading-5 text-studio-muted">当前工程 {progress.total} 段台词，{storyboards.length} 段可下载。</p>
         <div role="group" aria-label="分镜下载状态" className="mt-3 grid grid-cols-3 gap-2">
@@ -228,7 +229,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
         <p className="mt-1 text-[11px] leading-5 text-studio-muted">仅打包已保存、完整且未过期的提示词；待生成与需更新段落不包含在内。</p>
       </> : <>
         <p className="mt-3 text-xs leading-5 text-studio-muted">当前项目共 {video.total} 段表演，打包音频、画面与声音方案和独立运行程序。</p>
-        <p className="mt-2 text-[11px] leading-5 text-studio-muted">台词使用{videoUsesPrepared ? "已生成的后处理音频" : "已采用原音"}。按表演顺序生成，无台词段保留完整时长及声音安排。</p>
+        <p className="mt-2 text-[11px] leading-5 text-studio-muted">台词使用{videoUsesPrepared ? "已生成的后处理音频" : "已采用原音"}，段间留白已写入音频末尾，视频同步保留这段时间。按表演顺序生成，无台词段保留完整时长及声音安排。</p>
         {video.total > 0 && <div className="mt-2 rounded-lg border border-violet-300/15 bg-violet-300/[0.035] px-3 py-2 text-[11px] leading-5 text-studio-muted">
           <p>ASMR 触发音：{videoAsmrReady} / {video.total} 镜已规划</p>
           <p>{videoAsmrReady === video.total ? "勾选合并顺序预览后，输出原版与 ASMR 叠加版。" : `补齐剩余 ${video.total - videoAsmrReady} 镜的 ASMR 规划后，可合并叠加版。${video.issues.length ? "" : "当前可导出原版视频包。"}`}</p>

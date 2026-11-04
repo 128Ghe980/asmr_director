@@ -33,6 +33,23 @@ describe("accepted voice preview plan", () => {
     track.clips.forEach(clip => { clip.pause_after = .5; });
     expect(getAcceptedVoicePreviewPlan(project).entries.map(entry => entry.gapAfterSeconds)).toEqual([.5, .5, 0]);
   });
+  it("uses the delivery pause for zero legacy gaps and supports an explicit zero override", () => {
+    const project = projectWithVoices(), track = project.timeline.tracks.find(track => track.track_type === "voice")!;
+    track.clips.forEach(clip => { clip.pause_after = 0; });
+    const baseline = getAcceptedVoicePreviewPlan(project);
+    expect(baseline.entries.map(entry => entry.gapAfterSeconds)).toEqual([.35, .35, 0]);
+    track.clips[0].tail_pause_seconds = 0;
+    const changed = getAcceptedVoicePreviewPlan(project);
+    expect(changed.entries.map(entry => entry.gapAfterSeconds)).toEqual([0, .35, 0]);
+    expect(changed.fingerprint).not.toBe(baseline.fingerprint);
+  });
+  it("keeps speech-to-performance pauses and does not invent a default after a silent performance", () => {
+    const project = projectWithVoices(), track = project.timeline.tracks.find(track => track.track_type === "voice")!;
+    track.clips.forEach(clip => { clip.pause_after = 0; });
+    track.clips[1].kind = "silent";
+    track.clips[1].asset = { asset_id: null, uri: null, duration: null };
+    expect(getAcceptedVoicePreviewPlan(project).entries.map(entry => entry.gapAfterSeconds)).toEqual([.35, 0, 0]);
+  });
   it("fingerprints content, asset adoption, timing and order while ignoring space/DSP settings", () => {
     const project = projectWithVoices(), baseline = getAcceptedVoicePreviewPlan(project).fingerprint;
     project.timeline.mixing.binaural = !project.timeline.mixing.binaural;

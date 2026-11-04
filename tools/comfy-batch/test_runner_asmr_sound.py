@@ -93,6 +93,59 @@ class AsmrSoundTests(unittest.TestCase):
         self.make_runner(concat=True).run()
         self.assertEqual(len(self.remote.posts), 7)
 
+    def test_role_balancing_reuses_generation_and_legacy_preview_history(self):
+        first = self.make_runner(concat=True)
+        first.run()
+        original = copy.deepcopy(first.state["previews"])
+        legacy = copy.deepcopy(first.state["asmrPreviews"])
+        for shot in self.manifest["shots"]:
+            shot["asmrSound"]["role"] = "trigger" if shot["kind"] == "ambient" else "ambience"
+        self.save_manifest()
+        self.remote.classes["AsmrDirectorBalancedSpatialAudio"] = {}
+        second = self.make_runner(concat=True)
+        result = second.run()
+        self.assertEqual(result["asmr_preview_failed"], 0)
+        self.assertEqual(len(self.remote.model_posts), 4)
+        self.assertEqual(len(self.remote.preview_posts), 3)
+        self.assertEqual(second.state["previews"], original)
+        preview = second.state["asmrPreviews"]["1"]
+        graph = json.loads(second.state_file(preview["payload"]).read_text())["prompt"]
+        for index, role in enumerate(("ambience", "trigger")):
+            node = graph[f"preview_asmr_spatial_{index}"]
+            self.assertEqual(node["class_type"], "AsmrDirectorBalancedSpatialAudio")
+            self.assertEqual(node["inputs"]["role"], role)
+            self.assertEqual(node["inputs"]["reference_audio"], [f"preview_padded_{index}", 0])
+        for shot in self.manifest["shots"]:
+            del shot["asmrSound"]["role"]
+        self.save_manifest()
+        restored = self.make_runner(concat=True)
+        restored.run()
+        self.assertEqual(restored.state["asmrPreviews"]["1"]["fingerprint"], legacy["1"]["fingerprint"])
+        self.assertEqual(len(self.remote.posts), 7)
+
+    def test_missing_balanced_node_does_not_silently_use_legacy_audio(self):
+        self.make_runner(concat=True).run()
+        self.manifest["shots"][0]["asmrSound"]["role"] = "ambience"
+        self.save_manifest()
+        missing = self.make_runner(concat=True)
+        result = missing.run()
+        self.assertEqual(result["asmr_preview_failed"], 1)
+        self.assertIn("AsmrDirectorBalancedSpatialAudio", missing.state["asmrPreviews"]["1"]["last_error"])
+        self.assertIn("custom_nodes/asmr_director_audio", missing.state["asmrPreviews"]["1"]["last_error"])
+        self.assertEqual(len(self.remote.model_posts), 4)
+        self.assertEqual(len(self.remote.preview_posts), 2)
+        self.remote.classes["AsmrDirectorBalancedSpatialAudio"] = {}
+        self.assertEqual(self.make_runner(concat=True).run()["asmr_preview_failed"], 0)
+        self.assertEqual(len(self.remote.model_posts), 4)
+
+    def test_invalid_sound_roles_fail_before_generation(self):
+        for role in (None, "silence", True, 1, []):
+            self.manifest["shots"][0]["asmrSound"]["role"] = role
+            self.save_manifest()
+            with self.assertRaises(runner.BatchError):
+                self.make_runner()
+        self.assertFalse(self.remote.posts)
+
     def test_replace_uses_silent_base_and_only_rebuilds_the_enhanced_preview(self):
         first = self.make_runner(concat=True)
         first.run()

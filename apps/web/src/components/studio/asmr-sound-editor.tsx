@@ -6,11 +6,16 @@ import { renderAsmrSoundH3Prompt, type AsmrSound } from "@/lib/asmr/asmr-sound";
 const distances = { far: "远处", mid: "中距离", near: "近处", close: "耳旁", very_close: "贴近耳边" } as const;
 const movements = { static: "静止", approach: "靠近", recede: "远离", left_to_right: "从左向右", right_to_left: "从右向左", orbit: "环绕", orbit_approach: "环绕靠近" } as const;
 const field = "w-full min-w-0 rounded-md border border-studio-line bg-studio-panel px-2 py-1.5 text-xs outline-none focus:border-violet-300/40 disabled:opacity-40";
+const roleLabels = { trigger: "主要触发音", ambience: "环境底声" } as const;
+const neutralGain = (role: NonNullable<AsmrSound["role"]>) => role === "trigger" ? -12 : -30;
+const levelTrim = (sound: AsmrSound) => Math.max(-6, Math.min(sound.role === "ambience" ? 3 : 6,
+  sound.postProcessing.gainDb - neutralGain(sound.role!)));
 
 export function formatAsmrSound(sound: AsmrSound | undefined): string {
   if (!sound) return "（无）";
   const p = sound.postProcessing;
-  return `${sound.prompt}${sound.mixMode ? `\n${sound.mixMode === "replace" ? "作为本段主声音" : "叠加到原声音"}` : ""}\n${movements[p.movement]} · ${distances[p.start.distance]} (${p.start.pan}) → ${distances[p.end.distance]} (${p.end.pan}) · ${p.gainDb} dB`;
+  const level = sound.role ? `${roleLabels[sound.role]} · 响度微调 ${levelTrim(sound)} dB` : `${p.gainDb} dB`;
+  return `${sound.prompt}${sound.mixMode ? `\n${sound.mixMode === "replace" ? "作为本段主声音" : "叠加到原声音"}` : ""}\n${movements[p.movement]} · ${distances[p.start.distance]} (${p.start.pan}) → ${distances[p.end.distance]} (${p.end.pan}) · ${level}`;
 }
 
 export function AsmrSoundEditor({ sound, duration, silent = false, disabled, onChange }: {
@@ -27,6 +32,11 @@ export function AsmrSoundEditor({ sound, duration, silent = false, disabled, onC
   return <details className="rounded-lg border border-violet-300/20 bg-violet-300/[0.035] p-3">
     <summary className="cursor-pointer text-xs font-medium text-violet-100">环境与触发音 · {silent ? `${duration.toFixed(3)} 秒` : "随本段音频时长"}</summary>
     <div className="mt-3 space-y-3">
+      <label className="block space-y-1.5 text-[11px] text-studio-muted">声音用途<select aria-label="ASMR 声音用途" className={field} disabled={disabled} value={sound.role ?? "legacy"} onChange={event => {
+        const role = event.target.value === "legacy" ? undefined : event.target.value as "trigger" | "ambience";
+        onChange({ ...sound, role, postProcessing: { ...p, gainDb: role ? neutralGain(role) : p.gainDb } });
+      }}><option value="legacy">沿用原音量</option><option value="trigger">主要触发音 · 自动平衡</option><option value="ambience">环境底声 · 保持轻柔</option></select></label>
+      {sound.role ? <p className="text-[11px] leading-5 text-studio-muted">{sound.role === "trigger" ? "合片时平衡触发音的响度，保留轻重变化和安静间隙。" : "合片时压低过响的底声，安静部分保持安静。"}</p> : null}
       <label className="block space-y-1.5"><span className="text-[11px] text-studio-muted">触发材料与动作</span>
         <textarea aria-label="ASMR 触发音提示词" rows={4} maxLength={2000} disabled={disabled} className={`${field} leading-6`} value={prompt}
           onChange={event => setDraft({ source: sound.prompt, text: event.target.value })}
@@ -35,7 +45,8 @@ export function AsmrSoundEditor({ sound, duration, silent = false, disabled, onC
       {silent ? <label className="block space-y-1.5 text-[11px] text-studio-muted">声音用法<select aria-label="ASMR 声音用法" className={field} disabled={disabled} value={sound.mixMode ?? "overlay"} onChange={event => onChange({ ...sound, mixMode: event.target.value as "overlay" | "replace" })}><option value="replace">作为本段主声音</option><option value="overlay">叠加到原声音</option></select></label> : null}
       <div className="grid grid-cols-2 gap-2">
         <label className="space-y-1 text-[11px] text-studio-muted">声音移动<select aria-label="ASMR 声音移动" className={field} disabled={disabled} value={p.movement} onChange={event => update({ movement: event.target.value as typeof p.movement })}>{Object.entries(movements).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="space-y-1 text-[11px] text-studio-muted">声音音量<select aria-label="ASMR 叠加音量" className={field} disabled={disabled} value={p.gainDb} onChange={event => update({ gainDb: Number(event.target.value) })}>{[...new Set([-36, -30, -24, -18, -12, -9, -6, -3, 0, 3, 6, p.gainDb])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value} dB</option>)}</select></label>
+        {sound.role ? <label className="space-y-1 text-[11px] text-studio-muted">响度微调<select aria-label="ASMR 响度微调" className={field} disabled={disabled} value={levelTrim(sound)} onChange={event => update({ gainDb: neutralGain(sound.role!) + Number(event.target.value) })}>{[...new Set([-6, -3, 0, 3, ...(sound.role === "trigger" ? [6] : []), levelTrim(sound)])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value > 0 ? "+" : ""}{value} dB{value === 0 ? " · 标准" : ""}</option>)}</select></label>
+          : <label className="space-y-1 text-[11px] text-studio-muted">声音音量<select aria-label="ASMR 叠加音量" className={field} disabled={disabled} value={p.gainDb} onChange={event => update({ gainDb: Number(event.target.value) })}>{[...new Set([-36, -30, -24, -18, -12, -9, -6, -3, 0, 3, 6, p.gainDb])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value} dB</option>)}</select></label>}
       </div>
       {(["start", "end"] as const).map(key => <div key={key} className="grid grid-cols-2 gap-2">
         <label className="space-y-1 text-[11px] text-studio-muted">{key === "start" ? "起点" : "终点"}距离<select aria-label={`ASMR ${key === "start" ? "起点" : "终点"}距离`} className={field} disabled={disabled || key === "end" && p.movement === "static"} value={p[key].distance} onChange={event => update({ [key]: { ...p[key], distance: event.target.value as typeof p.start.distance } })}>{Object.entries(distances).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

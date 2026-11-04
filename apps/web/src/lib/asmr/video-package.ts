@@ -2,6 +2,8 @@ import { sanitizeDownloadName } from "./batch-download";
 import type { AsmrProject, VoiceClip } from "./schema";
 import { ClipVideoStoryboardSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceMode, type ClipVideoStoryboard, type StoryboardReferenceMode } from "./video-plan";
 import { MAX_VIDEO_GENERATION_SECONDS } from "./performance-segment";
+import { getCurrentAudioPostProcessingReceipts } from "./audio-post-processing";
+import { getSegmentPauseSeconds } from "./voice-delivery-timing";
 
 export type VideoPackageIssue = { clipId: string; index: number; message: string };
 export type VideoPackageSummary = { total: number; ready: number; issues: VideoPackageIssue[] };
@@ -30,6 +32,9 @@ function inspect(project: AsmrProject): { summary: VideoPackageSummary; shots: V
     .sort((a, b) => a.clip.start - b.clip.start || a.position - b.position)
     .map(entry => entry.clip);
   const counts = new Map<string, number>();
+  const speechClips = clips.filter(clip => clip.kind !== "silent");
+  const receipts = getCurrentAudioPostProcessingReceipts(project);
+  const usePrepared = speechClips.length > 0 && speechClips.every(clip => receipts.has(clip.id));
   for (const clip of clips) counts.set(clip.id, (counts.get(clip.id) ?? 0) + 1);
   const issues: VideoPackageIssue[] = [];
   const shots: VideoPackageSourceShot[] = [];
@@ -54,8 +59,11 @@ function inspect(project: AsmrProject): { summary: VideoPackageSummary; shots: V
     if (clip.kind === "silent" && clip.duration > MAX_VIDEO_GENERATION_SECONDS && !storyboard.parts?.length) {
       fail("超过 15 秒的无台词段需要完整的分段画面与声音设计，请重新生成。"); continue;
     }
-    if (clip.kind !== "silent" && storyboard.audio && storyboard.audio.duration > MAX_VIDEO_GENERATION_SECONDS) {
-      fail("每次视频生成最长 15 秒，请先拆分本段人声并重新设计画面。"); continue;
+    if (clip.kind !== "silent") {
+      const chosenDuration = (usePrepared ? receipts.get(clip.id)?.asset.duration : clip.asset.duration) ?? storyboard.audio?.duration ?? 0;
+      if (chosenDuration + getSegmentPauseSeconds(project, clip.id) > MAX_VIDEO_GENERATION_SECONDS + 1e-9) {
+        fail("每次视频生成最长 15 秒（含尾音与段间留白），请缩短留白或拆分本段人声。"); continue;
+      }
     }
     if (storyboard.parts?.some(part => ![part.visual, part.action, part.camera, part.ambientSound].every(value => value.trim()))) {
       fail("连续生成段的画面、动作、视点和声音说明尚未填写完整。"); continue;

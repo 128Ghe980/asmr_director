@@ -5,6 +5,7 @@ import { performanceStoryboardMessages } from "./performance-storyboard";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
 import { CAMERA_PANTOMIME_GUIDANCE } from "./camera-pantomime";
 import { asmrSoundFixture } from "./asmr-sound-test-fixture";
+import { ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE } from "./asmr-sound";
 import type { VoiceClip } from "./schema";
 
 const env = { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_MODEL: "test", ASMR_PLANNER_API_KEY: "test" };
@@ -26,7 +27,7 @@ function modelReply(quiet = false) {
       action: quiet ? "S1 holds a relaxed gaze with both empty hands still." : "S1 gently closes empty fingertips in the air, then opens them to each side, ending with both hands still raised.",
       camera: "Fixed frontal medium close shot.",
       ambientSound: quiet ? "Very quiet steady room tone." : "Soft dry fabric-friction foley matching the empty-hand gesture, with quiet gaps.",
-      asmrSound: { ...structuredClone(asmrSoundFixture), prompt: quiet ? "Very quiet steady room tone, no voices or music." : "Record gentle dry fabric friction in a sound-only material close-up, synchronized to the mimed pinches and pauses, no voices or music." } };
+      asmrSound: { ...structuredClone(asmrSoundFixture), role: quiet ? "ambience" as const : "trigger" as const, prompt: quiet ? "Very quiet steady room tone, no voices or music." : "Record gentle dry fabric friction in a sound-only material close-up, synchronized to the mimed pinches and pauses, no voices or music." } };
     return Response.json({ choices: [{ message: { content: JSON.stringify({ title: "空手模拟整理", ...fields,
       ...(material.current.partDurations ? { parts: material.current.partDurations.map((durationSeconds: number, index: number) => ({ ...fields, durationSeconds,
         action: index === 0 ? "S1 raises connected empty hands below center and begins gentle fingertip pinches, keeping both hands engaged."
@@ -42,10 +43,14 @@ describe("pantomime performance design", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(result.storyboard.parts?.map(part => part.durationSeconds)).toEqual([12, 12, 12]);
     expect(result.storyboard.asmrSound?.mixMode).toBe("replace");
+    expect(result.storyboard.asmrSound?.role).toBe("trigger");
     expect(result.storyboard.parts?.every(part => part.asmrSound.mixMode === "replace")).toBe(true);
+    expect(result.storyboard.parts?.every(part => part.asmrSound.role === "trigger")).toBe(true);
     expect(result.storyboard.parts?.[0].asmrSound.prompt).toContain("sound-only material close-up");
     const messages = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages;
     expect(messages[0].content).toContain(CAMERA_PANTOMIME_GUIDANCE);
+    expect(messages[0].content).toContain(ASMR_SOUND_PRODUCTION_GUIDANCE);
+    expect(messages[0].content).toContain(ASMR_SOUND_ROLE_GUIDANCE);
     expect(messages[0].content).toContain("空手位置和手势阶段");
     expect(messages[0].content).toContain("这些物件不能回灌主画面的visual/action");
     expect(messages[0].content).toContain("scene、direction、visual和action也不得安排呼气");
@@ -59,6 +64,7 @@ describe("pantomime performance design", () => {
     const fetchImpl = modelReply(true), result = await generateClipStoryboard(input, { env, fetchImpl });
     expect(result.storyboard.parts).toBeUndefined();
     expect(result.storyboard.duration).toBe(4);
+    expect(result.storyboard.asmrSound?.role).toBe("ambience");
     expect(result.storyboard.ambientSound).toBe("Very quiet steady room tone.");
     expect(result.storyboard.asmrSound?.mixMode).toBe("replace");
     const system = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages[0].content;

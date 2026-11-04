@@ -3,11 +3,15 @@ import type { AsmrProject } from "./schema";
 import { continuationClause, splitVoiceClauses, VOICE_LONGTEXT_WINDOW_CLAUSES } from "./voice-longtext-plan";
 
 export const VoiceGenerationContextSchema = z.object({
-  version: z.literal(1),
+  // v1 snapshots retain the historical silent boundary and natural final group.
+  // v2 always generates a continuation and extracts only the target prefix.
+  version: z.union([z.literal(1), z.literal(2)]),
   followingClauses: z.array(z.string().min(1).max(500)).max(500),
   isFinal: z.boolean(),
 }).strict().refine((context) => !context.isFinal || context.followingClauses.length === 0, {
   message: "Final speech cannot have following context",
+}).refine((context) => context.version !== 2 || !context.isFinal, {
+  message: "Continuous-window speech requires prefix extraction, including its last target",
 });
 
 export type VoiceGenerationContext = z.infer<typeof VoiceGenerationContextSchema>;
@@ -19,6 +23,7 @@ function prefix(text: string, limit: number): string {
 }
 
 /** Derive only the forward context within the 16-clause recipe and 500-character safety limit.
+ * Silent clips are skipped, never spoken or used as a window boundary.
  * No earlier clip, sound effect or out-of-window text affects this snapshot.
  * A partial final context clause is allowed; target speech is never truncated.
  */
@@ -29,11 +34,9 @@ export function getVoiceGenerationContext(project: AsmrProject, clipId: string):
   const index = ordered.findIndex((clip) => clip.id === clipId);
   const target = ordered[index];
   if (!target?.semantic_unit || target.kind === "silent") return undefined;
-  const suffix = ordered.slice(index + 1);
-  const silentBoundary = suffix.findIndex((clip) => clip.kind === "silent");
-  const following = (silentBoundary < 0 ? suffix : suffix.slice(0, silentBoundary))
-    .filter((clip) => /[\p{L}\p{N}]/u.test(clip.text));
-  if (!following.length) return { version: 1, followingClauses: [], isFinal: true };
+  const following = ordered.slice(index + 1)
+    .filter((clip) => clip.kind !== "silent" && /[\p{L}\p{N}]/u.test(clip.text));
+  if (!following.length) return { version: 2, followingClauses: [], isFinal: false };
   const readableTarget = prefix(target.text.trim(), 500);
   const targetClauses = /[\p{L}\p{N}]/u.test(readableTarget) ? splitVoiceClauses(readableTarget) : [readableTarget];
   const maximumFollowingClauses = Math.max(0, VOICE_LONGTEXT_WINDOW_CLAUSES - targetClauses.length);
@@ -52,11 +55,11 @@ export function getVoiceGenerationContext(project: AsmrProject, clipId: string):
       } else {
         const part = prefix(clause, available - 2);
         if (/[\p{L}\p{N}]/u.test(part)) followingClauses.push(part);
-        return { version: 1, followingClauses, isFinal: false };
+        return { version: 2, followingClauses, isFinal: false };
       }
     }
     // Do not skip over a truncated long clip to a later paragraph.
     if (text.length < clip.text.trim().length) break;
   }
-  return { version: 1, followingClauses, isFinal: false };
+  return { version: 2, followingClauses, isFinal: false };
 }

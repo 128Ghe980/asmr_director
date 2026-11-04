@@ -154,7 +154,8 @@ export function buildLongTextInputs(plan: VoiceLongTextPlan, context?: VoiceGene
     const clauses = plan.clauses.slice(group.start, group.end + 1);
     const expectedText = clauses.join("");
     if (group.text !== expectedText) throw new Error("语义组内容与原文不一致。");
-    const isFinal = index === plan.groups.length - 1 && (context?.isFinal ?? true);
+    const continuousWindow = context?.version === 2;
+    const isFinal = !continuousWindow && index === plan.groups.length - 1 && (context?.isFinal ?? true);
     if (isFinal) {
       const natural = expectedText.trim().replace(/[，；：、,…\s]+$/u, "");
       const text = /[。！？.!?][”’」』）)]*$/u.test(natural) ? natural : `${natural}。`;
@@ -165,17 +166,29 @@ export function buildLongTextInputs(plan: VoiceLongTextPlan, context?: VoiceGene
     // Semantic clips slide a fixed-size forward window across the project.
     // Legacy multi-group plans retain their original complete-body recipe.
     const remaining = context ? body.slice(0, VOICE_LONGTEXT_WINDOW_CLAUSES) : body;
-    const followingText = remaining[clauses.length];
-    if (!followingText) throw new Error("目标段太长，无法容纳后续语境，请先拆分片段。");
+    let followingText = remaining[clauses.length];
+    if (!followingText && !continuousWindow) throw new Error("目标段太长，无法容纳后续语境，请先拆分片段。");
     let text = remaining.map(continuationClause).join("");
     if (text.length > 500) throw new Error("加上停顿标点后的长文输入超过 500 字，请缩短文案后重试。");
     const paddingClauses: string[] = [];
-    for (const filler of VOICE_CONTINUATION_CLAUSES.slice(0, Math.max(0, VOICE_LONGTEXT_WINDOW_CLAUSES - remaining.length))) {
+    const targetContent = new Set(clauses.map(clause => clause.replace(/[^\p{L}\p{N}]/gu, "")));
+    for (const filler of VOICE_CONTINUATION_CLAUSES) {
+      if (remaining.length + paddingClauses.length >= VOICE_LONGTEXT_WINDOW_CLAUSES) break;
+      // Do not repeat a target clause as synthetic context. Existing v1 inputs
+      // are reproduced exactly when rechecking their saved original recordings.
+      if (continuousWindow && targetContent.has(filler.replace(/[^\p{L}\p{N}]/gu, ""))) continue;
       const padded = text + continuationClause(filler);
-      if (padded.length > 500) break;
+      if (padded.length > 500) {
+        if (continuousWindow) continue; // A later fixed clause may still fit intact.
+        break;
+      }
       text = padded;
       paddingClauses.push(filler);
+      if (continuousWindow && !followingText) followingText = filler;
     }
+    // A v2 recording always has a real continuation boundary. Never mark a
+    // padded final target as whole-recording or silently truncate its speech.
+    if (continuousWindow && !followingText) throw new Error("目标段太长，无法容纳后续语境，请先拆分片段。");
     return { text, expectedText, followingText, clauses, isFinal, paddingClauses };
   });
 }

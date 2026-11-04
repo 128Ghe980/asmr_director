@@ -89,6 +89,8 @@ export const VoiceClipSchema = ClipBaseSchema.extend({
   // Explicit user-controlled silence after the spoken audio. Older projects
   // omit this field and retain their original estimated timing behavior.
   pause_after: z.number().nonnegative().optional(),
+  // Explicit delivery silence; zero disables the default tail without changing TTS.
+  tail_pause_seconds: z.number().finite().min(0).max(30).optional(),
   semantic_unit: z.boolean().optional(),
   // Retain previously adopted audio while shared source edits await a new take.
   audio_stale: z.boolean().optional(),

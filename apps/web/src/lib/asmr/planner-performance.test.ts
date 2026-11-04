@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { compilePlannerDraft, estimatePlannerSpeechDuration, getPlannerDurationSummary, getPlannerPerformanceBudget, PlannerBriefSchema, PlannerDraftSchema, type PlannerDraft } from "./planner";
 import { insertPlannerSection, insertPlannerSilentSection, mergePlannerSection, replacePlannerRange, splitPlannerSection } from "./planner-editing";
-import { normalizePlannerSemanticDraft } from "./planner-semantic";
+import { normalizePlannerSemanticDraft, PlannerGeneratedDraftSchema, PlannerPerformanceGeneratedDraftSchema } from "./planner-semantic";
 import { runPlanner } from "./planner-provider";
 import { commitGenerationSuccess } from "./generation-project-state";
 import { createEmptyPlannerWorkingState, loadPlannerDraft, savePlannerDraft } from "./planner-persistence";
 import { CREATIVE_TEMPLATES } from "./creative-templates";
+import { ASMR_SOUND_PALETTE_GUIDANCE } from "./asmr-sound";
 
 const base = { id: "invite", title: "邀请", kind: "speech" as const, purpose: "dialogue" as const,
   text: "把外套给我，进来坐一会儿吧。", emotion: "自然", style: "轻声", pace: "缓慢", direction: "起始：双方站在门口；动作：S1伸出空手示意；结束：仍在门口，手中无物。",
@@ -86,6 +87,7 @@ describe("performance scripts", () => {
     expect(body.format.properties.performanceVersion.const).toBe(1);
     expect(body.messages[1].content).toContain("语言约 81 秒，无台词表演约 99 秒");
     expect(body.messages[0].content).toContain("先在内部");
+    expect(body.messages[0].content).toContain(ASMR_SOUND_PALETTE_GUIDANCE);
   });
   it("puts a compact whole-performance budget before schema and template detail without inheriting original plot beats", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ message: { content: JSON.stringify({ ...draft, sections: [base, transition, ...soundSections(44)] }) } }));
@@ -95,6 +97,7 @@ describe("performance scripts", () => {
     expect(system.split("\n")[1]).toContain("语言约 27 秒，无台词表演约 33 秒");
     expect(system.split("\n")[2]).toContain("约 59 个非空白字符、3 个完整 speech 段");
     expect(system).toContain("ASMR试听须有独立silent段");
+    expect(system).toContain(ASMR_SOUND_PALETTE_GUIDANCE);
     expect(system).toContain("说完一句话不代表动作已完成");
     expect(system).not.toContain("按朗读顺序连续排列的语义短单元");
     expect(system).not.toContain("每个实际台词单元都要有自足的单镜导演说明");
@@ -239,6 +242,47 @@ describe("performance scripts", () => {
     expect(repair).toContain(`总计${durationSeconds}秒`);
     expect(repair).toContain("允许48至72秒");
     expect(repair).toContain("不机械缩放");
+  });
+  it("rejects a repeated, structurally valid 125-second DP script with its actual timing failure and a concrete reduction budget", async () => {
+    // Reduced from the two identical real DP responses on 2026-11-02. Their
+    // structure was valid; the model ignored the 90-second request and repair.
+    const speechTexts = [
+      "今晚要出去夜游，先帮你把披风领子整理好，这样会舒服一点。",
+      "好了，领子这边已经平整了。你转一下头看看，应该不会勒。",
+      "脸上也帮你扫一下，今晚风大，别让碎发粘在脸上。",
+      "额发也拨开了，这样视线清楚，夜游时不会挡眼睛。",
+      "最后捏一下脸，就当是今晚的祝福。",
+      "好啦，现在感觉怎么样？有没有一点万圣节的气氛？",
+      "这个声音像不像小南瓜在敲门？",
+      "这个声音很舒服吧，像夜风轻轻吹过。",
+      "今晚的夜游，我会一直陪着你。",
+      "准备好了吗？我们出发吧。",
+    ];
+    const units = [
+      ...speechTexts.map(text => ({ kind: "speech", purpose: "dialogue", text, pauseAfter: "short", direction: base.direction, soundSuggestions: "" })),
+      ...[6, 5, 5, 4, 7, 6, 4, 3].map((durationSeconds, index) => ({
+        kind: "silent", purpose: index === 6 ? "interaction" : index === 7 ? "transition" : "asmr",
+        durationSeconds, text: "双手空着在镜头前完成当前手势，然后收住。", pauseAfter: "short",
+        direction: "起始：空手在胸前。动作：完成当前手势。结束：空手收回胸前。", soundSuggestions: index < 6 ? "与当前手势同步的独立材质触发音。" : "安静室内。",
+      })),
+    ];
+    const original = { performanceVersion: 1, title: draft.title, scene: draft.scene, character: draft.character,
+      groups: [{ id: "g1", title: "万圣节准备", emotion: base.emotion, style: base.style, pace: base.pace,
+        direction: base.direction, soundSuggestions: "", position: base.position, units }] };
+    expect(PlannerGeneratedDraftSchema.safeParse(original).success).toBe(true);
+    expect(PlannerPerformanceGeneratedDraftSchema.safeParse(original).success).toBe(true);
+    expect(speechTexts.reduce((sum, text) => sum + estimatePlannerSpeechDuration(text), 0)).toBe(85);
+    const content = JSON.stringify(original);
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ message: { content } }));
+    await expect(runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 90 } }, { env: {}, fetchImpl }))
+      .rejects.toMatchObject({ status: 502, message: expect.stringContaining("总计125秒；目标90秒，允许72至108秒") });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const repair = JSON.parse(fetchImpl.mock.calls[1][1]!.body as string).messages.at(-1).content;
+    expect(repair).toContain("台词目标约50秒、最多68秒");
+    expect(repair).toContain("当前台词85秒，至少减少17秒");
+    expect(repair).toContain("总时长超出时不能继续扩写台词");
+    expect(repair).toContain("不能只合并段落、改direction或原样返回上一稿");
+    expect(JSON.stringify(original)).toBe(content);
   });
   it.each(["（无台词）", "听。", "继续。"])("repairs placeholder description %s instead of showing an empty action to the user", async text => {
     const corrected = { ...draft, sections: soundSections(60) };

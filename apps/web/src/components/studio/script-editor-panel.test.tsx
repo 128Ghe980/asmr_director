@@ -49,6 +49,31 @@ function saveShot(project: AsmrProject, clip: VoiceClip, patch: Partial<ClipVide
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("语义台词编辑", () => {
+  it("shows one editable delivery pause for performance speech, including an explicit zero override", () => {
+    const input = fixture();
+    const voices = input.project.timeline.tracks.find(track => track.track_type === "voice")!.clips;
+    const clip = voices[0];
+    clip.pause_after = 0;
+    clip.performance = { version: 1, segmentId: "opening", purpose: "dialogue", direction: "面向镜头", soundIntent: "安静" };
+    input.selectedClipId = clip.id;
+    const view = render(<ScriptEditorPanel {...input} />);
+    expect(screen.getAllByText(/段间留白/)).toHaveLength(1);
+    const pause = screen.getByRole("spinbutton", { name: "第 1 段后等待秒数" }) as HTMLInputElement;
+    expect(pause.value).toBe("0.35");
+    fireEvent.change(pause, { target: { value: "0" } });
+    fireEvent.blur(pause);
+    expect(input.onGapChange).toHaveBeenCalledExactlyOnceWith(clip.id, 0);
+    clip.tail_pause_seconds = 0;
+    view.rerender(<ScriptEditorPanel {...input} />);
+    expect((screen.getByRole("spinbutton", { name: "第 1 段后等待秒数" }) as HTMLInputElement).value).toBe("0");
+    view.rerender(<ScriptEditorPanel {...input} selectedClipId={voices.at(-1)!.id} />);
+    expect(screen.queryByText(/段间留白/)).toBeNull();
+    clip.kind = "silent";
+    view.rerender(<ScriptEditorPanel {...input} selectedClipId={clip.id} onSilentDurationChange={vi.fn()} />);
+    expect(screen.queryByText(/段间留白/)).toBeNull();
+    expect(screen.getByRole("spinbutton", { name: "无台词段时长" })).toBeTruthy();
+  });
+
   it("keeps multi-sentence dialogue editable without a normalization reminder or blur split", () => {
     const input = fixture();
     const clip = input.project.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];

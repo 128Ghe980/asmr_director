@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import pyloudnorm as pyln
 from scipy.signal import resample_poly
 
 from .engine import processed_voice as engine
@@ -17,6 +18,7 @@ from .engine import processed_voice as engine
 RATE = 48000
 DISTANCES = ["far", "mid", "near", "close", "very_close"]
 MOVEMENTS = ["static", "approach", "recede", "left_to_right", "right_to_left", "orbit", "orbit_approach"]
+BALANCED_PEAK = 10 ** (-2.1 / 20)
 
 
 def _samples(value, rate):
@@ -74,6 +76,77 @@ def mix_samples(base, base_rate, overlay, overlay_rate):
     return original.T.astype(np.float32)
 
 
+def _loudness(samples):
+    """Gated integrated loudness, with silence left unmeasurable rather than raised."""
+    measured = np.asarray(samples, dtype=np.float64)
+    if not np.any(measured):
+        return None
+    if len(measured) < round(.4 * RATE):
+        measured = np.pad(measured, ((0, round(.4 * RATE) - len(measured)), (0, 0)))
+    level = float(pyln.Meter(RATE).integrated_loudness(measured))
+    return level if math.isfinite(level) else None
+
+
+def balance_samples(spatial, source, reference, role, mix_mode, gain_db):
+    """One gain for the whole clip/ears: preserve its attacks, pauses and D motion.
+
+    Inputs are frames x channels at RATE, already validated/resampled by the node.
+    New role-labelled clips use model gain as a bounded creative trim around the
+    role's neutral value. Legacy spatial_samples never calls this function.
+    """
+    if role not in ("trigger", "ambience") or mix_mode not in ("overlay", "replace"):
+        raise ValueError("Unsupported ASMR balancing role or mix mode")
+    gain = engine.number(gain_db, -36, 6)
+    result = np.asarray(spatial, dtype=np.float64).copy()
+    for samples in (result, source, reference):
+        if (samples.ndim != 2 or samples.shape[1] not in (1, 2) or not len(samples)
+                or not np.isfinite(samples).all()):
+            raise ValueError("Invalid ASMR balancing samples")
+    source_level, rendered_level = _loudness(source), _loudness(result)
+    reference_level = _loudness(reference) if mix_mode == "overlay" else None
+    neutral = -12. if role == "trigger" else -30.
+    trim = float(np.clip(gain - neutral, -6., 6. if role == "trigger" else 3.))
+    target = (-27. if mix_mode == "replace" else -34.) if role == "trigger" else -48.
+    if reference_level is not None:
+        target = min(target, reference_level - (10. if role == "trigger" else 18.))
+    target += trim
+    if source_level is not None and rendered_level is not None:
+        # Bound total elevation relative to the real generated source, not the
+        # intermediate D signal (whose legacy renderer normalizes its input).
+        max_lift = 12. if role == "trigger" and source_level >= -60. else 0.
+        target = min(target, source_level + max_lift)
+        factor = 10 ** ((target - rendered_level) / 20)
+    else:
+        # Below the loudness gate, never turn a near-silent bed into a trigger.
+        source_rms = float(np.sqrt(np.mean(np.square(source))))
+        rendered_rms = float(np.sqrt(np.mean(np.square(result))))
+        factor = min(1., source_rms / max(rendered_rms, 1e-30))
+    peak = engine.true_peak(result)
+    factor = min(factor, BALANCED_PEAK / max(peak, 1e-30))
+    result *= factor
+    return result
+
+
+def balanced_spatial_samples(samples, sample_rate, reference, reference_rate,
+                             duration_seconds, start_pan, start_distance,
+                             end_pan, end_distance, movement, gain_db, role, mix_mode,
+                             profile=None):
+    if role not in ("trigger", "ambience") or mix_mode not in ("overlay", "replace"):
+        raise ValueError("Unsupported ASMR balancing role or mix mode")
+    engine.number(gain_db, -36, 6)
+    duration = engine.number(duration_seconds, 1 / RATE, 600)
+    count = max(1, round(duration * RATE))
+    raw = _samples(samples, sample_rate).mean(axis=1, keepdims=True)[:count]
+    raw = np.pad(raw, ((0, max(0, count - len(raw))), (0, 0)))
+    original = _samples(reference, reference_rate)
+    # D positioning is rendered at unity trim, then the final spatial sound is
+    # measured. Do not first attenuate by -18 dB and then attempt to recover it.
+    spatial = spatial_samples(samples, sample_rate, duration, start_pan, start_distance,
+                              end_pan, end_distance, movement, 0., profile).T
+    result = balance_samples(spatial, raw, original, role, mix_mode, gain_db)
+    return result.T.astype(np.float32)
+
+
 def _unpack(audio):
     value = audio["waveform"].detach().cpu().numpy()
     if value.ndim != 3 or value.shape[0] != 1:
@@ -126,5 +199,25 @@ class AsmrDirectorMixAudio:
         return (_audio(mix_samples(base, base_rate, overlay, overlay_rate)),)
 
 
-NODE_CLASS_MAPPINGS = {"AsmrDirectorSpatialAudio": AsmrDirectorSpatialAudio, "AsmrDirectorMixAudio": AsmrDirectorMixAudio}
-NODE_DISPLAY_NAME_MAPPINGS = {"AsmrDirectorSpatialAudio": "ASMR Director · D spatial audio", "AsmrDirectorMixAudio": "ASMR Director · mix aligned audio"}
+class AsmrDirectorBalancedSpatialAudio(AsmrDirectorSpatialAudio):
+    @classmethod
+    def INPUT_TYPES(cls):
+        inputs = super().INPUT_TYPES()
+        inputs["required"].update({"reference_audio": ("AUDIO",),
+                                   "role": (["trigger", "ambience"],),
+                                   "mix_mode": (["overlay", "replace"],)})
+        return inputs
+
+    def process(self, audio, reference_audio, duration_seconds, start_pan, start_distance,
+                end_pan, end_distance, movement, gain_db, role, mix_mode):
+        samples, rate = _unpack(audio)
+        reference, reference_rate = _unpack(reference_audio)
+        result = balanced_spatial_samples(samples, rate, reference, reference_rate, duration_seconds,
+            start_pan, start_distance, end_pan, end_distance, movement, gain_db, role, mix_mode)
+        return (_audio(result),)
+
+
+NODE_CLASS_MAPPINGS = {"AsmrDirectorSpatialAudio": AsmrDirectorSpatialAudio, "AsmrDirectorMixAudio": AsmrDirectorMixAudio,
+                       "AsmrDirectorBalancedSpatialAudio": AsmrDirectorBalancedSpatialAudio}
+NODE_DISPLAY_NAME_MAPPINGS = {"AsmrDirectorSpatialAudio": "ASMR Director · D spatial audio", "AsmrDirectorMixAudio": "ASMR Director · mix aligned audio",
+                              "AsmrDirectorBalancedSpatialAudio": "ASMR Director · balanced ASMR spatial audio"}

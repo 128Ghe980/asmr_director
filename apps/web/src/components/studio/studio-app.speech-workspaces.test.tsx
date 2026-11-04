@@ -355,6 +355,26 @@ describe("StudioApp paged speech workspaces", () => {
     expect(current().speechWorkspace!.paragraph).toEqual(paragraphAfter);
   });
 
+  it("edits only the selected paragraph sentence's delivery pause without changing the short bank or adopted audio", async () => {
+    const project = fixture(); mockApi(); await mount(project);
+    const shortBefore = structuredClone(current().speechWorkspace!.short);
+    fireEvent.click(screen.getByRole("tab", { name: "整段" }));
+    const originalAssets = structuredClone(voices(current()).map(clip => clip.asset));
+    expect(screen.getAllByRole("spinbutton", { name: /段间留白秒数/ })).toHaveLength(1);
+    const gap = screen.getByRole("spinbutton", { name: "整段内短句 1 段间留白秒数" });
+    fireEvent.change(gap, { target: { value: "0" } }); fireEvent.blur(gap);
+    expect(voices(current())[0]).toMatchObject({ pause_after: 0, tail_pause_seconds: 0 });
+    expect(voices(current()).map(clip => clip.asset)).toEqual(originalAssets);
+    expect(voices(current()).every(clip => !clip.audio_stale)).toBe(true);
+    expect(current().speechWorkspace!.short).toEqual(shortBefore);
+    fireEvent.click(screen.getByRole("button", { name: "选择整段内短句 2" }));
+    expect(screen.queryByRole("spinbutton", { name: /段间留白秒数/ })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "短句" }));
+    expect(voices(current())[0].pause_after).toBe(1);
+    expect(voices(current())[0].tail_pause_seconds).toBeUndefined();
+    expect(current().speechWorkspace!.paragraph.clips[0].tail_pause_seconds).toBe(0);
+  });
+
   it("keeps a paragraph task running across unrelated short-gap edits and undo, then lists its result only on paragraph", async () => {
     const project = fixture(); const candidates = mockApi();
     let onUpdate!: (update: GenerationJobUpdate) => void;

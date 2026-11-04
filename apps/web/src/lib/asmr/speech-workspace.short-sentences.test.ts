@@ -24,6 +24,7 @@ function fixture(withAudio = false): AsmrProject {
 describe("canonical source sentences", () => {
   it("splits a pending AI paragraph before workspace initialization and keeps exact text and provisional span", () => {
     const project = fixture();
+    voices(project)[0].tail_pause_seconds = 0;
     const before = structuredClone(project);
     const normalized = normalizeSpeechSentences(project);
     const clips = voices(normalized);
@@ -33,6 +34,7 @@ describe("canonical source sentences", () => {
     expect(clips[0].start).toBe(0);
     expect(clips[2].start + clips[2].duration).toBe(12);
     expect(clips.slice(0, 3).map((clip) => clip.pause_after)).toEqual([0, 0, 2]);
+    expect(clips.slice(0, 3).map((clip) => clip.tail_pause_seconds)).toEqual([undefined, undefined, 0]);
     expect(clips.slice(0, 3).every((clip) => clip.semantic_unit && !clip.asset.uri)).toBe(true);
     expect(clips.slice(3)).toEqual(voices(project).slice(1));
     expect(project).toEqual(before);

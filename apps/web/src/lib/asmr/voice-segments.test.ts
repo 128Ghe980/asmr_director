@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { getProjectMixFingerprint } from "./generation-fingerprint";
+import { getVoiceCandidateSourceFingerprint } from "./audio-candidate";
+import { createAudioPostProcessingInputFingerprint } from "./audio-post-processing";
 import { commitGenerationSuccess } from "./generation-project-state";
 import { demoProject } from "./mock-project";
 import { AsmrProjectSchema, type AsmrProject, type TimelineClip } from "./schema";
@@ -36,6 +38,40 @@ function projectWithAudio() {
 }
 
 describe("user-controlled voice segments", () => {
+  it("persists an explicit zero tail even when the old performance pause was already zero", () => {
+    const project = projectWithAudio(), original = voiceClips(project)[0];
+    original.pause_after = 0;
+    voiceClips(project)[1].start = original.start + original.duration;
+    const updated = setVoiceGapAfter(project, original.id, 0), target = voiceClips(updated)[0];
+    expect(updated).not.toBe(project);
+    expect(target).toMatchObject({ pause_after: 0, tail_pause_seconds: 0 });
+    expect(target.asset).toBe(original.asset);
+    expect(target.generation).toBe(original.generation);
+    expect(target.audio_stale).toBeUndefined();
+    expect(voiceClips(AsmrProjectSchema.parse(updated))[0].tail_pause_seconds).toBe(0);
+    expect(getVoiceCandidateSourceFingerprint(target)).toBe(getVoiceCandidateSourceFingerprint(original));
+    expect(createAudioPostProcessingInputFingerprint(updated)).toBe(createAudioPostProcessingInputFingerprint(project));
+    expect(setVoiceGapAfter(updated, original.id, 0)).toBe(updated);
+    expect(setVoiceGapAfter(project, original.id, 31)).toBe(project);
+    expect(AsmrProjectSchema.safeParse({ ...project, timeline: { ...project.timeline, tracks: project.timeline.tracks.map(track =>
+      track.track_type === "voice" ? { ...track, clips: track.clips.map(clip => ({ ...clip, tail_pause_seconds: -1 })) } : track) } }).success).toBe(false);
+  });
+
+  it("keeps the explicit tail on the final split boundary and inherits the final boundary on merge or insert", () => {
+    const project = projectWithAudio(), original = voiceClips(project)[0];
+    original.pause_after = 0;
+    original.tail_pause_seconds = 0;
+    const split = splitVoiceClip(project, original.id, 3).project;
+    expect(voiceClips(split).slice(0, 2).map(clip => clip.tail_pause_seconds)).toEqual([undefined, 0]);
+    expect(voiceClips(mergeVoiceClipWithNext(split, original.id).project)[0].tail_pause_seconds).toBe(0);
+    const added = addVoiceClip(project, original.id);
+    expect(voiceClips(added.project)[0].tail_pause_seconds).toBeUndefined();
+    expect(voiceClips(added.project)[1].tail_pause_seconds).toBe(0);
+    const silent = addSilentClip(project, original.id);
+    expect(voiceClips(silent.project).find(clip => clip.id === silent.selectedClipId)?.tail_pause_seconds).toBeUndefined();
+    expect(original.tail_pause_seconds).toBe(0);
+  });
+
   it("gives inserted and split performance sections distinct identities without repeating the original one-off action", () => {
     const project = projectWithAudio();
     const original = voiceClips(project)[0];

@@ -8,6 +8,8 @@ import { renderProcessedClipWav } from "./project-mix-renderer";
 import type { AsmrProject } from "./schema";
 import { readPreparedAudioSource } from "./prepared-audio-source";
 import { StoredZipWriter, ZipLimitError } from "./stored-zip";
+import { getSegmentPauseSeconds } from "./voice-delivery-timing";
+import { appendPcmWavSilence } from "./wav-tail-padding";
 
 const MAX_SOURCE_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
@@ -132,12 +134,14 @@ export async function prepareBatchDownload(
       notes: [
         "仅包含当前工程已生成并采用的片段，不含未采用候选、原始生成长窗口、历史版本或整段混音。",
         "无后处理保留已采用素材的完整原始 WAV 字节；人声后处理仅附已显式生成且当前有效的成品，保留其文件原字节。",
+        "交付音频优先使用当前后处理成品，否则使用原音，并将当前段间停顿写入文件尾部；原音与后处理备份不变。",
         "下载不调用 AI 或临时执行人声空间渲染；缺少或过期的后处理请先点击生成后处理。",
       ],
       clips: [] as {
         clipId: string; assetId: string; type: string; startSeconds: number;
         rawPath: string; processedPath?: string; processing: string; spatialized: boolean;
         durationSeconds: number; processingNote: string;
+        deliveryPath: string; deliveryDurationSeconds: number; tailPauseSeconds: number;
         settings: { volumeDb: number; fadeInSeconds: number; fadeOutSeconds: number; position: typeof clips[number]["clip"]["position"] };
       }[],
     };
@@ -145,6 +149,7 @@ export async function prepareBatchDownload(
       checkCancelled(signal);
       const rawPath = `${folder}/无后处理/${entry.filename}`;
       const processedPath = `${folder}/后处理/${entry.filename}`;
+      const deliveryPath = `${folder}/交付音频/${entry.filename}`;
       const originalStream = createReadStream(sources[index].filePath, { signal });
       try { await writer.add(rawPath, originalStream); }
       finally { originalStream.destroy(); }
@@ -174,10 +179,15 @@ export async function prepareBatchDownload(
       }
       checkCancelled(signal);
       if (processed) await writer.add(processedPath, processed);
+      const delivery = appendPcmWavSilence(processed ?? await readFile(sources[index].filePath, { signal }),
+        clip.type === "voice" ? getSegmentPauseSeconds(project, clip.id) : 0);
+      checkCancelled(signal);
+      await writer.add(deliveryPath, delivery.wav);
       manifest.clips.push({
         clipId: clip.id, assetId: entry.assetId, type: clip.type, startSeconds: clip.start,
         rawPath, ...(processed ? { processedPath } : {}), processing, spatialized,
         durationSeconds: duration, processingNote,
+        deliveryPath, deliveryDurationSeconds: delivery.durationSeconds, tailPauseSeconds: delivery.tailPauseSeconds,
         settings: { volumeDb: clip.volume_db, fadeInSeconds: clip.fade_in, fadeOutSeconds: clip.fade_out, position: clip.position },
       });
     }

@@ -6,6 +6,8 @@ import { prepareVoicePreview } from "./local-voice-preview";
 import type { LocalRuntimeConfig } from "./local-runtime-config";
 import { demoProject } from "./mock-project";
 import { decodePcmWav, writePcm16Wav } from "./pcm-audio";
+import { makePreparedAudioFixture } from "./post-processing-test-fixtures";
+import { getAcceptedVoicePreviewPlan } from "./accepted-voice-preview";
 
 let root: string, tempRoot: string, config: LocalRuntimeConfig;
 beforeEach(async () => {
@@ -55,6 +57,39 @@ describe("raw adopted voice concatenation", () => {
     const result = await prepareVoicePreview(input, config, undefined, { tempRoot });
     expect(result).toMatchObject({ clipCount: 0, skippedCount: 0, duration: .02 });
     expect(decodePcmWav(await readFile(result.filePath)).samples.every(sample => sample === 0)).toBe(true);
+    await result.cleanup();
+  });
+  it("inserts the default pause once after a stored D tail in stable timeline order", async () => {
+    const { project: input, raw, processed } = await makePreparedAudioFixture(config, 2);
+    const track = input.timeline.tracks.find(track => track.track_type === "voice")!;
+    track.clips.forEach(clip => { clip.pause_after = 0; delete clip.tail_pause_seconds; });
+    track.clips[0].start = 1; track.clips[1].start = 0;
+    expect(getAcceptedVoicePreviewPlan(input, "processed").entries.map(entry => entry.clipId)).toEqual([track.clips[1].id, track.clips[0].id]);
+    const before = JSON.stringify(input);
+    const result = await prepareVoicePreview(input, config, undefined, { tempRoot, audioVersion: "processed" });
+    const pcm = decodePcmWav(await readFile(result.filePath)), original = decodePcmWav(processed);
+    expect(result.duration).toBe(1.85);
+    expect(pcm.samples.slice(0, original.samples.length)).toEqual(original.samples);
+    expect(pcm.samples.slice(36000 * 2, 52800 * 2).every(value => value === 0)).toBe(true);
+    expect(pcm.samples.slice(52800 * 2)).toEqual(original.samples);
+    expect(JSON.stringify(input)).toBe(before);
+    expect(await readFile(path.join(config.clipAssetRoot, "original_0.wav"))).toEqual(raw);
+    expect(await readFile(path.join(config.clipAssetRoot, "prepared_0.wav"))).toEqual(processed);
+    await result.cleanup();
+  });
+  it("rounds a sub-sample pause at the source rate before preview resampling", async () => {
+    const first = writePcm16Wav(new Float32Array(800).fill(.2), 8000);
+    const second = writePcm16Wav(new Float32Array(4800).fill(.3), 48000);
+    await writeFile(path.join(config.clipAssetRoot, "a0.wav"), first);
+    await writeFile(path.join(config.clipAssetRoot, "a2.wav"), second);
+    const input = project(), track = input.timeline.tracks.find(track => track.track_type === "voice")!;
+    track.clips = [track.clips[0], track.clips[2]];
+    track.clips[0].pause_after = .00007;
+    const result = await prepareVoicePreview(input, config, undefined, { tempRoot });
+    const pcm = decodePcmWav(await readFile(result.filePath));
+    expect(result.duration).toBe(.200125);
+    expect(pcm.samples.slice(4800 * 2, 4806 * 2).every(value => value === 0)).toBe(true);
+    expect(pcm.samples[4806 * 2]).toBeCloseTo(.3, 4);
     await result.cleanup();
   });
   it("keeps full source tails and channels, resamples, skips missing speech and applies only the explicit inter-clip wait", async () => {

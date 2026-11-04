@@ -106,6 +106,7 @@ export function normalizeSpeechSentences(project: AsmrProject, clipId?: string):
       return { ...blankClip(clip), id: replacement.ids[index], text, start, duration, semantic_unit: true,
         ...(clip.performance ? { performance: { ...clip.performance, segmentId: replacement.ids[index], direction: "", soundIntent: "" } } : {}),
         pause_after: index === replacement.texts.length - 1 ? clip.pause_after ?? 0 : 0,
+        tail_pause_seconds: index === replacement.texts.length - 1 ? clip.tail_pause_seconds : undefined,
         fade_in: Math.min(clip.fade_in, duration), fade_out: Math.min(clip.fade_out, duration) };
     });
   });
@@ -318,13 +319,53 @@ export function syncSharedSpeechScript(previous: AsmrProject, next: AsmrProject)
   const otherById = new Map(other.clips.map((clip) => [clip.id, clip]));
   const waits = new Map(other.clips.map((clip, index) => [clip.id, clip.pause_after ?? (other.clips[index + 1]
     ? Math.max(0, other.clips[index + 1].start - clip.start - (clip.asset.duration ?? clip.duration)) : 0)]));
+  // A split or merge moves the following boundary. Keep that boundary's pause
+  // from this bank, rather than copying another workspace's delivery override.
+  const boundaryPauses = new Map<string, { pause_after: number; tail_pause_seconds: number | undefined }>();
+  const boundary = (clip: VoiceClip) => ({ pause_after: waits.get(clip.id) ?? clip.pause_after ?? 0,
+    tail_pause_seconds: otherById.get(clip.id)?.tail_pause_seconds });
+  if (structural) for (const [oldIndex, old] of before.entries()) {
+    const newIndex = after.findIndex(clip => clip.id === old.id), first = after[newIndex];
+    if (!first || old.kind === "silent" || first.kind === "silent") continue;
+    if (old.text !== first.text) {
+      let splitText = "";
+      for (let index = newIndex; index < after.length && after[index].kind !== "silent"; index++) {
+        splitText += after[index].text;
+        if (!old.text.startsWith(splitText)) break;
+        if (splitText === old.text && index > newIndex) {
+          for (let part = newIndex; part <= index; part++) boundaryPauses.set(after[part].id,
+            part === index ? boundary(old) : { pause_after: 0, tail_pause_seconds: undefined });
+          break;
+        }
+      }
+      let mergedText = "";
+      for (let index = oldIndex; index < before.length && before[index].kind !== "silent"; index++) {
+        mergedText += before[index].text;
+        if (!first.text.startsWith(mergedText)) break;
+        if (mergedText === first.text && index > oldIndex) {
+          boundaryPauses.set(first.id, boundary(before[index]));
+          break;
+        }
+      }
+    } else if (first.pause_after === 0 && first.tail_pause_seconds === undefined && after[newIndex + 1]
+      && !beforeById.has(after[newIndex + 1].id)) {
+      let lastAdded = newIndex + 1;
+      while (after[lastAdded + 1] && !beforeById.has(after[lastAdded + 1].id)) lastAdded++;
+      boundaryPauses.set(first.id, { pause_after: 0, tail_pause_seconds: undefined });
+      const following = boundary(old);
+      boundaryPauses.set(after[lastAdded].id, after[lastAdded].kind === "silent"
+        ? { ...following, tail_pause_seconds: undefined } : following);
+    }
+  }
   let cursor = other.clips[0]?.start ?? after[0]?.start ?? 0;
   const otherClips = after.map((source) => {
     const original = otherById.get(source.id);
     let clip = original ? syncSource(repartitioned.has(source.id) ? blankClip(original) : original, source) : blankClip(source);
+    const transferredPause = boundaryPauses.get(source.id);
+    if (transferredPause) clip = { ...clip, ...transferredPause };
     if ((otherMode === "paragraph" ? paragraphAffected : changed).has(source.id)) clip = markStale(clip);
     if (structural || silentTiming) {
-      const pause = waits.get(source.id) ?? source.pause_after ?? 0;
+      const pause = transferredPause?.pause_after ?? waits.get(source.id) ?? source.pause_after ?? 0;
       clip = { ...clip, start: cursor, pause_after: pause };
       cursor += clip.duration + pause;
     }
@@ -373,6 +414,7 @@ export function replaceParagraphScript(project: AsmrProject, groupId: string, re
   const replacements: VoiceClip[] = [partitionChanged
     ? { ...blankClip(affected[0]), text: edited, duration: total, semantic_unit: true,
       pause_after: affected.at(-1)!.pause_after ?? 0,
+      tail_pause_seconds: affected.at(-1)!.tail_pause_seconds,
       fade_in: Math.min(affected[0].fade_in, total), fade_out: Math.min(affected[0].fade_out, total) }
     : { ...affected[0], text: edited }];
   for (const clip of replacements) {
@@ -417,6 +459,7 @@ export function replaceParagraphScript(project: AsmrProject, groupId: string, re
     const duration = end - start;
     return { ...syncSource(blankClip(original), source), id: source.id, start, duration,
       pause_after: index === replacements.length - 1 ? otherAffected.at(-1)!.pause_after ?? 0 : 0,
+      tail_pause_seconds: index === replacements.length - 1 ? otherAffected.at(-1)!.tail_pause_seconds : undefined,
       fade_in: Math.min(original.fade_in, duration), fade_out: Math.min(original.fade_out, duration) };
   });
   const otherSyncedById = new Map(synced.speechWorkspace![otherMode].clips.map((clip) => [clip.id, clip]));
@@ -462,6 +505,8 @@ export function restoreSharedSpeechScript(current: AsmrProject, beforeSourceProj
         duration: old.duration, fade_in: old.fade_in, fade_out: old.fade_out };
       if (old.pause_after === undefined) delete next.pause_after;
       else next.pause_after = old.pause_after;
+      if (old.tail_pause_seconds === undefined) delete next.tail_pause_seconds;
+      else next.tail_pause_seconds = old.tail_pause_seconds;
       if (old.audio_stale === undefined) delete next.audio_stale;
       else next.audio_stale = old.audio_stale;
       return next;
@@ -550,6 +595,8 @@ export function restoreSpeechWorkspaceArrangement(current: AsmrProject, beforePr
       volume_db: old.volume_db, fade_in: Math.min(old.fade_in, duration), fade_out: Math.min(old.fade_out, duration), position: structuredClone(old.position) };
     if (old.pause_after === undefined) delete restored.pause_after;
     else restored.pause_after = old.pause_after;
+    if (old.tail_pause_seconds === undefined) delete restored.tail_pause_seconds;
+    else restored.tail_pause_seconds = old.tail_pause_seconds;
     return restored;
   });
   const supportingTracks: SpeechWorkspaceBank["supportingTracks"] = bank.supportingTracks.map((track): SpeechWorkspaceBank["supportingTracks"][number] => {

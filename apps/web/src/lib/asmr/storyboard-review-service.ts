@@ -6,7 +6,7 @@ import { getStoryboardReviewClips, getStoryboardReviewFingerprint, getStoryboard
 import { readVideoPlanningRequest, videoPlanningError, videoPlanningTimeout, type VideoPlanningOptions } from "./video-planning-request";
 import { ClipVideoStoryboardSchema, PerformanceStoryboardPartSchema } from "./video-plan";
 import { creativeTemplateContext, getMatchingTemplateDirections } from "./reference-template";
-import { ASMR_SOUND_PLANNING_GUIDANCE, AsmrSoundSchema } from "./asmr-sound";
+import { ASMR_SOUND_PLANNING_GUIDANCE, ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE, AsmrSoundSchema } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
 import { CAMERA_PANTOMIME_GUIDANCE, usesCameraPantomime } from "./camera-pantomime";
 
@@ -49,10 +49,12 @@ function messages(input: StoryboardReviewRequest): PlannerChatMessage[] {
     ...(!pantomime && resolveStoryboardStyle(input.project.videoPlan) === "listener_pov" ? ["分镜风格是 listener_pov：镜头就是听者眼睛，检查前后镜头听者实际位置、眼高与朝向是否跟随已发生的走动、转身、落座等动作，不能一直在原地拍摄S1或无因变成独立跟拍机。S1单独移动不代表听者必须移动，邀请或未来计划不算听者已经行动；只修当前剧情支持的位置/机位变化，保留合理静止。"] : []),
     pantomime
       ? "asmrSound是与当前模拟动作同步的独立拟音。修正时after.asmrSound返回完整对象，保留mixMode；无台词段ambientSound与独立拟音意图一致，有台词主轨继续fully_copy。当前任务的音色、节奏或左右位置有误时同步最小修正，不为了拟音在主画面补真实物件。"
-      : "asmrSound 是独立触发音轨。需要修正时 after.asmrSound 返回完整对象（prompt、postProcessing），不要改变主视频的ambientSound或fully_copy规则。已存在的ASMR规划与画面动作有冲突时，随最小画面修正同步调整声音；不要为了让旧分镜新增ASMR而改写其合理画面。",
+      : "asmrSound 是独立触发音轨。需要修正时 after.asmrSound 返回完整对象（prompt、postProcessing及已有role、mixMode），不要改变主视频的ambientSound或fully_copy规则。已存在的ASMR规划与画面动作有冲突时，随最小画面修正同步调整声音；不要为了让旧分镜新增ASMR而改写其合理画面。",
     pantomime
       ? "asmrSound.prompt用简洁英文写匹配当前任务的拟音材质、触发方式、柔和节奏和安静间隙。独立声音素材可以拍发声材料或手部，只取音；不得将其物件带入主画面的visual/action。纯凝视与等待只保留安静环境。音效无对白、低语、呼吸、口腔声或音乐，保持干燥、少混响、无人工声像移动。postProcessing按当前手势相对听者的位置选start/end.pan(-1至1)、distance和movement，无位移时static且start=end，gainDb克制；角色人声位置与拟音位置独立。"
       : ASMR_SOUND_PLANNING_GUIDANCE,
+    ...(pantomime ? [ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE] : []),
+    "声音校对保持已有role；只有当前材料触发与安静环境分类确实错误时才调整，不因改写文字省略role而丢失用途与响度平衡。新增加的asmrSound明确role。用户已有合理声响和节奏保持；重复的泛化沙沙描述若未体现当前材料，应在当前意图内细化材质接触与音色，不追加新声源或改动动作时长。",
     ...(pantomime ? [
       "逐段核对当前text与performance.direction/soundIntent，不以邻段画面或模板示例取代本段任务。只要有具体模拟手势就允许对应拟音，不能因主画面空手就把声音删成静音；纯反应和等待则保持安静。",
       "保留每段及每个parts项的asmrSound.mixMode：无台词replace，有台词overlay且完整保留TTS。只修文字、音色节奏与位置，不修改声音职责。",

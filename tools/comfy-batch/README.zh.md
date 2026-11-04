@@ -30,7 +30,7 @@ English contract: The GUI offers project/default, portrait, and landscape preset
 
 ## 更新已有项目包
 
-先关闭旧批跑器，再将更新包中的 **`runner.py`、`run.bat`、`README.zh.md` 三个文件**覆盖到旧项目解压目录，并补齐或更新 `custom_nodes/asmr_director_audio/`。保留 `project.json`、已有的 `workflow_api.json`、全部素材及整个 `outputs/`，尤其不要删除 `run-state.json`。更新包附带标准 `workflow_api.json`，仅在旧包缺少该文件时补齐，不覆盖你已经调整的工作流。使用 ASMR 后处理合片时，将更新后的节点目录也复制到目标 ComfyUI，按节点说明安装缺少的依赖并重启 ComfyUI。
+先关闭旧批跑器，再将更新包中的 **`runner.py`、`run.bat`、`README.zh.md` 三个文件**覆盖到旧项目解压目录，并补齐或更新 `custom_nodes/asmr_director_audio/`。保留 `project.json`、已有的 `workflow_api.json`、全部素材及整个 `outputs/`，尤其不要删除 `run-state.json`。若更新包附带标准 `workflow_api.json`，仅在旧包缺少该文件时补齐，不覆盖你已经调整的工作流；本次音效质量更新包不含工作流。使用 ASMR 后处理合片时，将更新后的节点目录也复制到目标 ComfyUI，按节点说明安装缺少的依赖并重启 ComfyUI。
 
 第一次继续运行时，旧 version 1 状态会自动备份为 `run-state.v1-backup-*.json`，再迁入候选 1；输入保持不变时，已有成功结果不会因升级重新生成，未确认任务先对账。继续同一批时将 N 设为原值；改成其他 N 时按补缺／保留规则处理。新导出的完整项目包仍携带运行器、启动器、说明和工作流四个运行文件。
 
@@ -83,6 +83,7 @@ python runner.py "I:\AI\asmr_director\artifacts\我的项目" --concat
 
 ```json
 "asmrSound": {
+  "role": "trigger",
   "prompt": "Close-up of slow fabric brushing. Soft, dry, detailed fabric friction; no voices or music.",
   "durationSeconds": 3.2,
   "mixMode": "overlay",
@@ -90,7 +91,7 @@ python runner.py "I:\AI\asmr_director\artifacts\我的项目" --concat
     "start": {"pan": -0.5, "distance": "near"},
     "end": {"pan": 0.25, "distance": "close"},
     "movement": "left_to_right",
-    "gainDb": -9
+    "gainDb": -12
   }
 }
 ```
@@ -99,9 +100,11 @@ python runner.py "I:\AI\asmr_director\artifacts\我的项目" --concat
 
 最终合片使用 API 规划的起点、终点、移动和增益，对生成音效先转单声道，再使用 D 算法重新定位；这一步在生成音视频后才执行。处理结果裁到该段音频长度，再补齐至对应视频帧时长。增益以 dB 控制，混音统一保护峰值，不把后镜声音提前。`mixMode: "overlay"`（旧包默认）将处理声叠加到原轨；`"replace"` 让它作为无台词段的完整声音来源，避免原视频与独立声音重复敲击或叠加底噪。对白段只允许 overlay，已采用人声始终保留。原版预览使用主视频的原生声音，无台词操作段自身就包含所设计的触发声。
 
+`role` 为 `trigger`（材质触发音）或 `ambience`（安静环境）时启用新版响度平衡；缺省保持旧处理。新模式在空间处理后测量声音，独立触发基准 −27 LUFS，伴随对白触发基准不高于 −34 LUFS 且通常低于该段人声10 dB，环境基准上限 −48 LUFS。整段只用一个共同增益，保留触发强弱与停顿，不做逐拍自动压缩；环境声和极低噪声不被抬高，触发总提升上限12 dB，真峰值保护 −2.1 dB。`gainDb` 的中性值为 trigger −12 / ambience −30，新界面显示相对中性值的响度微调（触发±6、环境−6至+3 dB）。旧缺省工程仍使用原增益语义。需要更新包内音效节点，新增 `AsmrDirectorBalancedSpatialAudio`；没有新节点时只保留原版、提示补装，不能当作增强版成功。
+
 N=1 时原版为 `outputs/preview.mp4`，叠加版为 `outputs/preview-asmr.mp4`；N>1 时分别为 `preview-c001.mp4`、`preview-asmr-c001.mp4` 等。两种合片拥有各自的任务回执。缺音效、规划不完整或缺 D 节点时，仅叠加版待恢复，原版与已生成素材保留；安装节点后继续不会重跑 H3。原生 12 类实验包仍保持独立片段流程。
 
-只改音效提示词会重做对应音效；只改空间设置、增益或 mixMode 会复用音效素材并重新合成 ASMR 版，原版预览不重做。`--rerun-asmr 2` 或 `--rerun-asmr-candidates "2:1"` 可仅重抽 ASMR，普通 `--rerun` 仍仅重做主视频。所有音效任务也遵守停止、技术重试、未知提交对账和完整历史复用规则。`--dry-run` 会同时生成主镜及音效 payload，不联网。
+只改音效提示词会重做对应音效。在导出包 `project.json` 中保持音效 prompt 和时长不变，只改声音用途 `role`、空间设置、增益或 mixMode，会复用音效素材并重新合成 ASMR 版，原版预览不重做。网页切换用途后重新导出会采用该用途的新取音 prompt，因此对应音效会重新生成。`--rerun-asmr 2` 或 `--rerun-asmr-candidates "2:1"` 可仅重抽 ASMR，普通 `--rerun` 仍仅重做主视频。所有音效任务也遵守停止、技术重试、未知提交对账和完整历史复用规则。`--dry-run` 会同时生成主镜及音效 payload，不联网。
 
 窗口高级设置也提供「只重做 ASMR 镜头」和「只重做 ASMR 候选」：分别填写 `2,4` 或 `2:1,4:2`；画面重做使用旁边的画面选项。进度会标明当前正在生成画面、ASMR 触发音、原版合片或 ASMR 叠加版。
 
@@ -113,7 +116,7 @@ N=1 时原版为 `outputs/preview.mp4`，叠加版为 `outputs/preview-asmr.mp4`
 
 成品视频、原字节下载缓存、原音快照、尾帧、提交 payload 和原子保存的 `run-state.json` 默认保存在**项目文件夹内的 `outputs/`**，可用 `--output-root` 指定其他目录；程序不依赖开发机的盘符。每个镜头的每个候选独立记录任务身份和结果。相同输入已成功的候选会跳过；修改单镜输入只更新该镜，不传播到后镜。连续参考只认相邻上一镜的同号候选，缺失时自动按独立镜头继续。整批继续执行，不进行质量审核或人工确认。
 
-可在窗口勾选「由 ComfyUI 合并顺序预览」，或添加 `--concat`。每个候选号分别检查全部镜头，只有该号每一镜都有与当前输入一致、文件完整的成功结果才合片，不缺镜拼接、不套用工程时间线或等待。N=1 保持 `outputs/preview.mp4`；N>1 输出 `outputs/preview-c001.mp4`、`preview-c002.mp4` 等。同号中有缺镜时只跳过该条预览，其他完整候选号可以正常合片。
+可在窗口勾选「由 ComfyUI 合并顺序预览」，或添加 `--concat`。每个候选号分别检查全部镜头，只有该号每一镜都有与当前输入一致、文件完整的成功结果才合片，不缺镜拼接。段间留白由导演台直接写入每段交付 WAV 尾部，视频和独立 ASMR 使用同一实际时长，runner 不再额外插入等待；旧包须重新导出才能获得留白，仅升级 runner 不会修改其原 WAV。N=1 保持 `outputs/preview.mp4`；N>1 输出 `outputs/preview-c001.mp4`、`preview-c002.mp4` 等。同号中有缺镜时只跳过该条预览，其他完整候选号可以正常合片。
 
 合片由目标 ComfyUI 的 `LoadVideo`、`ConcatenateVideo`、`SaveVideo` 等节点完成。每镜通过已有 `CLFLoadVideoTailFrames` 实测总帧数，按本包固定 24 fps 计算时长；原生 `LoadAudio`、`EmptyAudio`、`AudioMerge`、`AudioConcat` 将各镜声音补齐或裁到各自画面时长，再作为完整预览音轨，避免短音轨使后镜声音提前。预览会编码音轨，不承诺字节无损；已有单镜成品不变。合片另有独立提交与恢复回执，错误保留已有预览，不触发 H3 重做；结果未变化时跳过重复合片。
 

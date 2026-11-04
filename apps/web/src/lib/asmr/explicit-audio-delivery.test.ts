@@ -35,10 +35,10 @@ describe("delivery of explicitly prepared audio", () => {
       .rejects.toMatchObject({ statusCode: 422, message: expect.stringContaining("后处理音频（含尾音）超过 15 秒") });
     expect(await readFile(path.join(config.clipAssetRoot, "original_0.wav"))).toEqual(raw);
   });
-  it("keeps original preview independent and concatenates stored processed bytes without timeline waits or another render", async () => {
+  it("keeps original preview independent and respects an explicit zero delivery pause without another render", async () => {
     const { project, raw, processed } = await makePreparedAudioFixture(config);
     const original = getAcceptedVoicePreviewPlan(project);
-    expect(original.entries[0]).toMatchObject({ assetId: "original_0", gapAfterSeconds: 25 });
+    expect(original.entries[0]).toMatchObject({ assetId: "original_0", gapAfterSeconds: 0 });
     const plan = getAcceptedVoicePreviewPlan(project, "processed");
     expect(plan.entries.map(entry => entry.gapAfterSeconds)).toEqual([0, 0]);
     expect(plan.entries[0]).toMatchObject({ assetId: "prepared_0" });

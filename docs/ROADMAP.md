@@ -1,10 +1,16 @@
 # ASMR Director 固定 Roadmap
 
-Last updated: 2026-11-02
+Last updated: 2026-11-05
 
 本文件是项目顶层路线的唯一硬来源。`docs/AI_HANDOFF.md` 可以总结当前状态，`docs/project-archive.md` 可以记录历史，但它们都不能定义一套与本文件竞争的路线。
 
 ## 当前优先级
+
+2026-11-05 按用户要求归档发布前两轮ASMR质量/响度与窗口/留白改动：70个精确范围文件，28历史范围外保持；源码与既有验证哈希一致，沿用637 Web+2Python及质量版本证据，无新生成、构建或部署。分支仍codex/voxcpm2-product-generation，实际commit与远端核验见发布回执。本次仅发布既有AudioQualityV1子项，整体路线与其他暂停不变。[发布记录](records/2026-11-05-asmr-quality-continuity-publication.md)。
+
+2026-11-04 完成额度中断的窗口/留白修改：新短句窗口跨无台词取后文、不足补句含末条；交付 WAV 在原音/D后实际追加默认0.35秒，旧非零保留/单段0可关，主视频和独立ASMR同长，含尾音和留白≤15秒。637 Web+2真实Python集成、lint/完整构建、HTTP/当前16段UI保存验证通过；3001 build `sXd34soKlctj7F4E1TWu0`已启用。旧39段万圣节重导出19处静音、78禁网payload、原40WAV保持；0新模型调用/未称听感改善、未提交推送，28范围外保持。Audio Quality V1内实现与交付修复完成，其他暂停及顶层路线不变。[记录与证据](records/2026-11-04-voice-continuity.md)。
+
+2026-11-02 已先推送既有78文件`1afcc47`，再完成ASMR制作与响度平衡新版：新用途trigger/ambience、材质真实接触/节奏差异、D后有限响度校平和环境不抬底；旧方式保持。15真实DP，最终五段分类及90秒brief重试80秒结构通过，仍有声位/材质与文案多样性局限，0H3试听；385 Web+153 runner+16 DSP+2集成、lint/完整构建通过。3001 build `62UR1pURBeVJ2uNUJxtY1`已启用，HTTP/原39文本/20采用/39设计/20D/保存核验，完整更新包交付。本轮新实现未提交，28范围外保护；仅当前Audio Quality V1子项完成实现，真实生成听感待验，其他暂停与顶层路线不变。[实现、证据与交付](records/2026-11-02-asmr-sound-quality.md)。
 
 2026-11-02 用户要求先记录推送既有版本，再改善独立声音的ASMR质感、材质/节奏多样性和各段响度平衡。仍在Audio Quality V1内；旧prompt诊断不代替生成听感验收，其他暂停不变。发布依据与后续实现分开记录。[当前反馈与发布](records/2026-11-02-asmr-quality-baseline-publication.md)。
 

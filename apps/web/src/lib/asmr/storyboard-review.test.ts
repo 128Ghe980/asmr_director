@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { postProcessingProject } from "../../components/studio/audio-post-processing-test-fixture";
 import { createClipVideoSourceFingerprint, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent } from "./video-plan";
-import { applyStoryboardReview, getStoryboardReviewFingerprint, getStoryboardReviewSummary, pickStoryboardReviewFields, StoryboardReviewSchema } from "./storyboard-review";
+import { applyStoryboardReview, getStoryboardReviewFingerprint, getStoryboardReviewSummary, pickStoryboardReviewFields, preserveStoryboardReviewSoundModes, StoryboardReviewSchema } from "./storyboard-review";
 import { asmrSoundFixture } from "./asmr-sound-test-fixture";
 
 function fixture() {
@@ -14,6 +14,26 @@ function fixture() {
 }
 
 describe("storyboard review domain", () => {
+  it("retains sound roles through text-only review omissions, including continuous parts", () => {
+    const before = { title: "材料声音", visual: "Hand and material.", action: "Rub cloth.", camera: "Fixed.",
+      asmrSound: { ...asmrSoundFixture, role: "trigger" as const, mixMode: "replace" as const },
+      parts: [{ durationSeconds: 5, visual: "Quiet room.", action: "Rest.", camera: "Fixed.", ambientSound: "Room tone.",
+        asmrSound: { ...asmrSoundFixture, role: "ambience" as const, mixMode: "replace" as const } }] };
+    const after = structuredClone(before);
+    const sound = { ...after.asmrSound, prompt: "Cotton layers rub with a muted shff." };
+    const partSound = { ...after.parts[0].asmrSound, prompt: "Soft indoor room tone." };
+    const withoutRole: typeof asmrSoundFixture = { ...sound };
+    const partWithoutRole: typeof asmrSoundFixture = { ...partSound };
+    delete withoutRole.role;
+    delete partWithoutRole.role;
+    const result = preserveStoryboardReviewSoundModes(before, { ...after, asmrSound: withoutRole,
+      parts: [{ ...after.parts[0], asmrSound: partWithoutRole }] });
+    expect(result.asmrSound).toMatchObject({ role: "trigger", mixMode: "replace", prompt: sound.prompt });
+    expect(result.parts?.[0].asmrSound).toMatchObject({ role: "ambience", mixMode: "replace", prompt: partSound.prompt });
+    expect(preserveStoryboardReviewSoundModes(before, { ...after, asmrSound: { ...sound, role: "ambience" } }).asmrSound?.role).toBe("ambience");
+    const legacy = { ...before, asmrSound: { ...asmrSoundFixture } };
+    expect(preserveStoryboardReviewSoundModes(legacy, legacy).asmrSound?.role).toBeUndefined();
+  });
   it("adds an independent sound plan to a legacy shot and can undo it without touching its main prompt or audio", () => {
     const { project, clips } = fixture(), shot = project.videoPlan!.shots[clips[0].id];
     const before = pickStoryboardReviewFields(shot);
@@ -26,6 +46,19 @@ describe("storyboard review domain", () => {
     expect(updated.timeline).toEqual(project.timeline);
     const undone = applyStoryboardReview(updated, { inputFingerprint: getStoryboardReviewFingerprint(updated), notes: [], changes: [{ ...change, before: after, after: before }] });
     expect(undone.videoPlan).toEqual(project.videoPlan);
+  });
+  it("can undo an explicit role addition back to the exact legacy plan", () => {
+    const { project, clips } = fixture(), shot = project.videoPlan!.shots[clips[0].id];
+    shot.asmrSound = structuredClone(asmrSoundFixture);
+    const before = pickStoryboardReviewFields(shot);
+    const after = { ...before, asmrSound: { ...asmrSoundFixture, role: "trigger" as const } };
+    const change = { clipId: shot.clipId, reason: "明确材料触发声", before, after };
+    const updated = applyStoryboardReview(project, { inputFingerprint: getStoryboardReviewFingerprint(project), notes: [], changes: [change] });
+    expect(updated.videoPlan!.shots[shot.clipId].asmrSound?.role).toBe("trigger");
+    const restored = applyStoryboardReview(updated, { inputFingerprint: getStoryboardReviewFingerprint(updated), notes: [],
+      changes: [{ ...change, before: after, after: before }] });
+    expect(restored.videoPlan!.shots[shot.clipId].asmrSound).toEqual(asmrSoundFixture);
+    expect(restored.videoPlan).toEqual(project.videoPlan);
   });
   it("requires all adopted sources and complete current shots", () => {
     const { project, clips } = fixture(); expect(getStoryboardReviewSummary(project)).toMatchObject({ ready: true, total: 2 });

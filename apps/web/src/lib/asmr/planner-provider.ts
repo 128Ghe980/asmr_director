@@ -15,6 +15,7 @@ import { expandPlannerGeneratedDraft, normalizePlannerSemanticDraft, PlannerGene
 import { creativeTemplateContext } from "./reference-template";
 import { effectiveStoryboardStyle } from "./storyboard-style";
 import { CAMERA_PANTOMIME_GUIDANCE, usesCameraPantomime } from "./camera-pantomime";
+import { ASMR_SOUND_PALETTE_GUIDANCE } from "./asmr-sound";
 
 // Imported only by the server route. Credentials never enter the browser contract.
 export const PlannerProviderIdSchema = z.enum(["ollama", "api"]);
@@ -211,9 +212,11 @@ function performanceFinalChecklist(brief: PlannerBrief, repair = false): string 
     `总表演目标${brief.durationSeconds}秒，合格范围${minimum}至${maximum}秒。台词按max(2,ceil(非空白字符数/2.8+标点数×0.35))逐条估时；不得把片名、导演说明或声音描述算成台词。`,
     budget.noSpeech ? "全程无台词，不添加speech；围绕当前主题发展有实质变化的声音内容，动作合理完成即结束，不反复执行一次性动作凑时间。"
       : soundLed ? `本次以声音为主，语言约${budget.speechSeconds}秒只是软偏好；保持少说话，用有效声音内容发展整体表演，不把等待或一次性动作拖长。`
-      : repair ? "完整交流按上面的实际逐条估时与具体重写预算重写；不要再受最初语言比例限制。必须先补齐缺失的任务动作silent，并确定合理秒数，再核算剩余语言预算；缺失silent绝不代表动作时间为0。充实同一主题的自然交流，不把其余时间塞给silent。"
+      : repair ? "完整交流按上面的实际逐条估时与具体重写预算重写；不要再受最初语言比例限制。必须先补齐缺失的任务动作silent，并确定合理秒数，再核算剩余语言预算；缺失silent绝不代表动作时间为0。按指出的超额或不足删减或充实同一主题的自然交流，不把其余时间塞给silent；总时长超出时不能继续扩写台词。"
       : `完整台词先按约${budget.speechSeconds}秒、约${Math.max(1, Math.round(budget.speechSeconds / 9))}段组织，每段通常20至35字、6至12秒。先确定实际输出的必要silent合计，再用“${brief.durationSeconds}秒－合理silent合计”计算需要的台词总时间；不能把尚未编排的动作当作0秒。若主题只有四五个一次性动作，动作可能共25至35秒，剩余时间应用约8至12秒的完整交流展开，不为比例增加动作或等待。`,
-    "把同一意图的短应答、解释和衔接组织成一段完整口语，允许2至3句；不要连续输出多段只有7至15字的介绍、确认或告别。已有短句可以充实当前角色、细节和声音感受，也可以与相邻同意图台词合并，不增加无关支线。每条speech预计不得超过15秒。",
+    repair
+      ? "把同一意图的短应答、解释和衔接组织成完整口语；每条speech预计不得超过15秒。按上面的预算增减实际文字或完整活动，不能只合并段落、改direction或原样返回上一稿；合并所有原句并不等于减少台词时长。保留必要任务动作和过渡，不机械压缩所有silent秒数。"
+      : "把同一意图的短应答、解释和衔接组织成一段完整口语，允许2至3句；不要连续输出多段只有7至15字的介绍、确认或告别。已有短句可以充实当前角色、细节和声音感受，也可以与相邻同意图台词合并，不增加无关支线。每条speech预计不得超过15秒。",
     `每个silent.text必须写至少4个实际文字的第三人称具体表演，不能空白；例如“${actionExample}”。“声音很舒服”“有点粗糙，但很踏实”“像提醒你该回神了”都是角色评论，应写speech，不能冒充silent动作描述；silent.text中不向听者说话。每unit显式写direction与soundSuggestions。一次性动作3至8秒、最多10秒且一段做完，interaction最多5秒，持续asmr最多15秒。不能因标签是asmr就拉长拆开、递交、取放。`,
     "按事件顺序再看一遍：发出动作邀请或说明准备做什么的台词在动作之前，动作后的确认说已经完成，不能做完后再说‘我来帮你做’；相邻unit的手部状态连续，不重复已经完成的动作。",
     "最后实际相加全部speech估时与silent秒数，达到上述范围后才返回完整JSON；不要返回一个时长不足的提纲。只返回脚本，不返回核对表。",
@@ -243,6 +246,7 @@ function performancePrompts(request: Extract<PlannerRequest, { action: "generate
     "你是中文 ASMR 表演编剧。产物是一段在稳定镜头前发生的完整表演脚本：语言、真实动作、听声音和等待共同占据时间。",
     timing,
     PERFORMANCE_PACING_GUIDANCE,
+    ASMR_SOUND_PALETTE_GUIDANCE,
     "先在内部安排完整交流、必需动作、声音操作和互动的合理时间，再写最终有序脚本；不要先把语言压成短词，再把全部缺口塞给无台词动作。只输出最终脚本，不输出推理或另一份时间表。开场与具体细节必须来自本次主题、角色和关系；人物能力符合设定。",
     "围绕当前主题的一个核心活动展开，不为凑时长新增支线、人物或材料。声音操作可持续并变化节奏；动作过渡按实际需要。一个单元可以包含多个句号，不按每个句号机械拆分，也不强制台词与无台词逐条交替。",
     "有台词：kind=speech，text只写真正说出口的话，不写动作括号，不填durationSeconds。无台词：kind=silent，text写用户可编辑的具体表演内容，durationSeconds写该完整段的合理秒数（大于0且不超过15，并遵守用途上限）。silent.text绝不会朗读。",
@@ -295,6 +299,7 @@ function rewritePrompts(request: Extract<PlannerRequest, { action: "rewrite" }>,
   const performance = request.draft.performanceVersion === 1;
   const system = [
     "你是中文 ASMR 创意策划与编剧。围绕用户今天的主题，写出完整、可编辑的表演脚本。表演者在相对稳定的镜头前交流、做事、让听者听声音；台词是表演的一部分。",
+    ASMR_SOUND_PALETTE_GUIDANCE,
     pantomime
       ? "场景和人物保持一致，S1从已建立的对镜位置用表情和空手手势自然承接、发展、安静收尾；不要只给大纲，不要机械重复安慰或说教。"
       : "场景和人物保持一致，段落自然承接，有进入场景、发展、安静收尾；不要只给大纲，不要机械重复安慰或说教。",
@@ -435,6 +440,11 @@ function performanceOutputProblems(value: unknown, brief: PlannerBrief): string[
   const totalSeconds = speechSeconds + nonSpeechSeconds, minimum = brief.durationSeconds * 0.8, maximum = brief.durationSeconds * 1.2;
   if (canEstimate && (totalSeconds < minimum || totalSeconds > maximum)) {
     problems.push(`表演时间预算不符：台词估计${speechSeconds}秒，无台词合计${nonSpeechSeconds}秒，总计${totalSeconds}秒；目标${brief.durationSeconds}秒，允许${minimum}至${maximum}秒。请${totalSeconds > maximum ? "减少支线、重复等待与重复声音操作" : budget.noSpeech ? "补充当前主题中有实质变化的声音内容" : "充实当前主题的完整自然交流或有实质变化的声音内容"}约${Math.round(Math.abs(totalSeconds - brief.durationSeconds))}秒。逐项相加复核，但不得把时间差额硬塞给少数silent段，不延长或重复一个简单动作；遵守每段时长上限，不机械缩放所有durationSeconds，不新编支线。`);
+    if (totalSeconds > maximum && speechSeconds > 0 && nonSpeechSeconds < maximum && budget.speechSeconds >= brief.durationSeconds * 0.25) {
+      const languageTarget = Math.max(0, Math.round(brief.durationSeconds - nonSpeechSeconds));
+      const languageMaximum = Math.max(0, Math.floor(maximum - nonSpeechSeconds));
+      problems.push(`超时重写预算：若保留现有${nonSpeechSeconds}秒合理无台词内容，台词目标约${languageTarget}秒、最多${languageMaximum}秒；当前台词${speechSeconds}秒，至少减少${Math.ceil(speechSeconds - languageMaximum)}秒。优先删去同一意思的重复解释、确认和非必要支线；也可删除一个完整的重复活动及相关台词，再重新核算剩余预算。必要动作、过渡和安静间隙保留，不把全部动作机械加速，不只合并段落但原样保留所有字。`);
+    }
     if (totalSeconds < minimum && !budget.noSpeech) {
       const speech = units.filter(({ value: unit }) => unit.kind === "speech" && typeof unit.text === "string")
         .map(({ value: unit, path }) => ({ path, text: unit.text as string, seconds: estimatePlannerSpeechDuration(unit.text as string) }));
@@ -682,7 +692,12 @@ export async function runPlanner(
         return { section, provider: provider.id, model: provider.model };
       } catch (error) {
         if (!(error instanceof InvalidPlannerOutput)) throw error;
-        if (attempt === 1) throw new PlannerError(502, "模型文案结构不正确，自动修复后仍未通过校验。请重试或调整主题。");
+        if (attempt === 1) {
+          const timing = error.message.match(/^表演时间预算不符：([^。\n]+)。/u)?.[1];
+          throw new PlannerError(502, timing
+            ? `模型文案时长仍不符合要求（${timing}），自动修复未成功。请重试或调整目标时长。`
+            : "模型文案结构不正确，自动修复后仍未通过校验。请重试或调整主题。");
+        }
         if (content) messages.push({ role: "assistant", content });
         messages.push({
           role: "user",

@@ -8,6 +8,7 @@ import type { AudioPostProcessingAnchor } from "@/lib/asmr/audio-post-processing
 import { resolvePlayableAssetUri } from "@/lib/asmr/playback-asset-resolver";
 import type { AsmrProject } from "@/lib/asmr/schema";
 import { getValueLabel } from "@/lib/asmr/ui-copy";
+import { getOrderedVoiceClips, getSegmentPauseSeconds } from "@/lib/asmr/voice-delivery-timing";
 import { AudioPlayer } from "./audio-player";
 
 type PreviewResult = { audioUrl: string; filename: string; clipCount: number; skippedCount: number; duration: number; size: number; expiresAt: number };
@@ -27,6 +28,7 @@ export function AudioPostProcessingPanel({ project, busy = false, notice }: { pr
   const receipts = useMemo(() => getCurrentAudioPostProcessingReceipts(project), [project]);
   const source = useMemo(() => JSON.stringify({ projectId: project.project_id, mode: project.speechWorkspace?.activeMode ?? "short",
     input: createAudioPostProcessingInputFingerprint(project), results: processing?.results,
+    deliveryPauses: getOrderedVoiceClips(project).map(clip => [clip.id, getSegmentPauseSeconds(project, clip.id)]),
     settings: clips.map(clip => [clip.id, clip.position, clip.volume_db, clip.fade_in, clip.fade_out]), complete: summary.complete }), [project, processing, clips, summary.complete]);
   const sourceRef = useRef(source);
   useLayoutEffect(() => { sourceRef.current = source; }, [source]);
@@ -89,7 +91,7 @@ export function AudioPostProcessingPanel({ project, busy = false, notice }: { pr
       <div className="text-[11px] text-studio-muted"><span className="font-medium text-teal-100">后处理结果</span> · 当前完成 {summary.completed}/{summary.total} 镜 · 原音保留</div>
       <div className="flex flex-wrap items-center gap-1.5">
         <button type="button" className={buttonClass} disabled={busy || !summary.complete || current?.status === "preparing"} onClick={() => void preparePreview()}
-          aria-label="后处理整体试听" title={summary.complete ? "按镜头顺序连接已生成的后处理结果，不重新渲染。" : "全部镜头后处理完成且未过期后，可整体试听。"}>
+          aria-label="后处理整体试听" title={summary.complete ? "按镜头顺序连接已生成的后处理结果，保留段间留白。" : "全部镜头后处理完成且未过期后，可整体试听。"}>
           {current?.status === "preparing" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : ready ? <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> : <Headphones className="h-3.5 w-3.5" aria-hidden="true" />}
           {current?.status === "preparing" ? "准备试听…" : "后处理整体试听"}
         </button>

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { demoProject } from "./mock-project";
 import { AsmrProjectSchema, type AsmrProject } from "./schema";
 import { captureSpeechWorkspace, ensureSpeechWorkspaces, getParagraphGroup, getSpeechParagraphs, getSpeechWorkspaceProject, hasSharedSpeechScriptChanges, mergeSpeechWorkspaceProject, replaceParagraphScript, restoreSharedSpeechScript, restoreSpeechWorkspaceArrangement, switchSpeechWorkspace, syncSharedSpeechScript } from "./speech-workspace";
-import { setVoiceGapAfter } from "./voice-segments";
+import { mergeVoiceClipWithNext, setVoiceGapAfter, splitVoiceClip } from "./voice-segments";
 import { commitGenerationSuccess } from "./generation-project-state";
 
 function voices(project: AsmrProject) { return project.timeline.tracks.find((track) => track.track_type === "voice")!.clips; }
@@ -25,6 +25,33 @@ function fillParagraph(project: AsmrProject): AsmrProject {
 }
 
 describe("two speech workspaces with shared source", () => {
+  it("keeps delivery overrides bank-specific and restores them without making adopted audio stale", () => {
+    const original = switchSpeechWorkspace(fillParagraph(ensureSpeechWorkspaces(fixture())), "short");
+    const edited = syncSharedSpeechScript(original, setVoiceGapAfter(original, "voice_0", 0));
+    expect(edited.speechWorkspace!.short.clips[0]).toMatchObject({ tail_pause_seconds: 0, pause_after: 0, asset: { asset_id: "short_0" } });
+    expect(edited.speechWorkspace!.short.clips[0].audio_stale).toBeUndefined();
+    expect(edited.speechWorkspace!.paragraph.clips[0].tail_pause_seconds).toBeUndefined();
+    expect(hasSharedSpeechScriptChanges(original, edited)).toBe(false);
+    const restored = restoreSpeechWorkspaceArrangement(edited, original, "short");
+    expect(voices(restored)[0].tail_pause_seconds).toBeUndefined();
+    expect(voices(restored)[0].pause_after).toBe(5);
+    expect(restored.speechWorkspace!.paragraph).toEqual(original.speechWorkspace!.paragraph);
+  });
+
+  it("transfers each bank's own tail override through a split and merge", () => {
+    let paragraph = fillParagraph(ensureSpeechWorkspaces(fixture()));
+    paragraph = captureSpeechWorkspace(setVoiceGapAfter(paragraph, "voice_0", 0));
+    let original = switchSpeechWorkspace(paragraph, "short");
+    original = captureSpeechWorkspace(setVoiceGapAfter(original, "voice_0", .8));
+    const split = syncSharedSpeechScript(original, splitVoiceClip(original, "voice_0", 3).project);
+    expect(split.speechWorkspace!.short.clips.slice(0, 2).map(clip => clip.tail_pause_seconds)).toEqual([undefined, .8]);
+    expect(split.speechWorkspace!.paragraph.clips.slice(0, 2).map(clip => clip.tail_pause_seconds)).toEqual([undefined, 0]);
+    expect(split.speechWorkspace!.paragraph.clips.slice(0, 2).map(clip => clip.pause_after)).toEqual([0, 0]);
+    const merged = syncSharedSpeechScript(split, mergeVoiceClipWithNext(split, "voice_0").project);
+    expect(merged.speechWorkspace!.short.clips[0].tail_pause_seconds).toBe(.8);
+    expect(merged.speechWorkspace!.paragraph.clips[0].tail_pause_seconds).toBe(0);
+  });
+
   it("shares performance direction changes across workspaces without invalidating unchanged spoken audio", () => {
     const source = fixture();
     voices(source)[0].performance = { version: 1, segmentId: "opening", purpose: "dialogue", direction: "看向听者", soundIntent: "安静" };

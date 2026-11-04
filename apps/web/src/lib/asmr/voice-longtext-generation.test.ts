@@ -9,7 +9,7 @@ import { decodePcmWav, writePcm16Wav } from "./pcm-audio";
 import { makeVoiceCandidateFixture } from "./voice-candidate-fixture";
 import { VoiceGroupAnalysisError, type VoiceGroupAnalysis } from "./voice-group-analysis";
 import { assembleVoiceGroups, generateVoiceLongText } from "./voice-longtext-generation";
-import { buildLongTextInputs, type VoiceLongTextPlan } from "./voice-longtext-plan";
+import { buildLongTextInputs, continuationClause, VOICE_CONTINUATION_CLAUSES, type VoiceLongTextPlan } from "./voice-longtext-plan";
 import { VoxCpm2Error } from "./voxcpm2-provider";
 import { INSUFFICIENT_STORAGE } from "./local-storage-error";
 
@@ -212,7 +212,7 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(result.provenance.longText!.joins).toEqual([]);
   });
 
-  it("generates the real project ending alone, without fixed padding or a planning request", async () => {
+  it("reproduces a saved v1 project ending alone without fixed padding or a planning request", async () => {
     const { input, waves, deps } = await fixture();
     deps.generate.mockImplementation(async () => ({ wav: waves[0], provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
     deps.analyze.mockImplementation(async ({ expectedText }) => ({ ...analysis(waves[0], expectedText), internalPausesMs: [] }));
@@ -222,6 +222,29 @@ describe("long-text generation orchestration with injected engine and alignment"
     expect(deps.generate.mock.calls[0][0].text).toBe("晚安。");
     expect(deps.analyze.mock.calls[0][0].followingText).toBeUndefined();
     expect(result.provenance.longText!.groups[0]).toMatchObject({ isFinal: true, paddingClauses: [] });
+  });
+
+  it("generates the v2 final target with fixed context, analyzes that boundary and retains only cropped target audio", async () => {
+    const { root, input, deps } = await fixture();
+    const context = { version: 2 as const, followingClauses: [], isFinal: false };
+    const source = writePcm16Wav(new Float32Array(96_000).fill(.08), 48_000);
+    const cropped = writePcm16Wav(new Float32Array(48_000).fill(.08), 48_000);
+    deps.generate.mockImplementation(async () => ({ wav: source, provenance: makeVoiceCandidateFixture().provenance, qualityWarnings: [] }));
+    deps.analyze.mockImplementation(async ({ expectedText }) => ({ ...analysis(cropped, expectedText), internalPausesMs: [] }));
+    const result = await generateVoiceLongText({ ...input, text: "晚安。", context }, deps);
+    expect(deps.plan).not.toHaveBeenCalled();
+    expect(deps.generate).toHaveBeenCalledOnce();
+    expect(deps.generate.mock.calls[0][0]).toMatchObject({ voicePackId: input.voicePackId, referenceMode: input.referenceMode,
+      text: ["晚安。", ...VOICE_CONTINUATION_CLAUSES].map(continuationClause).join("") });
+    expect(deps.analyze.mock.calls[0][0]).toMatchObject({ expectedText: "晚安。", followingText: VOICE_CONTINUATION_CLAUSES[0], clauses: ["晚安。"] });
+    const longText = result.provenance.longText!, group = longText.groups[0];
+    expect(longText.context).toEqual(context);
+    expect(longText.groups).toHaveLength(1);
+    expect(group).toMatchObject({ isFinal: false, checkStatus: "passed", paddingClauses: [...VOICE_CONTINUATION_CLAUSES], asset: { duration: 1 } });
+    expect(decodePcmWav(result.wav).samples).toHaveLength(48_000);
+    expect(new Uint8Array(await readFile(resolveClipAssetPath(group.asset.assetId, input.config)))).toEqual(cropped);
+    const [run] = await readdir(path.join(root, "voxcpm2-product", "long-text"));
+    expect(new Uint8Array(await readFile(path.join(root, "voxcpm2-product", "long-text", run, "group-1-take-1-source.wav")))).toEqual(source);
   });
 
   it("delivers a semantic unit's complete original once when window extraction needs review", async () => {

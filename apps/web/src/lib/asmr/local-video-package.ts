@@ -15,6 +15,8 @@ import { readPreparedAudioSource } from "./prepared-audio-source";
 import { renderAsmrSoundH3Prompt, type AsmrSound } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
 import type { ClipVideoStoryboard, PerformanceStoryboardPart } from "./video-plan";
+import { getSegmentPauseSeconds } from "./voice-delivery-timing";
+import { appendPcmWavSilence, getPcmSilenceFrameCount } from "./wav-tail-padding";
 
 export const MAX_VIDEO_REFERENCE_BYTES = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 128 * 1024 * 1024;
@@ -32,12 +34,14 @@ export type VideoPackageManifest = {
   shots: {
     id: string; order: number; kind: "speech" | "ambient"; referenceMode: "new" | "continuous";
     prompt: string; durationSeconds: number; audio?: string;
+    sourceDurationSeconds?: number; tailPauseSeconds?: number;
     segmentId?: string; partIndex?: number; partCount?: number;
-    asmrSound?: { prompt: string; durationSeconds: number; postProcessing: AsmrSound["postProcessing"]; mixMode?: "overlay" | "replace" };
+    asmrSound?: { prompt: string; durationSeconds: number; postProcessing: AsmrSound["postProcessing"]; mixMode?: "overlay" | "replace"; role?: AsmrSound["role"] };
   }[];
 };
 type Dependencies = { reference?: Uint8Array; tempRoot?: string; runnerRoot?: string; processorRoot?: string; maxArchiveBytes?: number };
-type AudioSource = { filePath: string; size: number; mtimeMs: number; duration: number; outputSha256?: string };
+type AudioSource = { filePath: string; size: number; mtimeMs: number; duration: number; outputSha256?: string;
+  sourceDuration: number; tailPauseSeconds: number; deliverySize: number };
 type ExportedEntry = {
   entry: VideoPackageSourceShot; directions: ClipVideoStoryboard | PerformanceStoryboardPart;
   partIndex: number; partCount: number;
@@ -79,7 +83,7 @@ async function readBytes(file: FileHandle, offset: number, count: number, signal
 }
 
 /** Inspect PCM headers in small reads; exporting never allocates a decoded sample buffer. */
-async function pcmDuration(file: FileHandle, size: number, signal?: AbortSignal, maximumSeconds = 600): Promise<number> {
+async function pcmDuration(file: FileHandle, size: number, signal?: AbortSignal, maximumSeconds = 600) {
   const header = await readBytes(file, 0, 12, signal);
   if (header.toString("ascii", 0, 4) !== "RIFF" || header.toString("ascii", 8, 12) !== "WAVE"
     || header.readUInt32LE(4) !== size - 8) throw new Error("Invalid WAV header");
@@ -106,11 +110,11 @@ async function pcmDuration(file: FileHandle, size: number, signal?: AbortSignal,
     || byteRate !== sampleRate * blockAlign || dataBytes % blockAlign !== 0) throw new Error("Unsupported PCM WAV");
   const duration = dataBytes / blockAlign / sampleRate;
   if (!Number.isFinite(duration) || duration <= 0 || duration > maximumSeconds) throw new Error("Invalid audio duration");
-  return duration;
+  return { duration, sampleRate, blockAlign, dataBytes };
 }
 
 async function inspectAudio(entry: VideoPackageSourceShot, config: LocalRuntimeConfig, signal?: AbortSignal,
-  preparedAssetId?: string): Promise<AudioSource> {
+  preparedAssetId?: string, pauseSeconds = 0): Promise<AudioSource> {
   let file: FileHandle | undefined;
   try {
     const filePath = resolveClipAssetPath(preparedAssetId ?? entry.clip.asset.asset_id!, config);
@@ -120,19 +124,28 @@ async function inspectAudio(entry: VideoPackageSourceShot, config: LocalRuntimeC
     const before = await file.stat();
     if (!before.isFile()) throw new BatchDownloadError(`第 ${entry.index} 段的已采用音频不可用。`, 404);
     if (before.size > MAX_SOURCE_BYTES * (preparedAssetId ? 4 : 1)) throw new BatchDownloadError(`第 ${entry.index} 段音频过大。`, 413);
-    let duration: number;
-    try { duration = await pcmDuration(file, before.size, signal, preparedAssetId ? 600.65 + 1 / 48000 : 600); }
+    let pcm: Awaited<ReturnType<typeof pcmDuration>>;
+    try { pcm = await pcmDuration(file, before.size, signal, preparedAssetId ? 600.65 + 1 / 48000 : 600); }
     catch (error) {
       checkCancelled(signal);
       if (error instanceof BatchDownloadError) throw error;
       throw new BatchDownloadError(`第 ${entry.index} 段需要完整有效的 PCM WAV 音频（最长 10 分钟）。`, 422);
     }
-    if (duration > MAX_VIDEO_GENERATION_SECONDS) {
+    if (pcm.duration > MAX_VIDEO_GENERATION_SECONDS) {
       throw new BatchDownloadError(`第 ${entry.index} 段${preparedAssetId ? "后处理音频（含尾音）" : "实际人声"}超过 15 秒，请先拆分并重新生成画面与声音。`, 422);
     }
+    const tailFrames = getPcmSilenceFrameCount(pauseSeconds, pcm.sampleRate);
+    const tailPauseSeconds = tailFrames / pcm.sampleRate;
+    const duration = (pcm.dataBytes / pcm.blockAlign + tailFrames) / pcm.sampleRate;
+    if (duration > MAX_VIDEO_GENERATION_SECONDS) {
+      throw new BatchDownloadError(`第 ${entry.index} 段音频含段间留白后超过 15 秒，请缩短留白或拆分本段。`, 422);
+    }
+    const newDataBytes = pcm.dataBytes + tailFrames * pcm.blockAlign;
+    const deliverySize = before.size + newDataBytes + newDataBytes % 2 - pcm.dataBytes - pcm.dataBytes % 2;
     const after = await file.stat();
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new BatchDownloadError(`第 ${entry.index} 段音频正在变化，请稍后导出。`, 409);
-    return { filePath: resolved, size: before.size, mtimeMs: before.mtimeMs, duration };
+    return { filePath: resolved, size: before.size, mtimeMs: before.mtimeMs, duration,
+      sourceDuration: pcm.duration, tailPauseSeconds, deliverySize };
   } catch (error) {
     checkCancelled(signal);
     if (error instanceof BatchDownloadError) throw error;
@@ -220,14 +233,25 @@ async function addAudio(writer: StoredZipWriter, name: string, source: AudioSour
         yield bytes;
       }
     }
-    await writer.add(name, chunks());
+    if (source.tailPauseSeconds > 0) {
+      // Source was bounded to 15 seconds during preflight. Keep one WAV in memory at a time.
+      const bytes = await readBytes(file, 0, source.size, signal);
+      outputHash?.update(bytes);
+      const padded = appendPcmWavSilence(bytes, source.tailPauseSeconds);
+      if (padded.durationSeconds !== source.duration || padded.wav.length !== source.deliverySize) {
+        throw new BatchDownloadError(`第 ${index} 段音频已变化，请重新导出。`, 409);
+      }
+      await writer.add(name, padded.wav);
+    } else {
+      await writer.add(name, chunks());
+    }
     if (outputHash && outputHash.digest("hex") !== source.outputSha256) throw new BatchDownloadError(`第 ${index} 段后处理音频已变化，请重新生成后处理。`, 409);
     const after = await file.stat();
     if (after.size !== source.size || after.mtimeMs !== source.mtimeMs) throw new BatchDownloadError(`第 ${index} 段音频已变化，请重新导出。`, 409);
   } finally { await file.close().catch(() => {}); }
 }
 
-/** Export one immutable, ordered input snapshot. No DSP, model calls or timeline scheduling. */
+/** Export one immutable snapshot, appending delivery silence after the selected WAV. No DSP or model calls. */
 export async function prepareVideoPackage(project: AsmrProject, config: LocalRuntimeConfig, signal?: AbortSignal, dependencies: Dependencies = {}): Promise<PreparedBatchDownload> {
   checkCancelled(signal);
   let shots: VideoPackageSourceShot[];
@@ -263,13 +287,13 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
     if (entry.clip.kind !== "silent") {
       const preparedAudio = usePrepared ? await readPreparedAudioSource(project, entry.clip.id, config, signal, false) : undefined;
       if (usePrepared && !preparedAudio) throw new BatchDownloadError("后处理结果已更新，请重新生成后处理。", 422);
-      const source = await inspectAudio(entry, config, signal, preparedAudio?.asset.assetId);
+      const source = await inspectAudio(entry, config, signal, preparedAudio?.asset.assetId, getSegmentPauseSeconds(project, entry.clip.id));
       if (preparedAudio) {
         if (source.filePath !== preparedAudio.filePath || source.size !== preparedAudio.size || source.mtimeMs !== preparedAudio.mtimeMs)
           throw new BatchDownloadError(`第 ${entry.index} 段后处理音频已变化，请重新生成后处理。`, 409);
         source.outputSha256 = preparedAudio.receipt.outputSha256;
       }
-      sources.set(entry.index, source); inputBytes += source.size;
+      sources.set(entry.index, source); inputBytes += source.deliverySize;
     }
   }
   if (inputBytes > maxArchiveBytes) throw new BatchDownloadError("视频项目包过大，请分工程导出（每包上限 1 GiB）。", 413);
@@ -292,10 +316,12 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
           performance: Boolean(entry.clip.performance || partCount),
           pantomime: usesCameraPantomime(project.videoPlan?.referenceTemplate),
           ...(silent ? { ambientSound: directions.ambientSound } : {}) }),
-        ...(silent ? {} : { audio }),
+        ...(silent ? {} : { audio, sourceDurationSeconds: sources.get(entry.index)!.sourceDuration,
+          tailPauseSeconds: sources.get(entry.index)!.tailPauseSeconds }),
         ...(directions.asmrSound ? { asmrSound: {
           prompt: renderAsmrSoundH3Prompt(directions.asmrSound), durationSeconds,
           postProcessing: directions.asmrSound.postProcessing,
+          ...(directions.asmrSound.role ? { role: directions.asmrSound.role } : {}),
           ...(directions.asmrSound.mixMode ? { mixMode: directions.asmrSound.mixMode } : {}),
         } } : {}),
       };

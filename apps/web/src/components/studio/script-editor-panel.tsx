@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, Clapperboard, Film, Link2, MoreHorizontal, Plus, Sc
 import type { AsmrProject, TimelineClip } from "@/lib/asmr/schema";
 import type { ClipPatch } from "@/lib/asmr/edit-project";
 import { getVoiceGapAfter, type VoiceClipMoveDirection } from "@/lib/asmr/voice-segments";
+import { getSegmentPauseSeconds } from "@/lib/asmr/voice-delivery-timing";
 import { getTrackLabel, getValueLabel } from "@/lib/asmr/ui-copy";
 import { flattenClips, formatTimeRange } from "@/lib/asmr/view-model";
 import type { StudioAudioState } from "@/lib/asmr/studio-audio-overview";
@@ -12,6 +13,7 @@ import { getStudioStoryboardProgress } from "@/lib/asmr/studio-storyboard-overvi
 import { getClipStoryboardReferenceMode, type StoryboardReferenceMode } from "@/lib/asmr/video-plan";
 import { ScriptRewrite } from "./script-rewrite";
 import { StatusBadge } from "./status-badge";
+import { SegmentPauseInput } from "./segment-pause-input";
 
 type ScriptEditorPanelProps = {
   project: AsmrProject;
@@ -65,18 +67,6 @@ function clipTitle(clip: TimelineClip) {
   }
 }
 
-function GapInput({ value, label, onChange }: { value: number; label: string; onChange: (seconds: number) => void }) {
-  const [input, setInput] = useState(String(Number(value.toFixed(3))));
-  return <label className="flex items-center gap-2 text-xs text-studio-muted">
-    段后等待
-    <input aria-label={label} type="number" min="0" max="600" step="0.1" value={input}
-      className="w-20 rounded-md border border-studio-line bg-black/20 px-2 py-1.5 text-studio-text"
-      onChange={(event) => setInput(event.target.value)}
-      onBlur={() => { const seconds = Number(input); if (input.trim() && Number.isFinite(seconds) && seconds >= 0 && seconds <= 600) { if (Math.abs(seconds - value) > 0.0005) onChange(seconds); } else setInput(String(value)); }}
-      onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />秒
-  </label>;
-}
-
 export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, notice, batchActions, workspaceTabs, paragraphBody, audioStates, audioStatesStatus = "ready", onSelectClip, onUpdateClip, onAddClip, onAddSilentClip, onSilentDurationChange, onDeleteClip, onSplitClip, onMergeClip, onMoveClip, onGapChange, onRewriteClip, onUndo, onOpenStoryboard, onReferenceModeChange, referenceModeBusy = false }: ScriptEditorPanelProps) {
   const clips = flattenClips(project);
   const voices = clips.filter((clip) => clip.type === "voice");
@@ -109,7 +99,7 @@ export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, noti
         const range = isSelected && selection?.clipId === clip.id && clip.type === "voice" && selection.text === clip.text ? selection : undefined;
         const hasRange = !!range && range.end > range.start && !!clipTitle(clip).slice(range.start, range.end).trim();
         const canSplit = !!range && (hasRange ? range.start > 0 || range.end < clipTitle(clip).length : range.start > 0 && range.start < clipTitle(clip).length);
-        const gap = clip.type === "voice" ? getVoiceGapAfter(project, clip.id) : null;
+        const gap = clip.type === "voice" && getVoiceGapAfter(project, clip.id) !== null ? getSegmentPauseSeconds(project, clip.id) : null;
         if (clip.type !== "voice") return <button type="button" key={clip.id} aria-pressed={isSelected} onClick={() => onSelectClip(clip.id)} className={`w-full rounded-md px-2 py-1.5 text-left ${isSelected ? "bg-sky-300/10 ring-1 ring-sky-300/35" : "text-studio-muted hover:bg-white/[0.025]"}`}><span className="text-sm">{clipTitle(clip)}</span><span className="ml-3 text-xs text-studio-muted">{getTrackLabel(clip.track)} · {formatTimeRange(clip.start, clip.duration)}</span></button>;
         const silent = clip.kind === "silent";
         const audioState = silent ? undefined : audioStates?.[clip.id];
@@ -162,7 +152,7 @@ export function ScriptEditorPanel({ project, selectedClipId, busy, canUndo, noti
               <button type="button" className={buttonClass} disabled={!clip.text.trim()} onClick={() => setRewrite(hasRange ? range : { clipId: clip.id, text: clip.text, start: 0, end: clip.text.length })}><Sparkles className="h-3.5 w-3.5" />{hasRange ? "AI 改写选区" : "AI 改写本段"}</button>
             </div>}
             <div className="flex flex-wrap items-center justify-between gap-2">
-              {silent && onSilentDurationChange ? <label className="flex items-center gap-2 text-xs text-violet-200/75">段落时长<input aria-label="无台词段时长" type="number" min="0.5" max="600" step="0.5" value={clip.duration} onChange={(event) => { const value = Number(event.target.value); if (value >= 0.5 && value <= 600) onSilentDurationChange(clip.id, value); }} className="w-16 rounded-md border border-violet-300/20 bg-black/10 px-2 py-1 text-violet-100 outline-none focus:border-violet-300/45" />秒</label> : gap !== null && !clip.performance && <GapInput key={`${clip.id}:${gap}`} value={gap} label={`第 ${index + 1} 段后等待秒数`} onChange={(seconds) => onGapChange(clip.id, seconds)} />}
+              {silent && onSilentDurationChange ? <label className="flex items-center gap-2 text-xs text-violet-200/75">段落时长<input aria-label="无台词段时长" type="number" min="0.5" max="600" step="0.5" value={clip.duration} onChange={(event) => { const value = Number(event.target.value); if (value >= 0.5 && value <= 600) onSilentDurationChange(clip.id, value); }} className="w-16 rounded-md border border-violet-300/20 bg-black/10 px-2 py-1 text-violet-100 outline-none focus:border-violet-300/45" />秒</label> : !silent && gap !== null && <SegmentPauseInput key={`${clip.id}:${gap}`} value={gap} label={`第 ${index + 1} 段后等待秒数`} onChange={(seconds) => onGapChange(clip.id, seconds)} />}
               <details className="relative ml-auto"><summary aria-label="本段更多操作" className={`${buttonClass} cursor-pointer list-none`}><MoreHorizontal className="h-4 w-4" /></summary><div className="absolute right-0 top-full z-20 mt-1 grid min-w-36 gap-1 rounded-lg border border-studio-line bg-studio-panel p-1.5 shadow-xl">
                 {!silent && <button type="button" className={buttonClass} disabled={!clip.text.trim()} onClick={() => setRewrite({ clipId: clip.id, text: clip.text, start: 0, end: clip.text.length })}><Sparkles className="h-3.5 w-3.5" />AI 改写本段</button>}
                 <button className={buttonClass} type="button" onClick={() => onAddClip(clip.id)}>下方插入台词</button>{onAddSilentClip && <button className={buttonClass} type="button" onClick={() => onAddSilentClip(clip.id)}>下方插入无台词</button>}

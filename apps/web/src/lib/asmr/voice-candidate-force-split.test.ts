@@ -9,7 +9,7 @@ import { discardAudioCandidate, getAudioCandidate, listAudioCandidates, resolveC
 import { getLocalRuntimeConfig } from "./local-runtime-config";
 import { demoProject } from "./mock-project";
 import { writePcm16Wav } from "./pcm-audio";
-import { makeVoiceCandidateFixture, makeVoiceLongTextResultFixture } from "./voice-candidate-fixture";
+import { makeSemanticVoiceLongTextResultFixture, makeVoiceCandidateFixture, makeVoiceLongTextResultFixture } from "./voice-candidate-fixture";
 import { forceSplitVoiceCandidate, recheckVoiceCandidate } from "./voice-candidate-recheck";
 import { type ForcedVoiceAlignment, type forceAlignVoiceAudio, VoiceForcedAlignmentError } from "./voice-forced-alignment";
 import { VoiceGroupAnalysisError } from "./voice-group-analysis";
@@ -18,6 +18,7 @@ import { getVoiceParagraphContext } from "./voice-paragraph-context";
 import { paragraphPcmFrames } from "./voice-paragraph-split";
 import { ensureSpeechWorkspaces, switchSpeechWorkspace } from "./speech-workspace";
 import { buildLongTextInputs } from "./voice-longtext-plan";
+import { getVoiceGenerationContext } from "./voice-generation-context";
 
 const roots: string[] = [], runId = "11111111-2222-4333-8444-555555555555";
 const sha = (value: Uint8Array | string) => createHash("sha256").update(value).digest("hex");
@@ -108,6 +109,40 @@ afterEach(async () => {
 });
 
 describe("explicit forced splitting of saved originals", () => {
+  it("prefix-cuts the v2 last target instead of keeping its fixed continuation as a whole recording", async () => {
+    const data = await base(), target = data.clips.at(-1)!;
+    target.semantic_unit = true; target.text = "今晚先到这里。";
+    const context = getVoiceGenerationContext(data.project, target.id)!;
+    expect(context).toEqual({ version: 2, followingClauses: [], isFinal: false });
+    const longText = makeSemanticVoiceLongTextResultFixture(target.text, context);
+    const wav = writePcm16Wav(new Float32Array(96_000).fill(.08), 48_000);
+    const asset = await saveClipAsset({ config: data.config, clipId: "v2_final_original", wav, duration: 2 });
+    const group = longText.groups[0];
+    Object.assign(group, { asset, checkStatus: "review", diagnosticCode: "no_verified_quiet_cut", internalPausesMs: [],
+      recognition: { analysisMode: "cutting_only", stage: "boundary_check", expectedText: target.text, sourceTranscript: "" } });
+    const original = makeVoiceCandidateFixture();
+    const candidate = AudioCandidateSchema.parse({ ...original, clipId: target.id, asset,
+      sourceFingerprint: getVoiceCandidateSourceFingerprint(target, context),
+      provenance: { ...original.provenance, generationMode: "long_text", longText } });
+    await saveAudioCandidate({ config: data.config, candidate });
+    const targets = buildLongTextInputs(longText.plan!, context), trace = path.join(data.workRoot, runId);
+    await mkdir(trace, { recursive: true });
+    await writeFile(path.join(trace, "plan.json"), JSON.stringify({ projectId: candidate.projectId, clipId: candidate.clipId,
+      sourceFingerprint: candidate.sourceFingerprint, plan: longText.plan, context, targets }));
+    await writeFile(path.join(trace, "result.json"), JSON.stringify(longText));
+    await writeFile(path.join(trace, "groups.json"), JSON.stringify(longText.groups));
+    await writeFile(path.join(trace, "group-1-take-1-source.wav"), wav);
+    await writeFile(path.join(trace, "group-1-take-1-source.json"), JSON.stringify({ ...original.provenance, seed: group.seed, parameters: group.parameters }));
+    const projectBefore = JSON.stringify(data.project);
+    const result = await forceSplitVoiceCandidate({ project: data.project, clipId: target.id, candidateId: candidate.candidateId, config: data.config }, { forceAlign: data.forceAlign });
+    expect(data.forceAlign).toHaveBeenCalledOnce();
+    expect(data.forceAlign.mock.calls[0][0]).toMatchObject({ mode: "prefix", inputText: targets[0].text, clauses: [target.text] });
+    expect(result.candidate.provenance.forcedSegmentation?.alignments).toMatchObject([{ method: "ctc_forced", mode: "prefix", cutFrames: [48_000] }]);
+    expect(result.candidate.provenance.longText!.groups[0]).toMatchObject({ isFinal: false, segmentationMethod: "ctc_forced", asset: { duration: 1 } });
+    expect(JSON.stringify(data.project)).toBe(projectBefore);
+    expect(await readFile(path.join(trace, "group-1-take-1-source.wav"))).toEqual(Buffer.from(wav));
+    expect(await getAudioCandidate({ config: data.config, candidateId: candidate.candidateId, projectId: candidate.projectId, clipId: candidate.clipId })).toEqual(candidate);
+  });
   it("partitions loud paragraph PCM despite low scores, preserves old ASR evidence, and never adopts", async () => {
     const data = await paragraphFixture(), projectBefore = JSON.stringify(data.project);
     const result = await forceSplitVoiceCandidate(inputFor(data), { forceAlign: data.forceAlign });

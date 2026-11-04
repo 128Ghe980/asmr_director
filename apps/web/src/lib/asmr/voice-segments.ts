@@ -189,12 +189,14 @@ export function setVoiceGapAfter(project: AsmrProject, clipId: string, seconds: 
   const index = ordered.findIndex((clip) => clip.id === clipId);
   const voice = ordered[index];
   if (!voice || !ordered[index + 1]) return project;
+  if (voice.kind !== "silent" && seconds > 30) return project;
   const duration = spokenDuration(voice);
-  if (voice.pause_after === seconds && voice.duration === duration && getVoiceGapAfter(project, clipId) === seconds) {
+  if (voice.pause_after === seconds && (voice.kind === "silent" || voice.tail_pause_seconds === seconds)
+    && voice.duration === duration && getVoiceGapAfter(project, clipId) === seconds) {
     return project;
   }
   const marked = replaceVoices(project, ordered.map((clip) => clip.id === clipId
-    ? { ...clip, pause_after: seconds }
+    ? { ...clip, pause_after: seconds, ...(clip.kind === "silent" ? {} : { tail_pause_seconds: seconds }) }
     : clip));
   return fitVoiceSegmentTiming(marked, clipId, duration);
 }
@@ -250,6 +252,7 @@ export function splitVoiceClip(project: AsmrProject, clipId: string, start: numb
       text,
       semantic_unit: true,
       pause_after: index === texts.length - 1 ? lastPause : 0,
+      tail_pause_seconds: index === texts.length - 1 ? voice.tail_pause_seconds : undefined,
       fade_in: Math.min(voice.fade_in, pieceDuration),
       fade_out: Math.min(voice.fade_out, pieceDuration),
     });
@@ -290,7 +293,7 @@ export function addVoiceClip(project: AsmrProject, afterClipId?: string): VoiceS
     fade_in: Math.min(source.fade_in, 4), fade_out: Math.min(source.fade_out, 4),
   });
   const normalized = after ? replaceVoices(base, ordered.map((clip) => clip.id === after.id
-    ? { ...clip, duration: spokenDuration(clip), pause_after: 0 }
+    ? { ...clip, duration: spokenDuration(clip), pause_after: 0, tail_pause_seconds: undefined }
     : clip)) : base;
   const shifted = rippleTime(normalized, start, added.duration, new Set(after ? [after.id] : []));
   return {
@@ -311,7 +314,7 @@ export function addSilentClip(project: AsmrProject, afterClipId?: string, option
     ...clip, kind: "silent", text: options.description?.trim() || "待设计：根据前后剧情安排自然衔接的无台词画面。",
     ...(voices(project).some(item => item.performance) ? { performance: { version: 1 as const,
       segmentId: clip.id, purpose: "transition" as const, direction: "", soundIntent: "" } } : {}),
-    semantic_unit: false, audio_stale: undefined, fade_in: 0, fade_out: 0,
+    semantic_unit: false, audio_stale: undefined, tail_pause_seconds: undefined, fade_in: 0, fade_out: 0,
   } : clip));
   return { ...edit, project: fitVoiceSegmentTiming(silent, edit.selectedClipId, duration) };
 }
@@ -351,6 +354,7 @@ export function mergeVoiceClipWithNext(project: AsmrProject, clipId: string): Vo
     ...(voice.semantic_unit || next.semantic_unit ? { semantic_unit: true } : {}),
     fade_out: Math.min(next.fade_out, duration),
     pause_after: next.pause_after ?? getVoiceGapAfter(project, next.id) ?? 0,
+    tail_pause_seconds: next.tail_pause_seconds,
   });
   return {
     project: fitProjectBounds(replaceVoices(project, ordered.filter((clip) => clip.id !== next.id)

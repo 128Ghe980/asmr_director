@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildLongTextInputs,
   chooseGroupPauses,
+  continuationClause,
   createRuleVoiceLongTextPlan,
   createSemanticVoiceLongTextPlan,
   splitVoiceClauses,
@@ -116,6 +117,57 @@ describe("accepted long-input construction", () => {
     expect(() => buildLongTextInputs(plan, context)).toThrow("请先拆分片段");
     const finalContext = { version: 1 as const, followingClauses: [], isFinal: true };
     expect(buildLongTextInputs(createSemanticVoiceLongTextPlan(text, finalContext), finalContext)[0].text).toBe(text);
+  });
+
+  it("uses real fixed continuation as the cut boundary even for the last v2 target", () => {
+    const context = { version: 2 as const, followingClauses: [], isFinal: false };
+    const text = "今晚先陪你到这里。";
+    const input = buildLongTextInputs(createSemanticVoiceLongTextPlan(text, context), context)[0];
+    expect(input).toMatchObject({ expectedText: text, clauses: [text], isFinal: false,
+      followingText: VOICE_CONTINUATION_CLAUSES[0], paddingClauses: [...VOICE_CONTINUATION_CLAUSES] });
+    expect(input.text).toBe([text, ...VOICE_CONTINUATION_CLAUSES].map(continuationClause).join(""));
+    expect(splitVoiceClauses(input.text)).toHaveLength(16);
+    expect(input.text.split("今晚先陪你到这里")).toHaveLength(2);
+  });
+
+  it("does not repeat a target that happens to match a fixed continuation clause", () => {
+    const context = { version: 2 as const, followingClauses: [], isFinal: false };
+    const text = `${VOICE_CONTINUATION_CLAUSES[0]}。`;
+    const input = buildLongTextInputs(createSemanticVoiceLongTextPlan(text, context), context)[0];
+    expect(input.followingText).toBe(VOICE_CONTINUATION_CLAUSES[1]);
+    expect(input.paddingClauses).not.toContain(VOICE_CONTINUATION_CLAUSES[0]);
+    expect(input.text.split(VOICE_CONTINUATION_CLAUSES[0])).toHaveLength(2);
+    expect(splitVoiceClauses(input.text).length).toBeLessThanOrEqual(16);
+  });
+
+  it("reserves a continuation clause without truncating a v2 target at the 16-clause limit", () => {
+    const context = { version: 2 as const, followingClauses: [], isFinal: false };
+    const text = Array.from({ length: 15 }, (_, index) => `目标${index}。`).join("");
+    const input = buildLongTextInputs(createSemanticVoiceLongTextPlan(text, context), context)[0];
+    expect(input.expectedText).toBe(text);
+    expect(input.paddingClauses).toEqual([VOICE_CONTINUATION_CLAUSES[0]]);
+    expect(splitVoiceClauses(input.text)).toHaveLength(16);
+    for (const extra of ["第十六句。", "第十六句。第十七句。"]) {
+      const oversized = text + extra;
+      expect(() => buildLongTextInputs(createSemanticVoiceLongTextPlan(oversized, context), context)).toThrow("请先拆分片段");
+    }
+  });
+
+  it("fits intact fixed continuation within 500 characters or refuses an uncuttable target", () => {
+    const context = { version: 2 as const, followingClauses: [], isFinal: false };
+    const text = "甲".repeat(500 - continuationClause(VOICE_CONTINUATION_CLAUSES[0]).length - 2) + "。";
+    const exact = buildLongTextInputs(createSemanticVoiceLongTextPlan(text, context), context)[0];
+    expect(exact.text).toHaveLength(500);
+    expect(exact.expectedText).toBe(text);
+    expect(exact.followingText).toBe(VOICE_CONTINUATION_CLAUSES[0]);
+    const nearLimit = "乙".repeat(493) + "。";
+    const shorterPadding = buildLongTextInputs(createSemanticVoiceLongTextPlan(nearLimit, context), context)[0];
+    expect(shorterPadding.text).toHaveLength(500);
+    expect(shorterPadding.followingText).toBe("不用急");
+    expect(shorterPadding.paddingClauses).toEqual(["不用急"]);
+    expect(shorterPadding.expectedText).toBe(nearLimit);
+    const noRoom = "丙".repeat(494) + "。";
+    expect(() => buildLongTextInputs(createSemanticVoiceLongTextPlan(noRoom, context), context)).toThrow("请先拆分片段");
   });
 
   it("reduces padding within 500 characters without discarding original body", () => {
