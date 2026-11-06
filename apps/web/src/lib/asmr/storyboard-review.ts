@@ -32,6 +32,7 @@ export function preserveStoryboardReviewSoundModes(before: StoryboardReviewField
     }
     const result = { ...sound };
     if (preserveMissingRoles && result.role === undefined && oldSound?.role !== undefined) result.role = oldSound.role;
+    if (preserveMissingRoles && result.continuation === undefined && oldSound?.continuation !== undefined) result.continuation = oldSound.continuation;
     if (oldSound?.mixMode === undefined) delete result.mixMode;
     else result.mixMode = oldSound.mixMode;
     return result;

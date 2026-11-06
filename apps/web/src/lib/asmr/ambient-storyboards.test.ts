@@ -44,7 +44,7 @@ describe("无对白环境镜头", () => {
     expect(getUsableClipH3Prompts(project).has(clip.id)).toBe(false);
     clip.duration = 7; shot.duration = 7; shot.sourceFingerprint = createClipVideoSourceFingerprint(project, clip.id);
     expect(AsmrProjectSchema.parse(project).videoPlan!.shots[clip.id].duration).toBe(7);
-    expect(() => createClipH3Prompt(project, clip.id)).toThrow("连续生成方案");
+    expect(() => createClipH3Prompt(project, clip.id)).toThrow("环境底噪描述");
     expect(clip.duration).toBe(7);
   });
 

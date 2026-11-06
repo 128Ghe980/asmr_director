@@ -147,7 +147,7 @@ describe("StudioApp project boundaries with the actual planner and inspector", (
     expect(currentProject().project_id).toBe(original.project_id);
   });
 
-  it("resets inspector selection to the new project's clip and uses its own scene when switching back", async () => {
+  it("opens a blank planner immediately from the editor and keeps the previous project available", async () => {
     const original = seed(); seedLegacy(); mockApi(); await mount();
     fireEvent.click(screen.getByRole("button", { name: "工程编辑" }));
     const script = screen.getByLabelText("文案与分段");
@@ -156,9 +156,12 @@ describe("StudioApp project boundaries with the actual planner and inspector", (
     await waitFor(() => expect(control("工程剧情背景").value).toBe("旧工程分镜的剧情背景"));
     expect(screen.getByLabelText("本段画面与声音").textContent).toContain(draft.sections[1].text);
     fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
-    expect(screen.getByRole("tab", { name: "声音" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.queryByLabelText("本段画面与声音")).toBeNull();
-    expect(screen.getByLabelText("当前范围文本").textContent).not.toContain("旧项目独有");
+    expect(screen.getByRole("button", { name: "AI 创意策划" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("region", { name: "AI 创意策划" })).toBeTruthy();
+    expect(control("今日主题").value).toBe("");
+    expect(currentProject().timeline.tracks.every((track) => track.clips.length === 0)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "工程编辑" }));
+    expect(screen.getByText("添加第一段台词，开始编排。")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "已有书店项目" }));
     fireEvent.click(screen.getByRole("tab", { name: "画面与声音" }));
     await waitFor(() => expect(screen.getByLabelText("本段画面与声音").textContent).toContain(draft.sections[0].text));

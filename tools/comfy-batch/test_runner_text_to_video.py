@@ -135,7 +135,7 @@ class TextToVideoTests(unittest.TestCase):
         self.remote.fail_posts = {1}
         first = self.make_runner(only="1")
         self.assertEqual(first.run()["succeeded"], 1)
-        self.assertEqual(support.seeds(self.remote.posts), [2, 2])
+        self.assertEqual(support.seeds(self.remote.posts), [first.seed_for(first.shots[0])] * 2)
         self.remote.behavior = "queued"
         stop = threading.Event()
         def status(value):

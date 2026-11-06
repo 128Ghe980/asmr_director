@@ -1,0 +1,8 @@
+# Loudness and separate audio references for continuing ASMR actions
+
+Use the adopted post-processed voice at its mastered level. The foreground trigger and the voice should both be audible. Either may be a little louder. A contact that continues across the start of a spoken line should sound like the same performance. Quiet room tone remains in the background.
+
+- The native silent performance X supplies the acoustic reference for generating the next independent effect. For the continuing speech shot X+1, H3 receives the adopted voice as Audio 1 for lips and pauses, and the processed effect as Audio 2 for contact and release timing. The final soundtrack mixes those stems once.
+- Both previews render the same audible X for a marked pair, using the next adopted voice as a level reference. X+1 measures audible activity at the end of X and the beginning of the new effect and respects relative manual gain adjustments. Fall back to the clip target when the boundary offers no reliable activity. Use one gain across the clip and both ears to preserve dynamics, pauses and spatial cues. Reduce the effect when headroom is needed.
+- Loudness parameters are tuning defaults. The neutral foreground target starts at −32 LUFS and can move to either side of the adopted voice. Source level, near silence and peak protection can limit the result. Verify contact continuity with measurements and evaluate perceived level on the actual render.
+- Reuse existing source renders. Upgrading the completed 64-second trial requires three continuing speech renders (shots 3, 6 and 9) and the two previews. Install the updated ComfyUI audio nodes as described in the runner package.

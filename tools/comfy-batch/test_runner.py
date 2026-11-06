@@ -568,8 +568,61 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(saved_seeds, [entry(second, shot["id"], number)["seed"]
                                       for shot in self.manifest["shots"] for number in range(1, 4)])
         isolated_output = self.root / "isolated-outputs"
-        self.make_runner(candidates=3, output_root=isolated_output).run()
+        self.make_runner(candidates=3, output_root=isolated_output, seed=first.seed).run()
         self.assertEqual(seeds(self.remote.posts[6:]), first_seeds)
+
+    def test_append_ignores_moved_old_output_and_keeps_both_versions(self):
+        first = self.make_runner(concat=True)
+        first.run()
+        previous = copy.deepcopy(first.state["shots"])
+        first.state_file(entry(first)["output"]).rename(self.root / "archived-shot.mp4")
+        batch = self.make_runner(append_candidates=1, concat=True)
+        self.assertEqual(batch.run()["succeeded"], 2)
+        self.assertEqual(len(self.remote.model_posts), 4)
+        self.assertEqual(len(self.remote.preview_posts), 2)
+        all_seeds = seeds(self.remote.model_posts)
+        self.assertEqual(len(set(all_seeds)), 4)
+        for shot in batch.shots:
+            self.assertEqual(entry(batch, shot["id"]), previous[shot["id"]]["candidates"]["1"])
+        self.assertFalse(first.state_file(entry(first)["output"]).exists())
+        self.assertTrue((batch.output / "preview-c002.mp4").is_file())
+        self.assertTrue((batch.output / "preview.mp4").is_file())
+        self.assertEqual(self.make_runner(concat=True).run()["succeeded"], 2)
+        self.assertEqual(len(self.remote.posts), 6)
+        # A smaller explicit target cannot release the reserved candidate numbers.
+        self.make_runner(candidates=1, only="2").run()
+        next_batch = self.make_runner(append_candidates=1)
+        next_batch.run()
+        self.assertEqual(list(next_batch.candidate_range), [3])
+
+    def test_stopped_reservation_recovers_without_spending_another_slot(self):
+        self.make_runner().run()
+        before = self.make_runner()
+        original_state = before.state_path.read_bytes()
+        dry = self.make_runner(append_candidates=2, dry_run=True)
+        self.assertEqual(len(dry.run()["dry_run"]), 4)
+        self.assertEqual(list(dry.candidate_range), [2, 3])
+        self.assertEqual(before.state_path.read_bytes(), original_state)
+        stop = threading.Event()
+        stop.set()
+        interrupted = self.make_runner(append_candidates=2, stop_event=stop)
+        self.assertTrue(interrupted.run()["stopped"])
+        self.assertEqual(len(self.remote.posts), 2)
+        continued = self.make_runner()
+        self.assertEqual(continued.run()["succeeded"], 4)
+        self.assertEqual(list(continued.candidate_range), [2, 3])
+        self.assertEqual(interrupted.seed, continued.seed)
+        self.assertEqual(len(self.remote.posts), 6)
+
+    def test_new_default_run_after_archiving_entire_output_generates_fresh_seeds(self):
+        with mock.patch.object(runner.secrets, "randbits", side_effect=[41, 93]) as rng:
+            first = self.make_runner()
+            first.run()
+            self.make_runner().run()
+            first.output.rename(self.root / "archive")
+            self.make_runner().run()
+        self.assertEqual(rng.call_count, 2)
+        self.assertEqual(seeds(self.remote.posts), [42, 43, 94, 95])
 
     def test_changing_base_seed_one_to_two_generates_both_shots_without_history_collision(self):
         first = self.make_runner(seed=1)

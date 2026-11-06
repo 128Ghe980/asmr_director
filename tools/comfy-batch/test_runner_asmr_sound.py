@@ -101,7 +101,7 @@ class AsmrSoundTests(unittest.TestCase):
         for shot in self.manifest["shots"]:
             shot["asmrSound"]["role"] = "trigger" if shot["kind"] == "ambient" else "ambience"
         self.save_manifest()
-        self.remote.classes["AsmrDirectorBalancedSpatialAudio"] = {}
+        self.remote.classes[runner.BALANCED_AUDIO_NODE] = {}
         second = self.make_runner(concat=True)
         result = second.run()
         self.assertEqual(result["asmr_preview_failed"], 0)
@@ -112,7 +112,7 @@ class AsmrSoundTests(unittest.TestCase):
         graph = json.loads(second.state_file(preview["payload"]).read_text())["prompt"]
         for index, role in enumerate(("ambience", "trigger")):
             node = graph[f"preview_asmr_spatial_{index}"]
-            self.assertEqual(node["class_type"], "AsmrDirectorBalancedSpatialAudio")
+            self.assertEqual(node["class_type"], runner.BALANCED_AUDIO_NODE)
             self.assertEqual(node["inputs"]["role"], role)
             self.assertEqual(node["inputs"]["reference_audio"], [f"preview_padded_{index}", 0])
         for shot in self.manifest["shots"]:
@@ -134,7 +134,7 @@ class AsmrSoundTests(unittest.TestCase):
         self.assertIn("custom_nodes/asmr_director_audio", missing.state["asmrPreviews"]["1"]["last_error"])
         self.assertEqual(len(self.remote.model_posts), 4)
         self.assertEqual(len(self.remote.preview_posts), 2)
-        self.remote.classes["AsmrDirectorBalancedSpatialAudio"] = {}
+        self.remote.classes[runner.BALANCED_AUDIO_NODE] = {}
         self.assertEqual(self.make_runner(concat=True).run()["asmr_preview_failed"], 0)
         self.assertEqual(len(self.remote.model_posts), 4)
 

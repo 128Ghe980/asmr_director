@@ -63,6 +63,122 @@ function entries(bytes: Buffer) {
 }
 
 describe("portable video packages", () => {
+  it.each([
+    { expanded: false, silentAudioMode: "action-first" }, { expanded: true, silentAudioMode: "action-first" },
+    { expanded: false, silentAudioMode: "native" }, { expanded: false, silentAudioMode: "asmr-first" },
+  ] as const)("exports action continuity only in its mode without forcing camera continuity: $silentAudioMode / parts=$expanded", async ({ expanded, silentAudioMode }) => {
+    const { project, clips, wav } = await fixture();
+    const silent = clips[0], speech = clips[1];
+    silent.kind = "silent"; silent.duration = 6;
+    silent.asset = { asset_id: null, uri: null, duration: null }; silent.generation.status = "asset_pending";
+    const sound = { role: "trigger" as const, prompt: "Soft wooden taps continue at an unhurried, uneven rhythm.", mixMode: "replace" as const,
+      postProcessing: { start: { pan: 0, distance: "near" as const }, end: { pan: 0, distance: "near" as const }, movement: "static" as const, gainDb: -12 } };
+    const first = project.videoPlan!.shots[silent.id]; delete first.audio;
+    Object.assign(first, { kind: "silent", duration: 6, ambientSound: sound.prompt, asmrSound: sound,
+      action: "S1 keeps gently tapping the box at the boundary." });
+    if (expanded) first.parts = [1, 2].map(() => ({ durationSeconds: 3, visual: first.visual, action: first.action,
+      camera: first.camera, ambientSound: sound.prompt, asmrSound: structuredClone(sound) }));
+    project.videoPlan!.shots[speech.id].asmrSound = { ...sound, mixMode: "overlay", continuation: "previous-silent" };
+    project.videoPlan!.shots[speech.id].action = "S1 continues tapping while speaking without restarting the operation.";
+    project.videoPlan!.referenceModes![speech.id] = "new";
+    for (const clip of clips) project.videoPlan!.shots[clip.id].sourceFingerprint = createClipVideoSourceFingerprint(project, clip.id);
+    config.spatialHrtfPath = path.join(root, "test.sofa");
+    await writeFile(config.spatialHrtfPath, Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]));
+    const before = structuredClone(project);
+    const archive = await prepareVideoPackage(project, config, undefined, { tempRoot,
+      runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch"), silentAudioMode });
+    const files = entries(await readFile(archive.filePath));
+    const manifest = JSON.parse(files.get("project.json")!.toString()) as VideoPackageManifest;
+    expect(manifest.silentAudioMode).toBe(silentAudioMode === "native" ? undefined : silentAudioMode);
+    const last = manifest.shots.at(-1)!;
+    expect(last.asmrSound?.referenceShotId).toBe(silentAudioMode === "action-first" ? expanded ? `${silent.id}--part-002` : silent.id : undefined);
+    expect(last.referenceMode).toBe("new");
+    expect(last.prompt.includes("<Audio 2>: partially_copy - Non-vocal ASMR")).toBe(silentAudioMode === "action-first");
+    expect(last.prompt).toContain(speech.text);
+    expect(last.asmrSound?.durationSeconds).toBe(last.durationSeconds);
+    expect(files.get(last.audio!)).toEqual(Buffer.from(wav));
+    for (const shot of manifest.shots.slice(0, -1)) {
+      if (silentAudioMode === "action-first") expect(shot.prompt).toContain("dedicated ASMR performance for relaxation and sleep");
+      expect(shot.prompt.includes("<Audio 1>")).toBe(silentAudioMode === "asmr-first");
+      expect(shot.asmrSound?.mixMode).toBe("replace");
+      expect(shot.asmrSound).not.toHaveProperty("referenceShotId");
+    }
+    expect(project).toEqual(before);
+    await archive.cleanup();
+  });
+
+  it.each(["first", "speech-predecessor", "ambience-source", "ambience-current", "silent-current"])("rejects invalid action continuation before creating output: %s", async failure => {
+    const { project, clips } = await fixture();
+    const sound = { role: "trigger" as const, prompt: "Soft wooden taps continue.", mixMode: "overlay" as const,
+      postProcessing: { start: { pan: 0, distance: "near" as const }, end: { pan: 0, distance: "near" as const }, movement: "static" as const, gainDb: -12 } };
+    const first = clips[0], next = clips[1];
+    if (failure !== "speech-predecessor" && failure !== "first") {
+      first.kind = "silent"; first.duration = 3; first.asset = { asset_id: null, uri: null, duration: null }; first.generation.status = "asset_pending";
+      delete project.videoPlan!.shots[first.id].audio;
+      Object.assign(project.videoPlan!.shots[first.id], { kind: "silent", duration: 3, ambientSound: sound.prompt });
+    }
+    project.videoPlan!.shots[first.id].asmrSound = { ...sound, role: failure === "ambience-source" ? "ambience" : "trigger" };
+    const target = failure === "first" || failure === "silent-current" ? first : next;
+    project.videoPlan!.shots[target.id].asmrSound = { ...sound, continuation: "previous-silent", role: failure === "ambience-current" ? "ambience" : "trigger" };
+    for (const clip of clips) project.videoPlan!.shots[clip.id].sourceFingerprint = createClipVideoSourceFingerprint(project, clip.id);
+    await expect(prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot, silentAudioMode: "action-first" }))
+      .rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/接续|延续/) });
+    expect(await readdir(root)).not.toContain("exports");
+  });
+
+  it.each([undefined, "native", "asmr-first"] as const)("exports sound-first only when selected, with unchanged speech and expanded parts: %s", async silentAudioMode => {
+    const { project, clips, wav } = await fixture();
+    project.videoPlan!.referenceTemplate = { ...structuredClone(referenceTemplateFixture), visualPerformance: "pantomime" };
+    const clip = clips[1]; clip.kind = "silent"; clip.duration = 6;
+    clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+    const shot = project.videoPlan!.shots[clip.id]; delete shot.audio;
+    const sound = { role: "trigger" as const, prompt: "Soft cotton folds brush slowly, then rest.", mixMode: "overlay" as const, postProcessing: {
+      start: { pan: -.5, distance: "near" as const }, end: { pan: .5, distance: "near" as const }, movement: "left_to_right" as const, gainDb: -12,
+    } };
+    Object.assign(shot, { kind: "silent", duration: 6, ambientSound: "Legacy cloth foley.",
+      parts: [1, 2].map(index => ({ durationSeconds: 3, visual: "S1 faces the camera with empty hands.", action: `S1 performs gentle gesture ${index}.`,
+        camera: "Fixed frontal camera.", ambientSound: "Legacy cloth foley.", asmrSound: sound })) });
+    for (const entry of clips) project.videoPlan!.shots[entry.id].sourceFingerprint = createClipVideoSourceFingerprint(project, entry.id);
+    config.spatialHrtfPath = path.join(root, "test.sofa");
+    await writeFile(config.spatialHrtfPath, Buffer.from([137, 72, 68, 70, 13, 10, 26, 10]));
+    const before = structuredClone(project);
+    const archive = await prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot: path.resolve(process.cwd(), "../../tools/comfy-batch"), silentAudioMode });
+    const files = entries(await readFile(archive.filePath));
+    const manifest = JSON.parse(files.get("project.json")!.toString()) as VideoPackageManifest;
+    expect(manifest.shots).toHaveLength(3);
+    expect(files.get("shots/001/audio.wav")).toEqual(Buffer.from(wav));
+    expect(manifest.shots[0].prompt).toContain("entire supplied speech track unchanged");
+    expect(manifest.shots[0].prompt).not.toContain("non-vocal ASMR");
+    if (silentAudioMode === "asmr-first") expect(manifest.silentAudioMode).toBe("asmr-first");
+    else expect(manifest).not.toHaveProperty("silentAudioMode");
+    for (const part of manifest.shots.slice(1)) {
+      expect(part.durationSeconds).toBe(3);
+      expect(part.asmrSound?.durationSeconds).toBe(3);
+      expect(part.asmrSound?.postProcessing).toEqual(sound.postProcessing);
+      expect(part.asmrSound?.mixMode).toBe(silentAudioMode === "asmr-first" ? "replace" : "overlay");
+      expect(part.prompt).toContain("hands hold nothing");
+      expect(part.prompt.includes("supplied non-vocal ASMR track unchanged")).toBe(silentAudioMode === "asmr-first");
+      expect(part.prompt.includes("Legacy cloth foley")).toBe(silentAudioMode !== "asmr-first");
+      expect(part.asmrSound?.prompt).not.toMatch(/fully_copy|Picture 1|Audio 1/);
+      expect(files.get(`shots/${String(part.order).padStart(3, "0")}/prompt.txt`)!.toString()).toBe(part.prompt);
+      expect(part).not.toHaveProperty("audio");
+    }
+    expect(project).toEqual(before);
+    await archive.cleanup();
+  });
+
+  it.each([false, true])("rejects missing silent ASMR before creating a ZIP, expanded=%s", async expanded => {
+    const { project, clips } = await fixture();
+    const clip = clips[1]; clip.kind = "silent"; clip.duration = 3;
+    clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+    const shot = project.videoPlan!.shots[clip.id]; delete shot.audio;
+    Object.assign(shot, { kind: "silent", duration: 3, ambientSound: "Quiet room.", sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id) });
+    if (expanded) Object.assign(shot, { parts: [{ durationSeconds: 3, visual: shot.visual, action: shot.action, camera: shot.camera, ambientSound: shot.ambientSound }] });
+    await expect(prepareVideoPackage(project, config, undefined, { tempRoot, runnerRoot, silentAudioMode: "asmr-first" }))
+      .rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining(expanded ? "第 2 段的第 1 个连续片段" : "第 2 段") });
+    expect(await readdir(root)).not.toContain("exports");
+  });
+
   it.each(["trigger", "ambience"] as const)("preserves explicit %s role through ZIP export while legacy shots remain unclassified", async role => {
     const { project, clips } = await fixture();
     const sound = { role, prompt: role === "trigger" ? "Cotton jersey layers slide against each other with a low soft shff." : "Steady quiet indoor air without any contact sounds.", postProcessing: {

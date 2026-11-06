@@ -94,8 +94,8 @@ describe("performance scripts", () => {
     await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, durationSeconds: 60 } }, { env: {}, fetchImpl });
     const messages = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string).messages;
     const system = messages[0].content as string;
-    expect(system.split("\n")[1]).toContain("语言约 27 秒，无台词表演约 33 秒");
-    expect(system.split("\n")[2]).toContain("约 59 个非空白字符、3 个完整 speech 段");
+    expect(system).toContain("语言约 27 秒，无台词表演约 33 秒");
+    expect(system).toContain("约 59 个非空白字符、3 个完整 speech 段");
     expect(system).toContain("ASMR试听须有独立silent段");
     expect(system).toContain(ASMR_SOUND_PALETTE_GUIDANCE);
     expect(system).toContain("说完一句话不代表动作已完成");

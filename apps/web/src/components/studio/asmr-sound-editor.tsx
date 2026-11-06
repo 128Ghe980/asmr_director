@@ -15,11 +15,11 @@ export function formatAsmrSound(sound: AsmrSound | undefined): string {
   if (!sound) return "（无）";
   const p = sound.postProcessing;
   const level = sound.role ? `${roleLabels[sound.role]} · 响度微调 ${levelTrim(sound)} dB` : `${p.gainDb} dB`;
-  return `${sound.prompt}${sound.mixMode ? `\n${sound.mixMode === "replace" ? "作为本段主声音" : "叠加到原声音"}` : ""}\n${movements[p.movement]} · ${distances[p.start.distance]} (${p.start.pan}) → ${distances[p.end.distance]} (${p.end.pan}) · ${level}`;
+  return `${sound.prompt}${sound.mixMode ? `\n${sound.mixMode === "replace" ? "作为本段主声音" : "叠加到原声音"}` : ""}${sound.continuation ? "\n接续上一无台词段的 ASMR 动作" : ""}\n${movements[p.movement]} · ${distances[p.start.distance]} (${p.start.pan}) → ${distances[p.end.distance]} (${p.end.pan}) · ${level}`;
 }
 
-export function AsmrSoundEditor({ sound, duration, silent = false, disabled, onChange }: {
-  sound: AsmrSound; duration: number; silent?: boolean; disabled: boolean; onChange: (sound: AsmrSound) => void;
+export function AsmrSoundEditor({ sound, duration, silent = false, canContinuePrevious = false, disabled, onChange }: {
+  sound: AsmrSound; duration: number; silent?: boolean; canContinuePrevious?: boolean; disabled: boolean; onChange: (sound: AsmrSound) => void;
 }) {
   const [draft, setDraft] = useState<{ source: string; text: string }>();
   const prompt = draft?.source === sound.prompt ? draft.text : sound.prompt;
@@ -34,9 +34,24 @@ export function AsmrSoundEditor({ sound, duration, silent = false, disabled, onC
     <div className="mt-3 space-y-3">
       <label className="block space-y-1.5 text-[11px] text-studio-muted">声音用途<select aria-label="ASMR 声音用途" className={field} disabled={disabled} value={sound.role ?? "legacy"} onChange={event => {
         const role = event.target.value === "legacy" ? undefined : event.target.value as "trigger" | "ambience";
-        onChange({ ...sound, role, postProcessing: { ...p, gainDb: role ? neutralGain(role) : p.gainDb } });
+        const next = { ...sound, role, postProcessing: { ...p, gainDb: role ? neutralGain(role) : p.gainDb } };
+        if (role !== "trigger") delete next.continuation;
+        onChange(next);
       }}><option value="legacy">沿用原音量</option><option value="trigger">主要触发音 · 自动平衡</option><option value="ambience">环境底声 · 保持轻柔</option></select></label>
       {sound.role ? <p className="text-[11px] leading-5 text-studio-muted">{sound.role === "trigger" ? "合片时平衡触发音的响度，保留轻重变化和安静间隙。" : "合片时压低过响的底声，安静部分保持安静。"}</p> : null}
+      {(!silent && canContinuePrevious && sound.role === "trigger" || sound.continuation) && <div>
+        <label className="flex items-start gap-2 text-xs text-violet-100"><input type="checkbox" className="mt-0.5 accent-violet-300" disabled={disabled}
+          checked={sound.continuation === "previous-silent"} onChange={event => {
+            const next = { ...sound };
+            if (event.target.checked) {
+              if (silent || !canContinuePrevious || sound.role !== "trigger") return;
+              next.continuation = "previous-silent";
+            } else delete next.continuation;
+            onChange(next);
+          }} />接续上一无台词段的 ASMR 动作</label>
+        <p className="mt-1 text-[11px] leading-5 text-studio-muted">保持正在进行的动作，边做边说；导出时选择「动作声音接续」。</p>
+        {sound.continuation && (!canContinuePrevious || silent) && <p className="mt-1 text-[11px] leading-5 text-amber-100">请补齐前段触发音设计，或取消这次接续。</p>}
+      </div>}
       <label className="block space-y-1.5"><span className="text-[11px] text-studio-muted">触发材料与动作</span>
         <textarea aria-label="ASMR 触发音提示词" rows={4} maxLength={2000} disabled={disabled} className={`${field} leading-6`} value={prompt}
           onChange={event => setDraft({ source: sound.prompt, text: event.target.value })}

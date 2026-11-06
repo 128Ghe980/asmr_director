@@ -94,13 +94,19 @@ class AudioNodeTests(unittest.TestCase):
                 self.node.spatial_samples(np.zeros((1, 4800)), 48000, profile=object(), **settings)
 
     def test_comfy_contract_has_expected_audio_links(self):
-        self.assertEqual(set(self.node.NODE_CLASS_MAPPINGS), {"AsmrDirectorSpatialAudio", "AsmrDirectorMixAudio", "AsmrDirectorBalancedSpatialAudio"})
+        self.assertEqual(set(self.node.NODE_CLASS_MAPPINGS), {"AsmrDirectorSpatialAudio", "AsmrDirectorMixAudio",
+            "AsmrDirectorBalancedSpatialAudio", "AsmrDirectorBalancedSpatialAudioV2"})
         self.assertEqual(self.node.AsmrDirectorMixAudio.INPUT_TYPES()["required"], {"audio1": ("AUDIO",), "audio2": ("AUDIO",)})
         self.assertEqual(self.node.AsmrDirectorSpatialAudio.RETURN_TYPES, ("AUDIO",))
         balanced = self.node.AsmrDirectorBalancedSpatialAudio.INPUT_TYPES()["required"]
         self.assertEqual(balanced["reference_audio"], ("AUDIO",))
         self.assertEqual(balanced["role"], (["trigger", "ambience"],))
         self.assertNotIn("role", self.node.AsmrDirectorSpatialAudio.INPUT_TYPES()["required"])
+        matched = self.node.AsmrDirectorBalancedSpatialAudioV2.INPUT_TYPES()
+        self.assertEqual(matched["required"], balanced)
+        self.assertEqual(matched["optional"]["previous_trigger_audio"], ("AUDIO",))
+        self.assertFalse(matched["optional"]["use_voice_reference"][1]["default"])
+        self.assertFalse(self.node.AsmrDirectorMixAudio.INPUT_TYPES()["optional"]["preserve_base"][1]["default"])
 
     def tone(self, amplitude=.1, seconds=1):
         axis = np.arange(round(seconds * 48000)) / 48000
@@ -160,6 +166,87 @@ class AudioNodeTests(unittest.TestCase):
             self.assertLessEqual(level, -34 + 1e-6)
             levels.append(level)
         self.assertGreater(levels[0] - levels[1], 10)
+
+    def test_matched_trigger_is_close_to_speech_and_can_fall_on_either_side(self):
+        source = self.tone(.15)
+        spatial = np.repeat(source, 2, axis=1)
+        for voice_level in (-34.2, -28., -24.):
+            voice = spatial * 10 ** ((voice_level - self.node._loudness(spatial)) / 20)
+            effect = self.node.balance_samples(spatial, source, voice, "trigger", "overlay", -12, version=2)
+            mono_ref = self.node.balance_samples(spatial, source, voice[:, :1], "trigger", "overlay", -12, version=2)
+            np.testing.assert_allclose(effect, mono_ref)
+            standalone = self.node.balance_samples(spatial, source, voice, "trigger", "replace", -12,
+                                                    version=2, use_voice_reference=True)
+            np.testing.assert_allclose(effect, standalone)
+            level = self.node._loudness(effect)
+            self.assertLessEqual(abs(level - voice_level), 4.001)
+            self.assertEqual(level > voice_level, voice_level == -34.2)
+
+    def test_matching_uses_boundary_contacts_despite_different_levels_elsewhere(self):
+        # The previous scene started with much louder taps. The new scene has
+        # a different number of taps and a silent lead-in before the first tap.
+        tap = self.tone(.05, .05)
+        previous = np.zeros((6 * 48000, 1))
+        current = np.zeros_like(previous)
+        for second in (0, .25, 1, 2, 3.25, 4, 5.5):
+            start = int(second * 48000)
+            previous[start:start + len(tap)] = tap * (3 if second < 3 else 1)
+        for second in (.5, .75, 1.5, 3.5, 4, 4.5, 5, 5.25, 5.5):
+            start = int(second * 48000)
+            current[start:start + len(tap)] = tap * (.5 if second < 3 else 1.5)
+        prev_stereo = np.repeat(previous, 2, axis=1)
+        spatial = np.repeat(current * 2, 2, axis=1)
+        result = self.node.balance_samples(spatial, current, np.zeros_like(current), "trigger", "overlay", -12,
+                                           version=2, previous_trigger=prev_stereo)
+        np.testing.assert_allclose(result[24000:26400], prev_stereo[192000:194400], atol=1e-10)
+        self.assertFalse(np.any(result[:23000]))
+        self.assertAlmostEqual(float(np.max(result[168000:170400])) / float(np.max(result[24000:26400])), 3.)
+        # X's measured output already contains its authored gain. Honor a
+        # changed X+1 gain without adding a second copy of their shared trim.
+        for gain, expected_delta in [(-9., 0.), (-15., -6.)]:
+            adjusted = self.node.balance_samples(spatial, current, np.zeros_like(current), "trigger", "overlay", gain,
+                version=2, previous_trigger=prev_stereo, previous_gain_db=-9.)
+            np.testing.assert_allclose(adjusted, result * 10 ** (expected_delta / 20), atol=1e-10)
+
+    def test_matched_trigger_skips_silent_reference_and_protects_quiet_inputs(self):
+        quiet = self.tone(.00001)
+        spatial = np.repeat(quiet * 500, 2, axis=1)
+        empty = np.zeros_like(quiet)
+        for role in ("trigger", "ambience"):
+            a = self.node.balance_samples(spatial, quiet, empty, role, "replace", -6, version=2)
+            b = self.node.balance_samples(spatial, quiet, empty, role, "overlay", -6, version=2, previous_trigger=empty)
+            np.testing.assert_allclose(a, b)
+            self.assertLessEqual(np.mean(a ** 2), np.mean(quiet ** 2) + 1e-16)
+        room_tail = self.tone(.0015, seconds=6)
+        room_tail[:2 * 48000] *= 100
+        self.assertIsNone(self.node._edge_activity(room_tail, tail=True))
+        self.assertIsNone(self.node._edge_activity(room_tail[::-1], tail=False))
+        steady_rubbing = np.random.default_rng(41).normal(0., .006, (6 * 48000, 1))
+        self.assertAlmostEqual(self.node._edge_activity(steady_rubbing, tail=True),
+                               self.node._edge_activity(steady_rubbing, tail=False), delta=.2)
+        # Either end with only quiet room tone must leave the voice-relative
+        # gain in place, rather than matching a clear trigger to the noise.
+        speech = np.repeat(self.tone(.03, seconds=6), 2, axis=1)
+        for previous, incoming in ((room_tail, steady_rubbing), (steady_rubbing, room_tail[::-1])):
+            stereo = np.repeat(incoming, 2, axis=1)
+            baseline = self.node.balance_samples(stereo, incoming, speech, "trigger", "overlay", -12, version=2)
+            with_edge = self.node.balance_samples(stereo, incoming, speech, "trigger", "overlay", -12,
+                                                  version=2, previous_trigger=previous)
+            np.testing.assert_array_equal(with_edge, baseline)
+
+    def test_peak_protection_keeps_voice_at_full_gain_and_scales_only_the_effect(self):
+        voice = self.tone(.85).T.astype(np.float32)
+        effect = np.repeat(voice * .8, 2, axis=0)
+        effect[:, :9600] = 0
+        mixed = self.node.mix_samples(voice, 48000, effect, 48000, preserve_base=True)
+        np.testing.assert_array_equal(mixed[0, :9600], voice[0, :9600])
+        self.assertLessEqual(self.node.engine.true_peak(mixed.T), .980001)
+        # A single gain on both ears also leaves the in-effect voice untouched.
+        active = np.abs(effect[0]) > .01
+        ratio = (mixed[0, active] - voice[0, active]) / effect[0, active]
+        self.assertGreater(float(ratio.min()), 0.)
+        self.assertLess(float(ratio.max()), 1.)
+        self.assertLess(float(np.ptp(ratio)), 2e-5)
 
     def test_balancing_preserves_sparse_attacks_pauses_and_peak_headroom(self):
         source = self.tone(.4, 2)

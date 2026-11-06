@@ -77,6 +77,49 @@ async function coldEntrySilentFixture(description?: string) {
 }
 
 describe("已采用音频的单片段分镜", () => {
+  it("keeps explicit silent-to-speech sound continuity on an independent shot without requiring the source design first", async () => {
+    const { input, project, voices } = await fixture();
+    Object.assign(voices[0], { kind: "silent", duration: 8, asset: { asset_id: null, uri: null, duration: null },
+      performance: { version: 1, segmentId: voices[0].id, purpose: "asmr", direction: "指尖在木盘上持续轻敲，末尾仍在操作。", soundIntent: "轻柔木质敲击，一直延续到段落边界。" } });
+    voices[1].performance = { version: 1, segmentId: voices[1].id, purpose: "dialogue", direction: "接着同一轻敲一边说话，末尾才停住。", soundIntent: "延续上一段同一木盘轻敲声。" };
+    input.referenceMode = "new";
+    const expectedSound = { ...asmrSoundFixture, role: "trigger" as const, mixMode: "overlay" as const, continuation: "previous-silent" as const };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply({ ...generated, asmrSound: expectedSound }));
+    const before = structuredClone(project);
+    const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
+    expect(result.storyboard.asmrSound).toEqual(expectedSound);
+    expect(result.storyboard.referenceMode).toBe("new");
+    expect(result.storyboard.previousClipId).toBeUndefined();
+    expect(materialFrom(fetchImpl).previousSilentSound).toEqual({ clipId: voices[0].id, designed: false });
+    expect(project).toEqual(before);
+  });
+
+  it("repairs a continuation that tries to reference preceding speech instead of a silent trigger", async () => {
+    const { input, voices } = await fixture();
+    voices[1].performance = { version: 1, segmentId: voices[1].id, purpose: "dialogue", direction: "微笑回应。", soundIntent: "安静环境。" };
+    const marked = { ...generated, asmrSound: { ...asmrSoundFixture, role: "trigger", continuation: "previous-silent" } };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(reply(marked)).mockResolvedValueOnce(reply(generated));
+    const result = await generateClipStoryboard(input, { env: {}, config, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body)).messages.at(-1).content).toContain("紧邻的上一段为无台词段");
+    expect(result.storyboard.asmrSound?.continuation).toBeUndefined();
+  });
+
+  it("rejects a continuation when an existing silent source design is quiet ambience", async () => {
+    const { input, project, voices } = await fixture();
+    Object.assign(voices[0], { kind: "silent", duration: 8, asset: { asset_id: null, uri: null, duration: null },
+      performance: { version: 1, segmentId: voices[0].id, purpose: "asmr", direction: "安静等待。", soundIntent: "室内底声。" } });
+    project.videoPlan!.shots[voices[0].id] = { ...generated, version: 1, promptFormat: "minimax-h3", clipId: voices[0].id,
+      sourceFingerprint: createClipVideoSourceFingerprint(project, voices[0].id), kind: "silent", duration: 8,
+      ambientSound: "Quiet room tone.", asmrSound: { ...asmrSoundFixture, role: "ambience" } };
+    voices[1].performance = { version: 1, segmentId: voices[1].id, purpose: "dialogue", direction: "继续说话。", soundIntent: "木盘敲击。" };
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => reply({ ...generated,
+      asmrSound: { ...asmrSoundFixture, role: "trigger", continuation: "previous-silent" } }));
+    await expect(generateClipStoryboard(input, { env: {}, config, fetchImpl })).rejects.toMatchObject({ status: 502,
+      message: expect.stringContaining("上一无台词段末段的声音设计") });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects a measured speech WAV over fifteen seconds before contacting the model", async () => {
     const { input, voices } = await fixture();
     await writeFile(path.join(config.clipAssetRoot, `${voices[1].asset.asset_id}.wav`), writePcm16Wav(new Float32Array(8000 * 16), 8000));

@@ -20,7 +20,7 @@ import {
   updateLibraryProject,
 } from "./project-library";
 import { PROJECT_STORAGE_KEY, serializeProject } from "./project-persistence";
-import type { AsmrProject, TimelineClip } from "./schema";
+import type { AsmrProject } from "./schema";
 import { createStoryboardSourceFingerprint, type PlannerStoryboard } from "./storyboard";
 import { createClipVideoSourceFingerprint, type ClipVideoStoryboard } from "./video-plan";
 
@@ -495,7 +495,7 @@ describe("project library", () => {
     });
   });
 
-  it("creates a clean project from the template", () => {
+  it("starts a project with empty tracks and no story or generated assets from its template", () => {
     const initial = createInitialProjectLibrary(demoProject, firstTime);
     const created = createLibraryProject(initial, demoProject, secondTime);
     const project = created.projects[1].project;
@@ -503,18 +503,13 @@ describe("project library", () => {
     expect(project.project_id).toBe("asmr_20260712_020304");
     expect(project.title).toBe("未命名项目");
     expect(project.status).toBe("draft");
-    expect(project.timeline.tracks.flatMap<TimelineClip>((track) => track.clips)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          generation: expect.objectContaining({
-            status: "asset_pending",
-            retry_count: 0,
-            error: null,
-          }),
-          asset: { asset_id: null, uri: null, duration: null },
-        }),
-      ]),
-    );
+    expect(project.timeline.tracks.map((track) => track.track_type)).toEqual(demoProject.timeline.tracks.map((track) => track.track_type));
+    expect(project.timeline.tracks.every((track) => track.clips.length === 0)).toBe(true);
+    expect(project.scene).not.toEqual(demoProject.scene);
+    expect(project.character).not.toEqual(demoProject.character);
+    expect(project.emotion_curve).not.toEqual(demoProject.emotion_curve);
+    expect(project.videoPlan).toBeUndefined();
+    expect(project.audioPostProcessing).toBeUndefined();
     expect(project.exports.every((entry) => entry.status === "not_started")).toBe(
       true,
     );

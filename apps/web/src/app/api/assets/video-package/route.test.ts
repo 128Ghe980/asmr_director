@@ -70,6 +70,50 @@ describe("video package multipart API", () => {
     expect(prepare).toHaveBeenCalledWith(demoProject, expect.any(Object), input.signal, {});
   });
 
+  it.each(["native", "asmr-first", "action-first"] as const)("accepts explicit %s export mode without changing the project snapshot", async silentAudioMode => {
+    const body = form(); body.set("silentAudioMode", silentAudioMode);
+    const input = request(body); await success(input);
+    expect(prepare).toHaveBeenCalledWith(demoProject, expect.any(Object), input.signal, silentAudioMode === "native" ? {} : { silentAudioMode });
+  });
+
+  it("rejects unknown, duplicate and file-valued silent audio modes", async () => {
+    const cases = ["", "automatic", "ASMR-FIRST", "ACTION-FIRST", " native"].map(value => { const body = form(); body.set("silentAudioMode", value); return body; });
+    const duplicate = form(); duplicate.append("silentAudioMode", "native"); duplicate.append("silentAudioMode", "asmr-first"); cases.push(duplicate);
+    const file = form(); file.set("silentAudioMode", new Blob(["asmr-first"]), "mode.txt"); cases.push(file);
+    for (const body of cases) expect((await POST(request(body))).status).toBe(400);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(["asmr-first", "action-first"])("explains a missing continuous-part ASMR design before starting %s export", async silentAudioMode => {
+    const project = structuredClone(demoProject), clip = project.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];
+    clip.kind = "silent"; clip.duration = 3;
+    const part = { durationSeconds: 3, visual: "S1 faces the camera.", action: "S1 moves empty hands slowly.", camera: "Fixed view.", ambientSound: "Soft cloth movement." };
+    Object.assign(project, { videoPlan: { version: 1, sceneDescription: "Quiet room.", shots: {
+      [clip.id]: { version: 1, promptFormat: "minimax-h3", clipId: clip.id, kind: "silent", duration: 3, sourceFingerprint: "test", title: "Empty hands",
+        visual: part.visual, action: part.action, camera: part.camera, ambientSound: part.ambientSound, parts: [part] },
+    } } });
+    const body = form(); body.set("project", JSON.stringify(project)); body.set("silentAudioMode", silentAudioMode);
+    const response = await POST(request(body));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: expect.stringContaining("补齐无台词连续片段的 ASMR 声音设计") });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("reports malformed action-continuation metadata instead of silently discarding the video plan", async () => {
+    const project = structuredClone(demoProject), clip = project.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];
+    const sound = { prompt: "Soft wooden taps.", role: "trigger", continuation: "future-segment", mixMode: "overlay", postProcessing: {
+      start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -12 } };
+    Object.assign(project, { videoPlan: { version: 1, sceneDescription: "Quiet room.", shots: {
+      [clip.id]: { version: 1, promptFormat: "minimax-h3", clipId: clip.id, sourceFingerprint: "test", title: "Tapping",
+        audio: { assetId: "adopted", uri: "asset://clip/adopted", duration: 4 }, visual: "S1 holds a box.", action: "S1 taps.", camera: "Fixed view.", asmrSound: sound },
+    } } });
+    const body = form(); body.set("project", JSON.stringify(project)); body.set("silentAudioMode", "action-first");
+    const response = await POST(request(body));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: expect.stringContaining("画面与声音方案不完整") });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
   it("rejects foreign origins and unsupported request content types before reading inputs", async () => {
     expect((await POST(request(form(), { headers: { origin: "https://foreign.example" } }))).status).toBe(403);
     expect((await POST(new Request("http://localhost/api/assets/video-package", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }))).status).toBe(415);

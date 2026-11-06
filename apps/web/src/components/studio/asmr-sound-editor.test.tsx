@@ -9,6 +9,29 @@ const sound: AsmrSound = { prompt: "Gentle cloth friction.", postProcessing: {
 } };
 afterEach(cleanup);
 describe("ASMR sound editing", () => {
+  it("sets an explicit continuation only for an eligible speech segment", () => {
+    const onChange = vi.fn(), trigger: AsmrSound = { ...sound, role: "trigger", mixMode: "overlay" };
+    render(<AsmrSoundEditor sound={trigger} duration={2} disabled={false} canContinuePrevious onChange={onChange} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "接续上一无台词段的 ASMR 动作" }));
+    expect(onChange).toHaveBeenCalledWith({ ...trigger, continuation: "previous-silent" });
+    expect(formatAsmrSound({ ...trigger, continuation: "previous-silent" })).toContain("接续上一无台词段的 ASMR 动作");
+  });
+  it("keeps an invalid saved continuation removable and clears it when choosing ambience", () => {
+    const onChange = vi.fn(), continued: AsmrSound = { ...sound, role: "trigger", continuation: "previous-silent" };
+    render(<AsmrSoundEditor sound={continued} duration={2} disabled={false} onChange={onChange} />);
+    const option = screen.getByRole("checkbox", { name: "接续上一无台词段的 ASMR 动作" }) as HTMLInputElement;
+    expect(option.checked).toBe(true); expect(option.disabled).toBe(false);
+    fireEvent.click(option);
+    expect(onChange.mock.calls[0][0]).not.toHaveProperty("continuation");
+    fireEvent.change(screen.getByLabelText("ASMR 声音用途"), { target: { value: "ambience" } });
+    expect(onChange.mock.calls[1][0]).not.toHaveProperty("continuation");
+  });
+  it("does not offer continuation on silent or ineligible speech segments", () => {
+    const view = render(<AsmrSoundEditor sound={sound} duration={2} disabled={false} onChange={vi.fn()} />);
+    expect(screen.queryByRole("checkbox", { name: "接续上一无台词段的 ASMR 动作" })).toBeNull();
+    view.rerender(<AsmrSoundEditor sound={{ ...sound, role: "trigger" }} duration={2} disabled={false} silent canContinuePrevious onChange={vi.fn()} />);
+    expect(screen.queryByRole("checkbox", { name: "接续上一无台词段的 ASMR 动作" })).toBeNull();
+  });
   it("opts into a sound role at its neutral level without losing prompt or spatial settings", () => {
     const onChange = vi.fn();
     render(<AsmrSoundEditor sound={sound} duration={2} disabled={false} onChange={onChange} />);

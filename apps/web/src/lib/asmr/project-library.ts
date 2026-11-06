@@ -3,6 +3,7 @@ import { ensureSpeechWorkspaces, getSpeechWorkspaceMode } from "./speech-workspa
 import {
   PlannerSourceSchema,
   compilePlannerDraft,
+  createEmptyPlannerBrief,
   type PlannerBrief,
   type PlannerDraft,
   type PlannerSource,
@@ -438,27 +439,19 @@ function cleanTemplateProject(
   template: AsmrProject,
   projectId: string,
 ): AsmrProject {
+  const brief = createEmptyPlannerBrief();
   const cleaned = cloneProject({
-    ...template,
-    speechWorkspace: undefined,
     project_id: projectId,
     title: "未命名项目",
     status: "draft",
+    language: template.language,
+    duration: brief.durationSeconds,
+    scene: { id: "pending", name: "待策划" },
+    character: { id: "pending", role: "待策划", personality: ["待策划"], speech_style: ["待策划"] },
+    emotion_curve: [{ start: 0, end: brief.durationSeconds, emotion: "待策划" }],
     timeline: {
-      ...template.timeline,
-      tracks: template.timeline.tracks.map((track) => ({
-        ...track,
-        clips: track.clips.map((clip) => ({
-          ...clip,
-          generation: {
-            ...clip.generation,
-            status: "asset_pending",
-            retry_count: 0,
-            error: null,
-          },
-          asset: { asset_id: null, uri: null, duration: null },
-        })),
-      })) as AsmrProject["timeline"]["tracks"],
+      mixing: template.timeline.mixing,
+      tracks: template.timeline.tracks.map((track) => ({ ...track, clips: [] })),
     },
     exports: template.exports.map((entry) => ({
       ...entry,

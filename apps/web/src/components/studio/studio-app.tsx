@@ -1819,6 +1819,7 @@ export function StudioApp({ project }: StudioAppProps) {
       "切换前",
     );
     activateLibraryProject(createLibraryProject(protectedLibrary, project));
+    setWorkspaceView("planner");
   }
 
   function handleAdoptPlanner(brief: PlannerBrief, draft: PlannerDraft, storyboard?: import("@/lib/asmr/storyboard").PlannerStoryboard, sceneDescription?: string) {

@@ -19,7 +19,10 @@ export const PerformanceStoryboardPartSchema = z.object({
   durationSeconds: z.number().finite().positive().max(MAX_VIDEO_GENERATION_SECONDS),
   visual: z.string().max(800), action: z.string().max(600), camera: z.string().max(400),
   ambientSound: z.string().max(600), asmrSound: AsmrSoundSchema,
-}).strict();
+}).strict().superRefine((part, context) => {
+  if (part.asmrSound.continuation) context.addIssue({ code: "custom", path: ["asmrSound", "continuation"],
+    message: "无台词连续生成段不能引用上一无台词段声音。" });
+});
 export type PerformanceStoryboardPart = z.infer<typeof PerformanceStoryboardPartSchema>;
 
 export const ClipVideoStoryboardSchema = z.object({
@@ -63,6 +66,9 @@ export const ClipVideoStoryboardSchema = z.object({
   }
   if (shot.kind !== "silent" && shot.asmrSound?.mixMode === "replace") {
     context.addIssue({ code: "custom", message: "有台词段必须保留已采用人声。", path: ["asmrSound", "mixMode"] });
+  }
+  if (shot.asmrSound?.continuation && (shot.kind === "silent" || shot.asmrSound.role !== "trigger")) {
+    context.addIssue({ code: "custom", message: "只有有台词触发音可以延续上一无台词段。", path: ["asmrSound", "continuation"] });
   }
 });
 

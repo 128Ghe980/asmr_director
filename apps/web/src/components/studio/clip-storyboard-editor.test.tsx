@@ -104,6 +104,25 @@ afterEach(() => {
 });
 
 describe("ClipStoryboardEditor current-audio workflow", () => {
+  it("lets a speech shot explicitly continue the prior silent trigger while retaining an independent camera", async () => {
+    const project = fixture(), [previous, current] = voices(project);
+    previous.kind = "silent"; previous.duration = 4;
+    previous.asset = { asset_id: null, uri: null, duration: null }; previous.generation.status = "asset_pending";
+    const sound = { role: "trigger" as const, prompt: "Soft wooden taps continue.", mixMode: "overlay" as const,
+      postProcessing: { start: { pan: 0, distance: "near" as const }, end: { pan: 0, distance: "near" as const }, movement: "static" as const, gainDb: -12 } };
+    const source = shotFixture(project, previous.id);
+    delete source.audio;
+    Object.assign(source, { kind: "silent", duration: 4, ambientSound: "Soft wooden taps.", asmrSound: { ...sound, mixMode: "replace" } });
+    project.videoPlan!.shots[previous.id] = source;
+    const shot = withShot(project, current.id); shot.asmrSound = sound;
+    mockApi(); const { onEdit } = await mountEditor(project);
+    expect((control("新镜头") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByText(/环境与触发音 ·/));
+    fireEvent.click(screen.getByRole("checkbox", { name: "接续上一无台词段的 ASMR 动作" }));
+    expect(onEdit).toHaveBeenCalledWith(current.id, { asmrSound: { ...sound, continuation: "previous-silent" } });
+    expect((control("新镜头") as HTMLInputElement).checked).toBe(true);
+  });
+
   it.each(["current", "stale", "silent"] as const)("asks before replacing an existing %s storyboard and keeps it when declined", async (kind) => {
     const project = fixture(), clip = voices(project)[1];
     if (kind === "silent") { clip.kind = "silent"; clip.duration = 3; clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending"; }

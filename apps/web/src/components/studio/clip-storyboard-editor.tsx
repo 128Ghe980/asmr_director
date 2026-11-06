@@ -8,6 +8,7 @@ import { sanitizeDownloadName } from "@/lib/asmr/batch-download";
 import { getSpeechWorkspaceMode } from "@/lib/asmr/speech-workspace";
 import { createStoryboardGenerationContextFingerprint } from "@/lib/asmr/storyboard-context";
 import { AsmrSoundEditor } from "./asmr-sound-editor";
+import { getAsmrContinuationProblem } from "@/lib/asmr/asmr-sound";
 import {
   ClipVideoStoryboardSchema, createClipH3Prompt, createClipVideoSourceFingerprint,
   getPreviousVoiceClip, getPreviousClipPromptFingerprint, isClipVideoStoryboardCurrent,
@@ -40,6 +41,11 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
   const voices = flattenClips(project).filter((item) => item.type === "voice").sort((a, b) => a.start - b.start);
   const index = voices.findIndex((item) => item.id === clipId);
   const previous = getPreviousVoiceClip(project, clipId);
+  const previousShot = previous ? project.videoPlan?.shots[previous.id] : undefined;
+  const canContinuePrevious = !!shot?.asmrSound && getAsmrContinuationProblem(
+    { ...shot.asmrSound, continuation: "previous-silent" }, clip?.type === "voice" ? clip.kind : undefined,
+    previous ? { ...previousShot, kind: previous.kind } : undefined,
+  ) === undefined;
   const previousFingerprint = getPreviousClipPromptFingerprint(project, clipId);
   const [localReferenceMode, setLocalReferenceMode] = useState<{ projectId: string; clipId: string; mode: StoryboardReferenceMode }>();
   const savedReferenceMode = getClipStoryboardReferenceMode(project, clipId);
@@ -254,7 +260,7 @@ export function ClipStoryboardEditor({ project, clipId, batchBusy = false, refer
             </div>
           </details>;
         })}</div>
-      </details> : shot.asmrSound ? <AsmrSoundEditor key={shot.clipId} sound={shot.asmrSound} duration={silent ? clip.duration : shot.audio?.duration ?? clip.asset.duration ?? 0} silent={silent} disabled={batchBusy} onChange={asmrSound => edit({ asmrSound })} /> : <p className="text-[11px] text-studio-muted">重新设计可生成本段环境与触发音。</p>}
+      </details> : shot.asmrSound ? <AsmrSoundEditor key={shot.clipId} sound={shot.asmrSound} duration={silent ? clip.duration : shot.audio?.duration ?? clip.asset.duration ?? 0} silent={silent} canContinuePrevious={canContinuePrevious} disabled={batchBusy} onChange={asmrSound => edit({ asmrSound })} /> : <p className="text-[11px] text-studio-muted">重新设计可生成本段环境与触发音。</p>}
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!prompt} onClick={() => void copy()}>{copiedPrompt === prompt && prompt ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}{copiedPrompt === prompt && prompt ? "已复制 H3 提示词" : "复制 H3 提示词"}</button><button type="button" className={buttonClass} disabled={!prompt} onClick={download}><Download className="h-3.5 w-3.5" aria-hidden="true" />下载提示词</button></div>
       <details ref={disclosure} onToggle={fitPromptPreview} className="rounded-lg border border-studio-line px-3 py-2.5 text-xs text-studio-muted"><summary className="cursor-pointer">H3 提示词预览</summary>{prompt ? <textarea ref={preview} aria-label="本段 H3 提示词" readOnly value={prompt} rows={8} spellCheck={false} className="mt-3 w-full min-w-0 resize-none overflow-hidden rounded-lg bg-black/20 px-2 py-2 font-mono text-xs leading-6 outline-none focus:ring-1 focus:ring-violet-300/30" /> : <p className="mt-2 leading-5">补全画面、动作与镜头，并确保分镜对应当前音频。</p>}</details>
     </div> : null}

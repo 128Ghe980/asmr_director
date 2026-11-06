@@ -6,7 +6,7 @@ import { getStoryboardReviewClips, getStoryboardReviewFingerprint, getStoryboard
 import { readVideoPlanningRequest, videoPlanningError, videoPlanningTimeout, type VideoPlanningOptions } from "./video-planning-request";
 import { ClipVideoStoryboardSchema, PerformanceStoryboardPartSchema } from "./video-plan";
 import { creativeTemplateContext, getMatchingTemplateDirections } from "./reference-template";
-import { ASMR_SOUND_PLANNING_GUIDANCE, ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE, AsmrSoundSchema } from "./asmr-sound";
+import { ASMR_SOUND_PLANNING_GUIDANCE, ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE, ASMR_SOUND_SPATIAL_GUIDANCE, ASMR_ACTION_CONTINUITY_GUIDANCE, AsmrSoundSchema, getAsmrContinuationProblem } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
 import { CAMERA_PANTOMIME_GUIDANCE, usesCameraPantomime } from "./camera-pantomime";
 
@@ -33,7 +33,7 @@ function messages(input: StoryboardReviewRequest): PlannerChatMessage[] {
     "shots 数组已经按真实脚本顺序提供，order 是顺序编号，shotNumber 是补丁唯一键，为输入给出的三位显示镜号。只复制该镜头的 shotNumber，并按 order 排列；不得返回 clipId，服务器负责映回原工程标识。notes 提到镜头也只使用输入 shotNumber；不得从旧 title 推断镜号，不能编造镜号、补齐缺号或引用数组之外的镜头。",
     ...(pantomime ? [
       CAMERA_PANTOMIME_GUIDANCE,
-      "检查S1的完整头部、上半身与连接身体的空手是否保持同框，固定机位、手位、姿势及当前手势阶段是否连续。当前text、performance.direction/soundIntent决定本段任务与声音；上一镜只提供结束手位和姿势，不能让当前段复演上一任务或照搬上一段音色。故事里的被照料对象只能作为剧情意图，不补听者身体、工具或实体目标，也不改成整理S1自己。",
+      "检查S1的完整头部、上半身与连接身体的空手是否保持同框，固定机位、手位、姿势及当前手势阶段是否连续。当前text、performance.direction/soundIntent决定本段任务与声音；上一镜提供结束手位和姿势，不能复演已结束任务或照搬无关音色。脚本明确从无台词段延续持续动作到台词段时，保留同一手势与音色，不强制改成停手说话。故事里的被照料对象只能作为剧情意图，不补听者身体、工具或实体目标，也不改成整理S1自己。",
       "Visual是开镜状态，Action是本镜当前手势及终态，二者应一致。只修实际矛盾：前段空手已抬起，后段不能无故复位再抬手；当前任务确需换手势时写出可在本段时长内完成的变化。目光、表情与等待本身有效，不为安静停留强添手势、实体接触、呼气、叹气或吹气；自然呼吸不用描述。",
       "区分当前执行、邀请、未来计划、回忆与已完成任务。只保留当前具体任务支持的空手表演，不因台词说了一个材料或照料动作就新增可见实体，不把合理模拟手势一律改成泛化微笑。动作或声音与当前任务不符时只修该段必要字段，不能复制邻段整套表演。",
       "不得修改台词、音频、时长、镜头顺序、角色身份、referenceMode或来源metadata。连续模式承接已建立的手位和姿势；new镜头允许合理开镜姿态，不补走动。需要新增镜头或改变引用模式时只在notes说明。S1自身外貌服装沿用参考图；对白时完整人物与嘴部可见并匹配原TTS，无台词时不做口型表演。",
@@ -53,7 +53,10 @@ function messages(input: StoryboardReviewRequest): PlannerChatMessage[] {
     pantomime
       ? "asmrSound.prompt用简洁英文写匹配当前任务的拟音材质、触发方式、柔和节奏和安静间隙。独立声音素材可以拍发声材料或手部，只取音；不得将其物件带入主画面的visual/action。纯凝视与等待只保留安静环境。音效无对白、低语、呼吸、口腔声或音乐，保持干燥、少混响、无人工声像移动。postProcessing按当前手势相对听者的位置选start/end.pan(-1至1)、distance和movement，无位移时static且start=end，gainDb克制；角色人声位置与拟音位置独立。"
       : ASMR_SOUND_PLANNING_GUIDANCE,
-    ...(pantomime ? [ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE] : []),
+    ...(pantomime ? [ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE, ASMR_SOUND_SPATIAL_GUIDANCE] : []),
+    ASMR_ACTION_CONTINUITY_GUIDANCE,
+    "校对同时核对持续动作的silent→speech边界。合理的边做边说不能改成仅持物、微笑或纯说话；前段还在操作，后段不能无故重置手位或从头演一遍。仅有明确持续动作却漏标时，在可编辑speech的完整after.asmrSound中补continuation。已有标记须在完整对象中保留，省略字段不会清除声音依赖；若当前脚本已不再延续，在notes说明需取消动作延续设置，不冒充已修正。不能把无台词/环境声/已完成动作标成延续。源段最后连续块须为trigger。",
+    "声音空间校对须核对主动作与asmrSound.postProcessing的端点和方向。声音意图已有一次明确横扫、靠近或退开却填成static时，在可编辑字段内同步给出最小修正；不得把已有复杂往返或双侧同时操作虚报为一条轨迹已精确实现，单轨迹无法表达的空间需求用notes说明限制，不改台词、不拆段、不改变接触次数。没有移动依据的静止声源保持静止，不为增加orbit数量重写表演。",
     "声音校对保持已有role；只有当前材料触发与安静环境分类确实错误时才调整，不因改写文字省略role而丢失用途与响度平衡。新增加的asmrSound明确role。用户已有合理声响和节奏保持；重复的泛化沙沙描述若未体现当前材料，应在当前意图内细化材质接触与音色，不追加新声源或改动动作时长。",
     ...(pantomime ? [
       "逐段核对当前text与performance.direction/soundIntent，不以邻段画面或模板示例取代本段任务。只要有具体模拟手势就允许对应拟音，不能因主画面空手就把声音删成静音；纯反应和等待则保持安静。",
@@ -125,6 +128,19 @@ export async function generateStoryboardReview(input: StoryboardReviewRequest, o
         else delete after.ambientSound;
       }
       if (JSON.stringify(before) !== JSON.stringify(after)) changes.push({ clipId, reason: change.reason, before, after });
+    }
+    // Validate against the final proposed batch so a source-role change cannot
+    // leave a dependent speaking segment pointing at quiet ambience.
+    const proposed = new Map(changes.map(change => [change.clipId, change.after]));
+    for (const [index, clip] of clips.entries()) {
+      const current = proposed.get(clip.id) ?? input.project.videoPlan!.shots[clip.id];
+      const previousClip = clips[index - 1];
+      const previous = previousClip ? proposed.get(previousClip.id) ?? input.project.videoPlan!.shots[previousClip.id] : undefined;
+      const problem = getAsmrContinuationProblem(current.asmrSound, clip.kind,
+        previousClip ? { ...previous, kind: previousClip.kind } : undefined);
+      if (problem && (proposed.has(clip.id) || previousClip && proposed.has(previousClip.id))) {
+        throw new PlannerError(502, `校对中的 ASMR 动作延续关系无效：${problem}未应用任何修改。`);
+      }
     }
     const order = new Map(clips.map((clip, index) => [clip.id, index]));
     changes.sort((a, b) => order.get(a.clipId)! - order.get(b.clipId)!);

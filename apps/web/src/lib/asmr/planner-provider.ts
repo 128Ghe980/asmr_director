@@ -15,7 +15,7 @@ import { expandPlannerGeneratedDraft, normalizePlannerSemanticDraft, PlannerGene
 import { creativeTemplateContext } from "./reference-template";
 import { effectiveStoryboardStyle } from "./storyboard-style";
 import { CAMERA_PANTOMIME_GUIDANCE, usesCameraPantomime } from "./camera-pantomime";
-import { ASMR_SOUND_PALETTE_GUIDANCE } from "./asmr-sound";
+import { ASMR_SOUND_PALETTE_GUIDANCE, ASMR_SOUND_SPATIAL_CREATION_CHECKLIST, ASMR_ACTION_CONTINUITY_CREATION_CHECKLIST } from "./asmr-sound";
 
 // Imported only by the server route. Credentials never enter the browser contract.
 export const PlannerProviderIdSchema = z.enum(["ollama", "api"]);
@@ -200,14 +200,14 @@ function performanceFinalChecklist(brief: PlannerBrief, repair = false): string 
   const soundLed = budget.speechSeconds < brief.durationSeconds * 0.25;
   const mixed = !budget.noSpeech && budget.nonSpeechSeconds > 0;
   const actionExample = usesCameraPantomime(brief.referenceTemplate)
-    ? "S1空手在镜头下沿向两侧打开一次，松开指尖后收手，配同步轻柔拟音。"
-    : "S1保持既有手位，指尖轻敲当前材料四次，停顿后收住手指。";
+    ? "S1空手在镜头下沿持续缓扫，配同步轻柔拟音，段末保持动作进行。"
+    : "S1保持既有手位，指尖持续轻敲当前材料，段末保持操作进行。";
   return [
     "【本次输出前最后核对：当前任务与以下要求优先于模板的节奏示例】",
     ...(mixed ? [
-      "必须返回混合表演脚本：groups[].units中同时实际存在kind=speech和kind=silent。主要任务动作、独立声音试听、必要回应时间须有silent单元及durationSeconds；只写进speech.direction/soundSuggestions或pauseAfter等于没有安排这些段。speech的direction可写表情、持续持物与轻微姿势，不在邀请台词里把随后整个操作提前做完。",
-      "先在内部列出本主题真正需要的几项动作与试听，每项给合理时长并实际输出为silent；完成一次的动作只安排一次。随后分配完整交流。无需逐句交替，但邀请→动作silent→完成后的回应必须按顺序出现，不能省略中间的动作段。",
-      `单个活动的类型示例（仅说明结构，不复制剧情，不代表全稿只有这三段）：[{kind:'speech',purpose:'dialogue',text:'我把这一侧处理好，你保持舒服的姿势就行，不用一直绷着。',direction:'保持动作开始前的位置，面向镜头说话。',soundSuggestions:''},{kind:'silent',purpose:'asmr',durationSeconds:6,text:'${actionExample}',direction:'写该动作的起始、完整过程和收手终点。',soundSuggestions:'写对应的无对白触发音。'},{kind:'speech',purpose:'dialogue',text:'这一侧已经好了，感觉怎么样？我们接着做下一步，你慢慢来。',direction:'保持上一动作的结束手位，微笑确认。',soundSuggestions:''}]。`,
+      "必须返回混合表演脚本：groups[].units中同时实际存在kind=speech和kind=silent。主要任务动作、独立声音试听、必要回应时间须有silent单元及durationSeconds；只写进speech.direction/soundSuggestions或pauseAfter等于没有安排这些段。speech可延续上一silent仍在进行的ASMR动作并说话，也可纯谈话；不要把持续触发限制成持物不动，不在邀请台词里把随后整个一次性操作提前做完。",
+      "先在内部列出本主题真正需要的几项动作与试听，每项给合理时长并实际输出为silent；完成一次的动作只安排一次。随后分配完整交流。无需逐句交替：一次性操作按邀请→动作silent→完成后的回应；持续ASMR至少一处按邀请→仍在操作的silent→边持续操作边说话的speech。两者区分，不把所有交流都写成操作结束后的回应。",
+      "持续动作跨段结构示例（只学边做边说，不复制台词或材料）：[{kind:'silent',purpose:'asmr',durationSeconds:8,text:'S1用指尖持续轻敲当前材料，最后仍在操作。',direction:'从既有持握位置开始轻敲，到本段最后一刻仍在轻敲，接着进入下一段。',soundSuggestions:'当前材料的轻敲声，节奏从容，持续到段落边界，没有收尾。'},{kind:'speech',purpose:'dialogue',text:'这个声音听起来很轻，我们就这样慢慢来，不用着急。',direction:'从上一段正在轻敲的状态接续，整句说话期间保持同一轻敲动作，最后一句说完才停住指尖。',soundSuggestions:'上一无台词段同一材料的轻敲声贯穿整句台词，保持原声位及节奏，随轻敲短暂停顿，说完收手才结束。'}]。不能把这里的speech改成手指停着、只持物、开头或末尾补两下；必须在说话主体期间仍在操作。一次性动作另按一次完成处理。",
     ] : []),
     `总表演目标${brief.durationSeconds}秒，合格范围${minimum}至${maximum}秒。台词按max(2,ceil(非空白字符数/2.8+标点数×0.35))逐条估时；不得把片名、导演说明或声音描述算成台词。`,
     budget.noSpeech ? "全程无台词，不添加speech；围绕当前主题发展有实质变化的声音内容，动作合理完成即结束，不反复执行一次性动作凑时间。"
@@ -219,6 +219,8 @@ function performanceFinalChecklist(brief: PlannerBrief, repair = false): string 
       : "把同一意图的短应答、解释和衔接组织成一段完整口语，允许2至3句；不要连续输出多段只有7至15字的介绍、确认或告别。已有短句可以充实当前角色、细节和声音感受，也可以与相邻同意图台词合并，不增加无关支线。每条speech预计不得超过15秒。",
     `每个silent.text必须写至少4个实际文字的第三人称具体表演，不能空白；例如“${actionExample}”。“声音很舒服”“有点粗糙，但很踏实”“像提醒你该回神了”都是角色评论，应写speech，不能冒充silent动作描述；silent.text中不向听者说话。每unit显式写direction与soundSuggestions。一次性动作3至8秒、最多10秒且一段做完，interaction最多5秒，持续asmr最多15秒。不能因标签是asmr就拉长拆开、递交、取放。`,
     "按事件顺序再看一遍：发出动作邀请或说明准备做什么的台词在动作之前，动作后的确认说已经完成，不能做完后再说‘我来帮你做’；相邻unit的手部状态连续，不重复已经完成的动作。",
+    ASMR_SOUND_SPATIAL_CREATION_CHECKLIST,
+    ASMR_ACTION_CONTINUITY_CREATION_CHECKLIST,
     "最后实际相加全部speech估时与silent秒数，达到上述范围后才返回完整JSON；不要返回一个时长不足的提纲。只返回脚本，不返回核对表。",
   ].join("\n");
 }
@@ -244,6 +246,7 @@ function performancePrompts(request: Extract<PlannerRequest, { action: "generate
   } : undefined;
   const system = [
     "你是中文 ASMR 表演编剧。产物是一段在稳定镜头前发生的完整表演脚本：语言、真实动作、听声音和等待共同占据时间。",
+    ASMR_ACTION_CONTINUITY_CREATION_CHECKLIST,
     timing,
     PERFORMANCE_PACING_GUIDANCE,
     ASMR_SOUND_PALETTE_GUIDANCE,
@@ -254,7 +257,7 @@ function performancePrompts(request: Extract<PlannerRequest, { action: "generate
       ? "purpose为dialogue、asmr、transition或interaction；silent不可用dialogue。空手模拟动作配同步拟音时用asmr，独立的必要动作过渡用transition，目光回应和安静停留用interaction。抬手、当前手势和收手通常合在同一段。为完整手势和声音留真实时间；剧情邀请不生成听者身体、移动或接物。轻微表情可伴随台词。"
       : "purpose为dialogue、asmr、transition或interaction；silent不可用dialogue。实际听材料声音用asmr，身体移动或取放交接用transition，回应停留或无实物表演用interaction。安静也是有效表演，不必硬造物件触发音。",
     ...(!pantomime ? ["台词发出行动邀请后，须给行动留真实时间：接物、归位、进入新位置、落座等关键状态转换安排在相应silent段完成，再继续下一阶段台词。不要把这些必需过渡只藏在speech.direction里；说完一句话不代表动作已完成。轻微表情或持续持物可伴随台词。"] : []),
-    "ASMR试听须有独立silent段，不能仅在介绍台词的soundSuggestions写敲击就算完成。一段完成一个内容足够的声音操作或合理变化；一次性的整理、拆开、递出等动作完成即结束，不延长为反复操作。同一动作与等待不重复计时，超预算先删赘语、支线和重复等待，不机械压缩所有动作秒数。",
+    "ASMR试听须有独立silent段，不能仅在介绍台词的soundSuggestions写敲击就算完成。一段呈现一个内容足够的声音操作或合理变化；持续操作可跨silent→speech，先纯试听再边操作边说话，不在silent边界强制结束。一次性的整理、拆开、递出等动作完成即结束，不延长为反复操作。同一动作与等待不重复计时，超预算先删赘语、支线和重复等待，不机械压缩所有动作秒数。",
     pantomime
       ? "每个unit逐单元填写具体direction，写S1空手的起始位置、当前一个模拟手势、结束时手部位置；本unit起始承接上一unit结束，包括跨group。抬手、收手和手势变化写进当前动作，不把它们偷写成下一段已完成状态。故事可说整理领子或扫脸，direction只落实镜头前可见的空手表演，不重复目标实体名。"
       : "每个unit逐单元填写具体 direction，简洁写起始状态、主要动作和结束状态；本 unit 的起始必须承接上一 unit 的结束，包括跨 group。取放、换手或移动必须实际发生，不能偷写成下一unit起始时已经完成；已经持有的物件不能再次拿起。仅描述当前动作涉及的状态，不每句重写全场清单。",

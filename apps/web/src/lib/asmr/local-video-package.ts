@@ -12,7 +12,7 @@ import { StoredZipWriter, ZipLimitError } from "./stored-zip";
 import { getVideoPackageFilename, getVideoPackageShots, VideoPackageValidationError, type VideoPackageSourceShot } from "./video-package";
 import { getCurrentAudioPostProcessingReceipts } from "./audio-post-processing";
 import { readPreparedAudioSource } from "./prepared-audio-source";
-import { renderAsmrSoundH3Prompt, type AsmrSound } from "./asmr-sound";
+import { getAsmrContinuationProblem, renderAsmrSoundH3Prompt, type AsmrSound } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
 import type { ClipVideoStoryboard, PerformanceStoryboardPart } from "./video-plan";
 import { getSegmentPauseSeconds } from "./voice-delivery-timing";
@@ -31,15 +31,17 @@ export type VideoPackageManifest = {
   workspaceMode: "short" | "paragraph";
   characterReference?: string;
   workflow: "workflow_api.json";
+  silentAudioMode?: "native" | "asmr-first" | "action-first";
   shots: {
     id: string; order: number; kind: "speech" | "ambient"; referenceMode: "new" | "continuous";
     prompt: string; durationSeconds: number; audio?: string;
     sourceDurationSeconds?: number; tailPauseSeconds?: number;
     segmentId?: string; partIndex?: number; partCount?: number;
-    asmrSound?: { prompt: string; durationSeconds: number; postProcessing: AsmrSound["postProcessing"]; mixMode?: "overlay" | "replace"; role?: AsmrSound["role"] };
+    asmrSound?: { prompt: string; durationSeconds: number; postProcessing: AsmrSound["postProcessing"]; mixMode?: "overlay" | "replace"; role?: AsmrSound["role"]; referenceShotId?: string };
   }[];
 };
-type Dependencies = { reference?: Uint8Array; tempRoot?: string; runnerRoot?: string; processorRoot?: string; maxArchiveBytes?: number };
+type Dependencies = { reference?: Uint8Array; tempRoot?: string; runnerRoot?: string; processorRoot?: string; maxArchiveBytes?: number;
+  silentAudioMode?: "native" | "asmr-first" | "action-first" };
 type AudioSource = { filePath: string; size: number; mtimeMs: number; duration: number; outputSha256?: string;
   sourceDuration: number; tailPauseSeconds: number; deliverySize: number };
 type ExportedEntry = {
@@ -254,6 +256,26 @@ async function addAudio(writer: StoredZipWriter, name: string, source: AudioSour
 /** Export one immutable snapshot, appending delivery silence after the selected WAV. No DSP or model calls. */
 export async function prepareVideoPackage(project: AsmrProject, config: LocalRuntimeConfig, signal?: AbortSignal, dependencies: Dependencies = {}): Promise<PreparedBatchDownload> {
   checkCancelled(signal);
+  const soundFirst = dependencies.silentAudioMode === "asmr-first";
+  const actionFirst = dependencies.silentAudioMode === "action-first";
+  if (soundFirst || actionFirst) {
+    const clips = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : [])
+      .sort((left, right) => left.start - right.start);
+    if (actionFirst) for (const [index, clip] of clips.entries()) {
+      const shot = project.videoPlan?.shots[clip.id], previousClip = clips[index - 1];
+      const previous = previousClip ? { ...project.videoPlan?.shots[previousClip.id], kind: previousClip.kind } : undefined;
+      const problem = getAsmrContinuationProblem(shot?.asmrSound, clip.kind, previous)
+        ?? shot?.parts?.map(part => getAsmrContinuationProblem(part.asmrSound, clip.kind, previous)).find(Boolean);
+      if (problem) throw new BatchDownloadError(`第 ${index + 1} 段的动作声音接续无效：${problem}`, 400);
+    }
+    const missing = clips.flatMap((clip, index) => {
+        if (clip.kind !== "silent") return [];
+        const shot = project.videoPlan?.shots[clip.id];
+        return shot?.parts?.length ? shot.parts.flatMap((part, partIndex) => part.asmrSound ? [] : [`第 ${index + 1} 段的第 ${partIndex + 1} 个连续片段`])
+          : shot?.asmrSound ? [] : [`第 ${index + 1} 段`];
+      });
+    if (missing.length) throw new BatchDownloadError(`${actionFirst ? "动作声音接续" : "无台词先生成声音"}需要完整的 ASMR 声音设计，请先补齐${missing.slice(0, 5).join("、")}${missing.length > 5 ? `等 ${missing.length} 处` : ""}。`, 400);
+  }
   let shots: VideoPackageSourceShot[];
   try { shots = getVideoPackageShots(project); }
   catch (error) {
@@ -300,18 +322,26 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
   const manifest: VideoPackageManifest = {
     format: "asmr-video-package", version: 1, projectId: project.project_id, title: project.title,
     workspaceMode: project.speechWorkspace?.activeMode ?? "short", workflow: "workflow_api.json",
+    ...(soundFirst || actionFirst ? { silentAudioMode: dependencies.silentAudioMode } : {}),
     ...(extension ? { characterReference: `references/character.${extension}` } : {}),
     shots: exportedEntries.map(({ entry, directions, partIndex, partCount }, position) => {
       const silent = entry.clip.kind === "silent";
       const durationSeconds = silent ? "durationSeconds" in directions ? directions.durationSeconds : entry.clip.duration : sources.get(entry.index)!.duration;
       const order = position + 1;
       const audio = `shots/${String(order).padStart(3, "0")}/audio.wav`;
+      const predecessor = exportedEntries[position - 1];
+      const referenceShotId = actionFirst && directions.asmrSound?.continuation === "previous-silent"
+        ? predecessor.partCount ? `${predecessor.entry.clip.id}--part-${String(predecessor.partIndex + 1).padStart(3, "0")}` : predecessor.entry.clip.id
+        : undefined;
       return {
         id: partCount ? `${entry.clip.id}--part-${String(partIndex + 1).padStart(3, "0")}` : entry.clip.id,
         order, kind: silent ? "ambient" : "speech", referenceMode: partIndex ? "continuous" : entry.referenceMode, durationSeconds,
         ...(silent && (partCount || entry.clip.performance) ? { segmentId: entry.clip.id, partIndex: partIndex + 1, partCount: partCount || 1 } : {}),
         prompt: renderConciseH3Prompt({ visual: directions.visual, action: directions.action, camera: directions.camera,
           dialogue: silent ? "" : entry.clip.text, silent, durationSeconds,
+          silentAudioReference: silent && soundFirst,
+          nativeAsmrFocus: silent && actionFirst,
+          separateSpeechAndAsmr: Boolean(referenceShotId),
           storyboardStyle: resolveStoryboardStyle(project.videoPlan),
           performance: Boolean(entry.clip.performance || partCount),
           pantomime: usesCameraPantomime(project.videoPlan?.referenceTemplate),
@@ -322,7 +352,9 @@ export async function prepareVideoPackage(project: AsmrProject, config: LocalRun
           prompt: renderAsmrSoundH3Prompt(directions.asmrSound), durationSeconds,
           postProcessing: directions.asmrSound.postProcessing,
           ...(directions.asmrSound.role ? { role: directions.asmrSound.role } : {}),
-          ...(directions.asmrSound.mixMode ? { mixMode: directions.asmrSound.mixMode } : {}),
+          ...(referenceShotId ? { referenceShotId } : {}),
+          ...((soundFirst || actionFirst) && silent ? { mixMode: "replace" as const }
+            : directions.asmrSound.mixMode ? { mixMode: directions.asmrSound.mixMode } : {}),
         } } : {}),
       };
     }),

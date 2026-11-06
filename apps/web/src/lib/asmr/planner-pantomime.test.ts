@@ -3,6 +3,7 @@ import { runPlanner } from "./planner-provider";
 import { getPlannerDurationSummary, getPlannerPerformanceBudget, PlannerBriefSchema, type PlannerDraft } from "./planner";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
 import { CAMERA_PANTOMIME_GUIDANCE } from "./camera-pantomime";
+import { ASMR_SOUND_PALETTE_GUIDANCE, ASMR_SOUND_SPATIAL_CREATION_CHECKLIST, ASMR_ACTION_CONTINUITY_CREATION_CHECKLIST } from "./asmr-sound";
 
 const template = { ...referenceTemplateFixture, id: "intimate-interaction-theatre", version: 3,
   storyboardStyle: "listener_pov" as const, visualPerformance: "pantomime" as const };
@@ -31,6 +32,13 @@ describe("pantomime planner contract", () => {
       referenceTemplate: { ...template, visualPerformance: undefined } }));
     const messages = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages;
     expect(messages[0].content).toContain(CAMERA_PANTOMIME_GUIDANCE);
+    expect(messages[0].content).toContain(ASMR_SOUND_PALETTE_GUIDANCE);
+    expect(messages[0].content).toContain(ASMR_ACTION_CONTINUITY_CREATION_CHECKLIST);
+    expect(messages.at(-1).role).toBe("user");
+    expect(messages.at(-1).content).toContain(ASMR_SOUND_SPATIAL_CREATION_CHECKLIST);
+    expect(messages.at(-1).content).toContain(ASMR_ACTION_CONTINUITY_CREATION_CHECKLIST);
+    expect(messages[0].content).toContain("至少1段必须在持续发声的同时完成一次明确的左到右或右到左单向移动");
+    expect(messages[0].content).toContain("direction与soundSuggestions中同时写清相对听者的起点—移动中持续触发—终点");
     expect(messages[0].content).toContain("纯凝视、表情和等待只用安静环境");
     expect(messages[0].content).toContain("scene、direction和无台词text都不安排呼气、吹气、叹气或呼吸演出");
     expect(messages[0].content).not.toContain("任务让听者看材料或路径时允许S1画外说话");
@@ -43,8 +51,15 @@ describe("pantomime planner contract", () => {
     const referenceTemplate = mode === "legacy-near" ? legacy : mode === "prop-template" ? referenceTemplateFixture : undefined;
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(reply(generatedDraft));
     await runPlanner({ action: "generate", provider: "ollama", brief: { ...brief, referenceTemplate } }, { env: {}, fetchImpl });
-    const system = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages[0].content;
+    const messages = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages, system = messages[0].content;
     expect(system).not.toContain(CAMERA_PANTOMIME_GUIDANCE);
+    expect(system).toContain(ASMR_SOUND_PALETTE_GUIDANCE);
+    expect(system).toContain(ASMR_ACTION_CONTINUITY_CREATION_CHECKLIST);
+    expect(system).toContain("若全稿至少3段ASMR触发试听，其中至少一种操作适合边发声边移动，且用户没有要求声源固定");
+    expect(messages.at(-1).content).toContain(ASMR_SOUND_SPATIAL_CREATION_CHECKLIST);
+    expect(system).toContain("不强求第二段移动");
+    expect(system).toContain("先把物件搬近、摆到另一边后原地发声，不算发声时移动");
+    expect(system).toContain("明确要求声源固定时遵循用户要求");
     expect(system).toContain("接物、归位、进入新位置、落座等关键状态转换");
     expect(system).toContain("无实物表演、凝视和等待允许空字符串或安静环境");
     if (mode === "legacy-near") expect(system).toContain("任务让听者看材料或路径时允许S1画外说话");
@@ -62,6 +77,7 @@ describe("pantomime planner contract", () => {
     expect(draft).toEqual(original);
     const system = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).messages[0].content;
     expect(system).toContain(CAMERA_PANTOMIME_GUIDANCE);
+    expect(system).toContain(ASMR_SOUND_PALETTE_GUIDANCE);
     expect(system).toContain("具体空手模拟手势可配独立制作的材质拟音");
     expect(system).toContain("scene、direction和无台词text都不安排呼气、吹气、叹气或呼吸演出");
     for (const conflict of ["已有材料真正接触才写对应声音", "只有听者真实移动时主观视点才移动", "真实接物、进屋、落座所需时间", "允许S1画外说话"]) {
@@ -86,6 +102,8 @@ describe("pantomime planner contract", () => {
     expect(getPlannerDurationSummary(result.draft)).toEqual(getPlannerDurationSummary(corrected));
     expect(incomplete.sections[1].durationSeconds).toBe(8);
     const messages = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body)).messages, repair = messages.at(-1).content;
+    expect(messages.at(-1).role).toBe("user");
+    expect(repair).toContain(ASMR_SOUND_SPATIAL_CREATION_CHECKLIST);
     expect(repair).toContain("允许96至144秒");
     expect(repair).toContain("自然交流");
     expect(repair).toContain("不得把时间差额硬塞给少数silent段");

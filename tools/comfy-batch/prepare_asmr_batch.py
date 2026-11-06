@@ -319,7 +319,7 @@ def build_package(workflow_path, output, trigger_path=None, assets_dir=None, dur
             manual_links[repair["linkId"]][4] = repair["actualSlot"]
         set_ui_widget(by_id["26"], "value", shot["prompt"])
         set_ui_widget(by_id["25"], "value", shot["durationSeconds"])
-        # Match the existing runner's default --seed 1 plus shot order.
+        # Keep these manual comparison workflows reproducible with runner.py --seed 1.
         seed = (1 + shot["order"]) % (2 ** 64)
         set_ui_widget(by_id["10"], "noise_seed", seed)
         set_ui_widget(by_id["10"], "control_after_generate", "fixed")

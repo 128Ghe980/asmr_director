@@ -5,7 +5,7 @@ import { performanceStoryboardMessages } from "./performance-storyboard";
 import { referenceTemplateFixture } from "./reference-template-test-fixture";
 import { CAMERA_PANTOMIME_GUIDANCE } from "./camera-pantomime";
 import { asmrSoundFixture } from "./asmr-sound-test-fixture";
-import { ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE } from "./asmr-sound";
+import { ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE, ASMR_SOUND_SPATIAL_GUIDANCE } from "./asmr-sound";
 import type { VoiceClip } from "./schema";
 
 const env = { ASMR_PLANNER_API_URL: "https://test.invalid/v1", ASMR_PLANNER_API_MODEL: "test", ASMR_PLANNER_API_KEY: "test" };
@@ -51,6 +51,7 @@ describe("pantomime performance design", () => {
     expect(messages[0].content).toContain(CAMERA_PANTOMIME_GUIDANCE);
     expect(messages[0].content).toContain(ASMR_SOUND_PRODUCTION_GUIDANCE);
     expect(messages[0].content).toContain(ASMR_SOUND_ROLE_GUIDANCE);
+    expect(messages[0].content).toContain(ASMR_SOUND_SPATIAL_GUIDANCE);
     expect(messages[0].content).toContain("空手位置和手势阶段");
     expect(messages[0].content).toContain("这些物件不能回灌主画面的visual/action");
     expect(messages[0].content).toContain("scene、direction、visual和action也不得安排呼气");
@@ -91,6 +92,7 @@ describe("pantomime performance design", () => {
     const messages = performanceStoryboardMessages(input, clip, 30, {});
     expect(messages[0].content).not.toContain(CAMERA_PANTOMIME_GUIDANCE);
     expect(messages[0].content).toContain("只用本段实际材料");
+    expect(messages[0].content).toContain(ASMR_SOUND_SPATIAL_GUIDANCE);
     expect(messages[0].content).toContain("只有明确的听者进屋");
     expect(messages[0].content).toContain("不能每项重新拿起道具");
     expect(messages[1].content).toContain("A held object cannot also remain");
@@ -118,7 +120,8 @@ describe("pantomime performance design", () => {
     expect(focus).toMatchObject({ clipId: current.id, text: current.text, direction: current.performance.direction,
       soundIntent: current.performance.soundIntent, durationSeconds: 12 });
     expect(messages[1].content.indexOf(focusLine)).toBeGreaterThan(messages[1].content.indexOf(previous));
-    expect(messages[0].content).toContain("不得复演上一段动作、沿用其声音");
+    expect(messages[0].content).toContain("不得复演上一段已完成动作");
+    expect(messages[0].content).toContain("当前脚本明确继续上一无台词段仍在进行的动作");
     expect(input.project).toEqual(before);
     delete input.project.videoPlan!.referenceTemplate!.visualPerformance;
     const legacy = JSON.parse(performanceStoryboardMessages(input, current, 12, {}, previous)[1].content.split("\n")[0]);

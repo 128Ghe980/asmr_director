@@ -3,6 +3,7 @@ import { BatchDownloadError, type PreparedBatchDownload } from "@/lib/asmr/local
 import { getLocalRuntimeConfig } from "@/lib/asmr/local-runtime-config";
 import { getVideoPackageReferenceExtension, MAX_VIDEO_REFERENCE_BYTES, prepareVideoPackage } from "@/lib/asmr/local-video-package";
 import { AsmrProjectSchema } from "@/lib/asmr/schema";
+import { ProjectVideoPlanSchema } from "@/lib/asmr/video-plan";
 
 export const runtime = "nodejs";
 const MAX_PROJECT_BYTES = 2 * 1024 * 1024;
@@ -74,15 +75,26 @@ export async function POST(request: Request) {
   try {
     checkCancelled(request);
     const form = await readForm(request);
-    const allowed = new Set(["project", "reference"]);
+    const allowed = new Set(["project", "reference", "silentAudioMode"]);
     for (const key of form.keys()) if (!allowed.has(key) || form.getAll(key).length !== 1) throw new BatchDownloadError("工程文件表单参数无效。", 400);
+    const silentAudioMode = form.get("silentAudioMode") ?? "native";
+    if (silentAudioMode !== "native" && silentAudioMode !== "asmr-first" && silentAudioMode !== "action-first") throw new BatchDownloadError("声音生成方式无效。", 400);
     const rawProject = form.get("project");
     if (typeof rawProject !== "string") throw new BatchDownloadError("请提供完整的工程 JSON。", 400);
     if (new TextEncoder().encode(rawProject).byteLength > MAX_PROJECT_BYTES) throw new BatchDownloadError("工程 JSON 过大（上限 2 MiB）。", 413);
-    let parsed;
-    try { parsed = AsmrProjectSchema.safeParse(JSON.parse(rawProject)); }
+    let parsed, rawInput: unknown;
+    try { rawInput = JSON.parse(rawProject); parsed = AsmrProjectSchema.safeParse(rawInput); }
     catch { throw new BatchDownloadError("工程 JSON 无效，请检查工程后重试。", 400); }
     if (!parsed.success) throw new BatchDownloadError("工程格式无效，请检查工程后重试。", 400);
+    // Project loading tolerates invalid saved plans by dropping them. An opt-in
+    // export must report incomplete per-part sound plans before that fallback.
+    if (silentAudioMode !== "native" && rawInput && typeof rawInput === "object" && "videoPlan" in rawInput && rawInput.videoPlan !== undefined) {
+      const plan = ProjectVideoPlanSchema.safeParse(rawInput.videoPlan);
+      if (!plan.success) {
+        const missingSound = plan.error.issues.some(issue => issue.path.includes("parts") && issue.path.includes("asmrSound"));
+        throw new BatchDownloadError(missingSound ? "请先补齐无台词连续片段的 ASMR 声音设计，再导出视频包。" : "画面与声音方案不完整，请补齐后重新导出视频包。", 400);
+      }
+    }
     const referenceFile = form.get("reference");
     let reference: Uint8Array | undefined;
     if (referenceFile !== null) {
@@ -95,7 +107,9 @@ export async function POST(request: Request) {
     if (processState.__asmrVideoPackageActive) throw new BatchDownloadError("正在整理另一份视频项目包，请稍后再试。", 429);
     assertBatchDownloadCapacity();
     processState.__asmrVideoPackageActive = true; ownsSlot = true;
-    archive = ownPreparedBatchDownload(await prepareVideoPackage(parsed.data, getLocalRuntimeConfig(), request.signal, reference ? { reference } : {}));
+    archive = ownPreparedBatchDownload(await prepareVideoPackage(parsed.data, getLocalRuntimeConfig(), request.signal, {
+      ...(reference ? { reference } : {}), ...(silentAudioMode !== "native" ? { silentAudioMode } : {}),
+    }));
     checkCancelled(request);
     const downloadUrl = registerBatchDownload(archive);
     const response = Response.json({ downloadUrl, filename: archive.filename, clipCount: archive.clipCount, size: archive.size }, { headers: { "cache-control": "no-store" } });

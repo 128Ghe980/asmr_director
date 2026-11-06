@@ -4,7 +4,7 @@ import type { PlannerChatMessage } from "./planner-provider";
 import { createStoryboardScriptContext } from "./storyboard-context";
 import { MAX_VIDEO_GENERATION_SECONDS, performancePartDurations } from "./performance-segment";
 import { CAMERA_PANTOMIME_GUIDANCE, usesCameraPantomime } from "./camera-pantomime";
-import { ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE } from "./asmr-sound";
+import { ASMR_SOUND_PRODUCTION_GUIDANCE, ASMR_SOUND_ROLE_GUIDANCE, ASMR_SOUND_SPATIAL_GUIDANCE, ASMR_ACTION_CONTINUITY_GUIDANCE } from "./asmr-sound";
 
 /** New performance scripts use sound-led staging; the legacy prompt stays intact. */
 export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip: VoiceClip, duration: number,
@@ -13,6 +13,12 @@ export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip
   const pantomime = usesCameraPantomime(input.project.videoPlan?.referenceTemplate);
   const parts = window?.durations ?? (silent && duration > MAX_VIDEO_GENERATION_SECONDS ? performancePartDurations(duration) : undefined);
   const scriptContext = createStoryboardScriptContext(input.project, clip.id, duration);
+  const previous = scriptContext.scriptOrder[scriptContext.currentIndex - 1];
+  const previousShot = previous?.kind === "silent" ? input.project.videoPlan?.shots[previous.clipId] : undefined;
+  const previousSilentSound = previous?.kind === "silent" ? {
+    clipId: previous.clipId, designed: Boolean(previousShot),
+    ...(previousShot ? { sound: previousShot.parts?.at(-1)?.asmrSound ?? previousShot.asmrSound } : {}),
+  } : undefined;
   if (pantomime) scriptContext.scriptOrder = scriptContext.scriptOrder.map(entry => {
     const compact = { ...entry };
     // Other generated shots are not examples to reproduce; their script intentions remain available.
@@ -30,7 +36,7 @@ export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip
   return [{ role: "system", content: [
     "为已确认的 ASMR 表演脚本设计当前一段的画面与声音。角色在相对稳定的镜头前表演，语言、材料触发音、互动留白和动作过渡都是真实内容。只细化当前段，不能修改顺序、加台词、挤占无台词时间或另编剧情。返回符合 schema 的 JSON。title 可中文；visual/action/camera/ambientSound/asmrSound.prompt 全部简洁英文。",
     pantomime
-      ? "scriptOrder只说明剧情顺序，各段performance和directorNotes保存原始动作与声音意图；当前text、当前direction和当前soundIntent决定这一段做什么和听什么。把当前剧情任务转换成S1朝镜头做出的空手模拟手势。previousEnding仅用于继承上一段最后的手位、姿势和固定机位，不是当前动作或声音范本；不得复演上一段动作、沿用其声音或把邻段任务换成本段内容。旧direction若写了真实目标或工具，只取任务意图，不继承实体。具体模拟手势才可配对应拟音；邀请、等待或已完成任务不自动变成新的操作。"
+      ? "scriptOrder只说明剧情顺序，各段performance和directorNotes保存原始动作与声音意图；当前text、当前direction和当前soundIntent决定这一段做什么和听什么。把当前剧情任务转换成S1朝镜头做出的空手模拟手势。previousEnding仅用于继承上一段最后的手位、姿势和固定机位，不是当前任务范本；不得复演上一段已完成动作或把邻段任务换成本段内容。当前脚本明确继续上一无台词段仍在进行的动作时，按continuation规则保持其手势、材质音色与位置。旧direction若写了真实目标或工具，只取任务意图，不继承实体。具体模拟手势才可配对应拟音；邀请、等待或已完成任务不自动变成新的操作。"
       : "scriptOrder 是完整混合脚本，performance 包含按稳定段落 ID 保存的用途、动作和声音意图。当前 text 是用户最终编辑的台词或无台词描述，优先于旧提示；有明确实际动作才发声。看清已发生、邀请、将来和等待：不让邀请凭空变成已完成，不重演前段已经结束的动作。",
     pantomime
       ? "visual只写S1在动作前的完整头肩、空手位置和安静背景；action写当前一个朝镜头的模拟手势及结束手位。持续空捏、缓扫或轻拢可覆盖一整段，靠节奏和停顿发展；手指之间仍为空。过渡只交代抬手、换手势、放松或收手，前后手位和姿势相接，不出现真实取物或接触目标。"
@@ -46,13 +52,17 @@ export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip
         ? "无台词段无TTS、无音频参考。ambientSound描述与本段具体空手手势同步的拟音及安静间隙，例如轻柔布料摩擦或刷扫质感；它是表演配声，不表示主画面里有材料、工具或被触碰的听者。纯凝视与等待只保留极轻室内底声。不要编低语、人声、口腔声或音乐。"
         : "无台词段无TTS、无音频参考。ambientSound 是主视频应产生的完整声音描述，按用途写真实材料接触/操作节奏或必要环境；ASMR段以触发音为主，过渡段只发实际动作的声音，互动停留可只有极轻室内底声。不要把所有段都改成环境白噪声，也不要编低语、人声、口腔声或音乐。"
       : pantomime
-        ? "有台词段使用已采用TTS，最终主视频完整fully_copy原音，不改词、声音、语速或停顿。只演实际时长容得下的空手动作，不重做相邻无台词操作。S1始终在固定画面内，可见嘴部匹配TTS，双手不遮嘴；独立拟音留给asmrSound。"
-        : "有台词段使用已采用TTS，最终主视频完整fully_copy原音，不改词、声音、语速或停顿。只设计可在实际音频时长内完成的表演；不要重做已安排在相邻无台词段的操作。可见嘴部匹配TTS，视点合理看向别处时允许画外讲话。",
+        ? "有台词段使用已采用TTS，最终主视频完整fully_copy原音，不改词、声音、语速或停顿。只演实际时长容得下的空手动作，不重做相邻已完成操作；但明确的持续手势可从上一无台词段不间断延续，边做边说，不强制停手。S1始终在固定画面内，可见嘴部匹配TTS，双手不遮嘴；拟音设计写asmrSound。"
+        : "有台词段使用已采用TTS，最终主视频完整fully_copy原音，不改词、声音、语速或停顿。只设计可在实际音频时长内完成的表演；不要重做相邻已完成操作，但可边说话边延续上一无台词段尚在进行的轻敲、摩擦等持续触发。可见嘴部匹配TTS，视点合理看向别处时允许画外讲话。",
     pantomime
       ? "asmrSound.prompt是独立拟音制作描述，按当前soundIntent选择匹配本段动作的音色、触发方式、节奏和安静间隙；声音与手势同时开始、停顿和结束，不提前播放未来动作。即使前后段手位相近，任务不同也要重新匹配声音，不能照搬previousEnding或邻段的材质与音色。声音素材视频可以拍真实材料或手部接触，但只提取声音，这些物件不能回灌主画面的visual/action。纯凝视、表情、等待只使用安静环境。prompt只描述这条独立声音文件本身，不评论主视频人声，不写focus on voice，不引用S1、Picture、Audio或台词；没有触发动作时直接描述极轻室内底声。纯拟音不得生成对白、低语、呼吸、口腔声、歌声或音乐，保持干燥、少混响、无人工声像移动。"
       : "asmrSound.prompt 是独立声音制作描述，以材料、接触方式、柔和音色、节奏与安静间隙为核心，避免无关布景和运镜。动作应与主画面发生在同一段内，不能提前播放下一段触发音。只用本段实际材料；无接触的停留使用安静既有环境，不强制发声。纯触发音不得生成对白、低语、呼吸、口腔声、歌声或音乐，原始素材保持干燥、少混响、无人工声像移动。",
     ASMR_SOUND_PRODUCTION_GUIDANCE,
     ASMR_SOUND_ROLE_GUIDANCE,
+    ASMR_SOUND_SPATIAL_GUIDANCE,
+    ASMR_ACTION_CONTINUITY_GUIDANCE,
+    "无台词段的ambientSound是直接生成主片原声的完整ASMR设计，必须写清当前材质的轻柔起音、可辨纹理、接触时机和自然衰减，声音清楚近录、房间底声低、少混响。触发动作停顿时同步安静，不笼统写成white noise或几乎听不见的沙沙声；纯凝视与等待依旧只保留既有安静环境。空手表演配同步拟音，但不把发声材料变成画面物件。",
+    "previousSilentSound只提供紧邻上一无台词段的声音设计供已确定的持续动作参考；designed=false时仍可按明确的脚本持续触发意图设计continuation，导出前须补齐源段声音设计。已有源段的最后连续块若为ambience，不填写continuation；不是任意借用上一段音色的理由。",
     pantomime
       ? "postProcessing按模拟手势对应的拟音位置选择：start/end.pan=-1左至1右，distance=far/mid/near/close/very_close，movement随手势方向，无位移则static且start=end。S1人声通常保持原位，拟音位置独立，不需要画面出现真实发声物件。处理在音效生成后进行。"
       : "postProcessing 由你依据声源相对听者的位置选择：start/end.pan=-1左至1右，distance=far/mid/near/close/very_close，movement符合实际位移，无位移static且start=end。角色人声与物件声的位置独立，相机靠近不等于声音贴耳。处理在音效生成后进行。",
@@ -73,6 +83,7 @@ export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip
     current: { kind: silent ? "silent" : "speech", text: clip.text, durationSeconds: duration,
       ...(clip.performance ? { performance: clip.performance } : {}), ...(parts ? { partDurations: parts } : {}), ...(window ? { window } : {}) },
     ...scriptContext,
+    ...(previousSilentSound ? { previousSilentSound } : {}),
     ...(previousPrompt ? { previousEnding: previousPrompt } : {}), instruction: input.instruction,
   }) + "\nOutput language reminder: title may be Chinese. Every visual, action, camera, ambientSound and asmrSound.prompt must be ENGLISH, including EVERY parts entry. Translate the supplied Chinese directions into English; do not copy their wording. "
     + (pantomime ? "Keep S1's complete head, upper body and connected empty hands in a fixed medium close shot. Describe only empty-handed gestures in visual/action, never the story's imagined target or a held tool. Foley production materials belong only to sound descriptions. " : "A held object cannot also remain in its original place: preserve one instance of each prop. ")
@@ -82,5 +93,5 @@ export function performanceStoryboardMessages(input: ClipStoryboardRequest, clip
       purpose: clip.performance?.purpose, direction: clip.performance?.direction, soundIntent: clip.performance?.soundIntent,
       ...(!clip.performance ? { directorNotes: scriptContext.scriptOrder.find(entry => entry.clipId === clip.id)?.directorNotes } : {}),
       instruction: input.instruction, ...(partStages ? { partStages } : {}),
-    }) + "\nDesign this current task and its own foley. Use previousEnding only for the inherited final hand position and posture, never to copy its action or sound. Omit any breath, exhale, sigh or blowing performance. For parts, follow the stage allocation above: no intermediate lowering/reset or whole-operation replay; only the final overall part may finish." : "") }];
+    }) + "\nDesign this current task and its own foley. Use previousEnding for the inherited final hand position and posture, never to replay a completed operation or borrow an unrelated sound. If this speech explicitly continues the preceding silent segment's ongoing trigger, preserve that operation and sound identity and set continuation=previous-silent. Omit any breath, exhale, sigh or blowing performance. For parts, follow the stage allocation above: no intermediate lowering/reset or whole-operation replay; only the final overall part may reach the script's planned end state, which may remain engaged for the next speaking segment." : "") }];
 }

@@ -12,9 +12,9 @@ SPEC.loader.exec_module(runner)
 
 
 class RunnerControlTests(unittest.TestCase):
-    def test_cli_defaults_to_one_candidate_and_unlimited_healthy_job_wait(self):
+    def test_cli_defaults_to_saved_candidate_range_and_unlimited_healthy_job_wait(self):
         args = runner.parser().parse_args(["package"])
-        self.assertEqual(args.candidates, 1)
+        self.assertIsNone(args.candidates)
         self.assertEqual(args.job_timeout, 0)
         self.assertEqual(args.request_timeout, 30)
         self.assertEqual(args.disconnect_timeout, 300)

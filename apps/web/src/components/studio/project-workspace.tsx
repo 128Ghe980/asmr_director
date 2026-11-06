@@ -175,7 +175,10 @@ export function ProjectWorkspace({
         panelId={PROJECT_WORKSPACE_RAIL_ID}
         projects={projects}
         summary={summary}
-        onCreate={onCreateProject}
+        onCreate={() => {
+          onCreateProject();
+          if (window.matchMedia?.("(max-width: 1023px)").matches) setLeftCollapsed(true);
+        }}
         onDelete={onDeleteProject}
         onDuplicate={onDuplicateProject}
         onSelect={onSelectProject}

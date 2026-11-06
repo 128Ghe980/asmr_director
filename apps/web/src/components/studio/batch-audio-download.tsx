@@ -9,6 +9,7 @@ import { getBatchStoryboardClips, getBatchStoryboardDownloadFilename, getBatchSt
 import { getStudioStoryboardProgress } from "@/lib/asmr/studio-storyboard-overview";
 import { getVideoPackageFilename, getVideoPackageSummary } from "@/lib/asmr/video-package";
 import { getCurrentAudioPostProcessingReceipts } from "@/lib/asmr/audio-post-processing";
+import { getAsmrContinuationProblem } from "@/lib/asmr/asmr-sound";
 
 type DownloadMode = "audio" | "storyboard" | "video";
 type DownloadState = { source: string; mode: DownloadMode; status: "idle" | "preparing" | "downloaded" | "error"; error?: string };
@@ -20,6 +21,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const [state, setState] = useState<DownloadState>();
   const [reference, setReference] = useState<File | null>(null);
   const [referenceError, setReferenceError] = useState<string>();
+  const [silentAudioMode, setSilentAudioMode] = useState<"native" | "asmr-first" | "action-first">("native");
   const panelId = useId();
   const titleId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -29,23 +31,40 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   const tabRefs = useRef<Record<DownloadMode, HTMLButtonElement | null>>({ audio: null, storyboard: null, video: null });
   const focusAfterCancelRef = useRef(false);
   const source = JSON.stringify(project);
+  const requestSource = mode === "video" ? JSON.stringify([source, silentAudioMode,
+    reference && [reference.name, reference.size, reference.type, reference.lastModified]]) : source;
   const clips = getBatchDownloadClips(project);
   const storyboards = getBatchStoryboardClips(project);
   const progress = getStudioStoryboardProgress(project);
   const video = getVideoPackageSummary(project);
-  const voiceClips = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : []);
+  const voiceClips = project.timeline.tracks.flatMap(track => track.track_type === "voice" ? track.clips : [])
+    .sort((left, right) => left.start - right.start);
   const videoTaskCount = voiceClips.reduce((sum, clip) => sum + (project.videoPlan?.shots[clip.id]?.parts?.length ?? 1), 0);
   const speechClips = voiceClips.filter(clip => clip.kind !== "silent");
   const videoIssueIds = new Set(video.issues.map(issue => issue.clipId));
   const videoAsmrReady = voiceClips.filter(clip => !videoIssueIds.has(clip.id) && project.videoPlan?.shots[clip.id]?.asmrSound).length;
+  const missingSilentSounds = voiceClips.reduce((count, clip) => {
+    if (clip.kind !== "silent") return count;
+    const shot = project.videoPlan?.shots[clip.id];
+    return count + (shot?.parts?.length ? shot.parts.filter(part => !part.asmrSound).length : shot?.asmrSound ? 0 : 1);
+  }, 0);
   const preparedReceipts = getCurrentAudioPostProcessingReceipts(project);
   const videoUsesPrepared = speechClips.length > 0 && speechClips.every(clip => preparedReceipts.has(clip.id));
-  const status = state?.source === source && state.mode === mode ? state.status : "idle";
+  const status = state?.source === requestSource && state.mode === mode ? state.status : "idle";
   const error = status === "error" ? state?.error : undefined;
   const count = mode === "audio" ? clips.length : mode === "storyboard" ? storyboards.length : video.total;
   const archiveClipCount = mode === "video" ? videoTaskCount : count;
   const busy = status === "preparing";
-  const videoBlocked = mode === "video" && (video.issues.length > 0 || Boolean(referenceError));
+  const soundFirstBlocked = silentAudioMode !== "native" && missingSilentSounds > 0;
+  const continuationCount = voiceClips.filter(clip => project.videoPlan?.shots[clip.id]?.asmrSound?.continuation === "previous-silent").length;
+  const continuationIssues = silentAudioMode === "action-first" ? voiceClips.flatMap((clip, index) => {
+    const shot = project.videoPlan?.shots[clip.id], previousClip = voiceClips[index - 1];
+    const previous = previousClip ? { ...project.videoPlan?.shots[previousClip.id], kind: previousClip.kind } : undefined;
+    const problem = getAsmrContinuationProblem(shot?.asmrSound, clip.kind, previous)
+      ?? shot?.parts?.map(part => getAsmrContinuationProblem(part.asmrSound, clip.kind, previous)).find(Boolean);
+    return problem ? [`第 ${index + 1} 段：${problem}`] : [];
+  }) : [];
+  const videoBlocked = mode === "video" && (video.issues.length > 0 || Boolean(referenceError) || soundFirstBlocked || continuationIssues.length > 0);
   const modeLabel = mode === "audio" ? "音频" : mode === "storyboard" ? "画面与声音" : "视频包";
 
   function close() {
@@ -57,7 +76,7 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
   useLayoutEffect(() => () => {
     requestRef.current?.abort();
     requestRef.current = null;
-  }, [source]);
+  }, [requestSource]);
 
   useEffect(() => {
     if (!busy && focusAfterCancelRef.current) {
@@ -118,11 +137,12 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
     const controller = new AbortController();
     requestRef.current = controller;
     const active = () => !controller.signal.aborted && requestRef.current === controller;
-    setState({ source, mode, status: "preparing" });
+    setState({ source: requestSource, mode, status: "preparing" });
     try {
       const form = new FormData();
       if (mode === "video") {
         form.set("project", JSON.stringify(snapshot));
+        if (silentAudioMode !== "native") form.set("silentAudioMode", silentAudioMode);
         if (reference) form.set("reference", reference);
       }
       const response = await fetch(mode === "video" ? "/api/assets/video-package" : "/api/assets/batch-download", {
@@ -147,11 +167,11 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
-      setState({ source, mode, status: "downloaded" });
+      setState({ source: requestSource, mode, status: "downloaded" });
     } catch (cause) {
       if (!active()) return;
       const connectionFailed = cause instanceof TypeError && /failed to fetch|fetch failed|networkerror|load failed/i.test(cause.message);
-      setState({ source, mode, status: "error", error: connectionFailed ? `${mode === "video" ? "视频项目包" : `${modeLabel}包`}下载连接中断，请重试。` : cause instanceof Error ? cause.message : "下载准备失败，请重试。" });
+      setState({ source: requestSource, mode, status: "error", error: connectionFailed ? `${mode === "video" ? "视频项目包" : `${modeLabel}包`}下载连接中断，请重试。` : cause instanceof Error ? cause.message : "下载准备失败，请重试。" });
     } finally {
       if (requestRef.current === controller) requestRef.current = null;
     }
@@ -232,8 +252,26 @@ export function BatchAudioDownload({ project }: { project: AsmrProject }) {
         <p className="mt-2 text-[11px] leading-5 text-studio-muted">台词使用{videoUsesPrepared ? "已生成的后处理音频" : "已采用原音"}，段间留白已写入音频末尾，视频同步保留这段时间。按表演顺序生成，无台词段保留完整时长及声音安排。</p>
         {video.total > 0 && <div className="mt-2 rounded-lg border border-violet-300/15 bg-violet-300/[0.035] px-3 py-2 text-[11px] leading-5 text-studio-muted">
           <p>ASMR 触发音：{videoAsmrReady} / {video.total} 镜已规划</p>
-          <p>{videoAsmrReady === video.total ? "勾选合并顺序预览后，输出原版与 ASMR 叠加版。" : `补齐剩余 ${video.total - videoAsmrReady} 镜的 ASMR 规划后，可合并叠加版。${video.issues.length ? "" : "当前可导出原版视频包。"}`}</p>
+          <p>{videoAsmrReady === video.total ? silentAudioMode === "action-first" ? "勾选合并顺序预览后，输出原版与声音后处理版。" : "勾选合并顺序预览后，输出原版与 ASMR 叠加版。" : `补齐剩余 ${video.total - videoAsmrReady} 镜的 ASMR 规划后，可合并叠加版。${video.issues.length ? "" : "当前可导出原版视频包。"}`}</p>
         </div>}
+        <label className="mt-3 block space-y-2 text-xs font-medium">声音生成方式
+          <select aria-label="声音生成方式" value={silentAudioMode} disabled={busy}
+            onChange={(event) => {
+              if (requestRef.current) return;
+              setSilentAudioMode(event.target.value as typeof silentAudioMode); setState(undefined);
+            }} className="block w-full min-w-0 rounded-md border border-studio-line bg-studio-panel px-2 py-2 text-xs outline-none focus:border-violet-300/40 disabled:opacity-40">
+            <option value="native">原方式</option>
+            <option value="asmr-first">无台词先生成声音（试验）</option>
+            <option value="action-first">动作声音接续（试验）</option>
+          </select>
+        </label>
+        {silentAudioMode === "asmr-first" && <p className="mt-1 text-[11px] leading-5 text-studio-muted">先生成助眠声音，再用这段声音配合角色参考生成无台词画面；原版保留该声音，ASMR 版应用声音后处理。</p>}
+        {silentAudioMode === "action-first" && <>
+          <p className="mt-1 text-[11px] leading-5 text-studio-muted">无台词画面直接生成动作与声音。接续段分别用台词对口型、用延续前段的触发声对动作，两轨混合后作为成片声音。</p>
+          <p className="mt-1 text-[11px] leading-5 text-studio-muted">已安排 {continuationCount} 段边做边说。可在对应段的「环境与触发音」中设置接续上一无台词段。</p>
+        </>}
+        {soundFirstBlocked && <p role="alert" className="mt-2 text-xs leading-5 text-amber-100">请先补齐 {missingSilentSounds} 个无台词片段的 ASMR 声音设计，再导出视频包。</p>}
+        {continuationIssues.length > 0 && <p role="alert" className="mt-2 text-xs leading-5 text-amber-100">{continuationIssues.slice(0, 3).join("；")}</p>}
         <label className="mt-3 block text-xs font-medium" htmlFor={`${panelId}-reference`}>角色参考图（可选）</label>
         <input id={`${panelId}-reference`} type="file" accept="image/jpeg,image/png,image/webp" disabled={busy}
           onChange={(event) => {

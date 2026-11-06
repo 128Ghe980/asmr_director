@@ -34,10 +34,127 @@ function openVideo() {
   fireEvent.click(screen.getByRole("tab", { name: "视频包" }));
 }
 
+function silentFixture(expanded = false) {
+  const project = fixture(), clip = project.timeline.tracks.find(track => track.track_type === "voice")!.clips[0];
+  clip.kind = "silent"; clip.duration = 6; clip.text = "慢慢做整理领口的空手手势。";
+  clip.asset = { asset_id: null, uri: null, duration: null }; clip.generation.status = "asset_pending";
+  const shot = project.videoPlan!.shots[clip.id]; delete shot.audio;
+  const sound: AsmrSound = { prompt: "Soft cotton folding.", postProcessing: { start: { pan: 0, distance: "near" }, end: { pan: 0, distance: "near" }, movement: "static", gainDb: -12 } };
+  Object.assign(shot, { kind: "silent", duration: 6, ambientSound: "Soft cloth foley.", asmrSound: sound,
+    sourceFingerprint: createClipVideoSourceFingerprint(project, clip.id) });
+  if (expanded) shot.parts = [1, 2].map(() => ({ durationSeconds: 3, visual: shot.visual, action: shot.action, camera: shot.camera,
+    ambientSound: shot.ambientSound!, asmrSound: structuredClone(sound) }));
+  return project;
+}
+
 beforeEach(() => { vi.stubGlobal("fetch", vi.fn()); vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("portable video package export", () => {
+  it("exports action-first as a separate choice without guessing a continuation from adjacency", async () => {
+    const project = silentFixture(), before = structuredClone(project);
+    vi.mocked(fetch).mockImplementation(async () => ready(project));
+    render(<BatchAudioDownload project={project} />); openVideo();
+    const mode = screen.getByRole("combobox", { name: "声音生成方式" }) as HTMLSelectElement;
+    fireEvent.change(mode, { target: { value: "action-first" } });
+    expect(mode.value).toBe("action-first");
+    expect(screen.getByText(/无台词画面直接生成动作与声音/)).toBeTruthy();
+    expect(screen.getByText(/已安排 0 段边做边说/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下载视频项目包" }));
+    await screen.findByText("下载已发起，解压后在生成主机打开 run.bat。");
+    const form = vi.mocked(fetch).mock.calls[0][1]!.body as FormData;
+    expect(form.get("silentAudioMode")).toBe("action-first");
+    expect(JSON.parse(form.get("project") as string)).toEqual(before);
+    expect(project).toEqual(before);
+  });
+
+  it("blocks action-first with a missing native sound design and allows switching back", () => {
+    const project = silentFixture(); delete Object.values(project.videoPlan!.shots)[0].asmrSound;
+    render(<BatchAudioDownload project={project} />); openVideo();
+    const mode = screen.getByRole("combobox", { name: "声音生成方式" });
+    fireEvent.change(mode, { target: { value: "action-first" } });
+    expect(screen.getByRole("alert").textContent).toContain("补齐 1 个无台词片段的 ASMR 声音设计");
+    expect((screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(mode, { target: { value: "native" } });
+    expect((screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("counts explicit continuations and blocks a changed source only in the action-first export", () => {
+    const project = silentFixture(), track = project.timeline.tracks.find(track => track.track_type === "voice")!, silent = track.clips[0];
+    const speechProject = fixture(), speech = structuredClone(speechProject.timeline.tracks.find(track => track.track_type === "voice")!.clips[0]);
+    const speechShot = structuredClone(speechProject.videoPlan!.shots[speech.id]);
+    speech.id += "_continuing"; speech.start = silent.start + silent.duration;
+    track.clips.push(speech);
+    const source = project.videoPlan!.shots[silent.id]; source.asmrSound!.role = "trigger";
+    project.videoPlan!.shots[speech.id] = { ...speechShot, clipId: speech.id,
+      sourceFingerprint: createClipVideoSourceFingerprint(project, speech.id),
+      asmrSound: { ...structuredClone(source.asmrSound!), mixMode: "overlay", continuation: "previous-silent" } };
+    const view = render(<BatchAudioDownload project={project} />); openVideo();
+    fireEvent.change(screen.getByRole("combobox", { name: "声音生成方式" }), { target: { value: "action-first" } });
+    expect(screen.getByText(/已安排 1 段边做边说/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement).disabled).toBe(false);
+    const changed = structuredClone(project); changed.videoPlan!.shots[silent.id].asmrSound!.role = "ambience";
+    view.rerender(<BatchAudioDownload project={changed} />);
+    expect(screen.getByRole("alert").textContent).toContain("第 2 段");
+    expect((screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole("combobox", { name: "声音生成方式" }), { target: { value: "native" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("keeps sound-first opt-in and clears completed status when its option changes", async () => {
+    const project = silentFixture(), before = structuredClone(project);
+    vi.mocked(fetch).mockImplementation(async () => ready(project));
+    render(<BatchAudioDownload project={project} />); openVideo();
+    const option = screen.getByRole("combobox", { name: "声音生成方式" }) as HTMLSelectElement;
+    expect(option.value).toBe("native");
+    fireEvent.click(screen.getByRole("button", { name: "下载视频项目包" }));
+    await screen.findByText("下载已发起，解压后在生成主机打开 run.bat。");
+    expect((vi.mocked(fetch).mock.calls[0][1]!.body as FormData).has("silentAudioMode")).toBe(false);
+    fireEvent.change(option, { target: { value: option.value === "native" ? "asmr-first" : "native" } });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(option.value).toBe("asmr-first");
+    fireEvent.click(screen.getByRole("button", { name: "下载视频项目包" }));
+    await screen.findByText("下载已发起，解压后在生成主机打开 run.bat。");
+    const form = vi.mocked(fetch).mock.calls[1][1]!.body as FormData;
+    expect(form.get("silentAudioMode")).toBe("asmr-first");
+    expect(JSON.parse(form.get("project") as string)).toEqual(before);
+    expect(project).toEqual(before);
+  });
+
+  it.each([false, true])("blocks sound-first when a silent sound design is missing, expanded=%s", expanded => {
+    const project = silentFixture(expanded), shot = Object.values(project.videoPlan!.shots)[0];
+    if (expanded) Reflect.deleteProperty(shot.parts![1], "asmrSound");
+    else delete shot.asmrSound;
+    render(<BatchAudioDownload project={project} />); openVideo();
+    fireEvent.change(screen.getByRole("combobox", { name: "声音生成方式" }), { target: { value: "asmr-first" } });
+    expect(screen.getByRole("alert").textContent).toContain("补齐 1 个无台词片段的 ASMR 声音设计");
+    const button = screen.getByRole("button", { name: "下载视频项目包" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true); fireEvent.click(button);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("locks the option during preparation and discards a cancelled result after changing it", async () => {
+    let finish!: (response: Response) => void;
+    const project = silentFixture();
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    vi.mocked(fetch).mockResolvedValueOnce(ready(project));
+    render(<BatchAudioDownload project={project} />); openVideo();
+    const option = screen.getByRole("combobox", { name: "声音生成方式" }) as HTMLSelectElement;
+    fireEvent.change(option, { target: { value: option.value === "native" ? "asmr-first" : "native" } }); fireEvent.click(screen.getByRole("button", { name: "下载视频项目包" }));
+    expect(option.disabled).toBe(true);
+    const oldSignal = vi.mocked(fetch).mock.calls[0][1]!.signal;
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(oldSignal!.aborted).toBe(true); expect(option.disabled).toBe(false);
+    fireEvent.change(option, { target: { value: option.value === "native" ? "asmr-first" : "native" } });
+    await act(async () => { finish(ready(project)); });
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "下载视频项目包" }));
+    await screen.findByText("下载已发起，解压后在生成主机打开 run.bat。");
+    expect((vi.mocked(fetch).mock.calls[1][1]!.body as FormData).has("silentAudioMode")).toBe(false);
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledOnce();
+  });
+
   it.each([5, 3])("validates the generated task count, while displaying three logical performance sections: %s", async (clipCount) => {
     const project = fixture(), track = project.timeline.tracks.find(track => track.track_type === "voice")!, first = track.clips[0];
     const sound: AsmrSound = { prompt: "Soft dry taps on the same wooden box.", mixMode: "replace",

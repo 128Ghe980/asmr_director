@@ -10,7 +10,7 @@ import { AsmrProjectSchema, type VoiceClip } from "./schema";
 import { ClipVideoStoryboardSchema, PerformanceStoryboardPartSchema, StoryboardReferenceModeSchema, createClipVideoSourceFingerprint, getClipStoryboardReferenceContext, getPreviousClipPromptFingerprint, getPreviousVoiceClip, type ClipVideoStoryboard, type PerformanceStoryboardPart } from "./video-plan";
 import { readVideoPlanningRequest, videoPlanningError, videoPlanningTimeout, type VideoPlanningOptions } from "./video-planning-request";
 import { createStoryboardScriptContext } from "./storyboard-context";
-import { ASMR_SOUND_PLANNING_GUIDANCE, AsmrSoundSchema } from "./asmr-sound";
+import { ASMR_SOUND_PLANNING_GUIDANCE, AsmrSoundSchema, getAsmrContinuationProblem } from "./asmr-sound";
 import { resolveStoryboardStyle } from "./storyboard-style";
 import { performanceStoryboardMessages } from "./performance-storyboard";
 import { MAX_VIDEO_GENERATION_SECONDS, performancePartDurations } from "./performance-segment";
@@ -276,6 +276,12 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
           problems.push(`模型分镜结构不正确：${issues.slice(0, 4).map(issue => issue.detail).join("；")}`);
         } else {
           const candidate = generated.data;
+          const precedingClip = getPreviousVoiceClip(request.project, clip.id);
+          const precedingShot = precedingClip ? request.project.videoPlan?.shots[precedingClip.id] : undefined;
+          const continuationProblem = getAsmrContinuationProblem(candidate.asmrSound, clip.kind,
+            precedingClip ? { ...precedingShot, kind: precedingClip.kind } : undefined,
+            !precedingShot && precedingClip?.performance?.purpose === "asmr" && Boolean(precedingClip.performance.soundIntent.trim()));
+          if (continuationProblem) problems.push(continuationProblem);
           if (clip.kind === "silent" && !candidate.ambientSound?.trim()) problems.push("模型未返回无台词段的声音描述");
           if (!window && candidate.parts) problems.push("当前片段不需要拆成连续生成段");
           if (window && (!candidate.parts || candidate.parts.some((part, index) =>
@@ -289,7 +295,7 @@ export async function generateClipStoryboard(input: ClipStoryboardRequest, optio
         }
         if (!performance || attempt === 1) throw new PlannerError(502, `${problems.join("；")}。请重试。`);
         messages.push({ role: "assistant", content: JSON.stringify(result.value) }, { role: "user",
-          content: `修正上一条输出并返回完整JSON，${pantomime ? "保留当前段任务、空手模拟方式、固定机位、分块阶段和规定时长，不复制邻段动作或声音。" : "保留原脚本内容、段落顺序、材料身份和规定时长。"}${problems.join("；")}。All visual/action/camera/ambientSound/asmrSound.prompt fields, including every part, must be English. Do not alter the planned durations.` });
+          content: `修正上一条输出并返回完整JSON，${pantomime ? "保留当前段任务、空手模拟方式、固定机位、分块阶段和规定时长；不复制邻段已结束或无关的动作声音，允许明确持续动作跨无台词到台词。" : "保留原脚本内容、段落顺序、材料身份和规定时长。"}${problems.join("；")}。All visual/action/camera/ambientSound/asmrSound.prompt fields, including every part, must be English. Do not alter the planned durations.` });
       }
       if (!data) throw new PlannerError(502, "画面与声音设计不完整，请重试。");
       if (performance) data.asmrSound.mixMode = clip.kind === "silent" ? "replace" : "overlay";

@@ -9,6 +9,28 @@ const directions = {
 };
 
 describe("camera pantomime final H3 contract", () => {
+  it.each([false, true])("uses supplied non-vocal audio without requesting a second generated track, pantomime=%s", pantomime => {
+    const prompt = renderConciseH3Prompt({ ...directions, silent: true, performance: true, pantomime,
+      silentAudioReference: true, dialogue: "", ambientSound: "Legacy generated cloth sound." });
+    expect(prompt).toContain("<Audio 1>: fully_copy");
+    expect(prompt).toContain("supplied non-vocal ASMR track unchanged");
+    expect(prompt).toContain("specified visible actions follow its rhythm");
+    expect(prompt).toContain("without speaking or lip-sync movements");
+    expect(prompt).toContain(`Action: ${directions.action}`);
+    expect(prompt).toContain(`Visual: ${directions.visual}`);
+    expect(prompt).not.toContain("Legacy generated cloth sound");
+    expect(prompt).not.toContain("<d>");
+    expect(prompt).not.toContain("Generate only this quiet natural ambient sound");
+    expect(prompt).not.toContain("Produce the specified textures");
+    if (pantomime) expect(prompt).toContain("hands hold nothing");
+  });
+
+  it("keeps default silent prompts and all speech prompts unchanged by the export option", () => {
+    const silent = { ...directions, silent: true, ambientSound: "Gentle rain." };
+    expect(renderConciseH3Prompt({ ...silent, silentAudioReference: false })).toBe(renderConciseH3Prompt(silent));
+    expect(renderConciseH3Prompt({ ...directions, silentAudioReference: true })).toBe(renderConciseH3Prompt(directions));
+  });
+
   it("keeps dialogue verbatim while making only empty-hand actor gestures visible", () => {
     const prompt = renderConciseH3Prompt({ ...directions, pantomime: true });
     expect(prompt).toContain(`<d>[Chinese]${directions.dialogue}</d>`);

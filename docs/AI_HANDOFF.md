@@ -1,10 +1,48 @@
 # AI ASMR Studio Handoff
 
-Last updated: 2026-11-05
+Last updated: 2026-11-06
 
 Read this first when resuming the project after context compaction or as a new AI agent. This is the high-signal handoff. For history and rationale, read `docs/project-archive.md`.
 
-## Current update — 2026-11-05 / 质量与连续性版本发布归档
+## Current update — 2026-11-06 / 发布与下一步复测
+
+上次提交 `6ec3cb0` 之后的先声音试验、动作声音接续、候选追加和新建工程修复一并归档。当前用生成机更新包复测 64 秒工程：先听木盘从无台词转入台词时响度是否自然，再看手部落点和口型。更新方法、预期重做的段号和 Git 回执见[发布记录](records/2026-11-06-asmr-dual-audio-publication.md)。
+
+## Earlier update — 2026-11-06 / 连续动作响度、两路音频参考及新建工程
+
+以已后处理人声为响度参照，用户允许 ASMR 触发声稍响或稍轻。V2 对连续动作比较前段末尾与本段开头的发声，普通和增强合片对接续前段采用同一处理，峰值保护优先调节声音素材。动作接续的台词主视频用人声对口型、用独立音效对手部时机，最终混音一次。详见[中文约定](specs/2026-11-06-asmr-level-and-references.zh.md) / [English](specs/2026-11-06-asmr-level-and-references.en.md)。
+
+生成机更新包 `I:/AI/asmr_director/artifacts/h3-asmr/ASMR-video-runner-dual-audio-update-2026-11-06.zip`。需更新解压的工程与 ComfyUI 自定义节点并重启 ComfyUI。QA `I:/AI/asmr_director/qa/asmr-sound/2026-11-06-separate-references/`，重点看 `balanced-pcm.json`、`64s-upgrade-verification.json`、`live-export.json`。真实台词加合成木盘敲击的边界电平差由 17.2 dB 降至 0.01 dB 以内。旧 64 秒完整候选的模拟 HTTP 升级复用 6 段音效和 6 段画面，重做第 3、6、9 段画面和两条合片。实际 H3 动作同步待生成机复测。
+
+3001 当前使用 `.local/releases/project-create-planner/apps/web`，构建 `XIuRyi64PfpEziCmUwDrN`。工程编辑页点击新建会激活空项目并进入 AI 创意策划。实测旧版留下 9 个示例片段，新版在 1350px / 390px 均为 0 个，原项目可切回。Web 161 项、runner 67 项相关测试和 DSP 20 项测试通过。页面 QA/回退启动配置在 `I:/AI/asmr_director/qa/project-library/2026-11-06-new-project/`。
+
+## Earlier update — 2026-11-06 / 批跑续跑与追加版本
+
+独立批跑器的「开始 / 断点继续」在候选总数留空时恢复上次的编号范围，首次生成一版。「再生成一版」只处理下一个候选号，主画面、独立音效、参考与合片使用同一编号。CLI 用 `--append-candidates N` 追加 N 版，`--candidates N` 仍用于显式检查 1 至 N。种子与候选范围在正式运行前写入恢复记录。全新输出目录默认随机，显式 `--seed` 可复现。网页导出从源码目录读取批跑器。以前下载的包需要替换其内的 `runner.py`。
+
+更新包 `I:/AI/asmr_director/artifacts/h3-asmr/ASMR-video-runner-new-candidate-update-2026-11-06.zip`。验证目录 `I:/AI/asmr_director/qa/video-batch/2026-11-06-candidates/`。其中 `http-e2e-results.json` 记录旧 9 镜头包升级、搬走全部旧 MP4 后追加、中断与续跑、随机与固定种子。`legacy-sidecar-only-after.json` 覆盖仅留下旧音效任务的恢复。`suite-verification.json` 记录 225 项测试通过，`tk-gui-check.json` 记录窗口实际按键，`export-verification.json` 和 `package-verification.json` 核对 3001 导出与更新包包含同一份 runner。使用实际工作流和本地模拟 ComfyUI，目标机的 H3 渲染留待试跑。
+
+## Earlier update — 2026-11-05 / 无台词原生声音与动作接续
+
+用户实际试跑反馈声音不贴画面，要求试无台词主片原生ASMR，并让部分台词延续前段操作。新导出silentAudioMode=action-first：所有silent不另跑音效，speech显式asmrSound.continuation=previous-silent映射紧前silent任务referenceShotId。同候选主片原音参考→新音效→一次D/平衡+原WAV混合→同一AUDIO供H3和CreateVideo；增强合片不再次处理混音speech，silent用自己原声D替换。旧native/asmr-first保留，独立镜头不绑定声音引用。缓存/恢复/only/重做/模式回切覆盖，修复后面缺WAV阻挡前面有效源；无节点或引擎改动。
+
+创意/设计/校对/编辑器增加持续操作语义和显式标记。真实DP12业务13上游，前三自由稿78/97/95秒：最后有边做边说，但源段边界暂停/方位矛盾尚在，不能声称自动文案稳定通过。独立交付使用助手明确持续方向+9真实DP设计，3对动作/声源/标记审查通过，6条原D人声及尾零按旧ZIP原字节复用；0新TTS/ASR/H3，不是视听验收。
+
+3001 `.local/releases/action-first/apps/web` build `K0vtVYmHPyU9whwpAeoSD`，20:55HKT上线，父25160/监听26696；回退本QA/start-production.before.ps1指向sound-first-spatial。隔离13生产+13测试、473 Web、192 runner、26lint/完整构建通过；8静态7参考4WAV服务核验。当前16段/11采用/5silent/16设计/11D UI JSON前后完全一致，未加入3接续；桌面和390px可用。28历史范围外保持，HEAD仍6ec3cb0，本轮与前轮新实现均未推。
+
+QA `I:/AI/asmr_director/qa/asmr-sound/2026-11-05-action-first/`，优先final-verification、release-overlay、activation/service、runner-verification、delivery-independent-verification、ui-export-verification、planning-trial02-semantic-review。试跑包 `artifacts/h3-asmr/ASMR-action-first-trial-2026-11-05.zip` 为9主+6音效/3接续、63.695s、4独立镜头，40项9,819,567bytes，sha54a9cefb…；无角色图，画幅未指定沿用横屏默认可在GUI改。完整更新包`ASMR-video-runner-action-first-update-2026-11-05.zip`14项2,858,253bytes，sha667c7f2d…；10节点/engine/SOFA原字节。交付3模式51禁网payload，实际UI16主+11音效另27个，总78过；0网络/H3。包内TRIAL.zh.txt说明，实际音画/口型/听感待生成机。[详细记录](records/2026-11-05-action-first.md)。AudioQualityV1与其他暂停保持。
+
+## Earlier update — 2026-11-05 / 无台词先声音试验与空间规划
+
+用户要求先生成无台词独立声音再参考音频生成画面，同时查空间后处理。新导出可选silentAudioMode=asmr-first，旧缺省native；GUI按项目/原生/先声音。runner先本次ASMR候选，原MP4通过LoadAudio/Trim同时进H3参考和主片原声，角色图/尾帧保持。普通版raw、增强版一次D replace，无新本地工具。候选/SHA依赖、前置阻断/恢复、原生回切、only历史依赖、小数时长已覆盖。
+
+当前16段全static与其脚本基本相符，旧39段38static且有左右文字错配。创意→设计→校对补7种运动语义，符合条件的≥3声音试听至少1段发声中单向移动，末尾/repair共用检查；不强套orbit，不扩单路径DSP。9业务10fetch真实DP：4明确案例、最终91秒自由稿及其8秒移动木盘设计贯通，1网络失败重试、1整稿修复失败保留。0新TTS/ASR/H3，非听感验收。
+
+最终3001 `.local/releases/sound-first-spatial/apps/web`，build `RcDxphISW5cJw4YWgXQnG`，启动父7384；入口不变，回退主QA/spatial-refinement/start-production.before.ps1。最终375 Web/172 runner、16 lint/webpack+TS、8静态7参考4WAV服务验证过。三次UI项目导出字节一致，仍16段/11采用/11D/已保存；28范围外保护。新源码未提交，已推基线6ec3cb0。
+
+QA `I:/AI/asmr_director/qa/asmr-sound/2026-11-05-sound-first/`，优先读final-verification、dp-final-review、delivery-package-verification、runner-update-package-verification和spatial-refinement下激活/服务回执。实际UI试跑包 `artifacts/h3-asmr/ASMR-sound-first-trial-2026-11-05.zip` 保留当前16段及原静止声位，16+16任务、11D+10处0.35尾零、约108.848s、64禁网payload通过，无角色图需用户在runner选择。完整更新包 `ASMR-video-runner-sound-first-update-2026-11-05.zip`含旧节点/引擎/SOFA原字节，不覆盖工程/结果。最终仅创意规则再更新，导出代码与已验证包一致。实际H3画面对声、目标机节点及最终听感待跑；AudioQualityV1、其他暂停保持。[记录/恢复说明](records/2026-11-05-sound-first.md)。
+
+## Earlier update — 2026-11-05 / 质量与连续性版本发布归档
 
 用户要求记录推送。将11-02 ASMR质感/响度与11-04窗口/留白两轮已验证改动一并归档，69既有文件加本次发布记录共70项，分支 `codex/voxcpm2-product-generation`，基线1afcc47。69源码/测试/文档与最终验证哈希一致，28历史范围外保持；不混入空间实验，不重跑模型、重建或重启。精确commit/远端SHA与发布状态以 `I:/AI/asmr_director/qa/voice-continuity/2026-11-02-window-pause/publication-2026-11-05.json` 为准，前两轮记录“未提交”为当时历史状态。运行仍为下述voice-continuity build，AudioQualityV1与其他暂停保持。[发布记录](records/2026-11-05-asmr-quality-continuity-publication.md)。
 
